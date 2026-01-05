@@ -1,17 +1,17 @@
-# Python / venv
+# entornos / caches
 .venv/
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-*.log
-
-# Mac
 .DS_Store
 
-# Entornos y secretos
+# BD/local
+db.sqlite3
+*.sqlite3
+*.sqlite
+
+# secretos
 .env
 
-# DB/artefactos locales
-*.sqlite3
-.db/
+# compilados / generados
+staticfiles/
+node_modules/
