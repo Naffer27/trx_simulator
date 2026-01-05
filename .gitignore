@@ -1,0 +1,17 @@
+# Python / venv
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+
+# Mac
+.DS_Store
+
+# Entornos y secretos
+.env
+
+# DB/artefactos locales
+*.sqlite3
+.db/

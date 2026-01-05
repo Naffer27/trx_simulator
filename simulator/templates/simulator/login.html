@@ -1,0 +1,125 @@
+{# simulator/templates/simulator/login.html #}
+{% extends "simulator/base.html" %}
+
+{% block title %}Acceso al Broker{% endblock %}
+
+{% block content %}
+<style>
+  body {
+    background: radial-gradient(circle at center, #0d0d0d, #1a001a 90%);
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    color: #fff;
+  }
+
+  .login-card {
+    background: rgba(20, 20, 30, 0.95);
+    border-radius: 16px;
+    padding: 30px;
+    max-width: 420px;
+    width: 100%;
+    margin: 60px auto;
+    box-shadow: 0 0 20px rgba(138, 43, 226, 0.6);
+    backdrop-filter: blur(6px);
+  }
+
+  .login-card h3 {
+    text-align: center;
+    margin-bottom: 20px;
+    font-size: 22px;
+    font-weight: bold;
+    background: linear-gradient(90deg, #8a2be2, #ff00ff);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .login-card label {
+    font-weight: 600;
+    font-size: 14px;
+  }
+
+  .login-card input {
+    width: 100%;
+    padding: 10px;
+    margin-top: 6px;
+    margin-bottom: 16px;
+    border-radius: 10px;
+    border: 1px solid #333;
+    background: #1a1a2e;
+    color: #fff;
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.4);
+    transition: border 0.3s ease, box-shadow 0.3s ease;
+  }
+
+  .login-card input:focus {
+    outline: none;
+    border: 1px solid #8a2be2;
+    box-shadow: 0 0 6px rgba(138,43,226,0.8);
+  }
+
+  .btn-trader {
+    display: inline-block;
+    width: 100%;
+    padding: 12px;
+    font-size: 15px;
+    font-weight: bold;
+    text-align: center;
+    color: #fff;
+    background: linear-gradient(90deg, #881ae8, #8948e4);
+    border: none;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(144, 68, 226, 0.4);
+    cursor: pointer;
+    transition: all 0.3s ease;
+  }
+
+  .btn-trader:hover {
+    background: linear-gradient(90deg, #00c6ff, #1a73e8);
+    box-shadow: 0 6px 16px rgba(0, 198, 255, 0.6);
+    transform: translateY(-2px);
+  }
+
+  .btn-trader:active {
+    transform: translateY(0);
+    box-shadow: 0 3px 10px rgba(0, 198, 255, 0.3);
+  }
+</style>
+
+<div class="login-card">
+  <h3>Acceso al Broker</h3>
+
+  {% if error %}
+    <div class="alert alert-danger">{{ error }}</div>
+  {% endif %}
+
+  {% if request.session.access_code %}
+    <p class="welcome">
+      Challenge activo: <strong>{{ request.session.access_code }}</strong><br>
+      Si completas las reglas, desbloquearás la siguiente fase 🚀
+    </p>
+  {% elif request.GET.code %}
+    <p class="welcome">
+      Estás entrando con el código <strong>{{ request.GET.code }}</strong>.<br>
+      Esta clave activará tu cuenta de fondeo.
+    </p>
+  {% endif %}
+
+  <form method="post" action="{% url 'simulator:login' %}">
+    {% csrf_token %}
+
+    <label>{{ form.username.label_tag }}</label>
+    {{ form.username }}
+
+    <label>{{ form.password.label_tag }}</label>
+    {{ form.password }}
+
+    <label>{{ form.access_code.label_tag }}</label>
+    {% if request.GET.code %}
+      <input type="text" name="access_code" value="{{ request.GET.code }}" readonly>
+    {% else %}
+      {{ form.access_code }}
+    {% endif %}
+
+    <button type="submit" class="btn-trader">ENTRAR</button>
+  </form>
+</div>
+{% endblock %}

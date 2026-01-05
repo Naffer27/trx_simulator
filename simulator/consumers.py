@@ -1,0 +1,827 @@
+# simulator/consumers.py
+import os, json, asyncio, random, time, logging
+from datetime import datetime
+from urllib.parse import parse_qs
+
+from channels.generic.websocket import AsyncWebsocketConsumer
+from channels.db import database_sync_to_async
+from django.db import transaction
+
+try:
+    import websockets  # pip install websockets
+except Exception:  # si no está, haremos fallback a sim
+    websockets = None
+
+# (por si luego enrutas por registry; hoy no se usan)
+from market_data.normalizer import norm_symbol, norm_tf  # noqa
+from market_data.provider_registry import provider_for   # noqa
+
+from .models import TradingAccount, Position, Trade, LedgerEntry
+
+log = logging.getLogger("simulator.ws")
+
+FINNHUB_API_KEY = (os.getenv("FINNHUB_API_KEY", "") or "").strip()
+DEFAULT_TICK_INTERVAL = float(os.getenv("PRICE_TICK_INTERVAL", "1.0"))
+
+# ---------------- TF helpers ----------------
+def tf_seconds(tf: str) -> int:
+    s = str(tf).strip().lower()
+    alias = {
+        "1": "1s","1sec":"1s","1second":"1s","1s":"1s",
+        "60":"1m","60s":"1m","m1":"1m","1m":"1m","1min":"1m",
+        "300":"5m","m5":"5m","5m":"5m",
+        "900":"15m","m15":"15m","15m":"15m",
+        "3600":"1h","h1":"1h","1h":"1h",
+        "86400":"1d","d1":"1d","1d":"1d",
+    }
+    s = alias.get(s, s)
+    return {"1s":1,"1m":60,"5m":300,"15m":900,"1h":3600,"1d":86400}.get(s, 1)
+
+def normalize_tf(tf: str) -> str:
+    rev = {1:"1s",60:"1m",300:"5m",900:"15m",3600:"1h",86400:"1d"}
+    return rev.get(tf_seconds(tf), "1s")
+
+# ---------------- Símbolos / formatos ----------------
+def step_decimals_for(symbol: str):
+    if symbol in ("BTCUSD","ETHUSD"): return (0.01, 2)
+    if symbol.endswith("/JPY"):        return (0.001, 3)
+    if "/" in symbol:                  return (0.00001, 5)
+    return (0.00001, 5)
+
+def spread_for(symbol: str):
+    if symbol == "BTCUSD": return 0.3  # ~30 ticks de 0.01
+    if symbol == "ETHUSD": return 0.1
+    if symbol.endswith("/JPY"): return 0.004
+    if "/" in symbol: return 0.00002
+    return 0.00002
+
+def drift_for(symbol: str):
+    if symbol == "BTCUSD": return 12.0
+    if symbol == "ETHUSD": return 2.0
+    return 0.0008
+
+def base_price_for(symbol: str):
+    return {
+        "EUR/USD": 1.17000,
+        "GBP/USD": 1.30000,
+        "USD/JPY": 155.000,
+        "AUD/USD": 0.68000,
+        "BTCUSD": 68000.0,
+        "ETHUSD": 3400.0,
+    }.get(symbol, 1.17000)
+
+def map_symbol_for_binance(symbol: str) -> str | None:
+    s = symbol.replace("/","").upper()
+    m = {"BTCUSD":"BTCUSDT","ETHUSD":"ETHUSDT"}
+    return m.get(s)
+
+def finnhub_symbol_for(symbol: str) -> str:
+    s = symbol.upper()
+    if s in ("BTCUSD","ETHUSD"):  # por si luego quieres crypto
+        return f"BINANCE:{s}T"
+    if "/" in s:
+        a,b = s.split("/",1)
+        return f"FX:{a}{b}"
+    return s
+
+# ======================================================
+#                       CONSUMER
+# ======================================================
+class TradingConsumer(AsyncWebsocketConsumer):
+
+    # ---------------- Conexión ----------------
+    async def connect(self):
+        self._db_account_id = None
+        self._last_db_sync = 0.0
+        self._tick_interval = DEFAULT_TICK_INTERVAL
+        self._force_provider = (os.getenv("FORCE_PROVIDER","") or "").lower()
+
+        user = getattr(self.scope, "user", None)
+        is_auth = bool(user and getattr(user, "is_authenticated", False))
+
+        # Querystring
+        try:
+            qs = parse_qs(self.scope.get("query_string", b"").decode())
+            q_account_raw = qs.get("account",[None])[0] or qs.get("account_id",[None])[0]
+            q_account = int(q_account_raw) if q_account_raw else None
+
+            q_interval_raw = qs.get("interval",[None])[0]
+            if q_interval_raw:
+                self._tick_interval = max(0.05, min(5.0, float(q_interval_raw)))
+
+            q_provider_raw = qs.get("provider",[None])[0]
+            if q_provider_raw:
+                self._force_provider = str(q_provider_raw).lower()
+
+            self._token = (qs.get("token",[None])[0] or "").strip()
+            q_tf_raw = qs.get("tf",[None])[0] or qs.get("timeframe",[None])[0]
+        except Exception:
+            q_account = None
+            self._token = ""
+            q_tf_raw = None
+
+        if is_auth and q_account:
+            acc = await self._db_get_account_for_user(q_account, user.id)
+            if acc: self._db_account_id = acc["id"]
+
+        await self.accept()
+
+        # --- Estado inicial (memoria) ---
+        self.symbol = "EUR/USD"
+        self.timeframe = normalize_tf(q_tf_raw or "1m")
+        self._price_state = {}   # ultima referencia por símbolo
+        self._order_seq = 1
+        self._positions = []
+        self._agg = {}
+        self._last_bar_time = {}
+
+        self.account = {
+            "balance": 10000.0,
+            "equity": 10000.0,
+            "pnl_unreal": 0.0,
+            "margin_used": 0.0,
+            "leverage": 50,
+            "netting_mode": False,
+        }
+
+        await self._maybe_hydrate_from_db()
+
+        self.stream_task = None
+        self.binance_task = None
+        self.finnhub_task = None
+        self._provider = "sim"
+
+        await self.start_stream_for(self.symbol)
+
+        await self.send_json({"type":"positions","items":self._positions_snapshot()})
+        await self._recalc_account_and_push()
+        await self.send_json({"type":"ack","action":"connected",
+                              "timeframe":self.timeframe,"tf_sec":tf_seconds(self.timeframe)})
+
+    async def disconnect(self, close_code):
+        await self.stop_all_streams()
+
+    # ---------------- Mensajes entrantes ----------------
+    async def receive(self, text_data: str):
+        try:
+            data = json.loads(text_data)
+        except Exception:
+            await self.send_json({"type":"error","message":"invalid_json"})
+            return
+
+        act = data.get("action")
+
+        if act == "ping":
+            return
+
+        if act == "change_symbol":
+            sym = data.get("symbol", self.symbol)
+            self.symbol = sym
+            self._reset_agg(sym)
+            await self.restart_stream_for(sym)
+            await self.send_json({"type":"info","message":f"symbol={sym} provider={self._provider}"})
+
+        elif act == "change_timeframe":
+            tf = normalize_tf(data.get("timeframe", self.timeframe))
+            self.timeframe = tf
+            self._reset_agg(self.symbol)
+            await self.send_json({"type":"ack","action":"change_timeframe","timeframe":tf,"tf_sec":tf_seconds(tf)})
+
+        elif act == "load_history":
+            sym = data.get("symbol", self.symbol)
+            tf  = normalize_tf(data.get("timeframe", self.timeframe))
+            hist = self.generate_history(sym, tf, bars=240)
+            await self.send_json({"type":"history","symbol":sym,"data":hist})
+
+        elif act == "account:get":
+            await self._recalc_account_and_push()
+
+        elif act == "order:mode":
+            nm = data.get("netting_mode", None)
+            if isinstance(nm, bool):
+                self.account["netting_mode"] = nm
+                await self.send_json({"type":"info","message":f"netting_mode={nm}"})
+
+        elif act == "order:new":
+            await self._order_new(data)
+
+        elif act == "order:update":
+            await self._order_update(data)
+
+        elif act == "order:close":
+            await self._order_close(data)
+
+        else:
+            await self.send_json({"type":"ack","ok":True,"action":act})
+
+    # ---------------- Streams ----------------
+    async def restart_stream_for(self, symbol: str):
+        await self.stop_all_streams()
+        self._reset_agg(symbol)
+        await self.start_stream_for(symbol)
+
+    async def stop_all_streams(self):
+        for task in (self.stream_task, self.binance_task, self.finnhub_task):
+            if task and not task.done():
+                task.cancel()
+                try: await task
+                except asyncio.CancelledError: pass
+                except Exception: pass
+        self.stream_task = self.binance_task = self.finnhub_task = None
+
+    async def start_stream_for(self, symbol: str):
+        # Decide proveedor
+        if self._force_provider in ("sim","binance","finnhub"):
+            provider = self._force_provider
+        else:
+            if symbol in ("BTCUSD","ETHUSD"):
+                provider = "binance"
+            elif (symbol in ("EUR/USD","GBP/USD","USD/JPY","AUD/USD") or symbol.endswith("/JPY")) and (self._token or FINNHUB_API_KEY):
+                provider = "finnhub"
+            else:
+                provider = "sim"
+
+        self._provider = provider
+        self._reset_agg(symbol)
+        log.warning("[provider] %s for %s (interval=%ss)", provider, symbol, self._tick_interval)
+        await self.send_json({"type":"info","message":f"provider={provider}"})
+
+        if provider == "binance":
+            if not websockets:
+                await self.send_json({"type":"warn","message":"websockets not installed → sim"})
+                provider = self._provider = "sim"
+            else:
+                self.binance_task = asyncio.create_task(self.binance_stream(symbol))
+                return
+
+        if provider == "finnhub":
+            if not websockets:
+                await self.send_json({"type":"warn","message":"websockets not installed → sim"})
+                provider = self._provider = "sim"
+            else:
+                self.finnhub_task = asyncio.create_task(self.finnhub_stream(symbol))
+                return
+
+        # simulador
+        self.stream_task = asyncio.create_task(self.stream_loop(symbol))
+
+    async def stream_loop(self, symbol: str):
+        while True:
+            await self.push_tick(symbol)
+            await asyncio.sleep(self._tick_interval)
+
+    async def push_tick(self, symbol: str):
+        step, dec = step_decimals_for(symbol)
+        mid = self.ensure_state(symbol)
+
+        # camina el precio
+        mid += (random.random()-0.5)*drift_for(symbol)
+        self.set_state(symbol, mid)
+
+        spr = spread_for(symbol)
+        bid = round(mid - spr/2, dec)
+        ask = round(mid + spr/2, dec)
+        ts  = int(datetime.utcnow().timestamp())
+
+        # tick (lo que lee el top SELL/BUY)
+        await self.send_json({"type":"tick","symbol":symbol,"bid":bid,"ask":ask,"time":ts})
+
+        # agregar a vela actual
+        await self._on_tick(symbol, (bid+ask)/2, volume=random.randint(200,1200), ts=ts)
+
+        await self._check_tp_sl(symbol, (bid+ask)/2)
+        await self._recalc_account_and_push()
+
+    async def binance_stream(self, symbol: str):
+        mapped = map_symbol_for_binance(symbol)
+        if not mapped:
+            await self.send_json({"type":"warn","message":f"{symbol} not on Binance spot → sim"})
+            self._provider = "sim"
+            self.stream_task = asyncio.create_task(self.stream_loop(symbol))
+            return
+
+        # bookTicker (bid/ask) + kline_1s (velas)
+        url = f"wss://stream.binance.com:9443/stream?streams={mapped}@bookTicker/{mapped}@kline_1s"
+        try:
+            async with websockets.connect(url, ping_interval=20, ping_timeout=20, close_timeout=10, max_queue=256) as ws:
+                await self.send_json({"type":"info","message":"binance_ws_connected"})
+                async for raw in ws:
+                    obj = json.loads(raw)
+                    stream = obj.get("stream") or ""
+                    data = obj.get("data") or {}
+
+                    # bid/ask
+                    if stream.endswith("@bookTicker"):
+                        try:
+                            b = float(data.get("b") or 0.0); a = float(data.get("a") or 0.0)
+                            if a > b > 0:
+                                ts = int(time.time())
+                                await self.send_json({"type":"tick","symbol":symbol,"bid":b,"ask":a,"time":ts})
+                                await self._on_tick(symbol, (a+b)/2, volume=0.0, ts=ts)
+                                await self._check_tp_sl(symbol, (a+b)/2)
+                        except Exception:
+                            pass
+
+                    # vela 1s directa (también actualiza)
+                    if "@kline_" in stream:
+                        k = data.get("k") or {}
+                        t = int((k.get("t") or 0)//1000)
+                        o = float(k.get("o") or 0.0); h = float(k.get("h") or 0.0)
+                        l = float(k.get("l") or 0.0); c = float(k.get("c") or 0.0)
+                        if t and o and h and l and c:
+                            await self._on_tick(symbol, c, volume=float(k.get("v") or 0.0), ts=t)
+                            await self._check_tp_sl(symbol, c)
+
+                    if int(time.time()) % 3 == 0:
+                        await self._recalc_account_and_push()
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            msg = f"binance_stream error: {e!r} → fallback sim"
+            log.error(msg)
+            await self.send_json({"type":"warn","message":msg})
+            self._provider = "sim"
+            self.stream_task = asyncio.create_task(self.stream_loop(symbol))
+
+    async def finnhub_stream(self, symbol: str):
+        token = self._token or FINNHUB_API_KEY
+        if not token:
+            await self.send_json({"type":"warn","message":"No FINNHUB_API_KEY → sim"})
+            self._provider = "sim"
+            self.stream_task = asyncio.create_task(self.stream_loop(symbol))
+            return
+
+        finnhub_sym = finnhub_symbol_for(symbol)
+        url = f"wss://ws.finnhub.io?token={token}"
+        try:
+            async with websockets.connect(url, ping_interval=20, ping_timeout=20, close_timeout=10, max_queue=256) as ws:
+                await ws.send(json.dumps({"type":"subscribe","symbol":finnhub_sym}))
+                await self.send_json({"type":"info","message":f"finnhub_ws_connected {finnhub_sym}"})
+
+                async for raw in ws:
+                    msg = json.loads(raw)
+                    if msg.get("type") != "trade":
+                        continue
+
+                    for t in msg.get("data", []):
+                        px = float(t.get("p") or 0.0)
+                        if not px: continue
+                        ts = int((t.get("t") or time.time()*1000)/1000)
+                        # sintetiza bid/ask alrededor del trade
+                        spr = spread_for(symbol)
+                        b = px - spr/2; a = px + spr/2
+                        await self.send_json({"type":"tick","symbol":symbol,"bid":b,"ask":a,"time":ts})
+                        await self._on_tick(symbol, px, volume=float(t.get("v") or 0.0), ts=ts)
+                        await self._check_tp_sl(symbol, px)
+
+                    if int(time.time()) % 3 == 0:
+                        await self._recalc_account_and_push()
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            msg = f"finnhub_stream error: {e!r} → fallback sim"
+            log.error(msg)
+            await self.send_json({"type":"warn","message":msg})
+            self._provider = "sim"
+            self.stream_task = asyncio.create_task(self.stream_loop(symbol))
+
+    # ---------------- Agregador de velas ----------------
+    def _reset_agg(self, symbol: str):
+        self._agg[symbol] = {"t0":None,"o":None,"h":None,"l":None,"c":None,"v":0.0,"tf_sec":tf_seconds(self.timeframe)}
+
+    async def _on_tick(self, symbol: str, price: float, volume: float = 0.0, ts: int | None = None):
+        if ts is None: ts = int(datetime.utcnow().timestamp())
+        acc = self._agg.get(symbol)
+        if acc is None or acc["tf_sec"] != tf_seconds(self.timeframe):
+            self._reset_agg(symbol)
+            acc = self._agg[symbol]
+
+        tf_sec = acc["tf_sec"]
+        bucket = (ts // tf_sec) * tf_sec
+
+        if acc["t0"] is None:
+            acc["t0"]=bucket; acc["o"]=acc["h"]=acc["l"]=acc["c"]=price; acc["v"]=float(volume or 0.0)
+            await self._emit_bar(symbol, acc); return
+
+        if bucket == acc["t0"]:
+            acc["c"]=price; acc["h"]=max(acc["h"],price); acc["l"]=min(acc["l"],price)
+            acc["v"]=float(acc["v"])+float(volume or 0.0)
+            await self._emit_bar(symbol, acc); return
+
+        # bucket nuevo
+        acc["t0"]=bucket; acc["o"]=acc["h"]=acc["l"]=acc["c"]=price; acc["v"]=float(volume or 0.0)
+        await self._emit_bar(symbol, acc)
+
+    async def _emit_bar(self, symbol: str, acc: dict):
+        bar = {"time":int(acc["t0"]), "open":float(acc["o"]), "high":float(acc["h"]),
+               "low":float(acc["l"]), "close":float(acc["c"])}
+        last_time = self._last_bar_time.get(symbol)
+
+        if last_time is None or int(acc["t0"]) > last_time:
+            await self.send_json({"type":"candle_new","symbol":symbol,"data":bar})
+            self._last_bar_time[symbol] = int(acc["t0"])
+        else:
+            await self.send_json({"type":"candle_update","symbol":symbol,"data":bar})
+
+        await self.send_json({
+            "type":"volume_update","symbol":symbol,"time":int(acc["t0"]),
+            "value":float(acc.get("v",0.0)),
+            "color":"#26a69a" if acc["c"]>=acc["o"] else "#f44336",
+        })
+
+    # ---------------- Historia sintética ----------------
+    def generate_history(self, symbol, timeframe, bars=200):
+        base = self._price_state.get(symbol, base_price_for(symbol))
+        step, dec = step_decimals_for(symbol)
+        d = drift_for(symbol)
+        now = int(datetime.utcnow().timestamp())
+        tf_sec = tf_seconds(timeframe)
+
+        series, price = [], base
+        rnd = random.Random(symbol+timeframe)
+        for i in range(bars, 0, -1):
+            ts = now - i * tf_sec
+            o = price + (rnd.random()-0.5)*d
+            c = o     + (rnd.random()-0.5)*d
+            h = max(o,c) + abs(rnd.random()-0.5)*d*0.6
+            l = min(o,c) - abs(rnd.random()-0.5)*d*0.6
+            price = c
+            series.append({"time":ts,"open":round(o,dec),"high":round(h,dec),
+                           "low":round(l,dec),"close":round(c,dec)})
+        self.set_state(symbol, price)
+        return series
+
+    # ---------------- Estado de precio ----------------
+    def ensure_state(self, symbol):
+        if symbol not in self._price_state:
+            self._price_state[symbol] = base_price_for(symbol)
+        return self._price_state[symbol]
+
+    def set_state(self, symbol, value):
+        self._price_state[symbol] = float(value)
+
+    # ---------------- Órdenes / Cuenta ----------------
+    async def _order_new(self, data: dict):
+        sym = data.get("symbol", self.symbol)
+        side = str(data.get("side","")).lower()
+        qty  = float(data.get("qty",0) or 0)
+        sl   = data.get("sl")
+        tp   = data.get("tp")
+
+        if side not in ("buy","sell") or qty <= 0:
+            await self.send_json({"type":"error","code":"invalid_order","message":"orden_invalida"})
+            return
+
+        ok, reason = self._pretrade_check(sym, side, qty)
+        if not ok:
+            await self.send_json({"type":"error","code":reason,"message":reason})
+            await self._recalc_account_and_push()
+            await self.send_json({"type":"positions","items":self._positions_snapshot()})
+            return
+
+        dec = step_decimals_for(sym)[1]
+        mid = self.ensure_state(sym)
+        spr = spread_for(sym)
+        px_exec = mid + (spr/2.0) if side=="buy" else mid - (spr/2.0)
+        px_exec = round(px_exec, dec)
+
+        commission = self.commission_for(sym, px_exec*qty)
+        self.account["balance"] -= commission
+
+        order_id = self._order_seq; self._order_seq += 1
+
+        if bool(self.account.get("netting_mode", False)):
+            self._open_or_update_position(sym, side, qty, px_exec, sl, tp, position_id=order_id)
+        else:
+            self._create_position(sym, side, qty, px_exec, sl, tp, position_id=order_id)
+
+        await self._db_mirror_open_or_update(order_id, sym, side, qty, px_exec, sl, tp,
+                                             commission, bool(self.account.get("netting_mode", False)))
+
+        await self.send_json({"type":"order_ack","order_id":order_id,"symbol":sym,"side":side,"qty":qty,"status":"accepted"})
+        await self.send_json({"type":"order_fill","order_id":order_id,"symbol":sym,"side":side,"qty":qty,"price":px_exec,
+                              "commission":commission,"ts":int(datetime.utcnow().timestamp())})
+
+        await self._recalc_account_and_push()
+        await self.send_json({"type":"positions","items":self._positions_snapshot()})
+
+    async def _order_update(self, data: dict):
+        pid = data.get("id")
+        sym = data.get("symbol", self.symbol)
+        sl  = data.get("sl", None)
+        tp  = data.get("tp", None)
+
+        found = False
+        if pid is not None:
+            for p in self._positions:
+                if p.get("id")==pid and p.get("symbol")==sym:
+                    if sl is not None: p["sl"] = float(sl)
+                    if tp is not None: p["tp"] = float(tp)
+                    found = True
+                    await self._db_mirror_update_sl_tp(pid, sym, p.get("sl"), p.get("tp"))
+                    break
+
+        # permite ids temporales "tmp-xxxx"
+        if not found and (pid is None or str(pid).startswith("tmp-")):
+            last_idx = None
+            for i in range(len(self._positions)-1, -1, -1):
+                if self._positions[i]["symbol"]==sym:
+                    last_idx = i; break
+            if last_idx is not None:
+                if sl is not None: self._positions[last_idx]["sl"] = float(sl)
+                if tp is not None: self._positions[last_idx]["tp"] = float(tp)
+                await self._db_mirror_update_sl_tp(self._positions[last_idx]["id"], sym,
+                                                   self._positions[last_idx].get("sl"), self._positions[last_idx].get("tp"))
+                found = True
+
+        if found:
+            await self.send_json({"type":"positions","items":self._positions_snapshot()})
+        else:
+            await self.send_json({"type":"warn","message":"order_update_not_found"})
+
+    async def _order_close(self, data: dict):
+        pid = data.get("id")
+        sym = data.get("symbol", self.symbol)
+
+        last = round(self.ensure_state(sym), step_decimals_for(sym)[1])
+        remaining, closed = [], None
+
+        for p in self._positions:
+            if p.get("id")==pid and p.get("symbol")==sym and not closed:
+                realized = self._realized_pnl_for(p, last)
+                self.account["balance"] += realized
+                closed = {"id":p["id"],"symbol":sym,"side":p["side"],"qty":p["qty"],"avg":p["avg"],
+                          "close_px":last,"reason":"manual","realized_pnl":realized,"ts":int(time.time())}
+                await self._db_mirror_close_position(p, close_px=last, reason="manual", realized_pnl=realized)
+            else:
+                remaining.append(p)
+
+        self._positions = remaining
+        await self._recalc_account_and_push()
+
+        if closed:
+            await self.send_json({"type":"order_close", **closed})
+            await self.send_json({"type":"positions","items":self._positions_snapshot()})
+        else:
+            await self.send_json({"type":"warn","message":"order_close_not_found"})
+
+    # ---------------- Cuenta / PnL ----------------
+    def commission_for(self, symbol, notional): return max(0.0, notional*0.0002)
+    def min_qty_for(self, symbol): return 0.001 if symbol in ("BTCUSD","ETHUSD") else 0.01
+
+    def _pretrade_check(self, symbol, side, qty):
+        if qty < self.min_qty_for(symbol): return False, "min_qty_violation"
+        lev = max(1, int(self.account.get("leverage", 1)))
+        mid = float(self.ensure_state(symbol))
+        est_margin = abs(mid*qty)/lev
+        equity = self.account["balance"] + self._unrealized_pnl_total()
+        if est_margin > (equity - self._margin_used_total()):
+            return False, "insufficient_margin"
+        return True, "ok"
+
+    def _open_or_update_position(self, symbol, side, qty, fill_px, sl=None, tp=None, position_id=None):
+        dec = step_decimals_for(symbol)[1]
+        for pos in self._positions:
+            if pos["symbol"]==symbol and pos["side"]==side:
+                new_qty = pos["qty"] + qty
+                pos["avg"] = round(((pos["avg"]*pos["qty"])+(fill_px*qty))/new_qty, dec)
+                pos["qty"] = new_qty
+                if sl is not None: pos["sl"]=sl
+                if tp is not None: pos["tp"]=tp
+                return
+        self._positions.append({"id":position_id or self._order_seq, "symbol":symbol,"side":side,
+                                "qty":qty,"avg":round(fill_px,dec),"sl":sl,"tp":tp,
+                                "opened_at":int(datetime.utcnow().timestamp())})
+
+    def _create_position(self, symbol, side, qty, fill_px, sl=None, tp=None, position_id=None):
+        dec = step_decimals_for(symbol)[1]
+        self._positions.append({"id":position_id or self._order_seq, "symbol":symbol,"side":side,
+                                "qty":qty,"avg":round(fill_px,dec),"sl":sl,"tp":tp,
+                                "opened_at":int(datetime.utcnow().timestamp())})
+
+    def _positions_snapshot(self): return [dict(p) for p in self._positions]
+
+    def _unrealized_pnl_total(self):
+        return sum(self._unrealized_pnl_for(p, self.ensure_state(p["symbol"])) for p in self._positions)
+
+    def _unrealized_pnl_for(self, pos, last_price):
+        return (last_price - pos["avg"]) * pos["qty"] if pos["side"]=="buy" else (pos["avg"] - last_price) * pos["qty"]
+
+    def _realized_pnl_for(self, pos, close_price): return self._unrealized_pnl_for(pos, close_price)
+
+    def _margin_used_total(self):
+        lev = max(1, int(self.account.get("leverage", 1)))
+        total = 0.0
+        for p in self._positions:
+            notional = abs(self.ensure_state(p["symbol"]) * p["qty"])
+            total += notional/lev
+        return total
+
+    async def _recalc_account_and_push(self):
+        self.account["pnl_unreal"] = round(self._unrealized_pnl_total(), 2)
+        self.account["margin_used"] = round(self._margin_used_total(), 2)
+        self.account["equity"] = round(self.account["balance"] + self.account["pnl_unreal"], 2)
+        free_margin = round(self.account["equity"] - self.account["margin_used"], 2)
+
+        now = time.time()
+        if self._db_account_id and (now - self._last_db_sync) > 1.2:
+            await self._db_sync_account_balances()
+            self._last_db_sync = now
+
+        await self.send_json({
+            "type":"account:update",
+            "balance":round(self.account["balance"],2),
+            "equity":self.account["equity"],
+            "pnl_unreal":self.account["pnl_unreal"],
+            "upnl":self.account["pnl_unreal"],
+            "margin_used":self.account["margin_used"],
+            "free_margin":free_margin,
+            "leverage":self.account["leverage"],
+            "netting_mode":bool(self.account.get("netting_mode", False)),
+        })
+
+    async def _check_tp_sl(self, symbol: str, last_price: float):
+        dec = step_decimals_for(symbol)[1]
+        remaining, closed = [], []
+        now = int(time.time())
+
+        for p in self._positions:
+            if p["symbol"] != symbol:
+                remaining.append(p); continue
+
+            side = p["side"]; sl = p.get("sl"); tp = p.get("tp")
+
+            trail = p.get("trail_dist")
+            if trail and trail > 0:
+                if side=="buy":
+                    p["best"] = max(p.get("best", p["avg"]), last_price)
+                    p["sl"] = round(p["best"] - trail, dec)
+                    sl = p["sl"]
+                else:
+                    p["best"] = min(p.get("best", p["avg"]), last_price)
+                    p["sl"] = round(p["best"] + trail, dec)
+                    sl = p["sl"]
+
+            sl_hit = sl is not None and ((side=="buy" and last_price<=sl) or (side=="sell" and last_price>=sl))
+            tp_hit = tp is not None and ((side=="buy" and last_price>=tp) or (side=="sell" and last_price<=tp))
+
+            if sl_hit or tp_hit:
+                realized = self._realized_pnl_for(p, last_price)
+                self.account["balance"] += realized
+                closed.append({"id":p["id"],"symbol":symbol,"side":side,"qty":p["qty"],"avg":p["avg"],
+                               "close_px":round(last_price,dec),"reason":"tp" if tp_hit else "sl",
+                               "realized_pnl":realized,"ts":now})
+                await self._db_mirror_close_position(p, close_px=last_price, reason=("tp" if tp_hit else "sl"),
+                                                     realized_pnl=realized)
+            else:
+                remaining.append(p)
+
+        if closed:
+            self._positions = remaining
+            await self._recalc_account_and_push()
+            for c in closed: await self.send_json({"type":"order_close", **c})
+            await self.send_json({"type":"positions","items":self._positions_snapshot()})
+
+    # ---------------- DB helpers (best-effort) ----------------
+    async def _maybe_hydrate_from_db(self):
+        if not self._db_account_id: return
+        acc = await self._db_read_account(self._db_account_id)
+        if not acc: return
+
+        self.account["balance"]  = float(acc.get("balance", self.account["balance"]))
+        self.account["equity"]   = float(acc.get("equity", self.account["equity"]))
+        self.account["leverage"] = int(acc.get("leverage", self.account["leverage"]))
+        self.account["netting_mode"] = bool(acc.get("netting_mode", self.account["netting_mode"]))
+
+        items = await self._db_fetch_open_positions()
+        self._positions = []
+        for it in items:
+            self._positions.append({
+                "id":it["id"], "symbol":it["symbol"], "side":it["side"],
+                "qty":float(it["qty"]), "avg":float(it["avg_price"]),
+                "sl":it.get("sl"), "tp":it.get("tp"),
+                "opened_at":it.get("opened_ts", int(time.time())),
+            })
+
+    @database_sync_to_async
+    def _db_get_account_for_user(self, acc_id:int, user_id:int):
+        try:
+            obj = TradingAccount.objects.get(id=acc_id, user_id=user_id)
+            return {"id":obj.id}
+        except TradingAccount.DoesNotExist:
+            return None
+
+    @database_sync_to_async
+    def _db_read_account(self, acc_id:int):
+        try:
+            obj = TradingAccount.objects.get(id=acc_id)
+            return {"id":obj.id,"balance":obj.balance,"equity":obj.equity,
+                    "leverage":getattr(obj,"leverage",50),"netting_mode":getattr(obj,"netting_mode",False)}
+        except TradingAccount.DoesNotExist:
+            return None
+
+    @database_sync_to_async
+    def _db_fetch_open_positions(self):
+        if not self._db_account_id: return []
+        out=[]
+        qs = Position.objects.filter(account_id=self._db_account_id)
+        for p in qs:
+            out.append({"id":p.id,"symbol":p.symbol,"side":p.side,"qty":p.qty,"avg_price":p.avg_price,
+                        "sl":p.sl,"tp":p.tp,"opened_ts":int(p.opened_at.timestamp())})
+        return out
+
+    @database_sync_to_async
+    def _db_sync_account_balances(self):
+        if not self._db_account_id: return
+        TradingAccount.objects.filter(id=self._db_account_id).update(
+            balance=self.account["balance"], equity=self.account["equity"]
+        )
+
+    @database_sync_to_async
+    def _db_mirror_open_or_update(self, order_id, symbol, side, qty, price, sl, tp, commission, netting_mode):
+        if not self._db_account_id: return
+        from decimal import Decimal
+        with transaction.atomic():
+            if commission and commission>0:
+                LedgerEntry.objects.create(
+                    account_id=self._db_account_id, event_type=LedgerEntry.EV_COMMISSION,
+                    amount=Decimal(-abs(commission)), balance_after=Decimal(self.account["balance"]),
+                    meta={"symbol":symbol,"side":side,"client_pos_id":order_id},
+                )
+            if netting_mode:
+                pos = Position.objects.select_for_update().filter(
+                    account_id=self._db_account_id, symbol=symbol, side=side).first()
+                if pos:
+                    old_qty = Decimal(pos.qty); old_avg = Decimal(pos.avg_price)
+                    new_qty = old_qty + Decimal(qty)
+                    new_avg = (old_avg*old_qty + Decimal(price)*Decimal(qty)) / (new_qty if new_qty!=0 else Decimal(1))
+                    pos.qty=new_qty; pos.avg_price=new_avg
+                    if sl is not None: pos.sl=Decimal(sl)
+                    if tp is not None: pos.tp=Decimal(tp)
+                    pos.save()
+                else:
+                    Position.objects.create(
+                        account_id=self._db_account_id, symbol=symbol, side=side,
+                        qty=Decimal(qty), avg_price=Decimal(price),
+                        **({"sl":Decimal(sl)} if sl is not None else {}),
+                        **({"tp":Decimal(tp)} if tp is not None else {}),
+                        external_id=str(order_id),
+                    )
+            else:
+                Position.objects.create(
+                    account_id=self._db_account_id, symbol=symbol, side=side,
+                    qty=Decimal(qty), avg_price=Decimal(price),
+                    **({"sl":Decimal(sl)} if sl is not None else {}),
+                    **({"tp":Decimal(tp)} if tp is not None else {}),
+                    external_id=str(order_id),
+                )
+
+    @database_sync_to_async
+    def _db_mirror_update_sl_tp(self, pos_id, symbol, sl, tp):
+        if not self._db_account_id or not pos_id: return
+        try:
+            pos = Position.objects.get(id=pos_id, account_id=self._db_account_id)
+        except Position.DoesNotExist:
+            pos = Position.objects.filter(account_id=self._db_account_id, symbol=symbol).order_by("-id").first()
+        if not pos: return
+        changed=False
+        from decimal import Decimal
+        if sl is not None: pos.sl = Decimal(sl); changed=True
+        if tp is not None: pos.tp = Decimal(tp); changed=True
+        if changed: pos.save()
+
+    @database_sync_to_async
+    def _db_mirror_close_position(self, pos_mem, close_px, reason, realized_pnl):
+        if not self._db_account_id: return
+        from decimal import Decimal
+        with transaction.atomic():
+            pos = Position.objects.filter(id=pos_mem["id"], account_id=self._db_account_id).first()
+            if not pos:
+                pos = Position.objects.filter(account_id=self._db_account_id,
+                                              symbol=pos_mem["symbol"], side=pos_mem["side"]).order_by("-id").first()
+            Trade.objects.create(
+                account_id=self._db_account_id, symbol=pos_mem["symbol"],
+                trade_type=("BUY" if pos_mem["side"]=="buy" else "SELL"),
+                lot_size=Decimal(pos_mem["qty"]), entry_price=Decimal(pos_mem["avg"]),
+                exit_price=Decimal(close_px),
+                stop_loss=Decimal(pos_mem["sl"]) if pos_mem.get("sl") is not None else None,
+                take_profit=Decimal(pos_mem["tp"]) if pos_mem.get("tp") is not None else None,
+                profit_loss=Decimal(realized_pnl),
+                opened_at=datetime.utcfromtimestamp(int(pos_mem.get("opened_at", time.time()))),
+                closed_at=datetime.utcnow(),
+            )
+            LedgerEntry.objects.create(
+                account_id=self._db_account_id, event_type=LedgerEntry.EV_REALIZED,
+                amount=Decimal(realized_pnl), balance_after=Decimal(self.account["balance"]),
+                meta={"symbol":pos_mem["symbol"],"side":pos_mem["side"],"reason":reason},
+            )
+            if pos: pos.delete()
+            TradingAccount.objects.filter(id=self._db_account_id).update(
+                balance=self.account["balance"], equity=self.account["equity"]
+            )
+
+    # ---------------- Util: enviar JSON ----------------
+    async def send_json(self, payload: dict):
+        await self.send(text_data=json.dumps(payload))

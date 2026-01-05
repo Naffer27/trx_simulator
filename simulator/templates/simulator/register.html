@@ -1,0 +1,164 @@
+{# simulator/templates/simulator/register.html #}
+{% extends "simulator/base.html" %}
+
+{% block title %}Traderwork Evaluation{% endblock %}
+
+{% block content %}
+<style>
+  body {
+    background: radial-gradient(circle at center, #0d0d0d, #1a001a 90%);
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    color: #fff;
+  }
+
+  .register-title {
+    text-align: center;
+    margin-top: 40px;
+    margin-bottom: 20px;
+    font-size: 26px;
+    font-weight: bold;
+    background: linear-gradient(90deg, #8a2be2, #ff00ff);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .register-card {
+    background: rgba(20, 20, 30, 0.95);
+    border-radius: 16px;
+    padding: 30px;
+    max-width: 420px;
+    width: 100%;
+    margin: 20px auto 60px auto;
+    box-shadow: 0 0 20px rgba(138, 43, 226, 0.6);
+    backdrop-filter: blur(6px);
+  }
+
+  .register-card label {
+    font-weight: 600;
+    font-size: 14px;
+  }
+
+  .register-card input, 
+  .register-card select {
+    width: 100%;
+    padding: 10px;
+    margin-top: 6px;
+    margin-bottom: 16px;
+    border-radius: 10px;
+    border: 1px solid #333;
+    background: #1a1a2e;
+    color: #fff;
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.4);
+    transition: border 0.3s ease, box-shadow 0.3s ease;
+  }
+
+  .register-card input:focus,
+  .register-card select:focus {
+    outline: none;
+    border: 1px solid #8a2be2;
+    box-shadow: 0 0 6px rgba(138,43,226,0.8);
+  }
+
+  /* Botón estilo trader */
+  .btn-trader {
+    display: inline-block;
+    width: 100%;
+    padding: 12px;
+    font-size: 15px;
+    font-weight: bold;
+    text-align: center;
+    color: #fff;
+    background: linear-gradient(90deg, #881ae8, #8948e4);
+    border: none;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(144, 68, 226, 0.4);
+    cursor: pointer;
+    transition: all 0.3s ease;
+  }
+
+  .btn-trader:hover {
+    background: linear-gradient(90deg, #00c6ff, #1a73e8);
+    box-shadow: 0 6px 16px rgba(0, 198, 255, 0.6);
+    transform: translateY(-2px);
+  }
+
+  .btn-trader:active {
+    transform: translateY(0);
+    box-shadow: 0 3px 10px rgba(0, 198, 255, 0.3);
+  }
+
+  .login-link {
+    margin-top: 15px;
+    text-align: center;
+    font-size: 14px;
+  }
+
+  .login-link a {
+    color: #00c6ff;
+    text-decoration: none;
+  }
+
+  .login-link a:hover {
+    text-decoration: underline;
+  }
+</style>
+
+<!-- Nombre de la empresa FUERA de la caja -->
+<h2 class="register-title">Traderwork Evaluation</h2>
+
+<div class="register-card">
+  <!-- 🔑 El action apunta a la vista de registro -->
+  <form method="post" action="{% url 'simulator:register' %}" novalidate>
+    {% csrf_token %}
+
+    {# Mostrar errores generales del formulario #}
+    {% if form.non_field_errors %}
+      <div class="alert alert-danger">
+        {{ form.non_field_errors }}
+      </div>
+    {% endif %}
+
+    <label>{{ form.username.label_tag }}</label>
+    {{ form.username }}
+    {% if form.username.errors %}
+      <div class="text-danger small">{{ form.username.errors }}</div>
+    {% endif %}
+
+    <label>{{ form.email.label_tag }}</label>
+    {{ form.email }}
+    {% if form.email.errors %}
+      <div class="text-danger small">{{ form.email.errors }}</div>
+    {% endif %}
+
+    <label>{{ form.password1.label_tag }}</label>
+    {{ form.password1 }}
+    {% if form.password1.errors %}
+      <div class="text-danger small">{{ form.password1.errors }}</div>
+    {% endif %}
+
+    <label>{{ form.password2.label_tag }}</label>
+    {{ form.password2 }}
+    {% if form.password2.errors %}
+      <div class="text-danger small">{{ form.password2.errors }}</div>
+    {% endif %}
+
+    <label>{{ form.tier.label_tag }}</label>
+    {{ form.tier }}
+    {% if form.tier.errors %}
+      <div class="text-danger small">{{ form.tier.errors }}</div>
+    {% endif %}
+
+    <label>{{ form.phase.label_tag }}</label>
+    {{ form.phase }}
+    {% if form.phase.errors %}
+      <div class="text-danger small">{{ form.phase.errors }}</div>
+    {% endif %}
+
+    <button type="submit" class="btn-trader">CREAR CUENTA</button>
+  </form>
+
+  <p class="login-link">
+    ¿Ya tienes cuenta? <a href="{% url 'simulator:login' %}">Inicia sesión</a>
+  </p>
+</div>
+{% endblock %}

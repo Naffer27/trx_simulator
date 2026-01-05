@@ -1,0 +1,58 @@
+{% extends "admin/base_site.html" %}
+{% block content %}
+<h1>{{ title }}</h1>
+
+<p>
+  <a class="button" href="{% url 'admin:simulator_tradingaccount_change' account.id %}">← Volver a la cuenta</a>
+</p>
+
+<div class="module">
+  <h2>Exposición por símbolo</h2>
+  <table class="adminlist">
+    <thead>
+      <tr>
+        <th>Symbol</th>
+        <th style="text-align:right;">Long</th>
+        <th style="text-align:right;">Short</th>
+        <th style="text-align:right;">Net</th>
+        <th>Acción</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% if exposure %}
+        {% for row in exposure %}
+          <tr>
+            <td>{{ row.symbol }}</td>
+            <td style="text-align:right;">{{ row.long_qty }}</td>
+            <td style="text-align:right;">{{ row.short_qty }}</td>
+            <td style="text-align:right; font-weight:600;">{{ row.net_qty }}</td>
+            <td>
+              <form method="post" style="display:inline;">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="force_close">
+                <input type="hidden" name="symbol" value="{{ row.symbol }}">
+                Precio:
+                <input type="text" name="price" placeholder="(opcional)">
+                <button type="submit" class="button danger">Cerrar</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      {% else %}
+        <tr><td colspan="5"><em>Sin posiciones abiertas para esta cuenta.</em></td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+
+<div class="module">
+  <h2>Cierre forzado global</h2>
+  <form method="post">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="force_close">
+    <label>Símbolo (vacío = todos): <input type="text" name="symbol" placeholder="EUR/USD o BTCUSD"></label>
+    &nbsp;Precio (opcional): <input type="text" name="price" placeholder="usa precio medio si vacío">
+    &nbsp;<button type="submit" class="button default">Cerrar</button>
+  </form>
+</div>
+{% endblock %}

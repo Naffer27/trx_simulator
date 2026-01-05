@@ -1,0 +1,47 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  {% now "U" as ts %}
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>{% block title %}Trading Simulator{% endblock %}</title>
+
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+
+  <!-- Forzamos tema negro y eliminamos grises de Bootstrap -->
+  <style>
+    :root { color-scheme: dark; }
+    body.bg-black { background:#000 !important; }
+    .navbar { background:#000 !important; border-bottom:1px solid #000000; }
+    .navbar .nav-link, .navbar .navbar-brand { color:#e9eef5 !important; }
+    main.container, main.container-fluid { background:transparent; }
+  </style>
+
+  <link rel="stylesheet" href="{% static 'css/dashboard.css' %}?v={{ ts }}">
+  {% block extra_head %}{% endblock %}
+</head>
+<body class="bg-black text-light" style="padding-bottom: env(safe-area-inset-bottom);">
+  <nav class="navbar navbar-expand">
+    <div class="container-fluid">
+      <a class="navbar-brand" href="{% url 'simulator:dashboard' %}">Simulador</a>
+      <ul class="navbar-nav ms-auto">
+        {% if user.is_authenticated %}
+          <li class="nav-item"><a class="nav-link" href="{% url 'simulator:dashboard' %}">Dashboard</a></li>
+          <li class="nav-item"><a class="nav-link" href="{% url 'simulator:logout' %}">Cerrar sesión</a></li>
+        {% else %}
+          <li class="nav-item"><a class="nav-link" href="{% url 'simulator:login' %}">Iniciar sesión</a></li>
+          <li class="nav-item"><a class="nav-link" href="{% url 'simulator:register' %}">Abrir cuenta</a></li>
+        {% endif %}
+      </ul>
+    </div>
+  </nav>
+
+  <main class="container-fluid px-3 px-md-4">
+    {% block content %}{% endblock %}
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js" defer></script>
+  {% block extra_scripts %}{% endblock %}
+</body>
+</html>
