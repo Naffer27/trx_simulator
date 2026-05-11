@@ -1,0 +1,1088 @@
+{% extends "simulator/base.html" %}
+{% load static %}
+
+{% block title %}Money Brokers — Trade the World{% endblock %}
+
+{% block extra_head %}
+<style>
+/* ═══════════════════════════════════════════════
+   MONEY BROKERS — LANDING PAGE
+   Palette: #05050a bg · #FFD700 gold · #FFA500 amber
+   ═══════════════════════════════════════════════ */
+
+/* Fonts already loaded in base. Local vars: */
+:root {
+  --gold:    #FFD700;
+  --amber:   #FFA500;
+  --gold-dim:rgba(255,215,0,.12);
+  --gold-glow:0 0 32px rgba(255,215,0,.18),0 0 80px rgba(255,215,0,.08);
+  --bg:      #05050a;
+  --card:    #0d0d0d;
+  --text:    #ffffff;
+  --muted:   #888888;
+  --border:  rgba(255,215,0,.15);
+}
+
+html { scroll-behavior: smooth; }
+
+/* ── Canvas BG (particles + grid) ── */
+#lp-canvas {
+  position:fixed; inset:0; z-index:0;
+  pointer-events:none;
+}
+
+/* ── Generic helpers ── */
+.lp { position:relative; z-index:1; }
+.lp-container { max-width:1160px; margin:0 auto; padding:0 24px; }
+.gold  { color:var(--gold); }
+.amber { color:var(--amber); }
+.muted { color:var(--muted); }
+
+/* ── Section spacing ── */
+.lp-section { padding:96px 0; border-bottom:1px solid rgba(255,215,0,.06); }
+.lp-section:last-of-type { border-bottom:none; }
+
+/* ── Labels ── */
+.lp-label {
+  display:inline-flex; align-items:center; gap:8px;
+  font-size:.72rem; font-weight:700; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--gold);
+  margin-bottom:16px;
+}
+.lp-label::before {
+  content:''; display:block;
+  width:20px; height:1px; background:var(--gold);
+}
+
+/* ════════════════════════════════
+   1. HERO
+   ════════════════════════════════ */
+.hero {
+  min-height:100vh;
+  display:flex; flex-direction:column;
+  justify-content:center; align-items:center;
+  text-align:center;
+  padding:120px 24px 80px;
+  position:relative; z-index:1;
+}
+.hero-eyebrow {
+  font-size:.72rem; font-weight:700; letter-spacing:.2em;
+  text-transform:uppercase; color:var(--gold);
+  margin-bottom:24px;
+  display:inline-flex; align-items:center; gap:10px;
+}
+.hero-eyebrow span {
+  display:inline-block; width:32px; height:1px; background:var(--gold);
+}
+.hero-title {
+  font-family:'Orbitron',sans-serif;
+  font-size:clamp(2.4rem,7vw,5.5rem);
+  font-weight:900; line-height:1.05;
+  letter-spacing:-.01em;
+  margin-bottom:28px;
+}
+.hero-title .hl {
+  background:linear-gradient(90deg,#FFD700,#FFA500);
+  -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+  background-clip:text;
+}
+.hero-sub {
+  font-size:clamp(1rem,2vw,1.2rem);
+  color:var(--muted); max-width:560px;
+  line-height:1.7; margin:0 auto 44px;
+}
+.hero-ctas { display:flex; gap:14px; justify-content:center; flex-wrap:wrap; }
+
+.btn-gold {
+  display:inline-flex; align-items:center; gap:8px;
+  background:var(--gold); color:#000;
+  font-weight:700; font-size:.9rem; letter-spacing:.04em;
+  padding:14px 32px; border-radius:4px; border:none;
+  cursor:pointer; text-decoration:none;
+  transition:background .2s,transform .15s,box-shadow .2s;
+}
+.btn-gold:hover {
+  background:#FFC200; color:#000;
+  transform:translateY(-2px);
+  box-shadow:0 8px 32px rgba(255,215,0,.3);
+}
+.btn-outline-gold {
+  display:inline-flex; align-items:center; gap:8px;
+  background:transparent; color:var(--gold);
+  font-weight:600; font-size:.9rem; letter-spacing:.04em;
+  padding:13px 32px; border-radius:4px;
+  border:1px solid rgba(255,215,0,.4);
+  cursor:pointer; text-decoration:none;
+  transition:border-color .2s,color .2s,background .2s;
+}
+.btn-outline-gold:hover {
+  border-color:var(--gold); background:var(--gold-dim); color:var(--gold);
+}
+
+.hero-trust {
+  margin-top:56px; display:flex; gap:32px;
+  justify-content:center; flex-wrap:wrap;
+}
+.trust-item {
+  display:flex; flex-direction:column; align-items:center; gap:4px;
+}
+.trust-num {
+  font-family:'Orbitron',sans-serif;
+  font-size:1.5rem; font-weight:900; color:var(--gold);
+}
+.trust-label { font-size:.72rem; color:var(--muted); letter-spacing:.06em; }
+
+/* scroll indicator */
+.hero-scroll {
+  position:absolute; bottom:32px; left:50%; transform:translateX(-50%);
+  display:flex; flex-direction:column; align-items:center; gap:6px;
+  color:var(--muted); font-size:.68rem; letter-spacing:.1em;
+  animation:bounce 2s ease-in-out infinite;
+}
+@keyframes bounce { 0%,100%{transform:translateX(-50%) translateY(0)} 50%{transform:translateX(-50%) translateY(6px)} }
+.hero-scroll::after {
+  content:''; display:block; width:1px; height:32px;
+  background:linear-gradient(to bottom,rgba(255,215,0,.4),transparent);
+}
+
+/* ════════════════════════════════
+   2. STATS
+   ════════════════════════════════ */
+.stats-grid {
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(200px,1fr));
+  gap:2px;
+  border:1px solid var(--border);
+  border-radius:8px; overflow:hidden;
+}
+.stat-box {
+  background:var(--card);
+  padding:32px 24px;
+  text-align:center;
+  transition:background .2s;
+}
+.stat-box:hover { background:#111; }
+.stat-num {
+  font-family:'Orbitron',sans-serif;
+  font-size:2rem; font-weight:900;
+  color:var(--gold); display:block;
+  margin-bottom:8px;
+}
+.stat-desc { font-size:.8rem; color:var(--muted); letter-spacing:.04em; }
+
+/* ════════════════════════════════
+   3. WHY
+   ════════════════════════════════ */
+.why-grid {
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
+  gap:16px; margin-top:48px;
+}
+.why-card {
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:8px; padding:28px 24px;
+  transition:border-color .2s,box-shadow .2s,transform .2s;
+}
+.why-card:hover {
+  border-color:rgba(255,215,0,.5);
+  box-shadow:var(--gold-glow);
+  transform:translateY(-4px);
+}
+.why-icon {
+  font-size:1.6rem; margin-bottom:16px; display:block;
+  filter:drop-shadow(0 0 8px rgba(255,215,0,.4));
+}
+.why-title {
+  font-family:'Orbitron',sans-serif;
+  font-size:.82rem; font-weight:700;
+  color:var(--gold); letter-spacing:.06em;
+  text-transform:uppercase; margin-bottom:10px;
+}
+.why-body { font-size:.85rem; color:var(--muted); line-height:1.7; }
+
+/* ════════════════════════════════
+   4. ACCOUNT TYPES
+   ════════════════════════════════ */
+.accounts-grid {
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
+  gap:16px; margin-top:48px;
+}
+.acct-card {
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:8px; padding:32px 24px;
+  display:flex; flex-direction:column; gap:0;
+  transition:border-color .2s,box-shadow .2s,transform .2s;
+  position:relative; overflow:hidden;
+}
+.acct-card.featured {
+  border-color:var(--gold);
+  box-shadow:var(--gold-glow);
+}
+.acct-card.featured::before {
+  content:'POPULAR';
+  position:absolute; top:16px; right:-24px;
+  background:var(--gold); color:#000;
+  font-size:.6rem; font-weight:900; letter-spacing:.1em;
+  padding:4px 32px;
+  transform:rotate(45deg) translate(0,0);
+}
+.acct-tier {
+  font-family:'Orbitron',sans-serif;
+  font-size:.72rem; font-weight:700; letter-spacing:.12em;
+  text-transform:uppercase; color:var(--gold); margin-bottom:8px;
+}
+.acct-balance {
+  font-family:'Orbitron',sans-serif;
+  font-size:2rem; font-weight:900; color:#fff;
+  margin-bottom:24px; line-height:1;
+}
+.acct-features { list-style:none; padding:0; margin:0 0 28px; display:flex; flex-direction:column; gap:10px; }
+.acct-features li { font-size:.82rem; color:var(--muted); display:flex; align-items:center; gap:10px; }
+.acct-features li::before { content:'✓'; color:var(--gold); font-weight:700; flex-shrink:0; }
+.acct-card .btn-gold { margin-top:auto; justify-content:center; }
+
+/* Comparison table */
+.cmp-table-wrap { overflow-x:auto; margin-top:48px; }
+.cmp-table {
+  width:100%; border-collapse:collapse;
+  font-size:.82rem;
+}
+.cmp-table th {
+  background:var(--card);
+  border:1px solid var(--border);
+  padding:12px 16px;
+  text-align:center;
+  font-family:'Orbitron',sans-serif;
+  font-size:.68rem; font-weight:700;
+  letter-spacing:.08em; text-transform:uppercase;
+  color:var(--gold);
+}
+.cmp-table th:first-child { text-align:left; color:var(--muted); }
+.cmp-table td {
+  border:1px solid rgba(255,215,0,.08);
+  padding:12px 16px; text-align:center;
+  color:var(--muted);
+  background:#05050a;
+}
+.cmp-table td:first-child { text-align:left; color:#fff; font-weight:500; }
+.cmp-table td.ok  { color:var(--gold); font-weight:700; }
+.cmp-table td.no  { color:#444; }
+.cmp-table tbody tr:hover td { background:#0a0a0f; }
+
+/* ════════════════════════════════
+   5. PLATFORM
+   ════════════════════════════════ */
+.platform-layout {
+  display:grid; grid-template-columns:1fr 1fr;
+  gap:64px; align-items:center; margin-top:48px;
+}
+.platform-features { display:flex; flex-direction:column; gap:24px; }
+.pf-item { display:flex; gap:16px; }
+.pf-icon {
+  width:40px; height:40px; flex-shrink:0;
+  background:var(--gold-dim); border:1px solid var(--border);
+  border-radius:6px; display:flex; align-items:center; justify-content:center;
+  font-size:1rem;
+}
+.pf-title { font-weight:600; color:#fff; margin-bottom:4px; font-size:.9rem; }
+.pf-body  { font-size:.82rem; color:var(--muted); line-height:1.6; }
+.platform-screen {
+  aspect-ratio:16/10;
+  background:#0d0d0d; border:1px solid var(--border);
+  border-radius:10px; overflow:hidden; position:relative;
+  box-shadow:var(--gold-glow);
+}
+.platform-screen-inner {
+  width:100%; height:100%;
+  background:linear-gradient(135deg,#0d0d0d 0%,#111 100%);
+  display:flex; align-items:center; justify-content:center;
+  flex-direction:column; gap:12px;
+}
+.ps-label {
+  font-family:'Orbitron',sans-serif;
+  font-size:.72rem; letter-spacing:.1em; color:var(--gold);
+}
+.ps-bars { display:flex; gap:4px; align-items:flex-end; height:60px; }
+.ps-bar  { width:12px; background:rgba(255,215,0,.4); border-radius:2px 2px 0 0;
+           animation:bar-grow 1.8s ease-in-out infinite alternate; }
+.ps-bar:nth-child(1){height:30%;animation-delay:0s}
+.ps-bar:nth-child(2){height:55%;animation-delay:.1s}
+.ps-bar:nth-child(3){height:40%;animation-delay:.2s}
+.ps-bar:nth-child(4){height:80%;animation-delay:.3s;background:rgba(255,215,0,.75)}
+.ps-bar:nth-child(5){height:60%;animation-delay:.4s}
+.ps-bar:nth-child(6){height:90%;animation-delay:.5s;background:var(--gold)}
+.ps-bar:nth-child(7){height:70%;animation-delay:.6s}
+.ps-bar:nth-child(8){height:50%;animation-delay:.7s}
+@keyframes bar-grow { from{opacity:.5} to{opacity:1} }
+
+/* ════════════════════════════════
+   6. AFFILIATES
+   ════════════════════════════════ */
+.aff-layout {
+  display:grid; grid-template-columns:1fr 1fr;
+  gap:64px; align-items:center;
+}
+.aff-steps { display:flex; flex-direction:column; gap:0; margin-top:32px; }
+.aff-step  { display:flex; gap:20px; padding:20px 0; border-bottom:1px solid rgba(255,215,0,.07); }
+.aff-step:last-child { border-bottom:none; }
+.aff-n {
+  font-family:'Orbitron',sans-serif;
+  font-size:1.4rem; font-weight:900; color:var(--gold);
+  flex-shrink:0; line-height:1; padding-top:2px;
+  min-width:32px;
+}
+.aff-step-title { font-weight:600; color:#fff; margin-bottom:4px; }
+.aff-step-body  { font-size:.82rem; color:var(--muted); line-height:1.6; }
+.aff-highlight {
+  background:var(--card); border:1px solid var(--border);
+  border-radius:8px; padding:40px; text-align:center;
+}
+.aff-rate {
+  font-family:'Orbitron',sans-serif;
+  font-size:4rem; font-weight:900;
+  background:linear-gradient(90deg,#FFD700,#FFA500);
+  -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+  background-clip:text; line-height:1; margin-bottom:12px;
+}
+.aff-rate-label { font-size:.85rem; color:var(--muted); margin-bottom:28px; }
+
+/* ════════════════════════════════
+   7. CRYPTO DEPOSITS
+   ════════════════════════════════ */
+.crypto-grid {
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+  gap:12px; margin-top:48px;
+}
+.crypto-card {
+  background:var(--card); border:1px solid var(--border);
+  border-radius:6px; padding:20px 16px; text-align:center;
+  transition:border-color .2s,box-shadow .2s;
+}
+.crypto-card:hover { border-color:rgba(255,215,0,.4); box-shadow:0 0 20px rgba(255,215,0,.1); }
+.crypto-icon { font-size:1.8rem; margin-bottom:8px; display:block; }
+.crypto-name { font-size:.8rem; font-weight:600; color:#fff; margin-bottom:4px; }
+.crypto-min  { font-size:.72rem; color:var(--gold); }
+.crypto-min-label { font-size:.68rem; color:var(--muted); }
+
+.crypto-info {
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr));
+  gap:16px; margin-top:40px;
+  background:var(--card); border:1px solid var(--border);
+  border-radius:8px; padding:28px;
+}
+.ci-item { text-align:center; }
+.ci-val   { font-family:'Orbitron',sans-serif; font-size:1.2rem; font-weight:700; color:var(--gold); margin-bottom:4px; }
+.ci-label { font-size:.72rem; color:var(--muted); }
+
+/* ════════════════════════════════
+   8. FAQ
+   ════════════════════════════════ */
+.faq-list { margin-top:48px; display:flex; flex-direction:column; gap:8px; }
+.faq-item {
+  background:var(--card); border:1px solid var(--border);
+  border-radius:6px; overflow:hidden;
+}
+.faq-q {
+  width:100%; display:flex; justify-content:space-between; align-items:center;
+  background:none; border:none; color:#fff;
+  padding:18px 20px; text-align:left; cursor:pointer;
+  font-size:.88rem; font-weight:500;
+  transition:color .15s;
+}
+.faq-q:hover { color:var(--gold); }
+.faq-q .faq-icon {
+  color:var(--gold); font-size:1.1rem; flex-shrink:0;
+  transition:transform .25s;
+}
+.faq-q[aria-expanded="true"] { color:var(--gold); }
+.faq-q[aria-expanded="true"] .faq-icon { transform:rotate(45deg); }
+.faq-a {
+  max-height:0; overflow:hidden;
+  transition:max-height .3s ease, padding .3s ease;
+}
+.faq-a.open { max-height:400px; }
+.faq-a-inner {
+  padding:0 20px 18px;
+  font-size:.83rem; color:var(--muted); line-height:1.7;
+}
+
+/* ════════════════════════════════
+   9. FOOTER
+   ════════════════════════════════ */
+.lp-footer {
+  background:#030308; border-top:1px solid rgba(255,215,0,.08);
+  padding:56px 0 32px;
+  position:relative; z-index:1;
+}
+.footer-grid {
+  display:grid; grid-template-columns:2fr 1fr 1fr 1fr;
+  gap:40px; margin-bottom:48px;
+}
+.footer-brand {
+  font-family:'Orbitron',sans-serif;
+  font-size:.9rem; font-weight:900; color:var(--gold);
+  letter-spacing:.1em; margin-bottom:12px;
+}
+.footer-about { font-size:.8rem; color:var(--muted); line-height:1.7; max-width:280px; }
+.footer-col h4 {
+  font-size:.68rem; font-weight:700; letter-spacing:.1em;
+  text-transform:uppercase; color:var(--gold); margin-bottom:16px;
+}
+.footer-col ul { list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:8px; }
+.footer-col ul li a {
+  font-size:.8rem; color:var(--muted); text-decoration:none; transition:color .15s;
+}
+.footer-col ul li a:hover { color:#fff; }
+.footer-divider { border:none; border-top:1px solid rgba(255,215,0,.07); margin:0 0 24px; }
+.footer-bottom {
+  display:flex; justify-content:space-between; align-items:flex-start;
+  gap:24px; flex-wrap:wrap;
+}
+.footer-copy { font-size:.75rem; color:#444; }
+.footer-disclaimer {
+  font-size:.7rem; color:#333; line-height:1.6;
+  max-width:700px; text-align:right;
+}
+
+/* ════════════════════════════════
+   RESPONSIVE
+   ════════════════════════════════ */
+@media (max-width:900px) {
+  .platform-layout, .aff-layout { grid-template-columns:1fr; gap:40px; }
+  .footer-grid { grid-template-columns:1fr 1fr; gap:28px; }
+  .footer-disclaimer { text-align:left; }
+}
+@media (max-width:600px) {
+  .lp-section { padding:64px 0; }
+  .hero { padding:100px 20px 64px; }
+  .hero-ctas { flex-direction:column; align-items:stretch; }
+  .btn-gold, .btn-outline-gold { justify-content:center; }
+  .hero-trust { gap:20px; }
+  .footer-grid { grid-template-columns:1fr; }
+  .footer-bottom { flex-direction:column; }
+  .footer-disclaimer { text-align:left; max-width:100%; }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- Particle + grid canvas -->
+<canvas id="lp-canvas"></canvas>
+
+<!-- ══════════════════════════════════════
+     1. HERO
+     ══════════════════════════════════════ -->
+<section class="hero lp">
+  <p class="hero-eyebrow"><span></span>Your Global Trading Partner<span></span></p>
+
+  <h1 class="hero-title">
+    Trade the<br>
+    <span class="hl">World's Markets.</span><br>
+    From One Account.
+  </h1>
+
+  <p class="hero-sub">
+    Access Forex, crypto, commodities and indices with tight spreads,
+    deep liquidity, and lightning-fast execution.
+  </p>
+
+  <div class="hero-ctas">
+    <a href="{% url 'simulator:register' %}" class="btn-gold">
+      Open Account &rarr;
+    </a>
+    <a href="#accounts" class="btn-outline-gold">
+      View Account Types
+    </a>
+  </div>
+
+  <div class="hero-trust">
+    <div class="trust-item">
+      <span class="trust-num counter" data-target="4800">0</span>
+      <span class="trust-label">Active Traders</span>
+    </div>
+    <div class="trust-item">
+      <span class="trust-num counter" data-target="50">0</span>
+      <span class="trust-label">Instruments</span>
+    </div>
+    <div class="trust-item">
+      <span class="trust-num">$850M+</span>
+      <span class="trust-label">Monthly Volume</span>
+    </div>
+    <div class="trust-item">
+      <span class="trust-num">24/7</span>
+      <span class="trust-label">Support</span>
+    </div>
+  </div>
+
+  <div class="hero-scroll">SCROLL</div>
+</section>
+
+<!-- ══════════════════════════════════════
+     2. LIVE STATS
+     ══════════════════════════════════════ -->
+<section class="lp-section lp" id="stats">
+  <div class="lp-container">
+    <div class="stats-grid">
+      <div class="stat-box">
+        <span class="stat-num counter" data-target="50">0</span>
+        <span class="stat-desc">Instruments Available</span>
+      </div>
+      <div class="stat-box">
+        <span class="stat-num">1:500</span>
+        <span class="stat-desc">Max Leverage</span>
+      </div>
+      <div class="stat-box">
+        <span class="stat-num">&lt;50ms</span>
+        <span class="stat-desc">Avg Execution Speed</span>
+      </div>
+      <div class="stat-box">
+        <span class="stat-num">0.0</span>
+        <span class="stat-desc">Spreads From (pips)</span>
+      </div>
+      <div class="stat-box">
+        <span class="stat-num">$10</span>
+        <span class="stat-desc">Min Deposit</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════
+     3. WHY MONEY BROKERS
+     ══════════════════════════════════════ -->
+<section class="lp-section lp" id="why">
+  <div class="lp-container">
+    <p class="lp-label">Why Us</p>
+    <h2 style="font-family:'Orbitron',sans-serif;font-size:clamp(1.5rem,4vw,2.4rem);font-weight:900;margin-bottom:0;">
+      Built for serious traders.<br>
+      <span class="gold">Not for gamblers.</span>
+    </h2>
+
+    <div class="why-grid">
+      <div class="why-card">
+        <span class="why-icon">⚡</span>
+        <p class="why-title">Instant Execution</p>
+        <p class="why-body">Market orders filled in under 50ms. No requotes, no slippage abuse. Your entry is your entry.</p>
+      </div>
+      <div class="why-card">
+        <span class="why-icon">🔒</span>
+        <p class="why-title">Secure & Regulated</p>
+        <p class="why-body">Client funds held in segregated accounts. SSL-encrypted platform, two-factor authentication, and full audit trail.</p>
+      </div>
+      <div class="why-card">
+        <span class="why-icon">📊</span>
+        <p class="why-title">Real Market Data</p>
+        <p class="why-body">Live feeds from Binance and Finnhub. Forex, crypto, indices — all instruments, one platform.</p>
+      </div>
+      <div class="why-card">
+        <span class="why-icon">💸</span>
+        <p class="why-title">Fast Withdrawals</p>
+        <p class="why-body">Request withdrawals anytime. Processed within 24 hours via crypto — no banks, no delays, no hidden fees.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════
+     4. ACCOUNT TYPES
+     ══════════════════════════════════════ -->
+<section class="lp-section lp" id="accounts">
+  <div class="lp-container">
+    <p class="lp-label">Account Types</p>
+    <h2 style="font-family:'Orbitron',sans-serif;font-size:clamp(1.5rem,4vw,2.4rem);font-weight:900;">
+      Choose your<br><span class="gold">account type.</span>
+    </h2>
+
+    <div class="accounts-grid">
+      <div class="acct-card">
+        <p class="acct-tier">Standard</p>
+        <p class="acct-balance">From $10</p>
+        <ul class="acct-features">
+          <li>Spreads from 1.2 pips</li>
+          <li>No commission per trade</li>
+          <li>Leverage up to 1:200</li>
+          <li>All instruments</li>
+          <li>Instant withdrawals</li>
+        </ul>
+        <a href="{% url 'simulator:register' %}" class="btn-gold">Open Standard</a>
+      </div>
+
+      <div class="acct-card featured">
+        <p class="acct-tier">ECN</p>
+        <p class="acct-balance">From $200</p>
+        <ul class="acct-features">
+          <li>Spreads from 0.0 pips</li>
+          <li>$3.50 commission / lot</li>
+          <li>Leverage up to 1:500</li>
+          <li>All instruments</li>
+          <li>Priority routing</li>
+          <li>VPS hosting included</li>
+        </ul>
+        <a href="{% url 'simulator:register' %}" class="btn-gold">Open ECN</a>
+      </div>
+
+      <div class="acct-card">
+        <p class="acct-tier">VIP</p>
+        <p class="acct-balance">From $5,000</p>
+        <ul class="acct-features">
+          <li>Spreads from 0.0 pips</li>
+          <li>$2.00 commission / lot</li>
+          <li>Leverage up to 1:500</li>
+          <li>All instruments + indices</li>
+          <li>Dedicated account manager</li>
+          <li>Custom rebate program</li>
+        </ul>
+        <a href="{% url 'simulator:register' %}" class="btn-gold">Open VIP</a>
+      </div>
+    </div>
+
+    <!-- Comparison table -->
+    <div class="cmp-table-wrap">
+      <table class="cmp-table">
+        <thead>
+          <tr>
+            <th>Feature</th>
+            <th>Standard</th>
+            <th>ECN</th>
+            <th>VIP</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Min Deposit</td><td>$10</td><td>$200</td><td>$5,000</td></tr>
+          <tr><td>Spreads</td><td>From 1.2 pips</td><td>From 0.0 pips</td><td>From 0.0 pips</td></tr>
+          <tr><td>Commission / lot</td><td class="ok">None</td><td>$3.50</td><td>$2.00</td></tr>
+          <tr><td>Leverage</td><td>1:200</td><td>1:500</td><td>1:500</td></tr>
+          <tr><td>Forex Trading</td><td class="ok">✓</td><td class="ok">✓</td><td class="ok">✓</td></tr>
+          <tr><td>Crypto Trading</td><td class="ok">✓</td><td class="ok">✓</td><td class="ok">✓</td></tr>
+          <tr><td>Commodities &amp; Indices</td><td class="no">—</td><td class="ok">✓</td><td class="ok">✓</td></tr>
+          <tr><td>VPS Hosting</td><td class="no">—</td><td class="ok">✓</td><td class="ok">✓</td></tr>
+          <tr><td>Account Manager</td><td class="no">—</td><td class="no">—</td><td class="ok">✓</td></tr>
+          <tr><td>Custom Rebates</td><td class="no">—</td><td class="no">—</td><td class="ok">✓</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════
+     5. PLATFORM
+     ══════════════════════════════════════ -->
+<section class="lp-section lp" id="platform">
+  <div class="lp-container">
+    <p class="lp-label">The Platform</p>
+    <h2 style="font-family:'Orbitron',sans-serif;font-size:clamp(1.5rem,4vw,2.4rem);font-weight:900;">
+      One platform.<br><span class="gold">Every market.</span>
+    </h2>
+
+    <div class="platform-layout">
+      <div class="platform-features">
+        <div class="pf-item">
+          <div class="pf-icon">📈</div>
+          <div>
+            <p class="pf-title">Real-Time Charts</p>
+            <p class="pf-body">Professional candlestick charts with multiple timeframes, multi-chart layouts, and live bid/ask feeds.</p>
+          </div>
+        </div>
+        <div class="pf-item">
+          <div class="pf-icon">⚙️</div>
+          <div>
+            <p class="pf-title">Advanced Orders</p>
+            <p class="pf-body">Market orders with automatic SL/TP, trailing stops, and one-click trading from the chart.</p>
+          </div>
+        </div>
+        <div class="pf-item">
+          <div class="pf-icon">🌐</div>
+          <div>
+            <p class="pf-title">Multi-Asset</p>
+            <p class="pf-body">Forex majors, BTC, ETH, Gold, and indices — all in one terminal, powered by Binance and Finnhub feeds.</p>
+          </div>
+        </div>
+        <div class="pf-item">
+          <div class="pf-icon">📱</div>
+          <div>
+            <p class="pf-title">Mobile Ready</p>
+            <p class="pf-body">Full PWA — install on iOS or Android. Trade from anywhere with the same desktop experience.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="platform-screen">
+        <div class="platform-screen-inner">
+          <p class="ps-label">LIVE MARKET</p>
+          <div class="ps-bars">
+            <div class="ps-bar"></div><div class="ps-bar"></div>
+            <div class="ps-bar"></div><div class="ps-bar"></div>
+            <div class="ps-bar"></div><div class="ps-bar"></div>
+            <div class="ps-bar"></div><div class="ps-bar"></div>
+          </div>
+          <p style="font-size:.68rem;color:rgba(255,215,0,.5);letter-spacing:.1em;margin-top:8px;">BTCUSD · 1m · LIVE</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════
+     6. AFFILIATES
+     ══════════════════════════════════════ -->
+<section class="lp-section lp" id="affiliates">
+  <div class="lp-container">
+    <p class="lp-label">Affiliates</p>
+    <h2 style="font-family:'Orbitron',sans-serif;font-size:clamp(1.5rem,4vw,2.4rem);font-weight:900;">
+      Earn while others<br><span class="gold">trade.</span>
+    </h2>
+
+    <div class="aff-layout">
+      <div>
+        <p style="color:var(--muted);line-height:1.7;margin-bottom:0;">
+          Refer traders to Money Brokers and earn a commission on every deposit they make. No cap, no expiry.
+        </p>
+        <div class="aff-steps">
+          <div class="aff-step">
+            <span class="aff-n">01</span>
+            <div>
+              <p class="aff-step-title">Get your link</p>
+              <p class="aff-step-body">Sign up and receive a unique referral link from your dashboard instantly.</p>
+            </div>
+          </div>
+          <div class="aff-step">
+            <span class="aff-n">02</span>
+            <div>
+              <p class="aff-step-title">Share everywhere</p>
+              <p class="aff-step-body">Post on social media, Discord, YouTube, or anywhere traders hang out.</p>
+            </div>
+          </div>
+          <div class="aff-step">
+            <span class="aff-n">03</span>
+            <div>
+              <p class="aff-step-title">Get paid in crypto</p>
+              <p class="aff-step-body">Commissions credited monthly to your wallet. Minimum payout $20.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="aff-highlight">
+        <p class="aff-rate">20%</p>
+        <p class="aff-rate-label">Commission on referred trader deposits</p>
+        <a href="{% url 'simulator:register' %}" class="btn-gold" style="width:100%;justify-content:center;">
+          Join Affiliate Program
+        </a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════
+     7. CRYPTO DEPOSITS
+     ══════════════════════════════════════ -->
+<section class="lp-section lp" id="deposits">
+  <div class="lp-container">
+    <p class="lp-label">Deposits</p>
+    <h2 style="font-family:'Orbitron',sans-serif;font-size:clamp(1.5rem,4vw,2.4rem);font-weight:900;">
+      Crypto deposits<br><span class="gold">from $10.</span>
+    </h2>
+    <p style="color:var(--muted);max-width:520px;line-height:1.7;margin-top:12px;">
+      No banks, no wires, no waiting. Fund your account instantly with your preferred cryptocurrency.
+    </p>
+
+    <div class="crypto-grid">
+      <div class="crypto-card">
+        <span class="crypto-icon">₿</span>
+        <p class="crypto-name">Bitcoin</p>
+        <p class="crypto-min">from $10</p>
+        <p class="crypto-min-label">BTC</p>
+      </div>
+      <div class="crypto-card">
+        <span class="crypto-icon">Ξ</span>
+        <p class="crypto-name">Ethereum</p>
+        <p class="crypto-min">from $10</p>
+        <p class="crypto-min-label">ETH</p>
+      </div>
+      <div class="crypto-card">
+        <span class="crypto-icon">◎</span>
+        <p class="crypto-name">USDT</p>
+        <p class="crypto-min">from $10</p>
+        <p class="crypto-min-label">TRC-20 / ERC-20</p>
+      </div>
+      <div class="crypto-card">
+        <span class="crypto-icon">◈</span>
+        <p class="crypto-name">USDC</p>
+        <p class="crypto-min">from $10</p>
+        <p class="crypto-min-label">ERC-20</p>
+      </div>
+      <div class="crypto-card">
+        <span class="crypto-icon">◉</span>
+        <p class="crypto-name">Solana</p>
+        <p class="crypto-min">from $10</p>
+        <p class="crypto-min-label">SOL</p>
+      </div>
+      <div class="crypto-card">
+        <span class="crypto-icon">⬡</span>
+        <p class="crypto-name">BNB</p>
+        <p class="crypto-min">from $10</p>
+        <p class="crypto-min-label">BEP-20</p>
+      </div>
+    </div>
+
+    <div class="crypto-info">
+      <div class="ci-item">
+        <p class="ci-val">~15 min</p>
+        <p class="ci-label">Average confirmation time</p>
+      </div>
+      <div class="ci-item">
+        <p class="ci-val">0%</p>
+        <p class="ci-label">Deposit fees</p>
+      </div>
+      <div class="ci-item">
+        <p class="ci-val">$10</p>
+        <p class="ci-label">Minimum deposit</p>
+      </div>
+      <div class="ci-item">
+        <p class="ci-val">24h</p>
+        <p class="ci-label">Withdrawal processing</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════
+     8. FAQ
+     ══════════════════════════════════════ -->
+<section class="lp-section lp" id="faq">
+  <div class="lp-container">
+    <p class="lp-label">FAQ</p>
+    <h2 style="font-family:'Orbitron',sans-serif;font-size:clamp(1.5rem,4vw,2.4rem);font-weight:900;">
+      Common <span class="gold">questions.</span>
+    </h2>
+
+    <div class="faq-list">
+      {% for item in faq_items %}
+      <div class="faq-item">
+        <button class="faq-q" aria-expanded="false">
+          {{ item.q }}
+          <span class="faq-icon">+</span>
+        </button>
+        <div class="faq-a">
+          <p class="faq-a-inner">{{ item.a }}</p>
+        </div>
+      </div>
+      {% empty %}
+      <div class="faq-item">
+        <button class="faq-q" aria-expanded="false">How do I open an account?<span class="faq-icon">+</span></button>
+        <div class="faq-a"><p class="faq-a-inner">Click "Open Account", fill in your details, choose your account type (Standard, ECN, or VIP), and make your first deposit. The whole process takes under 5 minutes.</p></div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-q" aria-expanded="false">What is the difference between Standard and ECN accounts?<span class="faq-icon">+</span></button>
+        <div class="faq-a"><p class="faq-a-inner">Standard accounts have wider spreads (from 1.2 pips) but zero commission per trade — ideal for beginners. ECN accounts offer raw spreads from 0.0 pips with a $3.50/lot commission, best suited for high-volume and algorithmic traders.</p></div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-q" aria-expanded="false">When can I withdraw my funds?<span class="faq-icon">+</span></button>
+        <div class="faq-a"><p class="faq-a-inner">You can request a withdrawal at any time, as long as you have no open margin positions. Withdrawals are processed within 24 hours via the same crypto method used to deposit.</p></div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-q" aria-expanded="false">What are the margin requirements?<span class="faq-icon">+</span></button>
+        <div class="faq-a"><p class="faq-a-inner">Margin call is triggered at 80% margin level. Stop-out occurs at 50%. We recommend keeping free margin above 200% to withstand normal market volatility.</p></div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-q" aria-expanded="false">Which instruments can I trade?<span class="faq-icon">+</span></button>
+        <div class="faq-a"><p class="faq-a-inner">Forex majors (EUR/USD, GBP/USD, USD/JPY, AUD/USD), cryptocurrencies (BTC, ETH), Gold (XAU/USD), and indices (NAS100) — all available in the platform with live data feeds.</p></div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-q" aria-expanded="false">Is crypto the only deposit method?<span class="faq-icon">+</span></button>
+        <div class="faq-a"><p class="faq-a-inner">Currently yes — we accept BTC, ETH, USDT, USDC, SOL, and BNB. Crypto allows instant global payments with no bank intermediaries. Additional methods are coming soon.</p></div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-q" aria-expanded="false">Can I use a trading bot or EA?<span class="faq-icon">+</span></button>
+        <div class="faq-a"><p class="faq-a-inner">Yes, automated strategies and Expert Advisors are fully supported. We provide VPS hosting on ECN and VIP accounts to ensure low-latency execution for algorithmic strategies.</p></div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════
+     CTA FINAL
+     ══════════════════════════════════════ -->
+<section class="lp-section lp" style="text-align:center;border-bottom:none;">
+  <div class="lp-container">
+    <p class="lp-label" style="justify-content:center;">Start Today</p>
+    <h2 style="font-family:'Orbitron',sans-serif;font-size:clamp(1.8rem,5vw,3.2rem);font-weight:900;margin-bottom:16px;">
+      Open an account.<br><span class="gold">Start trading today.</span>
+    </h2>
+    <p style="color:var(--muted);margin-bottom:36px;max-width:440px;margin-left:auto;margin-right:auto;line-height:1.7;">
+      Join thousands of traders on Money Brokers. Deposit from $10, no hidden fees.
+    </p>
+    <a href="{% url 'simulator:register' %}" class="btn-gold" style="font-size:1rem;padding:16px 40px;">
+      Open Your Account &rarr;
+    </a>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════
+     9. FOOTER
+     ══════════════════════════════════════ -->
+<footer class="lp-footer lp">
+  <div class="lp-container">
+    <div class="footer-grid">
+      <div>
+        <p class="footer-brand">MONEY BROKERS</p>
+        <p class="footer-about">Online CFD and Forex broker offering tight spreads, deep liquidity, and multi-asset access from a single trading account.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Platform</h4>
+        <ul>
+          <li><a href="{% url 'simulator:dashboard' %}">Dashboard</a></li>
+          <li><a href="{% url 'simulator:register' %}">Open Account</a></li>
+          <li><a href="{% url 'simulator:login' %}">Login</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Accounts</h4>
+        <ul>
+          <li><a href="#accounts">Standard</a></li>
+          <li><a href="#accounts">ECN</a></li>
+          <li><a href="#accounts">VIP</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Company</h4>
+        <ul>
+          <li><a href="#why">About Us</a></li>
+          <li><a href="#affiliates">Affiliates</a></li>
+          <li><a href="#faq">FAQ</a></li>
+          <li><a href="#deposits">Deposits</a></li>
+        </ul>
+      </div>
+    </div>
+
+    <hr class="footer-divider">
+
+    <div class="footer-bottom">
+      <p class="footer-copy">&copy; 2025 Money Brokers. All rights reserved.</p>
+      <p class="footer-disclaimer">
+        Risk Disclaimer: Trading CFDs and Forex involves substantial risk and is not suitable for all investors. Leverage can work against you. Past performance is not indicative of future results. Money Brokers does not provide financial advice. Please ensure you fully understand the risks involved before trading.
+      </p>
+    </div>
+  </div>
+</footer>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+/* ── Particle + grid canvas ── */
+(function(){
+  const canvas = document.getElementById('lp-canvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  let W, H, particles = [];
+
+  function resize(){
+    W = canvas.width  = window.innerWidth;
+    H = canvas.height = window.innerHeight;
+  }
+
+  function Particle(){
+    this.x = Math.random() * W;
+    this.y = Math.random() * H;
+    this.r = Math.random() * 1.4 + 0.3;
+    this.vx = (Math.random() - 0.5) * 0.25;
+    this.vy = (Math.random() - 0.5) * 0.25;
+    this.alpha = Math.random() * 0.5 + 0.1;
+  }
+
+  function init(){
+    particles = Array.from({length: 80}, () => new Particle());
+  }
+
+  function draw(){
+    ctx.clearRect(0, 0, W, H);
+
+    /* grid */
+    ctx.strokeStyle = 'rgba(255,215,0,0.028)';
+    ctx.lineWidth = 1;
+    const gridSize = 80;
+    for (let x = 0; x < W; x += gridSize){
+      ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke();
+    }
+    for (let y = 0; y < H; y += gridSize){
+      ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke();
+    }
+
+    /* particles */
+    particles.forEach(p => {
+      p.x += p.vx; p.y += p.vy;
+      if (p.x < 0) p.x = W;
+      if (p.x > W) p.x = 0;
+      if (p.y < 0) p.y = H;
+      if (p.y > H) p.y = 0;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(255,215,0,${p.alpha})`;
+      ctx.fill();
+    });
+
+    requestAnimationFrame(draw);
+  }
+
+  resize();
+  init();
+  draw();
+  window.addEventListener('resize', () => { resize(); });
+})();
+
+/* ── Animated counters ── */
+function animateCounters(){
+  document.querySelectorAll('.counter[data-target]').forEach(el => {
+    const target = parseInt(el.dataset.target, 10);
+    const prefix = el.dataset.prefix || '';
+    const dur = 1800;
+    const start = performance.now();
+    function step(now){
+      const elapsed = now - start;
+      const progress = Math.min(elapsed / dur, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const val = Math.floor(eased * target);
+      el.textContent = prefix + val.toLocaleString();
+      if (progress < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  });
+}
+
+/* Trigger counters when visible */
+const counterObserver = new IntersectionObserver((entries) => {
+  entries.forEach(e => {
+    if (e.isIntersecting){
+      animateCounters();
+      counterObserver.disconnect();
+    }
+  });
+}, { threshold: 0.3 });
+
+const firstCounter = document.querySelector('.counter');
+if (firstCounter) counterObserver.observe(firstCounter);
+
+/* ── FAQ accordion ── */
+document.querySelectorAll('.faq-q').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const isOpen = btn.getAttribute('aria-expanded') === 'true';
+    /* close all */
+    document.querySelectorAll('.faq-q').forEach(b => {
+      b.setAttribute('aria-expanded', 'false');
+      b.nextElementSibling.classList.remove('open');
+    });
+    /* open clicked if it was closed */
+    if (!isOpen){
+      btn.setAttribute('aria-expanded', 'true');
+      btn.nextElementSibling.classList.add('open');
+    }
+  });
+});
+</script>
+{% endblock %}

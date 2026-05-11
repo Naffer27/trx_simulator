@@ -1,0 +1,198 @@
+{% extends "simulator/base_app.html" %}
+{% block title %}Deposit History — Money Brokers{% endblock %}
+{% block page_title %}Historial de Depósitos{% endblock %}
+
+{% block extra_head %}
+<style>
+  .dh-wrap {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 40px 16px 60px;
+  }
+  .dh-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 28px;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .dh-title {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: #FFD700;
+    letter-spacing: .06em;
+  }
+  .dh-new-btn {
+    background: linear-gradient(135deg, #FFD700, #FFA500);
+    border: none;
+    border-radius: 8px;
+    color: #000;
+    font-family: 'Orbitron', sans-serif;
+    font-size: .75rem;
+    font-weight: 700;
+    letter-spacing: .06em;
+    padding: 10px 20px;
+    text-decoration: none;
+    transition: opacity .2s;
+  }
+  .dh-new-btn:hover { opacity: .85; color: #000; }
+
+  .dh-table-wrap {
+    background: #0d0d14;
+    border: 1px solid rgba(255,215,0,.1);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .dh-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: .82rem;
+  }
+  .dh-table thead th {
+    background: rgba(255,215,0,.06);
+    color: rgba(255,255,255,.45);
+    font-weight: 600;
+    font-size: .72rem;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    padding: 12px 16px;
+    text-align: left;
+    border-bottom: 1px solid rgba(255,215,0,.08);
+  }
+  .dh-table tbody tr {
+    border-bottom: 1px solid rgba(255,255,255,.04);
+    transition: background .15s;
+  }
+  .dh-table tbody tr:last-child { border-bottom: none; }
+  .dh-table tbody tr:hover { background: rgba(255,215,0,.03); }
+  .dh-table td {
+    padding: 13px 16px;
+    color: #d1d4dc;
+    vertical-align: middle;
+  }
+  .dh-amount { color: #FFD700; font-weight: 600; }
+  .dh-crypto {
+    background: rgba(255,215,0,.08);
+    border: 1px solid rgba(255,215,0,.15);
+    border-radius: 4px;
+    color: rgba(255,215,0,.8);
+    font-size: .7rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    text-transform: uppercase;
+  }
+
+  /* Status badges */
+  .badge-status {
+    border-radius: 20px;
+    font-size: .7rem;
+    font-weight: 700;
+    letter-spacing: .04em;
+    padding: 3px 10px;
+    text-transform: uppercase;
+  }
+  .badge-finished, .badge-confirmed {
+    background: rgba(38,166,154,.18);
+    color: #26a69a;
+    border: 1px solid rgba(38,166,154,.3);
+  }
+  .badge-waiting, .badge-confirming, .badge-sending {
+    background: rgba(255,215,0,.12);
+    color: #FFD700;
+    border: 1px solid rgba(255,215,0,.25);
+  }
+  .badge-partially_paid {
+    background: rgba(255,165,0,.12);
+    color: #FFA500;
+    border: 1px solid rgba(255,165,0,.25);
+  }
+  .badge-failed, .badge-expired, .badge-refunded {
+    background: rgba(239,83,80,.12);
+    color: #ef5350;
+    border: 1px solid rgba(239,83,80,.25);
+  }
+  .badge-pending {
+    background: rgba(120,123,134,.12);
+    color: #787b86;
+    border: 1px solid rgba(120,123,134,.25);
+  }
+
+  .dh-empty {
+    text-align: center;
+    padding: 60px 20px;
+    color: #787b86;
+  }
+  .dh-empty .icon { font-size: 2.5rem; margin-bottom: 12px; }
+  .dh-empty p { margin-bottom: 20px; font-size: .88rem; }
+
+  .pid-cell {
+    font-family: monospace;
+    font-size: .75rem;
+    color: #787b86;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="dh-wrap">
+  <div class="dh-header">
+    <div class="dh-title">Historial de Depósitos</div>
+    <a href="{% url 'simulator:deposit' %}" class="dh-new-btn">+ NUEVO DEPÓSITO</a>
+  </div>
+
+  <div class="dh-table-wrap">
+    {% if deposits %}
+    <table class="dh-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Monto</th>
+          <th>Cripto</th>
+          <th>Estado</th>
+          <th>Payment ID</th>
+          <th>Fecha</th>
+          <th>Confirmado</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for dep in deposits %}
+        <tr>
+          <td style="color:#787b86;">{{ dep.id }}</td>
+          <td class="dh-amount">${{ dep.amount_usd }}</td>
+          <td><span class="dh-crypto">{{ dep.crypto_currency }}</span></td>
+          <td>
+            <span class="badge-status badge-{{ dep.status }}">
+              {{ dep.get_status_display }}
+            </span>
+          </td>
+          <td class="pid-cell">
+            {% if dep.nowpayments_payment_id %}
+              {{ dep.nowpayments_payment_id|truncatechars:16 }}
+            {% else %}
+              <span style="color:#3a3a4a;">—</span>
+            {% endif %}
+          </td>
+          <td style="color:#787b86;">{{ dep.created_at|date:"d/m/Y H:i" }}</td>
+          <td style="color:#787b86;">
+            {% if dep.confirmed_at %}
+              {{ dep.confirmed_at|date:"d/m/Y H:i" }}
+            {% else %}
+              <span style="color:#3a3a4a;">—</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="dh-empty">
+      <div class="icon">&#9679;</div>
+      <p>Aún no tienes depósitos registrados.</p>
+      <a href="{% url 'simulator:deposit' %}" class="dh-new-btn">Hacer primer depósito</a>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

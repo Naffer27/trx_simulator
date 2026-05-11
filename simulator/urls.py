@@ -7,28 +7,40 @@ from .views import (
     trading_dashboard,
     api_orden,
     clean_dashboard,
+    landing_view,
+    home_view,
+    history_view,
+    deposit_view,
+    deposit_callback,
+    deposit_history_view,
 )
 
 app_name = 'simulator'
 
 urlpatterns = [
-    # 1️⃣ Registro de usuarios
+    # Landing pública
+    path("", landing_view, name="landing"),
+
+    # Autenticación
     path("register/", register_view, name="register"),
-
-    # 2️⃣ Login con código
     path("login/", login_view, name="login"),
-
-    # 3️⃣ Logout
     path("logout/", logout_view, name="logout"),
 
-    # 4️⃣ Dashboard principal (raíz del sitio)
-    path("", trading_dashboard, name="dashboard"),
+    # Home dashboard (after login)
+    path("home/", home_view, name="home"),
 
-    # 5️⃣ Ruta alternativa al dashboard
-    path("dashboard/", trading_dashboard, name="dashboard_alt"),
+    # Dashboard (requiere login)
+    path("dashboard/", trading_dashboard, name="dashboard"),
+    path("dashboard/alt/", trading_dashboard, name="dashboard_alt"),
 
-    # 6️⃣ API de órdenes (AJAX desde el gráfico)
+    # History
+    path("history/", history_view, name="history"),
+
+    # Depósitos
+    path("deposit/", deposit_view, name="deposit"),
+    path("deposit/callback/", deposit_callback, name="deposit_callback"),
+    path("deposit/history/", deposit_history_view, name="deposit_history"),
+
+    # API
     path("api/orden/", api_orden, name="api_orden"),
-
- 
 ]

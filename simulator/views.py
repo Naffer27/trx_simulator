@@ -8,17 +8,41 @@ from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
 from django.contrib.auth.decorators import login_required
 from django.core.mail import send_mail
-from django.conf import settings  # ✅ para BROKER_ACCESS_CODE / DEBUG
-import json, random
+from django.conf import settings
+from django.db.models import Sum, Count, Max, Min, Q
+from django.urls import reverse
+import json, random, hmac, hashlib, logging
+import requests as http_requests
 
-from .models import Purchase, TradingAccount, Trade, Position, LedgerEntry
-from .forms import LoginForm, RegisterForm
+from .models import Purchase, TradingAccount, Trade, Position, LedgerEntry, Deposit
+from .forms import LoginForm, RegisterForm, DepositForm
+
+logger = logging.getLogger(__name__)
+
+
+def landing_view(request):
+    return render(request, 'simulator/landing.html')
 
 
 # ===== Configuración de mercado (simulada) =====
-DEFAULT_PRICE = Decimal('1.10000')
-SPREAD = Decimal('0.00020')      # Spread fijo
-SLIPPAGE = Decimal('0.00010')    # Slippage máx
+# Prices match base_price_for() in consumers.py so HTTP-created positions
+# don't trigger SL/TP immediately when the WS loads them at live price.
+SYMBOL_BASE_PRICES = {
+    "EUR/USD": Decimal("1.17000"),
+    "GBP/USD": Decimal("1.30000"),
+    "USD/JPY": Decimal("155.000"),
+    "AUD/USD": Decimal("0.68000"),
+    "BTCUSD":  Decimal("68000.0"),
+    "ETHUSD":  Decimal("3400.0"),
+}
+_DEFAULT_BASE = Decimal("1.17000")
+
+SPREAD = Decimal("0.00020")
+SLIPPAGE = Decimal("0.00010")
+
+
+def get_base_price(symbol: str) -> Decimal:
+    return SYMBOL_BASE_PRICES.get(symbol, _DEFAULT_BASE)
 
 
 def apply_spread_and_slippage(base_price, side):
@@ -252,7 +276,7 @@ def login_view(request):
 
                 request.session['account_id'] = account.id
                 auth_login(request, user)
-                return redirect('simulator:dashboard')
+                return redirect('simulator:home')
 
     return render(request, 'simulator/login.html', {
         'error': error,
@@ -290,7 +314,7 @@ def trading_dashboard(request):
         stop_loss   = Decimal(stop_loss) if stop_loss else None
         take_profit = Decimal(take_profit) if take_profit else None
 
-        entry_price = apply_spread_and_slippage(DEFAULT_PRICE, trade_type)
+        entry_price = apply_spread_and_slippage(get_base_price(symbol), trade_type)
 
         pos = Position.objects.create(
             account=account,
@@ -394,7 +418,7 @@ def api_orden(request):
         if not account:
             return JsonResponse({'error': 'No hay cuenta activa'}, status=403)
 
-        entry_price = apply_spread_and_slippage(DEFAULT_PRICE, side)
+        entry_price = apply_spread_and_slippage(get_base_price(symbol), side)
 
         pos = Position.objects.create(
             account=account,
@@ -457,7 +481,282 @@ def api_orden(request):
 
 
 # -----------------------
+# HOME DASHBOARD
+# -----------------------
+@login_required
+def home_view(request):
+    acc_id = request.session.get("account_id")
+    account = TradingAccount.objects.filter(pk=acc_id, user=request.user).first()
+    if not account:
+        return redirect("simulator:login")
+
+    today = timezone.now().date()
+
+    pnl_today = LedgerEntry.objects.filter(
+        account=account,
+        event_type=LedgerEntry.EV_REALIZED,
+        created_at__date=today,
+    ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+
+    open_positions = Position.objects.filter(account=account)
+    leverage = int(getattr(account, 'leverage', 50) or 50)
+    margin_used = sum(
+        float(p.qty) * float(p.avg_price) / leverage
+        for p in open_positions
+    )
+
+    initial_balance = float({
+        '10K': 10000, '50K': 50000, '100K': 100000,
+    }.get(account.tier, float(account.balance)))
+    daily_loss = float(pnl_today) if float(pnl_today) < 0 else 0.0
+    daily_dd_pct = round(abs(daily_loss) / initial_balance * 100, 1) if initial_balance else 0.0
+    daily_dd_pct = min(daily_dd_pct, 100)
+
+    total_trades = Trade.objects.filter(account=account).count()
+    recent_moves = LedgerEntry.objects.filter(account=account).order_by('-created_at')[:8]
+    recent_trades = Trade.objects.filter(account=account).order_by('-opened_at')[:5]
+
+    return render(request, 'simulator/home.html', {
+        'account': account,
+        'pnl_today': pnl_today,
+        'margin_used': round(margin_used, 2),
+        'open_positions_count': open_positions.count(),
+        'daily_dd_pct': daily_dd_pct,
+        'total_trades': total_trades,
+        'recent_moves': recent_moves,
+        'recent_trades': recent_trades,
+        'active_section': 'dashboard',
+    })
+
+
+# HISTORIAL DE TRADES
+# -----------------------
+@login_required
+def history_view(request):
+    acc_id = request.session.get("account_id")
+    account = TradingAccount.objects.filter(pk=acc_id, user=request.user).first()
+    if not account:
+        return redirect("simulator:login")
+
+    trades = Trade.objects.filter(account=account).order_by('-opened_at')
+    ledger = LedgerEntry.objects.filter(account=account).order_by('-created_at')[:50]
+
+    total = trades.count()
+    wins = trades.filter(profit_loss__gt=0).count()
+    losses = trades.filter(profit_loss__lte=0).count()
+    win_rate = round((wins / total * 100), 1) if total else 0
+
+    agg = trades.aggregate(
+        total_pnl=Sum('profit_loss'),
+        best=Max('profit_loss'),
+        worst=Min('profit_loss'),
+    )
+    total_pnl = agg['total_pnl'] or Decimal('0.00')
+    best_trade = agg['best'] or Decimal('0.00')
+    worst_trade = agg['worst'] or Decimal('0.00')
+
+    context = {
+        'account': account,
+        'trades': trades,
+        'ledger': ledger,
+        'total': total,
+        'wins': wins,
+        'losses': losses,
+        'win_rate': win_rate,
+        'total_pnl': total_pnl,
+        'best_trade': best_trade,
+        'worst_trade': worst_trade,
+        'active_section': 'analysis',
+    }
+    return render(request, 'simulator/history.html', context)
+
+
+# -----------------------
 # DASHBOARD LIMPIO
 # -----------------------
 def clean_dashboard(request):
     return render(request, 'simulator/dashboard_clean.html')
+
+
+# ===================================================
+# NOWPAYMENTS — helpers privados
+# ===================================================
+
+def _nowpayments_create_payment(amount_usd, pay_currency, deposit_id, callback_url):
+    resp = http_requests.post(
+        "https://api.nowpayments.io/v1/payment",
+        headers={
+            "x-api-key": getattr(settings, "NOWPAYMENTS_API_KEY", ""),
+            "Content-Type": "application/json",
+        },
+        json={
+            "price_amount": float(amount_usd),
+            "price_currency": "usd",
+            "pay_currency": pay_currency,
+            "ipn_callback_url": callback_url,
+            "order_id": str(deposit_id),
+            "order_description": f"Money Brokers Deposit #{deposit_id}",
+        },
+        timeout=15,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _verify_nowpayments_ipn(body_bytes, signature):
+    secret = getattr(settings, "NOWPAYMENTS_IPN_SECRET", "")
+    if not secret:
+        return True  # dev: skip if secret not configured
+    try:
+        payload = json.loads(body_bytes)
+        sorted_payload = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        computed = hmac.new(
+            secret.encode("utf-8"),
+            sorted_payload.encode("utf-8"),
+            hashlib.sha512,
+        ).hexdigest()
+        return hmac.compare_digest(computed, signature)
+    except Exception:
+        return False
+
+
+# ===================================================
+# DEPÓSITOS
+# ===================================================
+
+@login_required
+def deposit_view(request):
+    acc_id = request.session.get("account_id")
+    account = TradingAccount.objects.filter(pk=acc_id, user=request.user).first()
+    if not account:
+        return redirect("simulator:login")
+
+    error = None
+    if request.method == "POST":
+        form = DepositForm(request.POST)
+        if form.is_valid():
+            amount_usd = form.cleaned_data["amount_usd"]
+            crypto_currency = form.cleaned_data["crypto_currency"]
+
+            if not getattr(settings, "NOWPAYMENTS_API_KEY", ""):
+                error = "Sistema de depósitos no configurado. Contacta al soporte."
+            else:
+                deposit = Deposit.objects.create(
+                    user=request.user,
+                    amount_usd=amount_usd,
+                    crypto_currency=crypto_currency,
+                    status=Deposit.STATUS_PENDING,
+                )
+                try:
+                    callback_url = request.build_absolute_uri(
+                        reverse("simulator:deposit_callback")
+                    )
+                    data = _nowpayments_create_payment(
+                        amount_usd, crypto_currency, deposit.id, callback_url
+                    )
+                    deposit.nowpayments_payment_id = str(data.get("payment_id", ""))
+                    deposit.nowpayments_invoice_url = data.get("invoice_url", "")
+                    deposit.status = data.get("payment_status", Deposit.STATUS_WAITING)
+                    deposit.save()
+
+                    invoice_url = deposit.nowpayments_invoice_url
+                    if invoice_url:
+                        return redirect(invoice_url)
+                    return redirect("simulator:deposit_history")
+                except Exception as exc:
+                    logger.error("NowPayments create payment error: %s", exc)
+                    deposit.status = Deposit.STATUS_FAILED
+                    deposit.save()
+                    error = "Error al crear el pago. Por favor intenta más tarde."
+    else:
+        form = DepositForm()
+
+    return render(request, "simulator/deposit.html", {
+        "form": form,
+        "account": account,
+        "error": error,
+        "active_section": "deposit",
+    })
+
+
+@csrf_exempt
+def deposit_callback(request):
+    """IPN webhook from NowPayments."""
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    body = request.body
+    sig = request.headers.get("x-nowpayments-sig", "")
+
+    if not _verify_nowpayments_ipn(body, sig):
+        logger.warning("Invalid NowPayments IPN signature")
+        return JsonResponse({"error": "Invalid signature"}, status=400)
+
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+    payment_id = str(data.get("payment_id", ""))
+    payment_status = data.get("payment_status", "")
+    order_id = str(data.get("order_id", ""))
+
+    deposit = Deposit.objects.filter(nowpayments_payment_id=payment_id).first()
+    if not deposit and order_id:
+        try:
+            deposit = Deposit.objects.filter(pk=int(order_id)).first()
+        except (ValueError, TypeError):
+            pass
+
+    if not deposit:
+        logger.warning("Deposit not found for payment_id=%s order_id=%s", payment_id, order_id)
+        return JsonResponse({"error": "Deposit not found"}, status=404)
+
+    old_status = deposit.status
+    deposit.status = payment_status
+    if not deposit.nowpayments_payment_id and payment_id:
+        deposit.nowpayments_payment_id = payment_id
+
+    if payment_status in Deposit.CREDITED_STATUSES and old_status not in Deposit.CREDITED_STATUSES:
+        deposit.confirmed_at = timezone.now()
+        account = TradingAccount.objects.filter(user=deposit.user).first()
+        if account:
+            new_balance = account.balance + deposit.amount_usd
+            new_equity = account.equity + deposit.amount_usd
+            LedgerEntry.objects.create(
+                account=account,
+                event_type=LedgerEntry.EV_DEPOSIT,
+                amount=deposit.amount_usd,
+                balance_after=new_balance,
+                meta={
+                    "source": "nowpayments",
+                    "payment_id": payment_id,
+                    "crypto": deposit.crypto_currency,
+                    "deposit_id": deposit.id,
+                },
+            )
+            account.balance = new_balance
+            account.equity = new_equity
+            account.save(update_fields=["balance", "equity"])
+            logger.info(
+                "Credited $%s to account #%s (deposit #%s)",
+                deposit.amount_usd, account.id, deposit.id,
+            )
+
+    deposit.save()
+    return JsonResponse({"ok": True})
+
+
+@login_required
+def deposit_history_view(request):
+    acc_id = request.session.get("account_id")
+    account = TradingAccount.objects.filter(pk=acc_id, user=request.user).first()
+    if not account:
+        return redirect("simulator:login")
+
+    deposits = Deposit.objects.filter(user=request.user)
+    return render(request, "simulator/deposit_history.html", {
+        "account": account,
+        "deposits": deposits,
+        "active_section": "deposit",
+    })

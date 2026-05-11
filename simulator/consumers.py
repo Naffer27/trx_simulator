@@ -96,7 +96,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
         self._tick_interval = DEFAULT_TICK_INTERVAL
         self._force_provider = (os.getenv("FORCE_PROVIDER","") or "").lower()
 
-        user = getattr(self.scope, "user", None)
+        user = self.scope.get("user")
         is_auth = bool(user and getattr(user, "is_authenticated", False))
 
         # Querystring
@@ -120,9 +120,35 @@ class TradingConsumer(AsyncWebsocketConsumer):
             self._token = ""
             q_tf_raw = None
 
+        uname = getattr(user, "username", None)
+        log.info("[connect] user=%s is_auth=%s q_account=%s", uname, is_auth, q_account)
+
         if is_auth and q_account:
             acc = await self._db_get_account_for_user(q_account, user.id)
-            if acc: self._db_account_id = acc["id"]
+            if acc:
+                self._db_account_id = acc["id"]
+                log.info("[connect] db_account_id=%s (from URL param)", self._db_account_id)
+
+        # Fallback 1: account_id stored in Django session by login_view
+        if is_auth and not self._db_account_id:
+            session = self.scope.get("session", {})
+            sess_acc_id = session.get("account_id")
+            log.info("[connect] session account_id=%s", sess_acc_id)
+            if sess_acc_id:
+                acc = await self._db_get_account_for_user(int(sess_acc_id), user.id)
+                if acc:
+                    self._db_account_id = acc["id"]
+                    log.info("[connect] db_account_id=%s (from session)", self._db_account_id)
+
+        # Fallback 2: most-recent active account for this user
+        if is_auth and not self._db_account_id:
+            acc = await self._db_get_latest_account_for_user(getattr(user, "id", None))
+            if acc:
+                self._db_account_id = acc["id"]
+                log.info("[connect] db_account_id=%s (from DB fallback)", self._db_account_id)
+
+        if not self._db_account_id:
+            log.warning("[connect] NO db_account_id resolved — all DB writes will be skipped")
 
         await self.accept()
 
@@ -153,7 +179,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
         await self.start_stream_for(self.symbol)
 
-        await self.send_json({"type":"positions","items":self._positions_snapshot()})
+        await self.send_positions_snapshot()
         await self._recalc_account_and_push()
         await self.send_json({"type":"ack","action":"connected",
                               "timeframe":self.timeframe,"tf_sec":tf_seconds(self.timeframe)})
@@ -179,7 +205,17 @@ class TradingConsumer(AsyncWebsocketConsumer):
             self.symbol = sym
             self._reset_agg(sym)
             await self.restart_stream_for(sym)
-            await self.send_json({"type":"info","message":f"symbol={sym} provider={self._provider}"})
+            # Push history immediately so the chart resets before live ticks arrive.
+            # This eliminates the 180 ms debounce gap where old-symbol candles land
+            # on the new-symbol chart.
+            hist = self.generate_history(sym, self.timeframe, bars=240)
+            await self.send_json({"type": "history", "symbol": sym, "data": hist})
+            await self.send_json({
+                "type": "ack", "action": "symbol_changed",
+                "symbol": sym, "provider": self._provider,
+            })
+            # Re-send positions so the client redraws lines for the active symbol.
+            await self.send_json({"type": "positions", "items": self._positions_snapshot()})
 
         elif act == "change_timeframe":
             tf = normalize_tf(data.get("timeframe", self.timeframe))
@@ -509,6 +545,8 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
     async def _order_update(self, data: dict):
         pid = data.get("id")
+        try: pid = int(pid)
+        except (ValueError, TypeError): pass
         sym = data.get("symbol", self.symbol)
         sl  = data.get("sl", None)
         tp  = data.get("tp", None)
@@ -516,7 +554,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
         found = False
         if pid is not None:
             for p in self._positions:
-                if p.get("id")==pid and p.get("symbol")==sym:
+                if str(p.get("id")) == str(pid) and p.get("symbol")==sym:
                     if sl is not None: p["sl"] = float(sl)
                     if tp is not None: p["tp"] = float(tp)
                     found = True
@@ -542,19 +580,43 @@ class TradingConsumer(AsyncWebsocketConsumer):
             await self.send_json({"type":"warn","message":"order_update_not_found"})
 
     async def _order_close(self, data: dict):
-        pid = data.get("id")
-        sym = data.get("symbol", self.symbol)
+        pid = data.get("id")                          # may arrive as str or int
+        sym_hint = data.get("symbol", None)           # optional — client may omit it
 
-        last = round(self.ensure_state(sym), step_decimals_for(sym)[1])
+        log.info("[close] received pid=%r sym_hint=%r positions_in_memory=%d ids=%s",
+                 pid, sym_hint, len(self._positions),
+                 [(p.get("id"), p.get("symbol"), p.get("side")) for p in self._positions])
+
         remaining, closed = [], None
 
         for p in self._positions:
-            if p.get("id")==pid and p.get("symbol")==sym and not closed:
+            # Normalise both sides to str so "5" == 5 works
+            id_match  = (pid is not None) and (str(p.get("id")) == str(pid))
+            sym_match = (sym_hint is None) or (p.get("symbol") == sym_hint)
+
+            log.debug("[close] checking pos id=%r sym=%r → id_match=%s sym_match=%s",
+                      p.get("id"), p.get("symbol"), id_match, sym_match)
+
+            if id_match and sym_match and not closed:
+                sym  = p["symbol"]                    # always use the position's own symbol
+                dec  = step_decimals_for(sym)[1]
+                last = round(self.ensure_state(sym), dec)
+
                 realized = self._realized_pnl_for(p, last)
                 self.account["balance"] += realized
-                closed = {"id":p["id"],"symbol":sym,"side":p["side"],"qty":p["qty"],"avg":p["avg"],
-                          "close_px":last,"reason":"manual","realized_pnl":realized,"ts":int(time.time())}
-                await self._db_mirror_close_position(p, close_px=last, reason="manual", realized_pnl=realized)
+                closed = {
+                    "id": p["id"], "symbol": sym, "side": p["side"],
+                    "qty": p["qty"], "avg": p["avg"],
+                    "close_px": last, "reason": "manual",
+                    "realized_pnl": realized, "ts": int(time.time()),
+                }
+                log.info("[close] MATCH found pos id=%r sym=%r side=%r close_px=%s realized=%.4f",
+                         p["id"], sym, p["side"], last, realized)
+                try:
+                    await self._db_mirror_close_position(p, close_px=last, reason="manual", realized_pnl=realized)
+                    log.info("[close] _db_mirror_close_position completed OK for pos id=%r", p["id"])
+                except Exception as exc:
+                    log.error("[close] _db_mirror_close_position FAILED for pos id=%r: %s", p["id"], exc, exc_info=True)
             else:
                 remaining.append(p)
 
@@ -562,9 +624,11 @@ class TradingConsumer(AsyncWebsocketConsumer):
         await self._recalc_account_and_push()
 
         if closed:
+            log.info("[close] order closed OK. remaining positions=%d", len(self._positions))
             await self.send_json({"type":"order_close", **closed})
             await self.send_json({"type":"positions","items":self._positions_snapshot()})
         else:
+            log.warning("[close] NO MATCH for pid=%r sym_hint=%r — sending order_close_not_found", pid, sym_hint)
             await self.send_json({"type":"warn","message":"order_close_not_found"})
 
     # ---------------- Cuenta / PnL ----------------
@@ -685,15 +749,37 @@ class TradingConsumer(AsyncWebsocketConsumer):
             await self.send_json({"type":"positions","items":self._positions_snapshot()})
 
     # ---------------- DB helpers (best-effort) ----------------
+    async def send_positions_snapshot(self):
+        items = await self._db_fetch_open_positions()
+        self._positions = [
+            {
+                "id": it["id"], "symbol": it["symbol"], "side": it["side"],
+                "qty": float(it["qty"]), "avg": float(it["avg_price"]),
+                "sl": it.get("sl"), "tp": it.get("tp"),
+                "opened_at": it.get("opened_ts", int(time.time())),
+            }
+            for it in items
+        ]
+        log.info("[positions_snapshot] sending %d position(s) ids=%s",
+                 len(self._positions), [p["id"] for p in self._positions])
+        await self.send_json({"type": "positions", "items": self._positions_snapshot()})
+
     async def _maybe_hydrate_from_db(self):
-        if not self._db_account_id: return
+        if not self._db_account_id:
+            log.warning("[hydrate] SKIPPED — db_account_id is None")
+            return
+        log.info("[hydrate] loading account #%s from DB", self._db_account_id)
         acc = await self._db_read_account(self._db_account_id)
-        if not acc: return
+        if not acc:
+            log.warning("[hydrate] account #%s not found in DB", self._db_account_id)
+            return
 
         self.account["balance"]  = float(acc.get("balance", self.account["balance"]))
         self.account["equity"]   = float(acc.get("equity", self.account["equity"]))
         self.account["leverage"] = int(acc.get("leverage", self.account["leverage"]))
         self.account["netting_mode"] = bool(acc.get("netting_mode", self.account["netting_mode"]))
+        log.info("[hydrate] balance=%.2f equity=%.2f leverage=%s",
+                 self.account["balance"], self.account["equity"], self.account["leverage"])
 
         items = await self._db_fetch_open_positions()
         self._positions = []
@@ -704,6 +790,8 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 "sl":it.get("sl"), "tp":it.get("tp"),
                 "opened_at":it.get("opened_ts", int(time.time())),
             })
+        log.info("[hydrate] loaded %d open position(s): %s",
+                 len(self._positions), [(p["id"], p["symbol"], p["side"]) for p in self._positions])
 
     @database_sync_to_async
     def _db_get_account_for_user(self, acc_id:int, user_id:int):
@@ -712,6 +800,16 @@ class TradingConsumer(AsyncWebsocketConsumer):
             return {"id":obj.id}
         except TradingAccount.DoesNotExist:
             return None
+
+    @database_sync_to_async
+    def _db_get_latest_account_for_user(self, user_id):
+        if not user_id:
+            return None
+        obj = (TradingAccount.objects
+               .filter(user_id=user_id, status="Activo")
+               .order_by("-id")
+               .first())
+        return {"id": obj.id} if obj else None
 
     @database_sync_to_async
     def _db_read_account(self, acc_id:int):
@@ -728,8 +826,13 @@ class TradingConsumer(AsyncWebsocketConsumer):
         out=[]
         qs = Position.objects.filter(account_id=self._db_account_id)
         for p in qs:
-            out.append({"id":p.id,"symbol":p.symbol,"side":p.side,"qty":p.qty,"avg_price":p.avg_price,
-                        "sl":p.sl,"tp":p.tp,"opened_ts":int(p.opened_at.timestamp())})
+            out.append({
+                "id": p.id, "symbol": p.symbol, "side": p.side,
+                "qty": float(p.qty), "avg_price": float(p.avg_price),
+                "sl": float(p.sl) if p.sl is not None else None,
+                "tp": float(p.tp) if p.tp is not None else None,
+                "opened_ts": int(p.opened_at.timestamp()),
+            })
         return out
 
     @database_sync_to_async
@@ -794,33 +897,67 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def _db_mirror_close_position(self, pos_mem, close_px, reason, realized_pnl):
-        if not self._db_account_id: return
+        if not self._db_account_id:
+            log.warning("[db_close] SKIPPED — db_account_id is None")
+            return
         from decimal import Decimal
+        log.info("[db_close] starting for pos id=%r sym=%r side=%r close_px=%s realized=%.4f reason=%s",
+                 pos_mem.get("id"), pos_mem.get("symbol"), pos_mem.get("side"),
+                 close_px, realized_pnl, reason)
         with transaction.atomic():
+            # look up the DB Position by in-memory id first, then by symbol+side
             pos = Position.objects.filter(id=pos_mem["id"], account_id=self._db_account_id).first()
-            if not pos:
-                pos = Position.objects.filter(account_id=self._db_account_id,
-                                              symbol=pos_mem["symbol"], side=pos_mem["side"]).order_by("-id").first()
-            Trade.objects.create(
-                account_id=self._db_account_id, symbol=pos_mem["symbol"],
-                trade_type=("BUY" if pos_mem["side"]=="buy" else "SELL"),
-                lot_size=Decimal(pos_mem["qty"]), entry_price=Decimal(pos_mem["avg"]),
-                exit_price=Decimal(close_px),
-                stop_loss=Decimal(pos_mem["sl"]) if pos_mem.get("sl") is not None else None,
-                take_profit=Decimal(pos_mem["tp"]) if pos_mem.get("tp") is not None else None,
-                profit_loss=Decimal(realized_pnl),
+            if pos:
+                log.info("[db_close] found Position by id=%r", pos_mem["id"])
+            else:
+                pos = Position.objects.filter(
+                    account_id=self._db_account_id,
+                    symbol=pos_mem["symbol"],
+                    side__iexact=pos_mem["side"],
+                ).order_by("-id").first()
+                if pos:
+                    log.info("[db_close] found Position by symbol+side fallback id=%r", pos.id)
+                else:
+                    log.warning("[db_close] no matching DB Position found — Trade will still be created")
+
+            # Normalise side to uppercase for trade_type field
+            raw_side = str(pos_mem.get("side", "")).upper()
+            trade_type = raw_side if raw_side in ("BUY", "SELL") else ("BUY" if raw_side == "BUY" else "SELL")
+
+            log.info("[db_close] creating Trade: sym=%s type=%s qty=%s entry=%s exit=%s pnl=%s",
+                     pos_mem["symbol"], trade_type, pos_mem["qty"], pos_mem["avg"], close_px, realized_pnl)
+            trade = Trade.objects.create(
+                account_id=self._db_account_id,
+                symbol=pos_mem["symbol"],
+                trade_type=trade_type,
+                lot_size=Decimal(str(pos_mem["qty"])),
+                entry_price=Decimal(str(pos_mem["avg"])),
+                exit_price=Decimal(str(close_px)),
+                stop_loss=Decimal(str(pos_mem["sl"])) if pos_mem.get("sl") is not None else None,
+                take_profit=Decimal(str(pos_mem["tp"])) if pos_mem.get("tp") is not None else None,
+                profit_loss=Decimal(str(realized_pnl)),
                 opened_at=datetime.utcfromtimestamp(int(pos_mem.get("opened_at", time.time()))),
                 closed_at=datetime.utcnow(),
             )
-            LedgerEntry.objects.create(
-                account_id=self._db_account_id, event_type=LedgerEntry.EV_REALIZED,
-                amount=Decimal(realized_pnl), balance_after=Decimal(self.account["balance"]),
-                meta={"symbol":pos_mem["symbol"],"side":pos_mem["side"],"reason":reason},
+            log.info("[db_close] Trade created id=%r", trade.id)
+
+            ledger = LedgerEntry.objects.create(
+                account_id=self._db_account_id,
+                event_type=LedgerEntry.EV_REALIZED,
+                amount=Decimal(str(realized_pnl)),
+                balance_after=Decimal(str(self.account["balance"])),
+                meta={"symbol": pos_mem["symbol"], "side": pos_mem["side"], "reason": reason},
             )
-            if pos: pos.delete()
+            log.info("[db_close] LedgerEntry created id=%r", ledger.id)
+
+            if pos:
+                pos.delete()
+                log.info("[db_close] Position deleted")
+
             TradingAccount.objects.filter(id=self._db_account_id).update(
                 balance=self.account["balance"], equity=self.account["equity"]
             )
+            log.info("[db_close] TradingAccount balance synced to %.2f", self.account["balance"])
 
     # ---------------- Util: enviar JSON ----------------
     async def send_json(self, payload: dict):

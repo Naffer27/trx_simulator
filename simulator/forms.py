@@ -1,8 +1,9 @@
 # simulator/forms.py
+from decimal import Decimal
 from django import forms
 from django.contrib.auth.models import User
 from django.conf import settings
-from .models import TradingAccount
+from .models import TradingAccount, Deposit
 
 
 class LoginForm(forms.Form):
@@ -78,3 +79,24 @@ class RegisterForm(forms.ModelForm):
         if commit:
             user.save()
         return user
+
+
+class DepositForm(forms.Form):
+    amount_usd = forms.DecimalField(
+        label="Monto (USD)",
+        min_value=Decimal("10"),
+        max_digits=12,
+        decimal_places=2,
+        widget=forms.NumberInput(attrs={
+            "class": "deposit-input",
+            "min": "10",
+            "step": "1",
+            "placeholder": "Mínimo $10",
+            "id": "id_amount_usd",
+        }),
+    )
+    crypto_currency = forms.ChoiceField(
+        label="Criptomoneda",
+        choices=Deposit.CRYPTO_CHOICES,
+        widget=forms.Select(attrs={"class": "deposit-input", "id": "id_crypto_currency"}),
+    )

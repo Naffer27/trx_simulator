@@ -1,0 +1,213 @@
+{% extends "simulator/base_app.html" %}
+{% load static %}
+
+{% block title %}History — Money Brokers{% endblock %}
+{% block page_title %}Análisis{% endblock %}
+
+{% block extra_head %}
+<style>
+  :root {
+    --bg:#131722; --panel:#1e222d; --border:rgba(255,215,0,.08);
+    --gold:#FFD700; --amber:#FFA500;
+    --bull:#26a69a; --bear:#ef5350;
+    --txt:#d1d4dc; --muted:#787b86;
+  }
+
+  body { background: var(--bg) !important; }
+
+  .hist-wrap { max-width:1200px; margin:0 auto; padding:24px 16px 48px; }
+
+  /* ── stat cards ── */
+  .stat-grid {
+    display:grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px,1fr));
+    gap:12px;
+    margin-bottom:28px;
+  }
+  .stat-card {
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:8px;
+    padding:16px;
+  }
+  .stat-card .lbl { font-size:.7rem; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin-bottom:6px; }
+  .stat-card .val { font-size:1.35rem; font-weight:700; color:#fff; }
+  .stat-card .val.pos { color:var(--bull); }
+  .stat-card .val.neg { color:var(--bear); }
+  .stat-card .val.gold { color:var(--gold); }
+
+  /* ── section title ── */
+  .sect-title {
+    font-size:.75rem; font-weight:700; color:var(--muted);
+    text-transform:uppercase; letter-spacing:.1em;
+    margin:0 0 12px;
+  }
+
+  /* ── table ── */
+  .tbl-wrap { overflow-x:auto; border-radius:8px; border:1px solid var(--border); margin-bottom:36px; }
+  table { width:100%; border-collapse:collapse; font-size:.8rem; }
+  thead tr { background:#161b27; }
+  thead th { padding:10px 12px; text-align:left; color:var(--muted); font-weight:600; font-size:.7rem; text-transform:uppercase; letter-spacing:.06em; white-space:nowrap; }
+  tbody tr { border-top:1px solid var(--border); transition:background .12s; }
+  tbody tr:hover { background:rgba(255,255,255,.03); }
+  tbody td { padding:9px 12px; color:var(--txt); white-space:nowrap; }
+
+  .side-buy  { color:var(--bull); font-weight:700; }
+  .side-sell { color:var(--bear); font-weight:700; }
+  .pnl-pos { color:var(--bull); font-weight:600; }
+  .pnl-neg { color:var(--bear); font-weight:600; }
+
+  .row-win  { border-left:3px solid var(--bull); }
+  .row-loss { border-left:3px solid var(--bear); }
+
+  /* ── ledger badges ── */
+  .ev-badge {
+    display:inline-block; padding:2px 7px; border-radius:3px;
+    font-size:.68rem; font-weight:700; text-transform:uppercase; letter-spacing:.04em;
+  }
+  .ev-REALIZED_PNL { background:rgba(38,166,154,.15); color:var(--bull); }
+  .ev-DEPOSIT      { background:rgba(255,215,0,.12);  color:var(--gold); }
+  .ev-WITHDRAW     { background:rgba(239,83,80,.15);  color:var(--bear); }
+  .ev-COMMISSION   { background:rgba(120,123,134,.15); color:var(--muted); }
+  .ev-FEE          { background:rgba(120,123,134,.15); color:var(--muted); }
+  .ev-ADJUSTMENT   { background:rgba(41,98,255,.15);  color:#6694f8; }
+
+  .empty-msg { text-align:center; padding:40px; color:var(--muted); font-size:.85rem; }
+
+  @media (max-width:600px) {
+    .stat-card .val { font-size:1.1rem; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="hist-wrap">
+
+  <!-- ── Stats overview ── -->
+  <div class="stat-grid">
+    <div class="stat-card">
+      <div class="lbl">Total Trades</div>
+      <div class="val gold">{{ total }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="lbl">Win Rate</div>
+      <div class="val {% if win_rate >= 50 %}pos{% else %}neg{% endif %}">{{ win_rate }}%</div>
+    </div>
+    <div class="stat-card">
+      <div class="lbl">W / L</div>
+      <div class="val">
+        <span class="pnl-pos">{{ wins }}</span>
+        <span style="color:var(--muted)"> / </span>
+        <span class="pnl-neg">{{ losses }}</span>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="lbl">Net P&L</div>
+      <div class="val {% if total_pnl >= 0 %}pos{% else %}neg{% endif %}">
+        {% if total_pnl >= 0 %}+{% endif %}${{ total_pnl|floatformat:2 }}
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="lbl">Best Trade</div>
+      <div class="val pos">+${{ best_trade|floatformat:2 }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="lbl">Worst Trade</div>
+      <div class="val neg">${{ worst_trade|floatformat:2 }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="lbl">Balance</div>
+      <div class="val gold">${{ account.balance|floatformat:2 }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="lbl">Phase</div>
+      <div class="val" style="font-size:1rem;">{{ account.phase }}</div>
+    </div>
+  </div>
+
+  <!-- ── Closed Trades ── -->
+  <p class="sect-title">Closed Trades</p>
+  <div class="tbl-wrap">
+    {% if trades %}
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Symbol</th>
+          <th>Side</th>
+          <th>Lots</th>
+          <th>Entry</th>
+          <th>Exit</th>
+          <th>SL</th>
+          <th>TP</th>
+          <th>P&L</th>
+          <th>Opened</th>
+          <th>Closed</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in trades %}
+        <tr class="{% if t.profit_loss and t.profit_loss > 0 %}row-win{% else %}row-loss{% endif %}">
+          <td style="color:var(--muted)">{{ forloop.counter }}</td>
+          <td>{{ t.symbol }}</td>
+          <td class="{% if t.trade_type == 'BUY' %}side-buy{% else %}side-sell{% endif %}">{{ t.trade_type }}</td>
+          <td>{{ t.lot_size }}</td>
+          <td>{{ t.entry_price }}</td>
+          <td>{% if t.exit_price %}{{ t.exit_price }}{% else %}<span style="color:var(--muted)">—</span>{% endif %}</td>
+          <td>{% if t.stop_loss %}{{ t.stop_loss }}{% else %}<span style="color:var(--muted)">—</span>{% endif %}</td>
+          <td>{% if t.take_profit %}{{ t.take_profit }}{% else %}<span style="color:var(--muted)">—</span>{% endif %}</td>
+          <td class="{% if t.profit_loss and t.profit_loss > 0 %}pnl-pos{% else %}pnl-neg{% endif %}">
+            {% if t.profit_loss %}
+              {% if t.profit_loss > 0 %}+{% endif %}${{ t.profit_loss|floatformat:2 }}
+            {% else %}
+              <span style="color:var(--muted)">—</span>
+            {% endif %}
+          </td>
+          <td>{{ t.opened_at|date:"M d, H:i" }}</td>
+          <td>{% if t.closed_at %}{{ t.closed_at|date:"M d, H:i" }}{% else %}<span style="color:var(--muted)">open</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty-msg">No trades yet. Open your first position from the dashboard.</div>
+    {% endif %}
+  </div>
+
+  <!-- ── Account Ledger ── -->
+  <p class="sect-title">Account Ledger <span style="color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0">(last 50 events)</span></p>
+  <div class="tbl-wrap">
+    {% if ledger %}
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Event</th>
+          <th>Amount</th>
+          <th>Balance After</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in ledger %}
+        <tr>
+          <td>{{ e.created_at|date:"M d, H:i" }}</td>
+          <td><span class="ev-badge ev-{{ e.event_type }}">{{ e.event_type }}</span></td>
+          <td class="{% if e.amount > 0 %}pnl-pos{% elif e.amount < 0 %}pnl-neg{% endif %}">
+            {% if e.amount > 0 %}+{% endif %}${{ e.amount|floatformat:2 }}
+          </td>
+          <td>${{ e.balance_after|floatformat:2 }}</td>
+          <td style="color:var(--muted);max-width:240px;overflow:hidden;text-overflow:ellipsis;">
+            {% if e.meta %}{{ e.meta }}{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty-msg">No ledger entries yet.</div>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}

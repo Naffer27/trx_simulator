@@ -172,11 +172,64 @@ class Trade(models.Model):
 
     profit_loss = models.DecimalField(max_digits=18, decimal_places=2, null=True, blank=True)
 
-    opened_at = models.DateTimeField(auto_now_add=True)
+    opened_at = models.DateTimeField(default=timezone.now)
     closed_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return f"{self.trade_type} {self.symbol} — {self.lot_size} lotes"
+
+
+class Deposit(models.Model):
+    STATUS_PENDING = 'pending'
+    STATUS_WAITING = 'waiting'
+    STATUS_CONFIRMING = 'confirming'
+    STATUS_CONFIRMED = 'confirmed'
+    STATUS_SENDING = 'sending'
+    STATUS_PARTIALLY_PAID = 'partially_paid'
+    STATUS_FINISHED = 'finished'
+    STATUS_FAILED = 'failed'
+    STATUS_REFUNDED = 'refunded'
+    STATUS_EXPIRED = 'expired'
+
+    CREDITED_STATUSES = {STATUS_FINISHED, STATUS_CONFIRMED}
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pendiente'),
+        (STATUS_WAITING, 'Esperando pago'),
+        (STATUS_CONFIRMING, 'Confirmando'),
+        (STATUS_CONFIRMED, 'Confirmado'),
+        (STATUS_SENDING, 'Enviando'),
+        (STATUS_PARTIALLY_PAID, 'Pago parcial'),
+        (STATUS_FINISHED, 'Completado'),
+        (STATUS_FAILED, 'Fallido'),
+        (STATUS_REFUNDED, 'Reembolsado'),
+        (STATUS_EXPIRED, 'Expirado'),
+    ]
+
+    CRYPTO_CHOICES = [
+        ('btc', 'Bitcoin (BTC)'),
+        ('eth', 'Ethereum (ETH)'),
+        ('usdttrc20', 'USDT TRC-20'),
+        ('usdterc20', 'USDT ERC-20'),
+        ('sol', 'Solana (SOL)'),
+        ('bnbmainnet', 'BNB (BSC)'),
+        ('usdcsol', 'USDC (Solana)'),
+    ]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='deposits')
+    amount_usd = models.DecimalField(max_digits=12, decimal_places=2)
+    crypto_currency = models.CharField(max_length=20, choices=CRYPTO_CHOICES)
+    nowpayments_payment_id = models.CharField(max_length=64, null=True, blank=True, db_index=True)
+    nowpayments_invoice_url = models.URLField(max_length=512, null=True, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    created_at = models.DateTimeField(auto_now_add=True)
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.user.username} — ${self.amount_usd} {self.crypto_currency} [{self.status}]"
 
 
 class Purchase(models.Model):

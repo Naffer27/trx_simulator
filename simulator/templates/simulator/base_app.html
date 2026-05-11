@@ -1,0 +1,597 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  {% now "U" as ts %}
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#05050a" />
+  <title>{% block title %}Money Brokers{% endblock %}</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Orbitron:wght@600;700;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --sb-w: 240px;
+      --sb-w-col: 64px;
+      --topbar-h: 60px;
+      --bg-app: #05050a;
+      --bg-sidebar: #07070f;
+      --bg-card: #0d0d1a;
+      --bg-card-2: #0a0a14;
+      --border: rgba(255,215,0,.08);
+      --border-dim: rgba(255,255,255,.04);
+      --gold: #FFD700;
+      --amber: #FFA500;
+      --text: #d1d4dc;
+      --muted: #5d6175;
+      --muted-2: #787b86;
+      --bull: #26a69a;
+      --bear: #ef5350;
+      --tr: .22s cubic-bezier(.4,0,.2,1);
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg-app);
+      color: var(--text);
+      font-family: 'Inter', sans-serif;
+      font-size: 14px;
+      overflow: hidden;
+    }
+
+    /* ══════════ SHELL ══════════ */
+    .app-shell {
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ══════════ SIDEBAR ══════════ */
+    .app-sidebar {
+      width: var(--sb-w);
+      min-width: var(--sb-w);
+      height: 100vh;
+      position: fixed;
+      left: 0; top: 0;
+      background: var(--bg-sidebar);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      transition: width var(--tr), min-width var(--tr);
+      z-index: 200;
+    }
+
+    /* collapsed */
+    .sb-collapsed .app-sidebar { width: var(--sb-w-col); min-width: var(--sb-w-col); }
+    .sb-collapsed .app-main    { margin-left: var(--sb-w-col); }
+
+    /* ── Sidebar header ── */
+    .sb-header {
+      height: 64px;
+      min-height: 64px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 14px 0 16px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .sb-logo { display: flex; align-items: center; gap: 10px; flex: 1; overflow: hidden; }
+    .sb-logo-mark {
+      width: 32px; height: 32px; min-width: 32px;
+      background: linear-gradient(135deg, #FFD700, #FFA500);
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'Orbitron', sans-serif;
+      font-size: .6rem; font-weight: 900; color: #000; letter-spacing: .01em;
+      flex-shrink: 0;
+    }
+    .sb-logo-text {
+      font-family: 'Orbitron', sans-serif;
+      font-size: .62rem; font-weight: 700;
+      color: var(--gold); letter-spacing: .08em; line-height: 1.3;
+      white-space: nowrap;
+      opacity: 1; overflow: hidden;
+      transition: opacity var(--tr), width var(--tr), max-width var(--tr);
+      max-width: 160px;
+    }
+    .sb-collapsed .sb-logo-text { opacity: 0; max-width: 0; }
+
+    .sb-collapse-btn {
+      width: 28px; height: 28px; min-width: 28px;
+      background: rgba(255,215,0,.05); border: 1px solid var(--border);
+      border-radius: 6px; color: var(--muted);
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      font-size: .7rem; flex-shrink: 0;
+      transition: background .15s, color .15s;
+    }
+    .sb-collapse-btn:hover { background: rgba(255,215,0,.12); color: var(--gold); }
+    .sb-collapse-btn .fa { transition: transform var(--tr); }
+    .sb-collapsed .sb-collapse-btn .fa { transform: rotate(180deg); }
+
+    /* ── Nav ── */
+    .sb-nav {
+      flex: 1; overflow-y: auto; overflow-x: hidden;
+      padding: 10px 0;
+      scrollbar-width: none;
+    }
+    .sb-nav::-webkit-scrollbar { display: none; }
+
+    .sb-link {
+      display: flex; align-items: center; gap: 10px;
+      padding: 0 16px;
+      height: 40px;
+      color: var(--muted-2);
+      text-decoration: none !important;
+      cursor: pointer;
+      position: relative;
+      white-space: nowrap;
+      transition: color .15s, background .15s;
+      border-left: 2px solid transparent;
+    }
+    .sb-link:hover { color: var(--text); background: rgba(255,255,255,.025); }
+    .sb-link.active {
+      color: var(--gold);
+      background: rgba(255,215,0,.06);
+      border-left-color: var(--gold);
+    }
+
+    .sb-icon {
+      width: 30px; min-width: 30px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: .85rem;
+    }
+
+    .sb-text {
+      flex: 1; font-size: .8rem; font-weight: 500;
+      opacity: 1; overflow: hidden; text-overflow: ellipsis;
+      transition: opacity var(--tr);
+    }
+    .sb-collapsed .sb-text { opacity: 0; width: 0; pointer-events: none; }
+
+    /* badge */
+    .sb-badge {
+      font-size: .6rem; font-weight: 700;
+      padding: 1px 5px; border-radius: 3px;
+      text-transform: uppercase; letter-spacing: .04em;
+      flex-shrink: 0;
+      transition: opacity var(--tr);
+    }
+    .sb-badge-soon { background: rgba(120,123,134,.15); color: var(--muted-2); }
+    .sb-badge-new  { background: rgba(38,166,154,.15);  color: var(--bull); }
+    .sb-collapsed .sb-badge { opacity: 0; width: 0; overflow: hidden; padding: 0; }
+
+    /* chevron */
+    .sb-chevron {
+      font-size: .65rem; color: var(--muted);
+      flex-shrink: 0;
+      transition: transform .2s, opacity var(--tr);
+    }
+    .sb-collapsed .sb-chevron { opacity: 0; width: 0; overflow: hidden; }
+    .sb-group.open > .sb-group-hd .sb-chevron { transform: rotate(90deg); }
+
+    /* dropdown */
+    .sb-group-hd { cursor: pointer; }
+    .sb-children { overflow: hidden; max-height: 0; transition: max-height .25s ease; }
+    .sb-group.open .sb-children { max-height: 220px; }
+    .sb-collapsed .sb-children { max-height: 0 !important; }
+
+    .sb-child {
+      display: flex; align-items: center; gap: 8px;
+      padding: 0 16px 0 56px;
+      height: 34px;
+      color: var(--muted-2);
+      text-decoration: none !important;
+      font-size: .78rem;
+      transition: color .15s, background .15s;
+      white-space: nowrap;
+    }
+    .sb-child:hover { color: var(--text); background: rgba(255,255,255,.018); }
+    .sb-child.active { color: var(--gold); }
+    .sb-cdot {
+      width: 4px; height: 4px; border-radius: 50%;
+      background: currentColor; opacity: .5; flex-shrink: 0;
+    }
+
+    /* divider */
+    .sb-divider { height: 1px; background: var(--border); margin: 6px 16px; }
+
+    /* ── Footer ── */
+    .sb-footer {
+      border-top: 1px solid var(--border);
+      padding: 12px 14px;
+      display: flex; align-items: center; gap: 10px;
+      flex-shrink: 0;
+    }
+    .sb-avatar {
+      width: 32px; height: 32px; min-width: 32px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, rgba(255,215,0,.25), rgba(255,165,0,.15));
+      border: 1px solid rgba(255,215,0,.3);
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'Orbitron', sans-serif; font-size: .65rem; font-weight: 700;
+      color: var(--gold); flex-shrink: 0;
+    }
+    .sb-user-info {
+      flex: 1; overflow: hidden;
+      opacity: 1; transition: opacity var(--tr), width var(--tr);
+    }
+    .sb-collapsed .sb-user-info { opacity: 0; width: 0; }
+    .sb-username {
+      font-size: .78rem; font-weight: 600; color: var(--text);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .sb-user-role { font-size: .7rem; color: var(--muted); }
+    .sb-logout {
+      color: var(--muted); text-decoration: none;
+      width: 28px; height: 28px; border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: .85rem; flex-shrink: 0;
+      transition: color .15s, background .15s;
+    }
+    .sb-logout:hover { color: var(--bear); background: rgba(239,83,80,.1); }
+
+    /* ══════════ MAIN ══════════ */
+    .app-main {
+      flex: 1;
+      margin-left: var(--sb-w);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      transition: margin-left var(--tr);
+    }
+
+    /* ── Topbar ── */
+    .app-topbar {
+      height: var(--topbar-h);
+      min-height: var(--topbar-h);
+      background: var(--bg-app);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center;
+      justify-content: space-between;
+      padding: 0 24px 0 20px;
+      flex-shrink: 0;
+    }
+    .tb-left { display: flex; align-items: center; gap: 12px; }
+    .tb-right { display: flex; align-items: center; gap: 6px; }
+
+    .tb-toggle {
+      display: none;
+      width: 36px; height: 36px; background: transparent; border: none;
+      color: var(--muted-2); font-size: .95rem; cursor: pointer;
+      border-radius: 6px; align-items: center; justify-content: center;
+      transition: color .15s, background .15s;
+    }
+    .tb-toggle:hover { color: var(--text); background: rgba(255,255,255,.05); }
+
+    .tb-breadcrumb {
+      display: flex; align-items: center; gap: 6px;
+      font-size: .72rem; color: var(--muted);
+    }
+    .tb-breadcrumb-sep { color: var(--muted); opacity: .5; }
+    .tb-page-title {
+      font-family: 'Orbitron', sans-serif;
+      font-size: .82rem; font-weight: 700;
+      color: var(--text); letter-spacing: .06em;
+    }
+
+    .tb-icon-btn {
+      position: relative;
+      width: 36px; height: 36px;
+      background: transparent; border: none;
+      color: var(--muted-2); font-size: .88rem;
+      cursor: pointer; border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      transition: color .15s, background .15s;
+    }
+    .tb-icon-btn:hover { color: var(--text); background: rgba(255,255,255,.05); }
+    .tb-notif-dot {
+      position: absolute; top: 7px; right: 7px;
+      width: 6px; height: 6px;
+      background: var(--gold); border-radius: 50%;
+      border: 1.5px solid var(--bg-app);
+    }
+
+    .tb-user-chip {
+      display: flex; align-items: center; gap: 8px;
+      padding: 4px 10px 4px 4px;
+      background: rgba(255,255,255,.03);
+      border: 1px solid var(--border);
+      border-radius: 20px; cursor: pointer;
+      transition: border-color .15s;
+    }
+    .tb-user-chip:hover { border-color: rgba(255,215,0,.2); }
+    .tb-chip-avatar {
+      width: 28px; height: 28px; border-radius: 50%;
+      background: linear-gradient(135deg, rgba(255,215,0,.25), rgba(255,165,0,.15));
+      border: 1px solid rgba(255,215,0,.25);
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'Orbitron', sans-serif; font-size: .6rem; font-weight: 700;
+      color: var(--gold);
+    }
+    .tb-chip-name {
+      font-size: .78rem; font-weight: 500; color: var(--text);
+      max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+
+    /* ── Content ── */
+    .app-content {
+      flex: 1; overflow-y: auto; overflow-x: hidden;
+      padding: 24px 28px 40px;
+      background: var(--bg-app);
+    }
+
+    /* ── Overlay mobile ── */
+    .sb-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,.75); z-index: 150;
+    }
+    .sb-overlay.active { display: block; }
+
+    /* ══════════ RESPONSIVE ══════════ */
+    @media (max-width: 768px) {
+      .app-main { margin-left: 0 !important; }
+      .app-sidebar {
+        transform: translateX(calc(-1 * var(--sb-w)));
+        transition: transform var(--tr);
+        width: var(--sb-w) !important;
+        min-width: var(--sb-w) !important;
+      }
+      .app-sidebar.sb-open { transform: translateX(0); }
+      .tb-toggle { display: flex; }
+      .sb-collapse-btn { display: none; }
+      .app-content { padding: 16px 16px 32px; }
+    }
+
+    /* ══════════ SHARED COMPONENTS ══════════ */
+    .section-title {
+      font-family: 'Orbitron', sans-serif;
+      font-size: .72rem; font-weight: 700;
+      color: var(--muted-2); letter-spacing: .1em;
+      text-transform: uppercase; margin-bottom: 14px;
+    }
+
+    {% block extra_styles %}{% endblock %}
+  </style>
+  {% block extra_head %}{% endblock %}
+</head>
+
+<body>
+<div class="app-shell {% if not sidebar_collapsed %}{% endif %}" id="appShell">
+
+  <!-- ══════════════════════ SIDEBAR ══════════════════════ -->
+  <aside class="app-sidebar" id="appSidebar">
+
+    <!-- Header / Logo -->
+    <div class="sb-header">
+      <div class="sb-logo">
+        <div class="sb-logo-mark">MB</div>
+        <div class="sb-logo-text">MONEY<br>BROKERS</div>
+      </div>
+      <button class="sb-collapse-btn" id="sidebarToggle" title="Colapsar menú">
+        <i class="fa fa-chevron-left"></i>
+      </button>
+    </div>
+
+    <!-- Navigation -->
+    <nav class="sb-nav" role="navigation">
+
+      <!-- Dashboard -->
+      <a href="{% url 'simulator:home' %}"
+         class="sb-link {% if active_section == 'dashboard' %}active{% endif %}">
+        <span class="sb-icon"><i class="fa-solid fa-gauge-high"></i></span>
+        <span class="sb-text">Dashboard</span>
+      </a>
+
+      <!-- Mis Cuentas -->
+      <a href="#" class="sb-link {% if active_section == 'accounts' %}active{% endif %}">
+        <span class="sb-icon"><i class="fa-solid fa-briefcase"></i></span>
+        <span class="sb-text">Mis Cuentas</span>
+        <span class="sb-badge sb-badge-soon">Pronto</span>
+      </a>
+
+      <!-- Cartera (dropdown) -->
+      <div class="sb-group {% if active_section == 'deposit' or active_section == 'withdraw' %}open{% endif %}"
+           data-group="cartera">
+        <div class="sb-link sb-group-hd">
+          <span class="sb-icon"><i class="fa-solid fa-wallet"></i></span>
+          <span class="sb-text">Cartera</span>
+          <span class="sb-chevron"><i class="fa-solid fa-chevron-right"></i></span>
+        </div>
+        <div class="sb-children">
+          <a href="{% url 'simulator:deposit' %}"
+             class="sb-child {% if active_section == 'deposit' %}active{% endif %}">
+            <span class="sb-cdot"></span>Depositar
+          </a>
+          <a href="#" class="sb-child">
+            <span class="sb-cdot"></span>Retirar
+          </a>
+          <a href="#" class="sb-child">
+            <span class="sb-cdot"></span>Transferencia interna
+          </a>
+        </div>
+      </div>
+
+      <!-- Panel de Trading -->
+      <a href="{% url 'simulator:dashboard' %}"
+         class="sb-link {% if active_section == 'trading' %}active{% endif %}">
+        <span class="sb-icon"><i class="fa-solid fa-chart-line"></i></span>
+        <span class="sb-text">Panel de Trading</span>
+      </a>
+
+      <!-- Calendario -->
+      <a href="#" class="sb-link">
+        <span class="sb-icon"><i class="fa-solid fa-calendar-days"></i></span>
+        <span class="sb-text">Calendario</span>
+        <span class="sb-badge sb-badge-soon">Pronto</span>
+      </a>
+
+      <!-- Análisis -->
+      <a href="{% url 'simulator:history' %}"
+         class="sb-link {% if active_section == 'analysis' %}active{% endif %}">
+        <span class="sb-icon"><i class="fa-solid fa-chart-bar"></i></span>
+        <span class="sb-text">Análisis</span>
+      </a>
+
+      <div class="sb-divider"></div>
+
+      <!-- Asociados (dropdown) -->
+      <div class="sb-group {% if active_section == 'asociados' %}open{% endif %}"
+           data-group="asociados">
+        <div class="sb-link sb-group-hd">
+          <span class="sb-icon"><i class="fa-solid fa-handshake"></i></span>
+          <span class="sb-text">Asociados</span>
+          <span class="sb-chevron"><i class="fa-solid fa-chevron-right"></i></span>
+        </div>
+        <div class="sb-children">
+          <a href="#" class="sb-child"><span class="sb-cdot"></span>Cuentas de clientes</a>
+          <a href="#" class="sb-child"><span class="sb-cdot"></span>Programa de afiliados</a>
+          <a href="#" class="sb-child"><span class="sb-cdot"></span>Reportes</a>
+          <a href="#" class="sb-child"><span class="sb-cdot"></span>Materiales</a>
+        </div>
+      </div>
+
+      <!-- Bonos -->
+      <a href="#" class="sb-link">
+        <span class="sb-icon"><i class="fa-solid fa-gift"></i></span>
+        <span class="sb-text">Bonos</span>
+        <span class="sb-badge sb-badge-new">New</span>
+      </a>
+
+      <!-- PAMM -->
+      <a href="#" class="sb-link">
+        <span class="sb-icon"><i class="fa-solid fa-people-group"></i></span>
+        <span class="sb-text">PAMM</span>
+        <span class="sb-badge sb-badge-soon">Pronto</span>
+      </a>
+
+      <!-- Archivos -->
+      <a href="#" class="sb-link">
+        <span class="sb-icon"><i class="fa-solid fa-folder-open"></i></span>
+        <span class="sb-text">Archivos</span>
+      </a>
+
+      <!-- Expertos -->
+      <a href="#" class="sb-link">
+        <span class="sb-icon"><i class="fa-solid fa-robot"></i></span>
+        <span class="sb-text">Expertos (EAs)</span>
+        <span class="sb-badge sb-badge-soon">Pronto</span>
+      </a>
+
+    </nav>
+
+    <!-- Footer / user -->
+    <div class="sb-footer">
+      <div class="sb-avatar">{{ user.username|slice:":1"|upper }}</div>
+      <div class="sb-user-info">
+        <div class="sb-username">{{ user.username }}</div>
+        <div class="sb-user-role">Trader</div>
+      </div>
+      <a href="{% url 'simulator:logout' %}" class="sb-logout" title="Cerrar sesión">
+        <i class="fa-solid fa-arrow-right-from-bracket"></i>
+      </a>
+    </div>
+
+  </aside>
+  <!-- /SIDEBAR -->
+
+  <!-- ══════════════════════ MAIN ══════════════════════ -->
+  <div class="app-main" id="appMain">
+
+    <!-- Topbar -->
+    <header class="app-topbar">
+      <div class="tb-left">
+        <button class="tb-toggle" id="mobileToggle" aria-label="Abrir menú">
+          <i class="fa-solid fa-bars"></i>
+        </button>
+        <div class="tb-breadcrumb">
+          <span>Money Brokers</span>
+          <span class="tb-breadcrumb-sep">/</span>
+          <span class="tb-page-title">{% block page_title %}Dashboard{% endblock %}</span>
+        </div>
+      </div>
+      <div class="tb-right">
+        <button class="tb-icon-btn" title="Notificaciones">
+          <i class="fa-solid fa-bell"></i>
+          <span class="tb-notif-dot"></span>
+        </button>
+        <button class="tb-icon-btn" title="Configuración">
+          <i class="fa-solid fa-gear"></i>
+        </button>
+        <div class="tb-user-chip">
+          <div class="tb-chip-avatar">{{ user.username|slice:":1"|upper }}</div>
+          <span class="tb-chip-name">{{ user.username }}</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Page content -->
+    <main class="app-content" id="appContent">
+      {% block content %}{% endblock %}
+    </main>
+
+  </div>
+  <!-- /MAIN -->
+
+</div><!-- /app-shell -->
+
+<!-- Mobile overlay -->
+<div class="sb-overlay" id="sbOverlay"></div>
+
+<script>
+(function() {
+  const shell    = document.getElementById('appShell');
+  const sidebar  = document.getElementById('appSidebar');
+  const togBtn   = document.getElementById('sidebarToggle');
+  const mobBtn   = document.getElementById('mobileToggle');
+  const overlay  = document.getElementById('sbOverlay');
+
+  // Restore collapse state from localStorage
+  if (localStorage.getItem('mb_sb_collapsed') === '1') {
+    shell.classList.add('sb-collapsed');
+  }
+
+  // Desktop collapse toggle
+  togBtn && togBtn.addEventListener('click', function () {
+    shell.classList.toggle('sb-collapsed');
+    localStorage.setItem('mb_sb_collapsed',
+      shell.classList.contains('sb-collapsed') ? '1' : '0');
+  });
+
+  // Mobile open/close
+  function openMobile() {
+    sidebar.classList.add('sb-open');
+    overlay.classList.add('active');
+    document.body.style.overflow = 'hidden';
+  }
+  function closeMobile() {
+    sidebar.classList.remove('sb-open');
+    overlay.classList.remove('active');
+    document.body.style.overflow = '';
+  }
+  mobBtn  && mobBtn.addEventListener('click', function () {
+    sidebar.classList.contains('sb-open') ? closeMobile() : openMobile();
+  });
+  overlay && overlay.addEventListener('click', closeMobile);
+
+  // Dropdown groups
+  document.querySelectorAll('.sb-group-hd').forEach(function(hd) {
+    hd.addEventListener('click', function () {
+      var g = hd.closest('.sb-group');
+      g.classList.toggle('open');
+    });
+  });
+})();
+</script>
+
+{% block extra_scripts %}{% endblock %}
+</body>
+</html>

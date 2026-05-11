@@ -7,7 +7,7 @@ from django.shortcuts import redirect, render
 from django.utils.timezone import now
 from django.utils.html import format_html
 
-from .models import TradingAccount, Position, Trade, LedgerEntry, Purchase
+from .models import TradingAccount, Position, Trade, LedgerEntry, Purchase, Deposit
 
 
 # ==========================
@@ -246,9 +246,17 @@ class PurchaseAdmin(admin.ModelAdmin):
     readonly_fields = ("created_at",)
 
 
+@admin.register(Deposit)
+class DepositAdmin(admin.ModelAdmin):
+    list_display = ("id", "user", "amount_usd", "crypto_currency", "status", "created_at")
+    list_filter = ("status",)
+    search_fields = ("user__username", "user__email")
+    readonly_fields = ("created_at", "confirmed_at", "nowpayments_payment_id", "nowpayments_invoice_url")
+
+
 # ==========================
 # Branding del Admin
 # ==========================
-admin.site.site_header = "Liquid Brokers — Admin"
-admin.site.site_title = "Liquid Brokers"
+admin.site.site_header = "Money Brokers — Admin"
+admin.site.site_title = "Money Brokers"
 admin.site.index_title = "Panel de administración"

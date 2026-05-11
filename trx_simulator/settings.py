@@ -202,3 +202,5 @@ CSRF_COOKIE_SAMESITE = "Lax"
 # 📡 API Keys externas
 # ===============================
 FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")
+NOWPAYMENTS_API_KEY = os.getenv("NOWPAYMENTS_API_KEY", "")
+NOWPAYMENTS_IPN_SECRET = os.getenv("NOWPAYMENTS_IPN_SECRET", "")

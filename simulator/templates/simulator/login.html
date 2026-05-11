@@ -1,125 +1,274 @@
-{# simulator/templates/simulator/login.html #}
-{% extends "simulator/base.html" %}
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login — Money Brokers</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-{% block title %}Acceso al Broker{% endblock %}
+    :root {
+      --gold:     #FFD700;
+      --amber:    #FFA500;
+      --gold-dim: rgba(255,215,0,.10);
+      --bg:       #05050a;
+      --card:     #0d0d14;
+      --border:   rgba(255,215,0,.18);
+      --muted:    #666;
+      --txt:      #c8c8d0;
+    }
 
-{% block content %}
-<style>
-  body {
-    background: radial-gradient(circle at center, #0d0d0d, #1a001a 90%);
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    color: #fff;
-  }
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: #fff;
+      font-family: 'Inter', sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
 
-  .login-card {
-    background: rgba(20, 20, 30, 0.95);
-    border-radius: 16px;
-    padding: 30px;
-    max-width: 420px;
-    width: 100%;
-    margin: 60px auto;
-    box-shadow: 0 0 20px rgba(138, 43, 226, 0.6);
-    backdrop-filter: blur(6px);
-  }
+    /* ── canvas ── */
+    #auth-canvas {
+      position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    }
 
-  .login-card h3 {
-    text-align: center;
-    margin-bottom: 20px;
-    font-size: 22px;
-    font-weight: bold;
-    background: linear-gradient(90deg, #8a2be2, #ff00ff);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-  }
+    /* ── layout ── */
+    .auth-wrap {
+      position: relative; z-index: 1;
+      min-height: 100vh;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: 40px 20px;
+    }
 
-  .login-card label {
-    font-weight: 600;
-    font-size: 14px;
-  }
+    /* ── brand ── */
+    .auth-brand {
+      font-family: 'Orbitron', sans-serif;
+      font-size: .88rem; font-weight: 900;
+      letter-spacing: .14em; color: var(--gold);
+      text-decoration: none;
+      margin-bottom: 40px;
+      display: inline-block;
+    }
+    .auth-brand:hover { color: var(--amber); }
 
-  .login-card input {
-    width: 100%;
-    padding: 10px;
-    margin-top: 6px;
-    margin-bottom: 16px;
-    border-radius: 10px;
-    border: 1px solid #333;
-    background: #1a1a2e;
-    color: #fff;
-    box-shadow: inset 0 2px 4px rgba(0,0,0,0.4);
-    transition: border 0.3s ease, box-shadow 0.3s ease;
-  }
+    /* ── card ── */
+    .auth-card {
+      width: 100%; max-width: 400px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 40px 36px;
+      box-shadow:
+        0 0 0 1px rgba(255,215,0,.04),
+        0 0 40px rgba(255,215,0,.08),
+        0 24px 48px rgba(0,0,0,.6);
+    }
 
-  .login-card input:focus {
-    outline: none;
-    border: 1px solid #8a2be2;
-    box-shadow: 0 0 6px rgba(138,43,226,0.8);
-  }
+    .auth-title {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 1.1rem; font-weight: 900;
+      letter-spacing: .06em; color: #fff;
+      margin-bottom: 6px;
+    }
+    .auth-sub {
+      font-size: .8rem; color: var(--muted);
+      margin-bottom: 32px;
+    }
 
-  .btn-trader {
-    display: inline-block;
-    width: 100%;
-    padding: 12px;
-    font-size: 15px;
-    font-weight: bold;
-    text-align: center;
-    color: #fff;
-    background: linear-gradient(90deg, #881ae8, #8948e4);
-    border: none;
-    border-radius: 8px;
-    box-shadow: 0 4px 12px rgba(144, 68, 226, 0.4);
-    cursor: pointer;
-    transition: all 0.3s ease;
-  }
+    /* ── alert ── */
+    .auth-alert {
+      background: rgba(239,83,80,.12);
+      border: 1px solid rgba(239,83,80,.3);
+      border-radius: 6px;
+      color: #ef5350;
+      font-size: .8rem;
+      padding: 10px 14px;
+      margin-bottom: 20px;
+    }
 
-  .btn-trader:hover {
-    background: linear-gradient(90deg, #00c6ff, #1a73e8);
-    box-shadow: 0 6px 16px rgba(0, 198, 255, 0.6);
-    transform: translateY(-2px);
-  }
+    /* ── fields ── */
+    .field { margin-bottom: 18px; }
+    .field label {
+      display: block;
+      font-size: .72rem; font-weight: 600;
+      letter-spacing: .06em; text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 7px;
+    }
+    .field input,
+    .field select {
+      width: 100%;
+      background: rgba(255,255,255,.04);
+      border: 1px solid rgba(255,215,0,.14);
+      border-radius: 6px;
+      padding: 11px 14px;
+      color: #fff;
+      font-family: 'Inter', sans-serif;
+      font-size: .88rem;
+      transition: border-color .18s, box-shadow .18s;
+      appearance: none;
+    }
+    .field input::placeholder { color: #444; }
+    .field input:focus,
+    .field select:focus {
+      outline: none;
+      border-color: var(--gold);
+      box-shadow: 0 0 0 3px rgba(255,215,0,.10);
+    }
+    /* style autofill */
+    .field input:-webkit-autofill {
+      -webkit-box-shadow: 0 0 0 40px #0d0d14 inset;
+      -webkit-text-fill-color: #fff;
+    }
 
-  .btn-trader:active {
-    transform: translateY(0);
-    box-shadow: 0 3px 10px rgba(0, 198, 255, 0.3);
-  }
-</style>
+    /* ── submit ── */
+    .btn-auth {
+      width: 100%; margin-top: 8px;
+      padding: 13px;
+      background: var(--gold);
+      color: #000;
+      font-family: 'Inter', sans-serif;
+      font-size: .9rem; font-weight: 700;
+      letter-spacing: .04em;
+      border: none; border-radius: 6px;
+      cursor: pointer;
+      transition: background .18s, transform .15s, box-shadow .18s;
+    }
+    .btn-auth:hover {
+      background: #FFC200;
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(255,215,0,.28);
+    }
+    .btn-auth:active { transform: translateY(0); }
 
-<div class="login-card">
-  <h3>Acceso al Broker</h3>
+    /* ── footer link ── */
+    .auth-footer {
+      margin-top: 24px;
+      text-align: center;
+      font-size: .8rem; color: var(--muted);
+    }
+    .auth-footer a {
+      color: var(--gold); text-decoration: none; font-weight: 600;
+      transition: color .15s;
+    }
+    .auth-footer a:hover { color: var(--amber); }
 
-  {% if error %}
-    <div class="alert alert-danger">{{ error }}</div>
-  {% endif %}
+    /* ── divider ── */
+    .auth-divider {
+      border: none; border-top: 1px solid rgba(255,215,0,.08);
+      margin: 24px 0;
+    }
+  </style>
+</head>
+<body>
 
-  {% if request.session.access_code %}
-    <p class="welcome">
-      Challenge activo: <strong>{{ request.session.access_code }}</strong><br>
-      Si completas las reglas, desbloquearás la siguiente fase 🚀
-    </p>
-  {% elif request.GET.code %}
-    <p class="welcome">
-      Estás entrando con el código <strong>{{ request.GET.code }}</strong>.<br>
-      Esta clave activará tu cuenta de fondeo.
-    </p>
-  {% endif %}
+<canvas id="auth-canvas"></canvas>
 
-  <form method="post" action="{% url 'simulator:login' %}">
-    {% csrf_token %}
+<div class="auth-wrap">
+  <a class="auth-brand" href="{% url 'simulator:landing' %}">MONEY BROKERS</a>
 
-    <label>{{ form.username.label_tag }}</label>
-    {{ form.username }}
+  <div class="auth-card">
+    <h1 class="auth-title">Welcome back</h1>
+    <p class="auth-sub">Sign in to your trading account</p>
 
-    <label>{{ form.password.label_tag }}</label>
-    {{ form.password }}
-
-    <label>{{ form.access_code.label_tag }}</label>
-    {% if request.GET.code %}
-      <input type="text" name="access_code" value="{{ request.GET.code }}" readonly>
-    {% else %}
-      {{ form.access_code }}
+    {% if error %}
+      <div class="auth-alert">{{ error }}</div>
     {% endif %}
 
-    <button type="submit" class="btn-trader">ENTRAR</button>
-  </form>
+    <form method="post" action="{% url 'simulator:login' %}" autocomplete="on">
+      {% csrf_token %}
+
+      <div class="field">
+        <label for="id_username">Username</label>
+        <input type="text" id="id_username" name="username"
+               placeholder="your username" autocomplete="username" required>
+      </div>
+
+      <div class="field">
+        <label for="id_password">Password</label>
+        <input type="password" id="id_password" name="password"
+               placeholder="••••••••" autocomplete="current-password" required>
+      </div>
+
+      <div class="field">
+        <label for="id_access_code">Access Code <span style="color:#444;font-weight:400;text-transform:none;">(optional in dev)</span></label>
+        {% if code %}
+          <input type="text" id="id_access_code" name="access_code" value="{{ code }}" readonly>
+        {% else %}
+          <input type="text" id="id_access_code" name="access_code" placeholder="e.g. CODE-123-4567">
+        {% endif %}
+      </div>
+
+      <button type="submit" class="btn-auth">Sign In &rarr;</button>
+    </form>
+
+    <hr class="auth-divider">
+
+    <p class="auth-footer">
+      Don't have an account? <a href="{% url 'simulator:register' %}">Open Account</a>
+    </p>
+    <p class="auth-footer" style="margin-top:12px;">
+      <a href="{% url 'simulator:landing' %}">&larr; Volver</a>
+    </p>
+  </div>
 </div>
-{% endblock %}
+
+<script>
+(function () {
+  const canvas = document.getElementById('auth-canvas');
+  const ctx = canvas.getContext('2d');
+  let W, H, particles = [];
+
+  function resize() {
+    W = canvas.width  = window.innerWidth;
+    H = canvas.height = window.innerHeight;
+  }
+
+  function Particle() {
+    this.x = Math.random() * W;
+    this.y = Math.random() * H;
+    this.r = Math.random() * 1.2 + 0.2;
+    this.vx = (Math.random() - 0.5) * 0.2;
+    this.vy = (Math.random() - 0.5) * 0.2;
+    this.alpha = Math.random() * 0.4 + 0.08;
+  }
+
+  function init() {
+    particles = Array.from({ length: 60 }, () => new Particle());
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+
+    /* subtle grid */
+    ctx.strokeStyle = 'rgba(255,215,0,0.022)';
+    ctx.lineWidth = 1;
+    const g = 80;
+    for (let x = 0; x < W; x += g) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+    for (let y = 0; y < H; y += g) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+
+    /* particles */
+    particles.forEach(p => {
+      p.x += p.vx; p.y += p.vy;
+      if (p.x < 0) p.x = W; if (p.x > W) p.x = 0;
+      if (p.y < 0) p.y = H; if (p.y > H) p.y = 0;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(255,215,0,${p.alpha})`;
+      ctx.fill();
+    });
+
+    requestAnimationFrame(draw);
+  }
+
+  resize(); init(); draw();
+  window.addEventListener('resize', resize);
+})();
+</script>
+
+</body>
+</html>

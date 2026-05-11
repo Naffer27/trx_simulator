@@ -1,164 +1,320 @@
-{# simulator/templates/simulator/register.html #}
-{% extends "simulator/base.html" %}
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Open Account — Money Brokers</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-{% block title %}Traderwork Evaluation{% endblock %}
+    :root {
+      --gold:     #FFD700;
+      --amber:    #FFA500;
+      --gold-dim: rgba(255,215,0,.10);
+      --bg:       #05050a;
+      --card:     #0d0d14;
+      --border:   rgba(255,215,0,.18);
+      --muted:    #666;
+      --txt:      #c8c8d0;
+    }
 
-{% block content %}
-<style>
-  body {
-    background: radial-gradient(circle at center, #0d0d0d, #1a001a 90%);
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    color: #fff;
-  }
+    html, body {
+      background: var(--bg);
+      color: #fff;
+      font-family: 'Inter', sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
 
-  .register-title {
-    text-align: center;
-    margin-top: 40px;
-    margin-bottom: 20px;
-    font-size: 26px;
-    font-weight: bold;
-    background: linear-gradient(90deg, #8a2be2, #ff00ff);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-  }
+    /* ── canvas ── */
+    #auth-canvas {
+      position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    }
 
-  .register-card {
-    background: rgba(20, 20, 30, 0.95);
-    border-radius: 16px;
-    padding: 30px;
-    max-width: 420px;
-    width: 100%;
-    margin: 20px auto 60px auto;
-    box-shadow: 0 0 20px rgba(138, 43, 226, 0.6);
-    backdrop-filter: blur(6px);
-  }
+    /* ── layout ── */
+    .auth-wrap {
+      position: relative; z-index: 1;
+      min-height: 100vh;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: flex-start;
+      padding: 40px 20px 60px;
+    }
 
-  .register-card label {
-    font-weight: 600;
-    font-size: 14px;
-  }
+    /* ── brand ── */
+    .auth-brand {
+      font-family: 'Orbitron', sans-serif;
+      font-size: .88rem; font-weight: 900;
+      letter-spacing: .14em; color: var(--gold);
+      text-decoration: none;
+      margin-bottom: 40px;
+      display: inline-block;
+    }
+    .auth-brand:hover { color: var(--amber); }
 
-  .register-card input, 
-  .register-card select {
-    width: 100%;
-    padding: 10px;
-    margin-top: 6px;
-    margin-bottom: 16px;
-    border-radius: 10px;
-    border: 1px solid #333;
-    background: #1a1a2e;
-    color: #fff;
-    box-shadow: inset 0 2px 4px rgba(0,0,0,0.4);
-    transition: border 0.3s ease, box-shadow 0.3s ease;
-  }
+    /* ── card ── */
+    .auth-card {
+      width: 100%; max-width: 440px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 40px 36px;
+      box-shadow:
+        0 0 0 1px rgba(255,215,0,.04),
+        0 0 40px rgba(255,215,0,.08),
+        0 24px 48px rgba(0,0,0,.6);
+    }
 
-  .register-card input:focus,
-  .register-card select:focus {
-    outline: none;
-    border: 1px solid #8a2be2;
-    box-shadow: 0 0 6px rgba(138,43,226,0.8);
-  }
+    .auth-title {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 1.1rem; font-weight: 900;
+      letter-spacing: .06em; color: #fff;
+      margin-bottom: 6px;
+    }
+    .auth-sub {
+      font-size: .8rem; color: var(--muted);
+      margin-bottom: 32px;
+    }
 
-  /* Botón estilo trader */
-  .btn-trader {
-    display: inline-block;
-    width: 100%;
-    padding: 12px;
-    font-size: 15px;
-    font-weight: bold;
-    text-align: center;
-    color: #fff;
-    background: linear-gradient(90deg, #881ae8, #8948e4);
-    border: none;
-    border-radius: 8px;
-    box-shadow: 0 4px 12px rgba(144, 68, 226, 0.4);
-    cursor: pointer;
-    transition: all 0.3s ease;
-  }
+    /* ── errors ── */
+    .auth-alert {
+      background: rgba(239,83,80,.12);
+      border: 1px solid rgba(239,83,80,.3);
+      border-radius: 6px;
+      color: #ef5350;
+      font-size: .8rem;
+      padding: 10px 14px;
+      margin-bottom: 20px;
+    }
+    .field-error {
+      font-size: .72rem; color: #ef5350;
+      margin-top: -12px; margin-bottom: 12px;
+    }
 
-  .btn-trader:hover {
-    background: linear-gradient(90deg, #00c6ff, #1a73e8);
-    box-shadow: 0 6px 16px rgba(0, 198, 255, 0.6);
-    transform: translateY(-2px);
-  }
+    /* ── fields ── */
+    .field { margin-bottom: 18px; }
+    .field label {
+      display: block;
+      font-size: .72rem; font-weight: 600;
+      letter-spacing: .06em; text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 7px;
+    }
+    .field input,
+    .field select {
+      width: 100%;
+      background: rgba(255,255,255,.04);
+      border: 1px solid rgba(255,215,0,.14);
+      border-radius: 6px;
+      padding: 11px 14px;
+      color: #fff;
+      font-family: 'Inter', sans-serif;
+      font-size: .88rem;
+      transition: border-color .18s, box-shadow .18s;
+      appearance: none;
+    }
+    .field input::placeholder { color: #444; }
+    .field input:focus,
+    .field select:focus {
+      outline: none;
+      border-color: var(--gold);
+      box-shadow: 0 0 0 3px rgba(255,215,0,.10);
+    }
+    .field input:-webkit-autofill {
+      -webkit-box-shadow: 0 0 0 40px #0d0d14 inset;
+      -webkit-text-fill-color: #fff;
+    }
 
-  .btn-trader:active {
-    transform: translateY(0);
-    box-shadow: 0 3px 10px rgba(0, 198, 255, 0.3);
-  }
+    /* custom select arrow */
+    .field select {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23666' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 14px center;
+      padding-right: 36px;
+      cursor: pointer;
+    }
+    .field select option { background: #0d0d14; color: #fff; }
 
-  .login-link {
-    margin-top: 15px;
-    text-align: center;
-    font-size: 14px;
-  }
+    /* ── row layout for side-by-side fields ── */
+    .field-row {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+    }
 
-  .login-link a {
-    color: #00c6ff;
-    text-decoration: none;
-  }
+    /* ── submit ── */
+    .btn-auth {
+      width: 100%; margin-top: 8px;
+      padding: 13px;
+      background: var(--gold);
+      color: #000;
+      font-family: 'Inter', sans-serif;
+      font-size: .9rem; font-weight: 700;
+      letter-spacing: .04em;
+      border: none; border-radius: 6px;
+      cursor: pointer;
+      transition: background .18s, transform .15s, box-shadow .18s;
+    }
+    .btn-auth:hover {
+      background: #FFC200;
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(255,215,0,.28);
+    }
+    .btn-auth:active { transform: translateY(0); }
 
-  .login-link a:hover {
-    text-decoration: underline;
-  }
-</style>
+    /* ── footer link ── */
+    .auth-footer {
+      margin-top: 24px;
+      text-align: center;
+      font-size: .8rem; color: var(--muted);
+    }
+    .auth-footer a {
+      color: var(--gold); text-decoration: none; font-weight: 600;
+      transition: color .15s;
+    }
+    .auth-footer a:hover { color: var(--amber); }
 
-<!-- Nombre de la empresa FUERA de la caja -->
-<h2 class="register-title">Traderwork Evaluation</h2>
+    /* ── divider ── */
+    .auth-divider {
+      border: none; border-top: 1px solid rgba(255,215,0,.08);
+      margin: 24px 0;
+    }
 
-<div class="register-card">
-  <!-- 🔑 El action apunta a la vista de registro -->
-  <form method="post" action="{% url 'simulator:register' %}" novalidate>
-    {% csrf_token %}
+    /* ── section separator ── */
+    .field-section {
+      font-size: .68rem; font-weight: 700;
+      letter-spacing: .1em; text-transform: uppercase;
+      color: rgba(255,215,0,.4);
+      margin: 24px 0 16px;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .field-section::after {
+      content: ''; flex: 1; height: 1px;
+      background: rgba(255,215,0,.08);
+    }
+  </style>
+</head>
+<body>
 
-    {# Mostrar errores generales del formulario #}
+<canvas id="auth-canvas"></canvas>
+
+<div class="auth-wrap">
+  <a class="auth-brand" href="{% url 'simulator:landing' %}">MONEY BROKERS</a>
+
+  <div class="auth-card">
+    <h1 class="auth-title">Open Account</h1>
+    <p class="auth-sub">Create your trading account in minutes</p>
+
     {% if form.non_field_errors %}
-      <div class="alert alert-danger">
-        {{ form.non_field_errors }}
+      <div class="auth-alert">{{ form.non_field_errors }}</div>
+    {% endif %}
+
+    <form method="post" action="{% url 'simulator:register' %}" novalidate autocomplete="on">
+      {% csrf_token %}
+
+      <!-- Personal -->
+      <p class="field-section">Personal Info</p>
+
+      <div class="field">
+        <label for="id_username">Username</label>
+        <input type="text" id="id_username" name="username"
+               value="{{ form.username.value|default:'' }}"
+               placeholder="choose a username" autocomplete="username" required>
+        {% if form.username.errors %}<p class="field-error">{{ form.username.errors|join:", " }}</p>{% endif %}
       </div>
-    {% endif %}
 
-    <label>{{ form.username.label_tag }}</label>
-    {{ form.username }}
-    {% if form.username.errors %}
-      <div class="text-danger small">{{ form.username.errors }}</div>
-    {% endif %}
+      <div class="field">
+        <label for="id_email">Email Address</label>
+        <input type="email" id="id_email" name="email"
+               value="{{ form.email.value|default:'' }}"
+               placeholder="you@example.com" autocomplete="email" required>
+        {% if form.email.errors %}<p class="field-error">{{ form.email.errors|join:", " }}</p>{% endif %}
+      </div>
 
-    <label>{{ form.email.label_tag }}</label>
-    {{ form.email }}
-    {% if form.email.errors %}
-      <div class="text-danger small">{{ form.email.errors }}</div>
-    {% endif %}
+      <!-- Security -->
+      <p class="field-section">Security</p>
 
-    <label>{{ form.password1.label_tag }}</label>
-    {{ form.password1 }}
-    {% if form.password1.errors %}
-      <div class="text-danger small">{{ form.password1.errors }}</div>
-    {% endif %}
+      <div class="field">
+        <label for="id_password1">Password</label>
+        <input type="password" id="id_password1" name="password1"
+               placeholder="min. 8 characters" autocomplete="new-password" required>
+        {% if form.password1.errors %}<p class="field-error">{{ form.password1.errors|join:", " }}</p>{% endif %}
+      </div>
 
-    <label>{{ form.password2.label_tag }}</label>
-    {{ form.password2 }}
-    {% if form.password2.errors %}
-      <div class="text-danger small">{{ form.password2.errors }}</div>
-    {% endif %}
+      <div class="field">
+        <label for="id_password2">Confirm Password</label>
+        <input type="password" id="id_password2" name="password2"
+               placeholder="repeat password" autocomplete="new-password" required>
+        {% if form.password2.errors %}<p class="field-error">{{ form.password2.errors|join:", " }}</p>{% endif %}
+      </div>
 
-    <label>{{ form.tier.label_tag }}</label>
-    {{ form.tier }}
-    {% if form.tier.errors %}
-      <div class="text-danger small">{{ form.tier.errors }}</div>
-    {% endif %}
+      <input type="hidden" name="tier" value="10K">
+      <input type="hidden" name="phase" value="Fase 1">
 
-    <label>{{ form.phase.label_tag }}</label>
-    {{ form.phase }}
-    {% if form.phase.errors %}
-      <div class="text-danger small">{{ form.phase.errors }}</div>
-    {% endif %}
+      <button type="submit" class="btn-auth">Create Account &rarr;</button>
+    </form>
 
-    <button type="submit" class="btn-trader">CREAR CUENTA</button>
-  </form>
+    <hr class="auth-divider">
 
-  <p class="login-link">
-    ¿Ya tienes cuenta? <a href="{% url 'simulator:login' %}">Inicia sesión</a>
-  </p>
+    <p class="auth-footer">
+      Already have an account? <a href="{% url 'simulator:login' %}">Sign In</a>
+    </p>
+    <p class="auth-footer" style="margin-top:12px;">
+      <a href="{% url 'simulator:login' %}">&larr; Volver</a>
+    </p>
+  </div>
 </div>
-{% endblock %}
+
+<script>
+(function () {
+  const canvas = document.getElementById('auth-canvas');
+  const ctx = canvas.getContext('2d');
+  let W, H, particles = [];
+
+  function resize() {
+    W = canvas.width  = window.innerWidth;
+    H = canvas.height = window.innerHeight;
+  }
+
+  function Particle() {
+    this.x = Math.random() * W;
+    this.y = Math.random() * H;
+    this.r = Math.random() * 1.2 + 0.2;
+    this.vx = (Math.random() - 0.5) * 0.2;
+    this.vy = (Math.random() - 0.5) * 0.2;
+    this.alpha = Math.random() * 0.4 + 0.08;
+  }
+
+  function init() {
+    particles = Array.from({ length: 60 }, () => new Particle());
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+
+    ctx.strokeStyle = 'rgba(255,215,0,0.022)';
+    ctx.lineWidth = 1;
+    const g = 80;
+    for (let x = 0; x < W; x += g) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+    for (let y = 0; y < H; y += g) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+
+    particles.forEach(p => {
+      p.x += p.vx; p.y += p.vy;
+      if (p.x < 0) p.x = W; if (p.x > W) p.x = 0;
+      if (p.y < 0) p.y = H; if (p.y > H) p.y = 0;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(255,215,0,${p.alpha})`;
+      ctx.fill();
+    });
+
+    requestAnimationFrame(draw);
+  }
+
+  resize(); init(); draw();
+  window.addEventListener('resize', resize);
+})();
+</script>
+
+</body>
+</html>

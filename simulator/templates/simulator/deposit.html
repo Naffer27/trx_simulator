@@ -1,0 +1,232 @@
+{% extends "simulator/base_app.html" %}
+{% load static %}
+{% block title %}Deposit — Money Brokers{% endblock %}
+{% block page_title %}Depositar{% endblock %}
+
+{% block extra_head %}
+<style>
+  .deposit-wrap {
+    min-height: calc(100vh - 56px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 16px;
+  }
+  .deposit-card {
+    background: #0d0d14;
+    border: 1px solid rgba(255,215,0,.15);
+    border-radius: 16px;
+    padding: 40px 36px;
+    width: 100%;
+    max-width: 480px;
+    box-shadow: 0 8px 40px rgba(0,0,0,.6);
+  }
+  .deposit-card h2 {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: #FFD700;
+    letter-spacing: .06em;
+    margin-bottom: 6px;
+  }
+  .deposit-card .subtitle {
+    color: #787b86;
+    font-size: .82rem;
+    margin-bottom: 28px;
+  }
+  .field-label {
+    font-size: .78rem;
+    font-weight: 600;
+    color: rgba(255,255,255,.55);
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  .deposit-input {
+    width: 100%;
+    background: #05050a;
+    border: 1px solid rgba(255,215,0,.2);
+    border-radius: 8px;
+    color: #fff;
+    font-size: .95rem;
+    padding: 12px 14px;
+    outline: none;
+    transition: border-color .2s;
+    appearance: none;
+    -webkit-appearance: none;
+  }
+  .deposit-input:focus {
+    border-color: #FFD700;
+    box-shadow: 0 0 0 2px rgba(255,215,0,.12);
+  }
+  .deposit-input option { background: #0d0d14; }
+  .preset-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-bottom: 20px;
+  }
+  .preset-btn {
+    background: rgba(255,215,0,.07);
+    border: 1px solid rgba(255,215,0,.18);
+    border-radius: 8px;
+    color: #FFD700;
+    font-size: .85rem;
+    font-weight: 600;
+    padding: 10px 0;
+    cursor: pointer;
+    transition: background .15s, border-color .15s;
+  }
+  .preset-btn:hover,
+  .preset-btn.active {
+    background: rgba(255,215,0,.18);
+    border-color: #FFD700;
+  }
+  .submit-btn {
+    width: 100%;
+    background: linear-gradient(135deg, #FFD700, #FFA500);
+    border: none;
+    border-radius: 8px;
+    color: #000;
+    font-family: 'Orbitron', sans-serif;
+    font-size: .88rem;
+    font-weight: 700;
+    letter-spacing: .07em;
+    padding: 14px;
+    cursor: pointer;
+    transition: opacity .2s;
+    margin-top: 24px;
+  }
+  .submit-btn:hover { opacity: .88; }
+  .deposit-error {
+    background: rgba(239,83,80,.12);
+    border: 1px solid rgba(239,83,80,.4);
+    border-radius: 8px;
+    color: #ef5350;
+    font-size: .83rem;
+    padding: 12px 14px;
+    margin-bottom: 20px;
+  }
+  .info-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #787b86;
+    font-size: .76rem;
+    margin-top: 16px;
+  }
+  .info-row span { color: rgba(255,215,0,.7); }
+  .divider {
+    border: none;
+    border-top: 1px solid rgba(255,215,0,.08);
+    margin: 24px 0;
+  }
+  .crypto-icons {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 6px;
+  }
+  .crypto-tag {
+    background: rgba(255,215,0,.08);
+    border: 1px solid rgba(255,215,0,.15);
+    border-radius: 4px;
+    color: rgba(255,215,0,.7);
+    font-size: .7rem;
+    font-weight: 600;
+    padding: 3px 8px;
+  }
+  .form-group { margin-bottom: 20px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="deposit-wrap">
+  <div class="deposit-card">
+    <h2>Deposit Funds</h2>
+    <p class="subtitle">Depósito instantáneo con criptomonedas · Sin comisiones · Desde $10</p>
+
+    {% if error %}
+    <div class="deposit-error">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" id="depositForm">
+      {% csrf_token %}
+
+      <!-- Amount -->
+      <div class="form-group">
+        <div class="field-label">Monto en USD</div>
+        <div class="preset-grid" id="presetGrid">
+          <button type="button" class="preset-btn" data-amount="10">$10</button>
+          <button type="button" class="preset-btn" data-amount="50">$50</button>
+          <button type="button" class="preset-btn" data-amount="100">$100</button>
+          <button type="button" class="preset-btn" data-amount="250">$250</button>
+          <button type="button" class="preset-btn" data-amount="500">$500</button>
+          <button type="button" class="preset-btn" data-amount="1000">$1,000</button>
+        </div>
+        {{ form.amount_usd }}
+        {% if form.amount_usd.errors %}
+          <div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{{ form.amount_usd.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+
+      <hr class="divider">
+
+      <!-- Crypto -->
+      <div class="form-group">
+        <div class="field-label">Criptomoneda</div>
+        {{ form.crypto_currency }}
+        {% if form.crypto_currency.errors %}
+          <div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{{ form.crypto_currency.errors|join:", " }}</div>
+        {% endif %}
+        <div class="crypto-icons" style="margin-top:10px;">
+          <span class="crypto-tag">BTC</span>
+          <span class="crypto-tag">ETH</span>
+          <span class="crypto-tag">USDT</span>
+          <span class="crypto-tag">SOL</span>
+          <span class="crypto-tag">BNB</span>
+          <span class="crypto-tag">USDC</span>
+        </div>
+      </div>
+
+      <button type="submit" class="submit-btn">CONTINUAR AL PAGO</button>
+    </form>
+
+    <div class="info-row">
+      <span>&#9432;</span>
+      Serás redirigido a NowPayments para completar el pago de forma segura.
+    </div>
+    <div class="info-row" style="margin-top:8px;">
+      <span>&#128274;</span>
+      Confirmación en ~15 minutos · Balance acreditado automáticamente.
+    </div>
+
+    <hr class="divider">
+    <div style="text-align:center;">
+      <a href="{% url 'simulator:deposit_history' %}" style="color:rgba(255,215,0,.6);font-size:.78rem;text-decoration:none;">
+        Ver historial de depósitos →
+      </a>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  const amountInput = document.getElementById('id_amount_usd');
+  document.querySelectorAll('.preset-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      amountInput.value = btn.dataset.amount;
+      document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+  });
+  amountInput.addEventListener('input', () => {
+    document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+    const v = parseFloat(amountInput.value);
+    document.querySelectorAll('.preset-btn').forEach(b => {
+      if (parseFloat(b.dataset.amount) === v) b.classList.add('active');
+    });
+  });
+</script>
+{% endblock %}
