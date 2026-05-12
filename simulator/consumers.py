@@ -157,6 +157,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
         self.timeframe = normalize_tf(q_tf_raw or "1m")
         self._price_state = {}   # ultima referencia por símbolo
         self._order_seq = 1
+        self._order_timestamps = []  # rate limiting: timestamps of recent _order_new calls
         self._positions = []
         self._agg = {}
         self._last_bar_time = {}
@@ -505,6 +506,14 @@ class TradingConsumer(AsyncWebsocketConsumer):
         qty  = float(data.get("qty",0) or 0)
         sl   = data.get("sl")
         tp   = data.get("tp")
+
+        # Rate limit: max 10 new orders per 10 seconds per connection
+        now = time.time()
+        self._order_timestamps = [t for t in self._order_timestamps if now - t < 10]
+        if len(self._order_timestamps) >= 10:
+            await self.send_json({"type": "error", "code": "rate_limited", "message": "demasiadas_ordenes"})
+            return
+        self._order_timestamps.append(now)
 
         if side not in ("buy","sell") or qty <= 0:
             await self.send_json({"type":"error","code":"invalid_order","message":"orden_invalida"})
@@ -958,7 +967,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 pos.delete()
                 log.info("[db_close] Position deleted")
 
-            TradingAccount.objects.filter(id=self._db_account_id).update(
+            TradingAccount.objects.select_for_update().filter(id=self._db_account_id).update(
                 balance=self.account["balance"], equity=self.account["equity"]
             )
             log.info("[db_close] TradingAccount balance synced to %.2f", self.account["balance"])

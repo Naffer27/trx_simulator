@@ -88,13 +88,27 @@ TEMPLATES = [
 WSGI_APPLICATION = "trx_simulator.wsgi.application"
 ASGI_APPLICATION = "trx_simulator.asgi.application"  # requerido por Channels
 
-# Base de datos
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+# Base de datos — PostgreSQL en producción, SQLite en dev sin DB_NAME
+_db_name = os.getenv("DB_NAME", "")
+if _db_name:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": _db_name,
+            "USER": os.getenv("DB_USER", "postgres"),
+            "PASSWORD": os.getenv("DB_PASSWORD", ""),
+            "HOST": os.getenv("DB_HOST", "localhost"),
+            "PORT": os.getenv("DB_PORT", "5432"),
+            "CONN_MAX_AGE": 60,
+        }
     }
-}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        }
+    }
 
 # Password validators (dev off)
 AUTH_PASSWORD_VALIDATORS = []
@@ -173,7 +187,7 @@ EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
 EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
 EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True").strip().lower() in {"1", "true", "yes"}
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "nafferphotographer@gmail.com")
-EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "gwbk juhm kmuc wmzd")  # usa .env en prod
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")  # required in .env
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 ADMINS = [("Admin", os.getenv("ADMIN_EMAIL", "nafferphotographer@gmail.com"))]
 

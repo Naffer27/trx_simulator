@@ -10,6 +10,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.mail import send_mail
 from django.conf import settings
 from django.db.models import Sum, Count, Max, Min, Q
+from django.db import transaction
 from django.urls import reverse
 import json, random, hmac, hashlib, logging
 import requests as http_requests
@@ -339,7 +340,7 @@ def trading_dashboard(request):
 
         if closed:
             direction = Decimal('1') if trade_type == "BUY" else Decimal('-1')
-            pnl = (exit_price - entry_price) * Decimal('100000') * direction
+            pnl = (exit_price - entry_price) * lot_size * direction
             pnl = pnl.quantize(Decimal('0.01'))
 
             Trade.objects.create(
@@ -606,7 +607,8 @@ def _nowpayments_create_payment(amount_usd, pay_currency, deposit_id, callback_u
 def _verify_nowpayments_ipn(body_bytes, signature):
     secret = getattr(settings, "NOWPAYMENTS_IPN_SECRET", "")
     if not secret:
-        return True  # dev: skip if secret not configured
+        logger.error("NOWPAYMENTS_IPN_SECRET not set — rejecting IPN to prevent unauthorized credits")
+        return False
     try:
         payload = json.loads(body_bytes)
         sorted_payload = json.dumps(payload, sort_keys=True, separators=(",", ":"))
@@ -712,38 +714,45 @@ def deposit_callback(request):
         logger.warning("Deposit not found for payment_id=%s order_id=%s", payment_id, order_id)
         return JsonResponse({"error": "Deposit not found"}, status=404)
 
-    old_status = deposit.status
-    deposit.status = payment_status
-    if not deposit.nowpayments_payment_id and payment_id:
-        deposit.nowpayments_payment_id = payment_id
+    with transaction.atomic():
+        # Re-fetch inside lock — prevents double-credit on concurrent IPNs
+        deposit = Deposit.objects.select_for_update().get(pk=deposit.pk)
+        old_status = deposit.status
 
-    if payment_status in Deposit.CREDITED_STATUSES and old_status not in Deposit.CREDITED_STATUSES:
-        deposit.confirmed_at = timezone.now()
-        account = TradingAccount.objects.filter(user=deposit.user).first()
-        if account:
-            new_balance = account.balance + deposit.amount_usd
-            new_equity = account.equity + deposit.amount_usd
-            LedgerEntry.objects.create(
-                account=account,
-                event_type=LedgerEntry.EV_DEPOSIT,
-                amount=deposit.amount_usd,
-                balance_after=new_balance,
-                meta={
-                    "source": "nowpayments",
-                    "payment_id": payment_id,
-                    "crypto": deposit.crypto_currency,
-                    "deposit_id": deposit.id,
-                },
-            )
-            account.balance = new_balance
-            account.equity = new_equity
-            account.save(update_fields=["balance", "equity"])
-            logger.info(
-                "Credited $%s to account #%s (deposit #%s)",
-                deposit.amount_usd, account.id, deposit.id,
-            )
+        if old_status in Deposit.CREDITED_STATUSES:
+            return JsonResponse({"ok": True})  # already credited — idempotent
 
-    deposit.save()
+        deposit.status = payment_status
+        if not deposit.nowpayments_payment_id and payment_id:
+            deposit.nowpayments_payment_id = payment_id
+
+        if payment_status in Deposit.CREDITED_STATUSES and old_status not in Deposit.CREDITED_STATUSES:
+            deposit.confirmed_at = timezone.now()
+            account = TradingAccount.objects.select_for_update().filter(user=deposit.user).first()
+            if account:
+                new_balance = account.balance + deposit.amount_usd
+                new_equity = account.equity + deposit.amount_usd
+                LedgerEntry.objects.create(
+                    account=account,
+                    event_type=LedgerEntry.EV_DEPOSIT,
+                    amount=deposit.amount_usd,
+                    balance_after=new_balance,
+                    meta={
+                        "source": "nowpayments",
+                        "payment_id": payment_id,
+                        "crypto": deposit.crypto_currency,
+                        "deposit_id": deposit.id,
+                    },
+                )
+                account.balance = new_balance
+                account.equity = new_equity
+                account.save(update_fields=["balance", "equity"])
+                logger.info(
+                    "Credited $%s to account #%s (deposit #%s)",
+                    deposit.amount_usd, account.id, deposit.id,
+                )
+
+        deposit.save()
     return JsonResponse({"ok": True})
 
 
