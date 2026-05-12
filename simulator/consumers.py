@@ -500,8 +500,8 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
     # ---------------- Órdenes / Cuenta ----------------
     async def _order_new(self, data: dict):
-        sym = data.get("symbol", self.symbol)
-        side = str(data.get("side","")).lower()
+        sym  = data.get("symbol", self.symbol)
+        side = str(data.get("side","")).lower()   # 'buy' | 'sell'  (in-memory stays lowercase)
         qty  = float(data.get("qty",0) or 0)
         sl   = data.get("sl")
         tp   = data.get("tp")
@@ -533,8 +533,12 @@ class TradingConsumer(AsyncWebsocketConsumer):
         else:
             self._create_position(sym, side, qty, px_exec, sl, tp, position_id=order_id)
 
-        await self._db_mirror_open_or_update(order_id, sym, side, qty, px_exec, sl, tp,
-                                             commission, bool(self.account.get("netting_mode", False)))
+        # DB write is best-effort — never let it abort the WS response
+        try:
+            await self._db_mirror_open_or_update(order_id, sym, side.upper(), qty, px_exec, sl, tp,
+                                                 commission, bool(self.account.get("netting_mode", False)))
+        except Exception as exc:
+            log.error("[order_new] DB mirror failed for %s %s: %s", side, sym, exc, exc_info=True)
 
         await self.send_json({"type":"order_ack","order_id":order_id,"symbol":sym,"side":side,"qty":qty,"status":"accepted"})
         await self.send_json({"type":"order_fill","order_id":order_id,"symbol":sym,"side":side,"qty":qty,"price":px_exec,
