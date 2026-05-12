@@ -92,6 +92,8 @@ class FeedManager:
         self._tasks: dict[str, asyncio.Task] = {}
         self._counts: dict[str, int] = {}
         self._prices: dict[str, float] = {}
+        self._bids:   dict[str, float] = {}
+        self._asks:   dict[str, float] = {}
 
     # --- public API ---
 
@@ -101,6 +103,12 @@ class FeedManager:
 
     def last_price(self, symbol: str) -> float:
         return self._prices.get(symbol, _base_price(symbol))
+
+    def last_bid(self, symbol: str) -> float:
+        return self._bids.get(symbol, _base_price(symbol) - _spread(symbol) / 2)
+
+    def last_ask(self, symbol: str) -> float:
+        return self._asks.get(symbol, _base_price(symbol) + _spread(symbol) / 2)
 
     async def subscribe(self, symbol: str, channel_layer, channel_name: str) -> None:
         await channel_layer.group_add(self.group_for(symbol), channel_name)
@@ -133,6 +141,8 @@ class FeedManager:
 
     async def _broadcast(self, symbol: str, cl, bid: float, ask: float, ts: int) -> None:
         _, dec = _step_dec(symbol)
+        self._bids[symbol]   = bid
+        self._asks[symbol]   = ask
         self._prices[symbol] = round((bid + ask) / 2, dec)
         await cl.group_send(
             self.group_for(symbol),
@@ -196,6 +206,8 @@ class FeedManager:
             f"?streams={mapped}@bookTicker/{mapped}@kline_1s"
         )
         log.info("[feed] Binance loop for %s (%s)", symbol, mapped)
+        consecutive_failures = 0
+        MAX_FAILURES = 3
         while True:
             try:
                 async with websockets.connect(
@@ -203,6 +215,7 @@ class FeedManager:
                     ping_interval=20, ping_timeout=20,
                     close_timeout=10, max_queue=256,
                 ) as ws:
+                    consecutive_failures = 0  # reset on successful connect
                     async for raw in ws:
                         obj = json.loads(raw)
                         stream = obj.get("stream") or ""
@@ -215,14 +228,24 @@ class FeedManager:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                log.error("[feed] Binance error %s: %r — reconnect in 5s", symbol, exc)
-                await asyncio.sleep(5)
+                consecutive_failures += 1
+                if consecutive_failures >= MAX_FAILURES:
+                    log.warning(
+                        "[feed] Binance giving up for %s after %d failures — sim fallback",
+                        symbol, consecutive_failures,
+                    )
+                    raise
+                log.error("[feed] Binance error %s: %r — reconnect in 3s (%d/%d)",
+                          symbol, exc, consecutive_failures, MAX_FAILURES)
+                await asyncio.sleep(3)
 
     async def _finnhub_loop(self, symbol: str, channel_layer) -> None:
         finnhub_sym = _finnhub_sym(symbol)
         url = f"wss://ws.finnhub.io?token={FINNHUB_API_KEY}"
         _, dec = _step_dec(symbol)
         log.info("[feed] Finnhub loop for %s (%s)", symbol, finnhub_sym)
+        consecutive_failures = 0
+        MAX_FAILURES = 3
         while True:
             try:
                 async with websockets.connect(
@@ -230,6 +253,7 @@ class FeedManager:
                     ping_interval=20, ping_timeout=20,
                     close_timeout=10, max_queue=256,
                 ) as ws:
+                    consecutive_failures = 0  # reset on successful connect
                     await ws.send(json.dumps({"type": "subscribe", "symbol": finnhub_sym}))
                     async for raw in ws:
                         msg = json.loads(raw)
@@ -247,5 +271,13 @@ class FeedManager:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                log.error("[feed] Finnhub error %s: %r — reconnect in 5s", symbol, exc)
-                await asyncio.sleep(5)
+                consecutive_failures += 1
+                if consecutive_failures >= MAX_FAILURES:
+                    log.warning(
+                        "[feed] Finnhub giving up for %s after %d failures — sim fallback",
+                        symbol, consecutive_failures,
+                    )
+                    raise
+                log.error("[feed] Finnhub error %s: %r — reconnect in 3s (%d/%d)",
+                          symbol, exc, consecutive_failures, MAX_FAILURES)
+                await asyncio.sleep(3)

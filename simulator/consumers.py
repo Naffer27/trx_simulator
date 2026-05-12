@@ -121,7 +121,9 @@ class TradingConsumer(AsyncWebsocketConsumer):
         # --- Estado inicial (memoria) ---
         self.symbol = "EUR/USD"
         self.timeframe = normalize_tf(q_tf_raw or "1m")
-        self._price_state = {}   # ultima referencia por símbolo
+        self._price_state = {}   # mid price por símbolo
+        self._bid_state   = {}   # bid (sell/close-buy) por símbolo
+        self._ask_state   = {}   # ask (buy/close-sell) por símbolo
         self._order_seq = 1
         self._order_timestamps = []  # rate limiting: timestamps of recent _order_new calls
         self._positions = []
@@ -141,8 +143,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
         # Shared feed subscription
         self._feed = get_feed_manager()
-        # Seed local price state from feed's last known price so history aligns
-        self._price_state[self.symbol] = self._feed.last_price(self.symbol)
+        self._seed_price_state(self.symbol)
         await self._feed.subscribe(self.symbol, self.channel_layer, self.channel_name)
 
         # Heartbeat — closes stale connections after 90 s of client silence
@@ -186,10 +187,11 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 await self._feed.unsubscribe(old_sym, self.channel_layer, self.channel_name)
                 self.symbol = new_sym
                 self._reset_agg(new_sym)
-                self._price_state[new_sym] = self._feed.last_price(new_sym)
+                self._seed_price_state(new_sym)
                 await self._feed.subscribe(new_sym, self.channel_layer, self.channel_name)
             hist = self.generate_history(new_sym, self.timeframe, bars=240)
             await self.send_json({"type": "history", "symbol": new_sym, "data": hist})
+            await self._send_bridge_candle(new_sym, self.timeframe)
             await self.send_json({"type": "ack", "action": "symbol_changed", "symbol": new_sym})
             await self.send_json({"type": "positions", "items": self._positions_snapshot()})
 
@@ -197,6 +199,10 @@ class TradingConsumer(AsyncWebsocketConsumer):
             tf = normalize_tf(data.get("timeframe", self.timeframe))
             self.timeframe = tf
             self._reset_agg(self.symbol)
+            self._last_bar_time.pop(self.symbol, None)
+            hist = self.generate_history(self.symbol, tf, bars=240)
+            await self.send_json({"type": "history", "symbol": self.symbol, "data": hist})
+            await self._send_bridge_candle(self.symbol, tf)
             await self.send_json({"type":"ack","action":"change_timeframe","timeframe":tf,"tf_sec":tf_seconds(tf)})
 
         elif act == "load_history":
@@ -204,6 +210,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
             tf  = normalize_tf(data.get("timeframe", self.timeframe))
             hist = self.generate_history(sym, tf, bars=240)
             await self.send_json({"type":"history","symbol":sym,"data":hist})
+            await self._send_bridge_candle(sym, tf)
 
         elif act == "account:get":
             await self._recalc_account_and_push()
@@ -239,10 +246,10 @@ class TradingConsumer(AsyncWebsocketConsumer):
         mid = event["mid"]
         ts  = event["time"]
 
-        self.set_state(symbol, mid)
+        self.set_state(symbol, bid, ask, mid)
         await self.send_json({"type": "tick", "symbol": symbol, "bid": bid, "ask": ask, "time": ts})
         await self._on_tick(symbol, mid, volume=0.0, ts=ts)
-        await self._check_tp_sl(symbol, mid)
+        await self._check_tp_sl(symbol, bid, ask)
         await self._recalc_account_and_push()
 
     # ---------------- Heartbeat ----------------
@@ -308,6 +315,22 @@ class TradingConsumer(AsyncWebsocketConsumer):
         })
 
     # ---------------- Historia sintética ----------------
+
+    async def _send_bridge_candle(self, symbol: str, timeframe: str) -> None:
+        """Send a flat candle at the CURRENT live bucket so the price line
+        anchors to the real feed price immediately after history loads,
+        eliminating the visual gap between synthetic history and live ticks."""
+        px = self._price_state.get(symbol, base_price_for(symbol))
+        _, dec = step_decimals_for(symbol)
+        tf_sec = tf_seconds(timeframe)
+        now = int(datetime.utcnow().timestamp())
+        bucket = (now // tf_sec) * tf_sec
+        px = round(px, dec)
+        await self.send_json({
+            "type": "candle_update",
+            "symbol": symbol,
+            "data": {"time": bucket, "open": px, "high": px, "low": px, "close": px},
+        })
     def generate_history(self, symbol, timeframe, bars=200):
         base = self._price_state.get(symbol, base_price_for(symbol))
         step, dec = step_decimals_for(symbol)
@@ -315,28 +338,59 @@ class TradingConsumer(AsyncWebsocketConsumer):
         now = int(datetime.utcnow().timestamp())
         tf_sec = tf_seconds(timeframe)
 
-        series, price = [], base
-        rnd = random.Random(symbol+timeframe)
-        for i in range(bars, 0, -1):
-            ts = now - i * tf_sec
-            o = price + (rnd.random()-0.5)*d
-            c = o     + (rnd.random()-0.5)*d
-            h = max(o,c) + abs(rnd.random()-0.5)*d*0.6
-            l = min(o,c) - abs(rnd.random()-0.5)*d*0.6
-            price = c
-            series.append({"time":ts,"open":round(o,dec),"high":round(h,dec),
-                           "low":round(l,dec),"close":round(c,dec)})
-        self.set_state(symbol, price)
+        # Align to canonical period boundaries so bars sit at proper
+        # LightweightCharts timestamps (e.g. 12:30:00, 12:45:00 for 15m).
+        # current_bucket is the OPEN time of the still-open live candle;
+        # history fills the bars BEFORE it so there is no time overlap.
+        current_bucket = (now // tf_sec) * tf_sec
+
+        # Walk backward from current live price so the last history bar's
+        # close = base, keeping the price continuous with incoming live ticks.
+        series = []
+        price = base
+        rnd = random.Random(symbol + timeframe)
+        for i in range(1, bars + 1):
+            ts = current_bucket - i * tf_sec      # canonical period starts
+            c = price
+            o = c + (rnd.random() - 0.5) * d
+            h = max(o, c) + abs(rnd.random() - 0.5) * d * 0.6
+            l = min(o, c) - abs(rnd.random() - 0.5) * d * 0.6
+            price = o
+            series.append({"time": ts, "open": round(o, dec), "high": round(h, dec),
+                           "low": round(l, dec), "close": round(c, dec)})
+        series.reverse()  # oldest first for LightweightCharts
         return series
 
     # ---------------- Estado de precio ----------------
-    def ensure_state(self, symbol):
-        if symbol not in self._price_state:
-            self._price_state[symbol] = base_price_for(symbol)
-        return self._price_state[symbol]
 
-    def set_state(self, symbol, value):
-        self._price_state[symbol] = float(value)
+    def _seed_price_state(self, symbol: str) -> None:
+        """Seed bid/ask/mid from FeedManager on connect / symbol change."""
+        self._bid_state[symbol]   = self._feed.last_bid(symbol)
+        self._ask_state[symbol]   = self._feed.last_ask(symbol)
+        self._price_state[symbol] = self._feed.last_price(symbol)
+
+    def set_state(self, symbol, bid: float, ask: float, mid: float):
+        self._bid_state[symbol]   = float(bid)
+        self._ask_state[symbol]   = float(ask)
+        self._price_state[symbol] = float(mid)
+
+    def ensure_state(self, symbol) -> float:
+        """Mid price — for candle aggregation and chart line only."""
+        return self._price_state.get(symbol, base_price_for(symbol))
+
+    def get_bid(self, symbol) -> float:
+        return self._bid_state.get(symbol, base_price_for(symbol))
+
+    def get_ask(self, symbol) -> float:
+        return self._ask_state.get(symbol, base_price_for(symbol))
+
+    def exec_price(self, symbol: str, side: str) -> float:
+        """Fill price when OPENING: buy fills at ask, sell fills at bid."""
+        return self.get_ask(symbol) if side == "buy" else self.get_bid(symbol)
+
+    def close_price(self, symbol: str, side: str) -> float:
+        """Fill price when CLOSING: buy closes at bid, sell closes at ask."""
+        return self.get_bid(symbol) if side == "buy" else self.get_ask(symbol)
 
     # ---------------- Órdenes / Cuenta ----------------
     async def _order_new(self, data: dict):
@@ -366,10 +420,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
             return
 
         dec = step_decimals_for(sym)[1]
-        mid = self.ensure_state(sym)
-        spr = spread_for(sym)
-        px_exec = mid + (spr/2.0) if side=="buy" else mid - (spr/2.0)
-        px_exec = round(px_exec, dec)
+        px_exec = round(self.exec_price(sym, side), dec)
 
         commission = self.commission_for(sym, px_exec*qty)
         self.account["balance"] -= commission
@@ -452,7 +503,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
             if id_match and sym_match and not closed:
                 sym  = p["symbol"]                    # always use the position's own symbol
                 dec  = step_decimals_for(sym)[1]
-                last = round(self.ensure_state(sym), dec)
+                last = round(self.close_price(sym, p["side"]), dec)
 
                 realized = self._realized_pnl_for(p, last)
                 self.account["balance"] += realized
@@ -490,8 +541,8 @@ class TradingConsumer(AsyncWebsocketConsumer):
     def _pretrade_check(self, symbol, side, qty):
         if qty < self.min_qty_for(symbol): return False, "min_qty_violation"
         lev = max(1, int(self.account.get("leverage", 1)))
-        mid = float(self.ensure_state(symbol))
-        est_margin = abs(mid*qty)/lev
+        entry_px = self.exec_price(symbol, side)
+        est_margin = abs(entry_px * qty) / lev
         equity = self.account["balance"] + self._unrealized_pnl_total()
         if est_margin > (equity - self._margin_used_total()):
             return False, "insufficient_margin"
@@ -520,10 +571,16 @@ class TradingConsumer(AsyncWebsocketConsumer):
     def _positions_snapshot(self): return [dict(p) for p in self._positions]
 
     def _unrealized_pnl_total(self):
-        return sum(self._unrealized_pnl_for(p, self.ensure_state(p["symbol"])) for p in self._positions)
+        total = 0.0
+        for p in self._positions:
+            px = self.close_price(p["symbol"], p["side"])
+            total += self._unrealized_pnl_for(p, px)
+        return total
 
-    def _unrealized_pnl_for(self, pos, last_price):
-        return (last_price - pos["avg"]) * pos["qty"] if pos["side"]=="buy" else (pos["avg"] - last_price) * pos["qty"]
+    def _unrealized_pnl_for(self, pos, close_px):
+        if pos["side"] == "buy":
+            return (close_px - pos["avg"]) * pos["qty"]
+        return (pos["avg"] - close_px) * pos["qty"]
 
     def _realized_pnl_for(self, pos, close_price): return self._unrealized_pnl_for(pos, close_price)
 
@@ -531,8 +588,8 @@ class TradingConsumer(AsyncWebsocketConsumer):
         lev = max(1, int(self.account.get("leverage", 1)))
         total = 0.0
         for p in self._positions:
-            notional = abs(self.ensure_state(p["symbol"]) * p["qty"])
-            total += notional/lev
+            notional = abs(self.exec_price(p["symbol"], p["side"]) * p["qty"])
+            total += notional / lev
         return total
 
     async def _recalc_account_and_push(self):
@@ -558,7 +615,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
             "netting_mode":bool(self.account.get("netting_mode", False)),
         })
 
-    async def _check_tp_sl(self, symbol: str, last_price: float):
+    async def _check_tp_sl(self, symbol: str, bid: float, ask: float):
         dec = step_decimals_for(symbol)[1]
         remaining, closed = [], []
         now = int(time.time())
@@ -568,28 +625,33 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 remaining.append(p); continue
 
             side = p["side"]; sl = p.get("sl"); tp = p.get("tp")
+            # BUY: triggers checked against BID (the price you'd exit at)
+            # SELL: triggers checked against ASK
+            trigger_px = bid if side == "buy" else ask
+            fill_px    = bid if side == "buy" else ask  # same: close at bid/ask
 
             trail = p.get("trail_dist")
             if trail and trail > 0:
-                if side=="buy":
-                    p["best"] = max(p.get("best", p["avg"]), last_price)
+                if side == "buy":
+                    p["best"] = max(p.get("best", p["avg"]), bid)
                     p["sl"] = round(p["best"] - trail, dec)
                     sl = p["sl"]
                 else:
-                    p["best"] = min(p.get("best", p["avg"]), last_price)
+                    p["best"] = min(p.get("best", p["avg"]), ask)
                     p["sl"] = round(p["best"] + trail, dec)
                     sl = p["sl"]
 
-            sl_hit = sl is not None and ((side=="buy" and last_price<=sl) or (side=="sell" and last_price>=sl))
-            tp_hit = tp is not None and ((side=="buy" and last_price>=tp) or (side=="sell" and last_price<=tp))
+            sl_hit = sl is not None and ((side=="buy" and trigger_px<=sl) or (side=="sell" and trigger_px>=sl))
+            tp_hit = tp is not None and ((side=="buy" and trigger_px>=tp) or (side=="sell" and trigger_px<=tp))
 
             if sl_hit or tp_hit:
-                realized = self._realized_pnl_for(p, last_price)
+                close_px = round(fill_px, dec)
+                realized = self._realized_pnl_for(p, close_px)
                 self.account["balance"] += realized
                 closed.append({"id":p["id"],"symbol":symbol,"side":side,"qty":p["qty"],"avg":p["avg"],
-                               "close_px":round(last_price,dec),"reason":"tp" if tp_hit else "sl",
+                               "close_px":close_px,"reason":"tp" if tp_hit else "sl",
                                "realized_pnl":realized,"ts":now})
-                await self._db_mirror_close_position(p, close_px=last_price, reason=("tp" if tp_hit else "sl"),
+                await self._db_mirror_close_position(p, close_px=close_px, reason=("tp" if tp_hit else "sl"),
                                                      realized_pnl=realized)
             else:
                 remaining.append(p)
