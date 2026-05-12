@@ -7,15 +7,7 @@ from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.db import transaction
 
-try:
-    import websockets  # pip install websockets
-except Exception:  # si no está, haremos fallback a sim
-    websockets = None
-
-# (por si luego enrutas por registry; hoy no se usan)
-from market_data.normalizer import norm_symbol, norm_tf  # noqa
-from market_data.provider_registry import provider_for   # noqa
-
+from market_data.feeds import get_feed_manager
 from .models import TradingAccount, Position, Trade, LedgerEntry
 
 log = logging.getLogger("simulator.ws")
@@ -70,19 +62,6 @@ def base_price_for(symbol: str):
         "ETHUSD": 3400.0,
     }.get(symbol, 1.17000)
 
-def map_symbol_for_binance(symbol: str) -> str | None:
-    s = symbol.replace("/","").upper()
-    m = {"BTCUSD":"BTCUSDT","ETHUSD":"ETHUSDT"}
-    return m.get(s)
-
-def finnhub_symbol_for(symbol: str) -> str:
-    s = symbol.upper()
-    if s in ("BTCUSD","ETHUSD"):  # por si luego quieres crypto
-        return f"BINANCE:{s}T"
-    if "/" in s:
-        a,b = s.split("/",1)
-        return f"FX:{a}{b}"
-    return s
 
 # ======================================================
 #                       CONSUMER
@@ -93,8 +72,6 @@ class TradingConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         self._db_account_id = None
         self._last_db_sync = 0.0
-        self._tick_interval = DEFAULT_TICK_INTERVAL
-        self._force_provider = (os.getenv("FORCE_PROVIDER","") or "").lower()
 
         user = self.scope.get("user")
         is_auth = bool(user and getattr(user, "is_authenticated", False))
@@ -104,20 +81,9 @@ class TradingConsumer(AsyncWebsocketConsumer):
             qs = parse_qs(self.scope.get("query_string", b"").decode())
             q_account_raw = qs.get("account",[None])[0] or qs.get("account_id",[None])[0]
             q_account = int(q_account_raw) if q_account_raw else None
-
-            q_interval_raw = qs.get("interval",[None])[0]
-            if q_interval_raw:
-                self._tick_interval = max(0.05, min(5.0, float(q_interval_raw)))
-
-            q_provider_raw = qs.get("provider",[None])[0]
-            if q_provider_raw:
-                self._force_provider = str(q_provider_raw).lower()
-
-            self._token = (qs.get("token",[None])[0] or "").strip()
             q_tf_raw = qs.get("tf",[None])[0] or qs.get("timeframe",[None])[0]
         except Exception:
             q_account = None
-            self._token = ""
             q_tf_raw = None
 
         uname = getattr(user, "username", None)
@@ -173,12 +139,15 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
         await self._maybe_hydrate_from_db()
 
-        self.stream_task = None
-        self.binance_task = None
-        self.finnhub_task = None
-        self._provider = "sim"
+        # Shared feed subscription
+        self._feed = get_feed_manager()
+        # Seed local price state from feed's last known price so history aligns
+        self._price_state[self.symbol] = self._feed.last_price(self.symbol)
+        await self._feed.subscribe(self.symbol, self.channel_layer, self.channel_name)
 
-        await self.start_stream_for(self.symbol)
+        # Heartbeat — closes stale connections after 90 s of client silence
+        self._last_msg_ts = time.time()
+        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
         await self.send_positions_snapshot()
         await self._recalc_account_and_push()
@@ -186,10 +155,18 @@ class TradingConsumer(AsyncWebsocketConsumer):
                               "timeframe":self.timeframe,"tf_sec":tf_seconds(self.timeframe)})
 
     async def disconnect(self, close_code):
-        await self.stop_all_streams()
+        # Cancel heartbeat
+        hb = getattr(self, "_heartbeat_task", None)
+        if hb and not hb.done():
+            hb.cancel()
+        # Unsubscribe from shared feed
+        feed = getattr(self, "_feed", None)
+        if feed:
+            await feed.unsubscribe(self.symbol, self.channel_layer, self.channel_name)
 
     # ---------------- Mensajes entrantes ----------------
     async def receive(self, text_data: str):
+        self._last_msg_ts = time.time()
         try:
             data = json.loads(text_data)
         except Exception:
@@ -199,23 +176,21 @@ class TradingConsumer(AsyncWebsocketConsumer):
         act = data.get("action")
 
         if act == "ping":
+            await self.send_json({"type": "pong", "ts": int(time.time())})
             return
 
         if act == "change_symbol":
-            sym = data.get("symbol", self.symbol)
-            self.symbol = sym
-            self._reset_agg(sym)
-            await self.restart_stream_for(sym)
-            # Push history immediately so the chart resets before live ticks arrive.
-            # This eliminates the 180 ms debounce gap where old-symbol candles land
-            # on the new-symbol chart.
-            hist = self.generate_history(sym, self.timeframe, bars=240)
-            await self.send_json({"type": "history", "symbol": sym, "data": hist})
-            await self.send_json({
-                "type": "ack", "action": "symbol_changed",
-                "symbol": sym, "provider": self._provider,
-            })
-            # Re-send positions so the client redraws lines for the active symbol.
+            new_sym = data.get("symbol", self.symbol)
+            old_sym = self.symbol
+            if new_sym != old_sym:
+                await self._feed.unsubscribe(old_sym, self.channel_layer, self.channel_name)
+                self.symbol = new_sym
+                self._reset_agg(new_sym)
+                self._price_state[new_sym] = self._feed.last_price(new_sym)
+                await self._feed.subscribe(new_sym, self.channel_layer, self.channel_name)
+            hist = self.generate_history(new_sym, self.timeframe, bars=240)
+            await self.send_json({"type": "history", "symbol": new_sym, "data": hist})
+            await self.send_json({"type": "ack", "action": "symbol_changed", "symbol": new_sym})
             await self.send_json({"type": "positions", "items": self._positions_snapshot()})
 
         elif act == "change_timeframe":
@@ -252,177 +227,41 @@ class TradingConsumer(AsyncWebsocketConsumer):
             await self.send_json({"type":"ack","ok":True,"action":act})
 
     # ---------------- Streams ----------------
-    async def restart_stream_for(self, symbol: str):
-        await self.stop_all_streams()
-        self._reset_agg(symbol)
-        await self.start_stream_for(symbol)
+    # ---------------- Shared feed handler ----------------
 
-    async def stop_all_streams(self):
-        for task in (self.stream_task, self.binance_task, self.finnhub_task):
-            if task and not task.done():
-                task.cancel()
-                try: await task
-                except asyncio.CancelledError: pass
-                except Exception: pass
-        self.stream_task = self.binance_task = self.finnhub_task = None
+    async def price_tick(self, event: dict):
+        """Receives broadcast ticks from FeedManager via channel layer group."""
+        symbol = event.get("symbol")
+        if symbol != self.symbol:
+            return
+        bid = event["bid"]
+        ask = event["ask"]
+        mid = event["mid"]
+        ts  = event["time"]
 
-    async def start_stream_for(self, symbol: str):
-        # Decide proveedor
-        if self._force_provider in ("sim","binance","finnhub"):
-            provider = self._force_provider
-        else:
-            if symbol in ("BTCUSD","ETHUSD"):
-                provider = "binance"
-            elif (symbol in ("EUR/USD","GBP/USD","USD/JPY","AUD/USD") or symbol.endswith("/JPY")) and (self._token or FINNHUB_API_KEY):
-                provider = "finnhub"
-            else:
-                provider = "sim"
-
-        self._provider = provider
-        self._reset_agg(symbol)
-        log.warning("[provider] %s for %s (interval=%ss)", provider, symbol, self._tick_interval)
-        await self.send_json({"type":"info","message":f"provider={provider}"})
-
-        if provider == "binance":
-            if not websockets:
-                await self.send_json({"type":"warn","message":"websockets not installed → sim"})
-                provider = self._provider = "sim"
-            else:
-                self.binance_task = asyncio.create_task(self.binance_stream(symbol))
-                return
-
-        if provider == "finnhub":
-            if not websockets:
-                await self.send_json({"type":"warn","message":"websockets not installed → sim"})
-                provider = self._provider = "sim"
-            else:
-                self.finnhub_task = asyncio.create_task(self.finnhub_stream(symbol))
-                return
-
-        # simulador
-        self.stream_task = asyncio.create_task(self.stream_loop(symbol))
-
-    async def stream_loop(self, symbol: str):
-        while True:
-            await self.push_tick(symbol)
-            await asyncio.sleep(self._tick_interval)
-
-    async def push_tick(self, symbol: str):
-        step, dec = step_decimals_for(symbol)
-        mid = self.ensure_state(symbol)
-
-        # camina el precio
-        mid += (random.random()-0.5)*drift_for(symbol)
         self.set_state(symbol, mid)
-
-        spr = spread_for(symbol)
-        bid = round(mid - spr/2, dec)
-        ask = round(mid + spr/2, dec)
-        ts  = int(datetime.utcnow().timestamp())
-
-        # tick (lo que lee el top SELL/BUY)
-        await self.send_json({"type":"tick","symbol":symbol,"bid":bid,"ask":ask,"time":ts})
-
-        # agregar a vela actual
-        await self._on_tick(symbol, (bid+ask)/2, volume=random.randint(200,1200), ts=ts)
-
-        await self._check_tp_sl(symbol, (bid+ask)/2)
+        await self.send_json({"type": "tick", "symbol": symbol, "bid": bid, "ask": ask, "time": ts})
+        await self._on_tick(symbol, mid, volume=0.0, ts=ts)
+        await self._check_tp_sl(symbol, mid)
         await self._recalc_account_and_push()
 
-    async def binance_stream(self, symbol: str):
-        mapped = map_symbol_for_binance(symbol)
-        if not mapped:
-            await self.send_json({"type":"warn","message":f"{symbol} not on Binance spot → sim"})
-            self._provider = "sim"
-            self.stream_task = asyncio.create_task(self.stream_loop(symbol))
-            return
+    # ---------------- Heartbeat ----------------
 
-        # bookTicker (bid/ask) + kline_1s (velas)
-        url = f"wss://stream.binance.com:9443/stream?streams={mapped}@bookTicker/{mapped}@kline_1s"
-        try:
-            async with websockets.connect(url, ping_interval=20, ping_timeout=20, close_timeout=10, max_queue=256) as ws:
-                await self.send_json({"type":"info","message":"binance_ws_connected"})
-                async for raw in ws:
-                    obj = json.loads(raw)
-                    stream = obj.get("stream") or ""
-                    data = obj.get("data") or {}
-
-                    # bid/ask
-                    if stream.endswith("@bookTicker"):
-                        try:
-                            b = float(data.get("b") or 0.0); a = float(data.get("a") or 0.0)
-                            if a > b > 0:
-                                ts = int(time.time())
-                                await self.send_json({"type":"tick","symbol":symbol,"bid":b,"ask":a,"time":ts})
-                                await self._on_tick(symbol, (a+b)/2, volume=0.0, ts=ts)
-                                await self._check_tp_sl(symbol, (a+b)/2)
-                        except Exception:
-                            pass
-
-                    # vela 1s directa (también actualiza)
-                    if "@kline_" in stream:
-                        k = data.get("k") or {}
-                        t = int((k.get("t") or 0)//1000)
-                        o = float(k.get("o") or 0.0); h = float(k.get("h") or 0.0)
-                        l = float(k.get("l") or 0.0); c = float(k.get("c") or 0.0)
-                        if t and o and h and l and c:
-                            await self._on_tick(symbol, c, volume=float(k.get("v") or 0.0), ts=t)
-                            await self._check_tp_sl(symbol, c)
-
-                    if int(time.time()) % 3 == 0:
-                        await self._recalc_account_and_push()
-
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            msg = f"binance_stream error: {e!r} → fallback sim"
-            log.error(msg)
-            await self.send_json({"type":"warn","message":msg})
-            self._provider = "sim"
-            self.stream_task = asyncio.create_task(self.stream_loop(symbol))
-
-    async def finnhub_stream(self, symbol: str):
-        token = self._token or FINNHUB_API_KEY
-        if not token:
-            await self.send_json({"type":"warn","message":"No FINNHUB_API_KEY → sim"})
-            self._provider = "sim"
-            self.stream_task = asyncio.create_task(self.stream_loop(symbol))
-            return
-
-        finnhub_sym = finnhub_symbol_for(symbol)
-        url = f"wss://ws.finnhub.io?token={token}"
-        try:
-            async with websockets.connect(url, ping_interval=20, ping_timeout=20, close_timeout=10, max_queue=256) as ws:
-                await ws.send(json.dumps({"type":"subscribe","symbol":finnhub_sym}))
-                await self.send_json({"type":"info","message":f"finnhub_ws_connected {finnhub_sym}"})
-
-                async for raw in ws:
-                    msg = json.loads(raw)
-                    if msg.get("type") != "trade":
-                        continue
-
-                    for t in msg.get("data", []):
-                        px = float(t.get("p") or 0.0)
-                        if not px: continue
-                        ts = int((t.get("t") or time.time()*1000)/1000)
-                        # sintetiza bid/ask alrededor del trade
-                        spr = spread_for(symbol)
-                        b = px - spr/2; a = px + spr/2
-                        await self.send_json({"type":"tick","symbol":symbol,"bid":b,"ask":a,"time":ts})
-                        await self._on_tick(symbol, px, volume=float(t.get("v") or 0.0), ts=ts)
-                        await self._check_tp_sl(symbol, px)
-
-                    if int(time.time()) % 3 == 0:
-                        await self._recalc_account_and_push()
-
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            msg = f"finnhub_stream error: {e!r} → fallback sim"
-            log.error(msg)
-            await self.send_json({"type":"warn","message":msg})
-            self._provider = "sim"
-            self.stream_task = asyncio.create_task(self.stream_loop(symbol))
+    async def _heartbeat_loop(self):
+        """Send server ping every 30 s; close stale connections after 90 s silence."""
+        PING_INTERVAL = 30
+        STALE_TIMEOUT = 90
+        while True:
+            await asyncio.sleep(PING_INTERVAL)
+            now = time.time()
+            if now - self._last_msg_ts > STALE_TIMEOUT:
+                log.warning("[heartbeat] stale connection for account=%s — closing", self._db_account_id)
+                await self.close()
+                return
+            try:
+                await self.send_json({"type": "heartbeat", "ts": int(now)})
+            except Exception:
+                return
 
     # ---------------- Agregador de velas ----------------
     def _reset_agg(self, symbol: str):
@@ -967,10 +806,29 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 pos.delete()
                 log.info("[db_close] Position deleted")
 
-            TradingAccount.objects.select_for_update().filter(id=self._db_account_id).update(
-                balance=self.account["balance"], equity=self.account["equity"]
+            account = (
+                TradingAccount.objects.select_for_update()
+                .filter(id=self._db_account_id)
+                .first()
             )
-            log.info("[db_close] TradingAccount balance synced to %.2f", self.account["balance"])
+            if account:
+                account.balance = Decimal(str(self.account["balance"]))
+                account.equity  = Decimal(str(self.account["equity"]))
+                account.save(update_fields=["balance", "equity"])
+                log.info("[db_close] TradingAccount balance synced to %.2f", self.account["balance"])
+
+                # Risk engine — check violations and update trader score
+                from .risk_engine import check_and_enforce_risk, update_trader_score
+                violations = check_and_enforce_risk(account)
+                if violations:
+                    log.warning(
+                        "[risk] account #%s suspended: %s",
+                        self._db_account_id,
+                        [v.violation_type for v in violations],
+                    )
+                    # Sync suspension back to in-memory state
+                    self.account["status"] = "Suspendido"
+                update_trader_score(account)
 
     # ---------------- Util: enviar JSON ----------------
     async def send_json(self, payload: dict):

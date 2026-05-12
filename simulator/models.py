@@ -25,6 +25,7 @@ class TradingAccount(models.Model):
     # Saldos / métricas
     balance = models.DecimalField(max_digits=12, decimal_places=2, default=10000.00)
     equity = models.DecimalField(max_digits=12, decimal_places=2, default=10000.00)
+    peak_balance = models.DecimalField(max_digits=12, decimal_places=2, default=10000.00)
     drawdown = models.DecimalField(max_digits=5, decimal_places=2, default=0.00)
     profit_target = models.DecimalField(max_digits=12, decimal_places=2, default=800.00)
     max_drawdown = models.DecimalField(max_digits=12, decimal_places=2, default=1200.00)
@@ -249,3 +250,109 @@ class Purchase(models.Model):
     def __str__(self):
         estado = "usado" if self.used else "nuevo"
         return f"{self.user} – {self.code} ({estado})"
+
+
+# ─────────────────────────────────────────────
+# Risk Engine models
+# ─────────────────────────────────────────────
+
+class RiskRule(models.Model):
+    """Per-account risk limits. Auto-created with tier defaults if missing."""
+    account = models.OneToOneField(
+        TradingAccount, on_delete=models.CASCADE, related_name="risk_rule"
+    )
+    max_daily_loss_pct = models.DecimalField(max_digits=5, decimal_places=2, default=5.00)
+    max_drawdown_pct   = models.DecimalField(max_digits=5, decimal_places=2, default=10.00)
+    max_lot_size       = models.DecimalField(max_digits=8, decimal_places=2, default=5.00)
+    max_open_positions = models.PositiveIntegerField(default=10)
+    max_exposure_usd   = models.DecimalField(max_digits=12, decimal_places=2, default=5000.00)
+    consistency_min_trades = models.PositiveIntegerField(default=5)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"RiskRule #{self.account_id} dd={self.max_drawdown_pct}% daily={self.max_daily_loss_pct}%"
+
+
+class DrawdownSnapshot(models.Model):
+    """Daily balance + drawdown snapshot. One row per account per calendar day."""
+    account          = models.ForeignKey(TradingAccount, on_delete=models.CASCADE, related_name="dd_snapshots")
+    date             = models.DateField()
+    balance_start    = models.DecimalField(max_digits=12, decimal_places=2)
+    balance_end      = models.DecimalField(max_digits=12, decimal_places=2)
+    daily_pnl        = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    daily_pnl_pct    = models.DecimalField(max_digits=7,  decimal_places=2, default=0)
+    peak_balance     = models.DecimalField(max_digits=12, decimal_places=2)
+    drawdown_from_peak = models.DecimalField(max_digits=7, decimal_places=2, default=0)
+
+    class Meta:
+        unique_together = [("account", "date")]
+        indexes = [models.Index(fields=["account", "date"])]
+        ordering = ["-date"]
+
+    def __str__(self):
+        return f"DD #{self.account_id} {self.date} pnl={self.daily_pnl}"
+
+
+class TradingViolation(models.Model):
+    """Recorded whenever a risk rule is breached."""
+    MAX_DRAWDOWN   = "MAX_DRAWDOWN"
+    MAX_DAILY_LOSS = "MAX_DAILY_LOSS"
+    MAX_LOT_SIZE   = "MAX_LOT_SIZE"
+    MAX_EXPOSURE   = "MAX_EXPOSURE"
+    RATE_LIMITED   = "RATE_LIMITED"
+    MARTINGALE     = "MARTINGALE_PATTERN"
+
+    VIOLATION_CHOICES = [
+        (MAX_DRAWDOWN,   "Max Drawdown"),
+        (MAX_DAILY_LOSS, "Max Daily Loss"),
+        (MAX_LOT_SIZE,   "Max Lot Size"),
+        (MAX_EXPOSURE,   "Max Exposure"),
+        (RATE_LIMITED,   "Rate Limited"),
+        (MARTINGALE,     "Martingale Pattern"),
+    ]
+
+    account            = models.ForeignKey(TradingAccount, on_delete=models.CASCADE, related_name="violations")
+    violation_type     = models.CharField(max_length=24, choices=VIOLATION_CHOICES)
+    value_at_violation = models.DecimalField(max_digits=12, decimal_places=4)
+    limit_value        = models.DecimalField(max_digits=12, decimal_places=4)
+    meta               = models.JSONField(null=True, blank=True)
+    created_at         = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["account", "created_at"])]
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Violation #{self.account_id} {self.violation_type} {self.value_at_violation}"
+
+
+class TraderScore(models.Model):
+    """Current trader classification + metrics. Updated after each trade close."""
+    NORMAL      = "NORMAL"
+    RISKY       = "RISKY"
+    MARTINGALE  = "MARTINGALE"
+    TOXIC       = "TOXIC"
+    CONSISTENT  = "CONSISTENT"
+    ELITE       = "ELITE"
+
+    CLASS_CHOICES = [
+        (NORMAL,     "Normal"),
+        (RISKY,      "Risky"),
+        (MARTINGALE, "Martingale"),
+        (TOXIC,      "Toxic"),
+        (CONSISTENT, "Consistent"),
+        (ELITE,      "Elite"),
+    ]
+
+    account           = models.OneToOneField(TradingAccount, on_delete=models.CASCADE, related_name="trader_score")
+    trader_class      = models.CharField(max_length=12, choices=CLASS_CHOICES, default=NORMAL)
+    win_rate          = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    avg_lot_size      = models.DecimalField(max_digits=10, decimal_places=4, default=0)
+    martingale_rate   = models.DecimalField(max_digits=5, decimal_places=3, default=0)
+    profit_factor     = models.DecimalField(max_digits=8, decimal_places=2, default=0)
+    consistency_score = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    last_evaluated    = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"Score #{self.account_id} {self.trader_class} win={self.win_rate}%"
