@@ -1,18 +1,65 @@
 # simulator/admin.py
 from django.contrib import admin, messages
 from django.utils.translation import gettext_lazy as _
-from django.db.models import Sum, Q
+from django.db.models import Sum, Count, Q
 from django.urls import path, reverse
 from django.shortcuts import redirect, render
 from django.utils.timezone import now
 from django.utils.html import format_html
 
-from .models import TradingAccount, Position, Trade, LedgerEntry, Purchase, Deposit
+from .models import (
+    TradingAccount, Position, Trade, LedgerEntry,
+    Purchase, Deposit,
+    RiskRule, DrawdownSnapshot, TradingViolation, TraderScore,
+    BrokerSnapshot, SymbolExposure, TraderClassExposure,
+)
 
 
-# ==========================
-# Inlines (en la vista de la cuenta)
-# ==========================
+# ─────────────────────────────────────────────
+# Color helpers
+# ─────────────────────────────────────────────
+
+_STATUS_COLORS = {
+    "Activo":     ("#1a472a", "#27ae60"),   # bg, fg
+    "Suspendido": ("#4a1a00", "#e67e22"),
+    "Violado":    ("#4a0000", "#e74c3c"),
+    "Cerrado":    ("#1a1a1a", "#888888"),
+    "Completado": ("#0a2a4a", "#3498db"),
+}
+
+_CLASS_COLORS = {
+    "ELITE":      ("#0a2a1a", "#00e676"),
+    "CONSISTENT": ("#0a2218", "#26a69a"),
+    "NORMAL":     ("#1a1a2a", "#7986cb"),
+    "RISKY":      ("#2a1a00", "#ffa726"),
+    "MARTINGALE": ("#2a0a00", "#ff7043"),
+    "TOXIC":      ("#2a0000", "#ef5350"),
+    "GAMBLER":    ("#2a1f00", "#f1c40f"),
+    "SCALPER":    ("#001a2a", "#29b6f6"),
+}
+
+_VIOLATION_COLORS = {
+    "MAX_DRAWDOWN":       "#e74c3c",
+    "MAX_DAILY_LOSS":     "#e67e22",
+    "MAX_LOT_SIZE":       "#f1c40f",
+    "MAX_EXPOSURE":       "#e74c3c",
+    "RATE_LIMITED":       "#3498db",
+    "MARTINGALE_PATTERN": "#ff7043",
+}
+
+
+def _badge(text, bg, fg):
+    return format_html(
+        '<span style="background:{};color:{};padding:2px 10px;border-radius:12px;'
+        'font-size:11px;font-weight:700;white-space:nowrap">{}</span>',
+        bg, fg, text,
+    )
+
+
+# ─────────────────────────────────────────────
+# Inlines
+# ─────────────────────────────────────────────
+
 class PositionInline(admin.TabularInline):
     model = Position
     extra = 0
@@ -26,18 +73,227 @@ class TradeInline(admin.TabularInline):
     extra = 0
     fields = (
         "symbol", "trade_type", "lot_size",
-        "entry_price", "exit_price",
-        "stop_loss", "take_profit",
-        "profit_loss", "opened_at", "closed_at",
+        "entry_price", "exit_price", "profit_loss", "opened_at", "closed_at",
     )
     readonly_fields = ("opened_at", "closed_at")
     show_change_link = True
+    ordering = ("-closed_at",)
+
+    def get_queryset(self, request):
+        # Do NOT slice here — Django needs to add .filter(account=parent) after
+        return super().get_queryset(request).order_by("-closed_at")
 
 
-# ==========================
-# Actions útiles (TradingAccount)
-# ==========================
-@admin.action(description="Resetear balance a balance inicial del tier")
+class RiskRuleInline(admin.StackedInline):
+    model = RiskRule
+    extra = 0
+    can_delete = False
+    verbose_name = "Risk Rule"
+    verbose_name_plural = "Risk Rule"
+    fields = (
+        ("max_daily_loss_pct", "max_drawdown_pct"),
+        ("max_lot_size", "max_open_positions"),
+        "max_exposure_usd",
+    )
+
+
+class ViolationInline(admin.TabularInline):
+    model = TradingViolation
+    extra = 0
+    can_delete = False
+    readonly_fields = ("violation_type", "value_at_violation", "limit_value", "created_at", "meta")
+    fields = ("violation_type", "value_at_violation", "limit_value", "created_at")
+    ordering = ("-created_at",)
+    max_num = 10
+    verbose_name = "Recent Violation"
+    verbose_name_plural = "Recent Violations (last 10)"
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).order_by("-created_at")
+
+
+class DrawdownSnapshotInline(admin.TabularInline):
+    model = DrawdownSnapshot
+    extra = 0
+    can_delete = False
+    readonly_fields = ("date", "balance_start", "balance_end", "daily_pnl",
+                       "daily_pnl_pct", "peak_balance", "drawdown_from_peak")
+    fields = ("date", "balance_start", "balance_end", "daily_pnl",
+              "daily_pnl_pct", "drawdown_from_peak")
+    ordering = ("-date",)
+    max_num = 0
+    verbose_name = "Drawdown Snapshot"
+    verbose_name_plural = "Drawdown History (last 14 days)"
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).order_by("-date")
+
+
+class TraderIntelligenceInline(admin.StackedInline):
+    model = TraderScore
+    extra = 0
+    can_delete = False
+    verbose_name = "Trader Intelligence"
+    verbose_name_plural = "Trader Intelligence"
+    readonly_fields = ("intelligence_panel",)
+    fields = ("intelligence_panel",)
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    @admin.display(description="")
+    def intelligence_panel(self, obj):
+        if not obj or not obj.pk:
+            return format_html(
+                '<p style="color:#55556a;font-style:italic;padding:8px 0">'
+                'Sin datos — se calcula al cerrar el primer trade.</p>'
+            )
+        from django.utils.html import mark_safe
+
+        _CLS_BG = {
+            "ELITE": "#0a2a1a", "CONSISTENT": "#0a2218", "NORMAL": "#1a1a2a",
+            "GAMBLER": "#2a1f00", "MARTINGALE": "#2a0a00", "RISKY": "#2a1a00",
+            "SCALPER": "#001a2a", "TOXIC": "#2a0000",
+        }
+        _CLS_FG = {
+            "ELITE": "#00e676", "CONSISTENT": "#26a69a", "NORMAL": "#7986cb",
+            "GAMBLER": "#f1c40f", "MARTINGALE": "#ff7043", "RISKY": "#ffa726",
+            "SCALPER": "#29b6f6", "TOXIC": "#ef5350",
+        }
+        _RT_BG = {
+            "ELITE": "#0a2a1a", "INTERNAL": "#1a1a2a",
+            "REVIEW": "#2a1a00", "HEDGE_CANDIDATE": "#2a0000",
+        }
+        _RT_FG = {
+            "ELITE": "#00e676", "INTERNAL": "#7986cb",
+            "REVIEW": "#ffa726", "HEDGE_CANDIDATE": "#ef5350",
+        }
+
+        cls     = obj.trader_class
+        routing = obj.routing_profile
+        cls_bg  = _CLS_BG.get(cls, "#1a1a2a")
+        cls_fg  = _CLS_FG.get(cls, "#aaa")
+        rt_bg   = _RT_BG.get(routing, "#1a1a2a")
+        rt_fg   = _RT_FG.get(routing, "#aaa")
+
+        # Numeric values
+        win_rate    = float(obj.win_rate    or 0)
+        pf          = float(obj.profit_factor or 0)
+        consistency = float(obj.consistency_score or 0)
+        toxicity    = float(obj.toxicity_score or 0)
+        gambler     = float(obj.gambler_score  or 0)
+        martingale  = float(obj.martingale_rate or 0) * 100
+        scalping    = float(obj.scalping_ratio  or 0) * 100
+        hold_s      = float(obj.avg_hold_time_seconds or 0)
+        freq        = float(obj.trade_frequency or 0)
+        avg_rr      = float(obj.avg_rr          or 0)
+        pnl_vol     = float(obj.pnl_volatility  or 0)
+        lot_growth  = float(obj.lot_growth_rate or 0)
+        cons_l      = obj.max_consecutive_losses
+        cons_w      = obj.max_consecutive_wins
+        avg_lot     = float(obj.avg_lot_size or 0)
+        last_eval   = obj.last_evaluated.strftime("%Y-%m-%d %H:%i") if obj.last_evaluated else "—"
+        if obj.last_evaluated:
+            last_eval = obj.last_evaluated.strftime("%Y-%m-%d %H:%M")
+
+        hold_str = (f"{hold_s/3600:.1f}h" if hold_s >= 3600
+                    else f"{hold_s/60:.1f}m" if hold_s >= 60
+                    else f"{hold_s:.0f}s")
+
+        def _color3(v, hi, mid, hi_c, mid_c, lo_c):
+            return hi_c if v >= hi else mid_c if v >= mid else lo_c
+
+        tox_c   = _color3(toxicity,  70, 40, "#ef5350", "#e67e22", "#27ae60")
+        gam_c   = _color3(gambler,   60, 30, "#f1c40f", "#e67e22", "#27ae60")
+        con_c   = _color3(consistency, 60, 40, "#27ae60", "#e67e22", "#ef5350")
+        wr_c    = _color3(win_rate,  55, 40, "#27ae60", "#e67e22", "#ef5350")
+        pf_c    = _color3(pf,        1.5, 1.0, "#27ae60", "#e67e22", "#ef5350")
+        rr_c    = _color3(avg_rr,    1.5, 1.0, "#27ae60", "#e67e22", "#ef5350")
+        mart_c  = "#ef5350" if martingale >= 25 else "#e67e22" if martingale >= 10 else "#27ae60"
+        freq_c  = "#ef5350" if freq >= 20 else "#e67e22" if freq >= 10 else "#27ae60"
+        scal_c  = "#e67e22" if scalping >= 60 else "#27ae60"
+        cl_c    = "#ef5350" if cons_l >= 5 else "#e67e22" if cons_l >= 3 else "#27ae60"
+        cw_c    = "#27ae60" if cons_w >= 5 else "#e67e22"
+
+        def _kv(label, val, color="#c8ccd8"):
+            return (f'<div style="display:flex;justify-content:space-between;padding:4px 0;'
+                    f'border-bottom:1px solid rgba(255,255,255,.03);">'
+                    f'<span style="font-size:11px;color:#55556a;">{label}</span>'
+                    f'<span style="font-size:12px;font-weight:700;color:{color};">{val}</span>'
+                    f'</div>')
+
+        def _score_card(icon, label, val, color, pct):
+            pct = min(max(pct, 0), 100)
+            return (f'<div style="background:#13131f;border:1px solid rgba(255,255,255,.06);'
+                    f'border-top:2px solid {color};border-radius:6px;padding:10px 12px;">'
+                    f'<div style="font-size:10px;color:#55556a;text-transform:uppercase;'
+                    f'letter-spacing:.08em;margin-bottom:4px;">{icon} {label}</div>'
+                    f'<div style="font-size:1.5rem;font-weight:800;color:{color};">{val:.0f}</div>'
+                    f'<div style="background:rgba(255,255,255,.05);border-radius:3px;height:4px;margin-top:6px;">'
+                    f'<div style="width:{pct:.0f}%;height:4px;border-radius:3px;background:{color};"></div>'
+                    f'</div></div>')
+
+        perf_html = (
+            _kv("Win Rate",      f"{win_rate:.1f}%",   wr_c)
+            + _kv("Profit Factor", f"{pf:.2f}",          pf_c)
+            + _kv("Avg RR",        f"{avg_rr:.2f}",      rr_c)
+            + _kv("Avg Lot Size",  f"{avg_lot:.4f}",     "#c8ccd8")
+            + _kv("PnL Volatility",f"{pnl_vol:.3f}",     "#c8ccd8")
+        )
+        beh_html = (
+            _kv("Hold Time",        hold_str,             "#c8ccd8")
+            + _kv("Scalping Ratio",   f"{scalping:.1f}%",   scal_c)
+            + _kv("Martingale Rate",  f"{martingale:.1f}%",  mart_c)
+            + _kv("Trade Freq/día",   f"{freq:.1f}",         freq_c)
+            + _kv("Lot Growth Rate",  f"{lot_growth:+.3f}",  "#c8ccd8")
+            + _kv("Racha Ganancias",  str(cons_w),           cw_c)
+            + _kv("Racha Pérdidas",   str(cons_l),           cl_c)
+        )
+
+        html = (
+            '<div style="background:#0f0f1c;border:1px solid #1e1e30;border-radius:8px;padding:16px;">'
+
+            # Header badges
+            '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px;">'
+            f'<span style="background:{cls_bg};color:{cls_fg};padding:5px 18px;border-radius:20px;'
+            f'font-size:13px;font-weight:800;letter-spacing:.06em;">{cls}</span>'
+            f'<span style="background:{rt_bg};color:{rt_fg};padding:3px 12px;border-radius:12px;'
+            f'font-size:11px;font-weight:700;">{routing}</span>'
+            f'<span style="color:#55556a;font-size:11px;margin-left:auto;">eval {last_eval}</span>'
+            '</div>'
+
+            # 3 score cards
+            '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px;">'
+            + _score_card("☠", "Toxicity",    toxicity,    tox_c, toxicity)
+            + _score_card("🎰", "Gambler",    gambler,     gam_c, gambler)
+            + _score_card("📊", "Consistency", consistency, con_c, consistency)
+            + '</div>'
+
+            # Two-column metrics
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">'
+
+            '<div>'
+            '<div style="font-size:10px;color:#55556a;text-transform:uppercase;letter-spacing:.08em;'
+            'margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid #1e1e30;">Performance</div>'
+            + perf_html +
+            '</div>'
+
+            '<div>'
+            '<div style="font-size:10px;color:#55556a;text-transform:uppercase;letter-spacing:.08em;'
+            'margin-bottom:8px;padding-bottom:4px;border-bottom:1px solid #1e1e30;">Behavioral Signals</div>'
+            + beh_html +
+            '</div>'
+
+            '</div></div>'
+        )
+        return mark_safe(html)
+
+
+# ─────────────────────────────────────────────
+# Admin actions
+# ─────────────────────────────────────────────
+
+@admin.action(description="Resetear balance al valor inicial del tier")
 def reset_balance(modeladmin, request, queryset):
     tier_defaults = {"10K": 10000, "50K": 50000, "100K": 100000}
     updated = 0
@@ -45,7 +301,8 @@ def reset_balance(modeladmin, request, queryset):
         base = tier_defaults.get(getattr(acc, "tier", "10K"), 10000)
         acc.balance = base
         acc.equity = base
-        acc.save(update_fields=["balance", "equity"])
+        acc.peak_balance = base
+        acc.save(update_fields=["balance", "equity", "peak_balance"])
         updated += 1
     modeladmin.message_user(request, f"{updated} cuenta(s) reseteadas.")
 
@@ -68,43 +325,122 @@ def enable_netting(modeladmin, request, queryset):
     modeladmin.message_user(request, f"{rows} cuenta(s) con NETTING activado.")
 
 
-@admin.action(description="Desactivar NETTING → HEDGING (múltiples posiciones)")
+@admin.action(description="Desactivar NETTING → HEDGING")
 def disable_netting(modeladmin, request, queryset):
     rows = queryset.update(netting_mode=False)
     modeladmin.message_user(request, f"{rows} cuenta(s) en modo HEDGING.")
 
 
-# ==========================
-# ModelAdmins
-# ==========================
+@admin.action(description="Recalcular Risk Rule (aplicar defaults del tier)")
+def recalc_risk_rules(modeladmin, request, queryset):
+    from .risk_engine import get_or_create_risk_rule
+    for acc in queryset:
+        get_or_create_risk_rule(acc)
+    modeladmin.message_user(request, f"Risk rules verificadas/creadas para {queryset.count()} cuenta(s).")
+
+
+@admin.action(description="Recalcular Trader Intelligence (score + routing)")
+def recalc_trader_scores(modeladmin, request, queryset):
+    from .intelligence_engine import update_intelligence
+    count = 0
+    for obj in queryset:
+        account = obj.account if isinstance(obj, TraderScore) else obj
+        update_intelligence(account)
+        count += 1
+    modeladmin.message_user(request, f"Intelligence actualizado para {count} cuenta(s).")
+
+
+# ─────────────────────────────────────────────
+# TradingAccount
+# ─────────────────────────────────────────────
+
 @admin.register(TradingAccount)
 class TradingAccountAdmin(admin.ModelAdmin):
+
+    # ── Computed display columns ──
+
+    @admin.display(description="Status", ordering="status")
+    def status_badge(self, obj):
+        bg, fg = _STATUS_COLORS.get(obj.status, ("#1a1a1a", "#aaa"))
+        return _badge(obj.status, bg, fg)
+
+    @admin.display(description="Total DD %")
+    def total_dd_pct(self, obj):
+        if not obj.peak_balance or obj.peak_balance == 0:
+            return "—"
+        pct = float((obj.peak_balance - obj.balance) / obj.peak_balance * 100)
+        color = "#e74c3c" if pct >= 7 else "#e67e22" if pct >= 3 else "#27ae60"
+        return format_html('<span style="color:{};font-weight:700">{}</span>', color, f"{pct:.2f}%")
+
+    @admin.display(description="Peak Balance")
+    def peak_balance_display(self, obj):
+        return f"${float(obj.peak_balance):,.2f}"
+
+    @admin.display(description="Desk")
     def dealing_link(self, obj):
         url = reverse("admin:simulator_tradingaccount_dealing_desk", args=[obj.pk])
-        return format_html('<a class="button" href="{}">Desk</a>', url)
-    dealing_link.short_description = "Desk"
+        return format_html('<a class="button" href="{}">→ Desk</a>', url)
+
+    # ── List config ──
 
     list_display = (
-        "id", "user", "tier", "phase", "currency", "leverage", "netting_mode",
-        "balance", "equity", "drawdown", "profit_target", "max_drawdown",
-        "status", "created_at", "dealing_link",   # ← botón al final de la fila
+        "id", "user", "tier", "phase",
+        "balance", "equity", "peak_balance_display",
+        "total_dd_pct", "open_positions", "violations_count",
+        "status_badge", "trader_class_badge",
+        "leverage", "netting_mode", "created_at",
+        "dealing_link",
     )
-    list_filter = ("tier", "phase", "status", "netting_mode", "currency", "created_at")
+    list_filter = ("tier", "phase", "status", "netting_mode", "created_at")
     search_fields = ("user__username", "user__email")
     readonly_fields = ("created_at",)
-    inlines = [PositionInline, TradeInline]
-    actions = [reset_balance, suspend_accounts, activate_accounts, enable_netting, disable_netting]
+    inlines = [RiskRuleInline, TraderIntelligenceInline, ViolationInline, DrawdownSnapshotInline, PositionInline, TradeInline]
+    actions = [reset_balance, suspend_accounts, activate_accounts, enable_netting, disable_netting,
+               recalc_risk_rules, recalc_trader_scores]
 
     fieldsets = (
         ("Propietario y plan", {"fields": ("user", "tier", "phase", "status")}),
-        ("Parámetros de la cuenta", {"fields": ("currency", "leverage", "netting_mode")}),
-        ("Saldos y límites", {
-            "fields": ("balance", "equity", "drawdown", "profit_target", "max_drawdown")
+        ("Parámetros", {"fields": ("currency", "leverage", "netting_mode")}),
+        ("Saldos", {
+            "fields": ("balance", "equity", "peak_balance", "drawdown", "profit_target", "max_drawdown")
         }),
         ("Metadatos", {"fields": ("created_at",)}),
     )
 
-    # ----- Dealing Desk -----
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        qs = qs.annotate(
+            _violations_count=Count("violations"),
+            _open_positions=Count("positions"),
+        ).prefetch_related("trader_score")
+        return qs
+
+    @admin.display(description="Violations")
+    def violations_count(self, obj):
+        n = obj._violations_count
+        if n == 0:
+            return "—"
+        color = "#e74c3c" if n >= 3 else "#e67e22"
+        return format_html('<span style="color:{};font-weight:700">{}</span>', color, n)
+
+    @admin.display(description="Open Pos.")
+    def open_positions(self, obj):
+        n = obj._open_positions
+        if n == 0:
+            return "—"
+        return format_html('<span style="color:#3498db;font-weight:700">{}</span>', n)
+
+    @admin.display(description="Trader Class")
+    def trader_class_badge(self, obj):
+        try:
+            score = obj.trader_score
+        except Exception:
+            return "—"
+        bg, fg = _CLASS_COLORS.get(score.trader_class, ("#1a1a2a", "#aaa"))
+        return _badge(score.trader_class, bg, fg)
+
+    # ── Dealing Desk custom view ──
+
     def get_urls(self):
         urls = super().get_urls()
         custom = [
@@ -117,68 +453,98 @@ class TradingAccountAdmin(admin.ModelAdmin):
         return custom + urls
 
     def dealing_desk_view(self, request, account_id: int):
+        from decimal import Decimal
         account = TradingAccount.objects.filter(pk=account_id).first()
         if not account:
             messages.error(request, "Cuenta no encontrada.")
             return redirect("admin:simulator_tradingaccount_changelist")
 
-        # Cierre forzado por símbolo (POST)
-        if request.method == "POST" and request.POST.get("action") == "force_close":
-            symbol = (request.POST.get("symbol") or "").strip()
-            try:
-                px = float(request.POST.get("price")) if request.POST.get("price") else None
-            except Exception:
-                px = None
+        # ── Quick actions (POST) ──
+        if request.method == "POST":
+            desk_action = request.POST.get("action", "")
 
-            qs = Position.objects.filter(account=account)
-            if symbol:
-                qs = qs.filter(symbol=symbol)
+            if desk_action == "suspend":
+                account.status = "Suspendido"
+                account.save(update_fields=["status"])
+                messages.warning(request, f"Cuenta #{account_id} suspendida.")
+                return redirect("admin:simulator_tradingaccount_dealing_desk", account_id=account.id)
 
-            total_closed = 0
-            total_pnl = 0.0
+            if desk_action == "activate":
+                account.status = "Activo"
+                account.save(update_fields=["status"])
+                messages.success(request, f"Cuenta #{account_id} reactivada.")
+                return redirect("admin:simulator_tradingaccount_dealing_desk", account_id=account.id)
 
-            for pos in qs:
-                exit_px = px if px is not None else pos.avg_price
-                pnl = (exit_px - pos.avg_price) * pos.qty if pos.side == "BUY" else (pos.avg_price - exit_px) * pos.qty
+            if desk_action == "reset":
+                tier_defaults = {"10K": 10000, "50K": 50000, "100K": 100000}
+                base = Decimal(str(tier_defaults.get(account.tier, 10000)))
+                account.balance = base
+                account.equity = base
+                account.peak_balance = base
+                account.status = "Activo"
+                account.save(update_fields=["balance", "equity", "peak_balance", "status"])
+                messages.success(request, f"Cuenta #{account_id} reseteada a ${base:,.0f}.")
+                return redirect("admin:simulator_tradingaccount_dealing_desk", account_id=account.id)
 
-                Trade.objects.create(
-                    account=account,
-                    symbol=pos.symbol,
-                    trade_type="SELL" if pos.side == "BUY" else "BUY",
-                    lot_size=pos.qty,
-                    entry_price=pos.avg_price,
-                    exit_price=exit_px,
-                    stop_loss=pos.sl,
-                    take_profit=pos.tp,
-                    profit_loss=pnl,
-                    opened_at=pos.opened_at,
-                    closed_at=now(),
-                )
+            if desk_action == "recalc_score":
+                from .intelligence_engine import update_intelligence
+                update_intelligence(account)
+                messages.success(request, "Trader intelligence recalculado.")
+                return redirect("admin:simulator_tradingaccount_dealing_desk", account_id=account.id)
 
-                bal_after = (account.balance or 0) + pnl
-                LedgerEntry.objects.create(
-                    account=account,
-                    event_type="FORCED_CLOSE",
-                    amount=pnl,
-                    balance_after=bal_after,
-                )
+            if desk_action == "recalc_risk":
+                from .risk_engine import get_or_create_risk_rule
+                get_or_create_risk_rule(account)
+                messages.success(request, "Risk rule verificada/creada.")
+                return redirect("admin:simulator_tradingaccount_dealing_desk", account_id=account.id)
 
-                account.balance = bal_after
-                account.equity = bal_after
-                account.save(update_fields=["balance", "equity"])
+            if desk_action == "force_close":
+                from django.db import transaction as db_tx
+                symbol = (request.POST.get("symbol") or "").strip()
+                try:
+                    px = float(request.POST.get("price")) if request.POST.get("price") else None
+                except Exception:
+                    px = None
+                total_closed, total_pnl = 0, 0.0
+                with db_tx.atomic():
+                    qs = Position.objects.select_for_update().filter(account=account)
+                    if symbol:
+                        qs = qs.filter(symbol=symbol)
+                    positions = list(qs)
+                    for pos in positions:
+                        exit_px = px if px is not None else float(pos.avg_price)
+                        # PnL: BUY profits when exit > entry, SELL profits when exit < entry
+                        pnl = ((exit_px - float(pos.avg_price)) * float(pos.qty)
+                               if pos.side == "BUY"
+                               else (float(pos.avg_price) - exit_px) * float(pos.qty))
+                        Trade.objects.create(
+                            account=account, symbol=pos.symbol,
+                            trade_type=pos.side,          # record original side, consistent with WS consumer
+                            lot_size=pos.qty, entry_price=pos.avg_price,
+                            exit_price=Decimal(str(exit_px)), stop_loss=pos.sl,
+                            take_profit=pos.tp, profit_loss=Decimal(str(pnl)),
+                            opened_at=pos.opened_at, closed_at=now(),
+                        )
+                        bal_after = float(account.balance or 0) + pnl
+                        LedgerEntry.objects.create(
+                            account=account, event_type=LedgerEntry.EV_REALIZED,
+                            amount=Decimal(str(pnl)), balance_after=Decimal(str(bal_after)),
+                            meta={"reason": "admin_force_close", "symbol": pos.symbol},
+                        )
+                        account.balance = Decimal(str(bal_after))
+                        account.equity  = Decimal(str(bal_after))
+                        account.save(update_fields=["balance", "equity"])
+                        pos.delete()
+                        total_closed += 1
+                        total_pnl += pnl
+                msg = (f"Cerradas {total_closed} posición(es). PnL total: ${total_pnl:+.2f}"
+                       if total_closed else "No hay posiciones que coincidan.")
+                (messages.success if total_closed else messages.info)(request, msg)
+                return redirect("admin:simulator_tradingaccount_dealing_desk", account_id=account.id)
 
-                pos.delete()
-                total_closed += 1
-                total_pnl += pnl
+        # ── Build context ──
+        open_positions = list(Position.objects.filter(account=account).order_by("-opened_at"))
 
-            if total_closed:
-                messages.success(request, f"Cerradas {total_closed} posición(es). PnL total: {total_pnl:.2f}")
-            else:
-                messages.info(request, "No hay posiciones para cerrar con ese criterio.")
-
-            return redirect("admin:simulator_tradingaccount_dealing_desk", account_id=account.id)
-
-        # Exposición por símbolo (BUY/SELL en mayúsculas)
         agg = (
             Position.objects.filter(account=account)
             .values("symbol")
@@ -188,25 +554,87 @@ class TradingAccountAdmin(admin.ModelAdmin):
             )
             .order_by("symbol")
         )
-        exposure = []
-        for r in agg:
-            l = float(r["long_qty"] or 0)
-            s = float(r["short_qty"] or 0)
-            exposure.append({
-                "symbol": r["symbol"],
-                "long_qty": l,
-                "short_qty": s,
-                "net_qty": l - s,
-            })
+        exposure = [
+            {"symbol": r["symbol"],
+             "long_qty":  float(r["long_qty"]  or 0),
+             "short_qty": float(r["short_qty"] or 0),
+             "net_qty":   float(r["long_qty"]  or 0) - float(r["short_qty"] or 0)}
+            for r in agg
+        ]
+
+        try:
+            risk_rule = account.risk_rule
+        except Exception:
+            risk_rule = None
+
+        _violations_qs = TradingViolation.objects.filter(account=account).order_by("-created_at")[:15]
+        violations = []
+        for _v in _violations_qs:
+            _v.excess = round(float(_v.value_at_violation) - float(_v.limit_value), 4)
+            violations.append(_v)
+
+        try:
+            trader_score = account.trader_score
+        except Exception:
+            trader_score = None
+
+        dd_snapshots = DrawdownSnapshot.objects.filter(account=account).order_by("-date")[:10]
+
+        peak = float(account.peak_balance or account.balance or 1)
+        balance = float(account.balance or 0)
+        total_dd_pct = max(0.0, (peak - balance) / peak * 100) if peak > 0 else 0.0
+
+        # Today's realized PnL from ledger
+        from django.utils import timezone
+        today = timezone.now().date()
+        today_pnl = float(
+            LedgerEntry.objects.filter(
+                account=account,
+                event_type=LedgerEntry.EV_REALIZED,
+                created_at__date=today,
+            ).aggregate(t=Sum("amount"))["t"] or 0
+        )
+        daily_dd_pct = abs(today_pnl) / peak * 100 if (peak > 0 and today_pnl < 0) else 0.0
+
+        # Challenge progress
+        tier_initial = {"10K": 10000.0, "50K": 50000.0, "100K": 100000.0}
+        initial_balance = tier_initial.get(account.tier, 10000.0)
+        profit_gained = balance - initial_balance
+        profit_target = float(account.profit_target or 1)
+        profit_pct = max(0.0, min(100.0, profit_gained / profit_target * 100)) if profit_target else 0.0
+
+        # Limits from risk rule or tier defaults
+        daily_limit = float(risk_rule.max_daily_loss_pct) if risk_rule else {"10K": 5, "50K": 4, "100K": 3}.get(account.tier, 5)
+        max_dd_limit = float(risk_rule.max_drawdown_pct)  if risk_rule else {"10K": 10, "50K": 8, "100K": 6}.get(account.tier, 10)
+
+        upnl = round(float(account.equity or 0) - float(account.balance or 0), 2)
 
         context = dict(
             self.admin_site.each_context(request),
-            title=f"Dealing Desk — Cuenta #{account.id}",
+            title=f"Dealing Desk — {account.user} / #{account.id} / {account.tier}",
             account=account,
+            upnl=upnl,
+            open_positions=open_positions,
             exposure=exposure,
+            risk_rule=risk_rule,
+            violations=violations,
+            trader_score=trader_score,
+            dd_snapshots=dd_snapshots,
+            total_dd_pct=round(total_dd_pct, 2),
+            daily_dd_pct=round(daily_dd_pct, 2),
+            daily_limit=round(daily_limit, 2),
+            max_dd_limit=round(max_dd_limit, 2),
+            profit_pct=round(profit_pct, 1),
+            profit_gained=round(profit_gained, 2),
+            profit_target=round(profit_target, 2),
+            today_pnl=round(today_pnl, 2),
         )
         return render(request, "admin/dealing_desk_inline.html", context)
 
+
+# ─────────────────────────────────────────────
+# Position
+# ─────────────────────────────────────────────
 
 @admin.register(Position)
 class PositionAdmin(admin.ModelAdmin):
@@ -217,12 +645,21 @@ class PositionAdmin(admin.ModelAdmin):
     list_editable = ("sl", "tp")
 
 
+# ─────────────────────────────────────────────
+# Trade
+# ─────────────────────────────────────────────
+
 @admin.register(Trade)
 class TradeAdmin(admin.ModelAdmin):
+    @admin.display(description="P&L")
+    def pnl_colored(self, obj):
+        v = float(obj.profit_loss or 0)
+        color = "#27ae60" if v > 0 else "#e74c3c" if v < 0 else "#888"
+        return format_html('<span style="color:{};font-weight:700">{}</span>', color, f"{v:+.2f}")
+
     list_display = (
         "id", "account", "symbol", "trade_type", "lot_size",
-        "entry_price", "exit_price",
-        "stop_loss", "take_profit", "profit_loss",
+        "entry_price", "exit_price", "pnl_colored",
         "opened_at", "closed_at",
     )
     list_filter = ("trade_type", "symbol", "opened_at", "closed_at", "account")
@@ -230,13 +667,287 @@ class TradeAdmin(admin.ModelAdmin):
     readonly_fields = ("opened_at", "closed_at")
 
 
+# ─────────────────────────────────────────────
+# LedgerEntry
+# ─────────────────────────────────────────────
+
 @admin.register(LedgerEntry)
 class LedgerEntryAdmin(admin.ModelAdmin):
-    list_display = ("id", "account", "event_type", "amount", "balance_after", "created_at")
+    @admin.display(description="Amount")
+    def amount_colored(self, obj):
+        v = float(obj.amount or 0)
+        color = "#27ae60" if v > 0 else "#e74c3c" if v < 0 else "#888"
+        return format_html('<span style="color:{};font-weight:700">{}</span>', color, f"{v:+.2f}")
+
+    list_display = ("id", "account", "event_type", "amount_colored", "balance_after", "created_at")
     list_filter = ("event_type", "created_at", "account")
     search_fields = ("account__user__username", "account__user__email", "event_type")
     readonly_fields = ("created_at", "balance_after")
 
+
+# ─────────────────────────────────────────────
+# RiskRule
+# ─────────────────────────────────────────────
+
+@admin.register(RiskRule)
+class RiskRuleAdmin(admin.ModelAdmin):
+    list_display = (
+        "id", "account_link", "max_daily_loss_pct", "max_drawdown_pct",
+        "max_lot_size", "max_open_positions", "max_exposure_usd",
+        "updated_at",
+    )
+    list_filter = ("account__tier",)
+    search_fields = ("account__user__username", "account__user__email")
+    readonly_fields = ("created_at", "updated_at")
+
+    @admin.display(description="Account", ordering="account")
+    def account_link(self, obj):
+        url = reverse("admin:simulator_tradingaccount_change", args=[obj.account_id])
+        return format_html('<a href="{}">{}</a>', url, str(obj.account))
+
+    fieldsets = (
+        ("Account", {"fields": ("account",)}),
+        ("Daily / Drawdown Limits", {"fields": ("max_daily_loss_pct", "max_drawdown_pct")}),
+        ("Position Limits", {"fields": ("max_lot_size", "max_open_positions", "max_exposure_usd")}),
+        ("Consistency", {"fields": ("consistency_min_trades",)}),
+        ("Timestamps", {"fields": ("created_at", "updated_at")}),
+    )
+
+
+# ─────────────────────────────────────────────
+# TradingViolation
+# ─────────────────────────────────────────────
+
+@admin.register(TradingViolation)
+class TradingViolationAdmin(admin.ModelAdmin):
+
+    @admin.display(description="Type")
+    def type_badge(self, obj):
+        color = _VIOLATION_COLORS.get(obj.violation_type, "#888")
+        return format_html(
+            '<span style="color:{};font-weight:700;font-size:11px">{}</span>',
+            color, obj.violation_type,
+        )
+
+    @admin.display(description="Breach")
+    def breach_display(self, obj):
+        v = float(obj.value_at_violation)
+        lim = float(obj.limit_value)
+        over = v - lim
+        return format_html(
+            '<span style="color:#e74c3c">{}</span> / {} '
+            '<span style="color:#e67e22;font-size:10px">(+{})</span>',
+            f"{v:.4f}", f"{lim:.4f}", f"{over:.4f}",
+        )
+
+    @admin.display(description="Trader")
+    def trader_link(self, obj):
+        url = reverse("admin:simulator_tradingaccount_change", args=[obj.account_id])
+        user = getattr(obj.account, "user", None)
+        label = getattr(user, "username", f"#{obj.account_id}")
+        return format_html('<a href="{}">{}</a>', url, label)
+
+    list_display = (
+        "id", "trader_link", "type_badge", "breach_display",
+        "created_at",
+    )
+    list_filter = ("violation_type", "created_at", "account__tier")
+    search_fields = ("account__user__username", "account__user__email", "violation_type")
+    readonly_fields = ("account", "violation_type", "value_at_violation", "limit_value", "meta", "created_at")
+    ordering = ("-created_at",)
+    date_hierarchy = "created_at"
+
+
+# ─────────────────────────────────────────────
+# DrawdownSnapshot
+# ─────────────────────────────────────────────
+
+@admin.register(DrawdownSnapshot)
+class DrawdownSnapshotAdmin(admin.ModelAdmin):
+
+    @admin.display(description="Daily P&L")
+    def daily_pnl_colored(self, obj):
+        v = float(obj.daily_pnl or 0)
+        color = "#27ae60" if v > 0 else "#e74c3c" if v < 0 else "#888"
+        return format_html('<span style="color:{};font-weight:700">{}</span>', color, f"{v:+.2f}")
+
+    @admin.display(description="DD from Peak %")
+    def dd_pct_colored(self, obj):
+        v = float(obj.drawdown_from_peak or 0)
+        color = "#e74c3c" if v >= 7 else "#e67e22" if v >= 3 else "#27ae60"
+        return format_html('<span style="color:{};font-weight:700">{}</span>', color, f"{v:.2f}%")
+
+    @admin.display(description="Trader")
+    def trader_link(self, obj):
+        url = reverse("admin:simulator_tradingaccount_change", args=[obj.account_id])
+        user = getattr(obj.account, "user", None)
+        label = getattr(user, "username", f"#{obj.account_id}")
+        return format_html('<a href="{}">{}</a>', url, label)
+
+    list_display = (
+        "id", "trader_link", "date",
+        "balance_start", "balance_end",
+        "daily_pnl_colored", "daily_pnl_pct",
+        "peak_balance", "dd_pct_colored",
+    )
+    list_filter = ("date", "account__tier")
+    search_fields = ("account__user__username", "account__user__email")
+    readonly_fields = (
+        "account", "date", "balance_start", "balance_end",
+        "daily_pnl", "daily_pnl_pct", "peak_balance", "drawdown_from_peak",
+    )
+    ordering = ("-date", "-id")
+    date_hierarchy = "date"
+
+
+# ─────────────────────────────────────────────
+# TraderScore
+# ─────────────────────────────────────────────
+
+@admin.register(TraderScore)
+class TraderScoreAdmin(admin.ModelAdmin):
+
+    @admin.display(description="Classification")
+    def class_badge(self, obj):
+        bg, fg = _CLASS_COLORS.get(obj.trader_class, ("#1a1a2a", "#aaa"))
+        icon = {
+            "ELITE": "★", "CONSISTENT": "✓", "NORMAL": "·",
+            "GAMBLER": "🎰", "MARTINGALE": "↑↑", "RISKY": "⚠",
+            "SCALPER": "⚡", "TOXIC": "☠",
+        }.get(obj.trader_class, "·")
+        return format_html(
+            '<span style="background:{};color:{};padding:4px 14px;border-radius:20px;'
+            'font-size:12px;font-weight:800;letter-spacing:.06em;white-space:nowrap">{} {}</span>',
+            bg, fg, icon, obj.trader_class,
+        )
+
+    @admin.display(description="Danger")
+    def danger_indicator(self, obj):
+        tox = float(obj.toxicity_score or 0)
+        gam = float(obj.gambler_score  or 0)
+        mart = float(obj.martingale_rate or 0) * 100
+        danger = max(tox, gam, mart)
+        if danger >= 70:
+            color, label = "#ef5350", "HIGH"
+        elif danger >= 40:
+            color, label = "#e67e22", "MED"
+        else:
+            color, label = "#27ae60", "LOW"
+        bar_w = min(int(danger), 100)
+        return format_html(
+            '<div style="display:flex;align-items:center;gap:6px;">'
+            '<div style="background:rgba(255,255,255,.06);border-radius:3px;width:60px;height:6px;overflow:hidden;">'
+            '<div style="width:{}%;height:6px;background:{};border-radius:3px;"></div></div>'
+            '<span style="color:{};font-size:11px;font-weight:700;">{}</span>'
+            '</div>',
+            bar_w, color, color, label,
+        )
+
+    @admin.display(description="Win Rate")
+    def win_rate_display(self, obj):
+        v = float(obj.win_rate or 0)
+        color = "#27ae60" if v >= 55 else "#e67e22" if v >= 40 else "#e74c3c"
+        return format_html('<span style="color:{};font-weight:700">{}</span>', color, f"{v:.1f}%")
+
+    @admin.display(description="Profit Factor")
+    def pf_display(self, obj):
+        v = float(obj.profit_factor or 0)
+        color = "#27ae60" if v >= 1.5 else "#e67e22" if v >= 1.0 else "#e74c3c"
+        return format_html('<span style="color:{};font-weight:700">{}</span>', color, f"{v:.2f}")
+
+    @admin.display(description="Consistency")
+    def consistency_display(self, obj):
+        v = float(obj.consistency_score or 0)
+        color = "#27ae60" if v >= 60 else "#e67e22" if v >= 40 else "#e74c3c"
+        return format_html('<span style="color:{};font-weight:700">{}</span>', color, f"{v:.1f}")
+
+    @admin.display(description="Martingale %")
+    def martingale_display(self, obj):
+        v = float(obj.martingale_rate or 0) * 100
+        color = "#e74c3c" if v >= 25 else "#e67e22" if v >= 10 else "#27ae60"
+        return format_html('<span style="color:{};font-weight:700">{}</span>', color, f"{v:.1f}%")
+
+    @admin.display(description="Routing")
+    def routing_badge(self, obj):
+        colors = {
+            "ELITE":           ("#0a2a1a", "#00e676"),
+            "INTERNAL":        ("#1a1a2a", "#7986cb"),
+            "REVIEW":          ("#2a1a00", "#ffa726"),
+            "HEDGE_CANDIDATE": ("#2a0000", "#ef5350"),
+        }
+        bg, fg = colors.get(obj.routing_profile, ("#1a1a1a", "#aaa"))
+        return _badge(obj.routing_profile, bg, fg)
+
+    @admin.display(description="Hold Avg")
+    def hold_time_display(self, obj):
+        secs = float(obj.avg_hold_time_seconds or 0)
+        if secs >= 3600:
+            return f"{secs/3600:.1f}h"
+        if secs >= 60:
+            return f"{secs/60:.1f}m"
+        return f"{secs:.0f}s"
+
+    @admin.display(description="Toxicity")
+    def toxicity_display(self, obj):
+        v = float(obj.toxicity_score or 0)
+        color = "#e74c3c" if v >= 70 else "#e67e22" if v >= 40 else "#27ae60"
+        return format_html('<span style="color:{};font-weight:700">{}</span>', color, f"{v:.1f}")
+
+    @admin.display(description="Gambler")
+    def gambler_display(self, obj):
+        v = float(obj.gambler_score or 0)
+        color = "#f1c40f" if v >= 60 else "#e67e22" if v >= 30 else "#27ae60"
+        return format_html('<span style="color:{};font-weight:700">{}</span>', color, f"{v:.1f}")
+
+    @admin.display(description="Freq/day")
+    def freq_display(self, obj):
+        v = float(obj.trade_frequency or 0)
+        color = "#e74c3c" if v >= 20 else "#e67e22" if v >= 10 else "#27ae60"
+        return format_html('<span style="color:{};font-weight:700">{}</span>', color, f"{v:.1f}")
+
+    @admin.display(description="Trader")
+    def trader_link(self, obj):
+        url = reverse("admin:simulator_tradingaccount_change", args=[obj.account_id])
+        user = getattr(obj.account, "user", None)
+        label = getattr(user, "username", f"#{obj.account_id}")
+        return format_html('<a href="{}">{}</a>', url, label)
+
+    list_display = (
+        "id", "trader_link",
+        "class_badge", "routing_badge", "danger_indicator",
+        "toxicity_display", "gambler_display",
+        "win_rate_display", "pf_display", "consistency_display",
+        "martingale_display", "hold_time_display", "freq_display",
+        "last_evaluated",
+    )
+    list_filter = ("trader_class", "routing_profile", "last_evaluated")
+    search_fields = ("account__user__username", "account__user__email")
+    readonly_fields = (
+        "account", "trader_class", "routing_profile",
+        "win_rate", "profit_factor", "avg_lot_size", "consistency_score",
+        "avg_rr", "pnl_volatility",
+        "martingale_rate", "lot_growth_rate", "scalping_ratio",
+        "avg_hold_time_seconds", "toxicity_score", "gambler_score",
+        "trade_frequency", "max_consecutive_losses", "max_consecutive_wins",
+        "last_evaluated",
+    )
+    fieldsets = (
+        ("Classification", {"fields": ("account", "trader_class", "routing_profile", "last_evaluated")}),
+        ("Performance", {"fields": ("win_rate", "profit_factor", "avg_lot_size", "consistency_score", "avg_rr", "pnl_volatility")}),
+        ("Behavioral Signals", {"fields": (
+            "martingale_rate", "lot_growth_rate", "scalping_ratio",
+            "avg_hold_time_seconds", "toxicity_score", "gambler_score",
+            "trade_frequency", "max_consecutive_losses", "max_consecutive_wins",
+        )}),
+    )
+    ordering = ("-last_evaluated",)
+
+    actions = [recalc_trader_scores]
+
+
+# ─────────────────────────────────────────────
+# Purchase / Deposit
+# ─────────────────────────────────────────────
 
 @admin.register(Purchase)
 class PurchaseAdmin(admin.ModelAdmin):
@@ -248,15 +959,189 @@ class PurchaseAdmin(admin.ModelAdmin):
 
 @admin.register(Deposit)
 class DepositAdmin(admin.ModelAdmin):
-    list_display = ("id", "user", "amount_usd", "crypto_currency", "status", "created_at")
-    list_filter = ("status",)
+    @admin.display(description="Status")
+    def status_badge(self, obj):
+        colors = {
+            "finished":  ("#0a2a1a", "#27ae60"),
+            "confirmed": ("#0a2218", "#26a69a"),
+            "failed":    ("#2a0000", "#e74c3c"),
+            "expired":   ("#1a1a1a", "#888"),
+            "pending":   ("#1a1a2a", "#7986cb"),
+            "waiting":   ("#1a1a2a", "#3498db"),
+        }
+        bg, fg = colors.get(obj.status, ("#1a1a1a", "#aaa"))
+        return _badge(obj.get_status_display(), bg, fg)
+
+    list_display = ("id", "user", "amount_usd", "crypto_currency", "status_badge", "created_at", "confirmed_at")
+    list_filter = ("status", "crypto_currency", "created_at")
     search_fields = ("user__username", "user__email")
     readonly_fields = ("created_at", "confirmed_at", "nowpayments_payment_id", "nowpayments_invoice_url")
 
 
-# ==========================
-# Branding del Admin
-# ==========================
-admin.site.site_header = "Money Brokers — Admin"
+# ─────────────────────────────────────────────
+# Exposure / Dealer Analytics
+# ─────────────────────────────────────────────
+
+@admin.action(description="📸 Guardar Snapshot de Exposición ahora")
+def take_exposure_snapshot(modeladmin, request, queryset):
+    from .exposure_engine import save_snapshot
+    snap = save_snapshot()
+    modeladmin.message_user(
+        request,
+        f"Snapshot #{snap.pk} guardado — net=${float(snap.net_exposure_usd):,.2f}, "
+        f"{snap.total_open_positions} posiciones.",
+    )
+
+
+class SymbolExposureInline(admin.TabularInline):
+    model = SymbolExposure
+    extra = 0
+    can_delete = False
+    readonly_fields = (
+        "symbol", "long_usd", "short_usd", "net_usd",
+        "trader_count", "concentration_pct", "unrealized_pnl", "is_high_risk",
+    )
+    fields = readonly_fields
+    ordering = ("-concentration_pct",)
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+class TraderClassExposureInline(admin.TabularInline):
+    model = TraderClassExposure
+    extra = 0
+    can_delete = False
+    readonly_fields = (
+        "trader_class", "routing_profile", "account_count",
+        "long_usd", "short_usd", "net_usd", "unrealized_pnl",
+    )
+    fields = readonly_fields
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(BrokerSnapshot)
+class BrokerSnapshotAdmin(admin.ModelAdmin):
+
+    # ── display helpers ──
+
+    @admin.display(description="Net Exposure")
+    def net_col(self, obj):
+        v = float(obj.net_exposure_usd)
+        color = "#ef5350" if abs(v) > 10000 else "#e67e22" if abs(v) > 5000 else "#27ae60"
+        return format_html('<span style="color:{};font-weight:700">{}</span>',
+                           color, f"${v:+,.2f}")
+
+    @admin.display(description="UPnL")
+    def upnl_col(self, obj):
+        v = float(obj.total_unrealized_pnl)
+        color = "#27ae60" if v >= 0 else "#ef5350"
+        return format_html('<span style="color:{};font-weight:700">{}</span>',
+                           color, f"${v:+,.2f}")
+
+    @admin.display(description="Broker PnL (sim)")
+    def broker_pnl_col(self, obj):
+        v = float(obj.broker_pnl_unrealized)
+        color = "#27ae60" if v >= 0 else "#ef5350"
+        return format_html('<span style="color:{};font-weight:700">{}</span>',
+                           color, f"${v:+,.2f}")
+
+    @admin.display(description="Flags")
+    def flags_col(self, obj):
+        n = len(obj.risk_flags or [])
+        if n == 0:
+            return format_html('<span style="color:#27ae60">✓ 0</span>')
+        color = "#ef5350" if any(f.get("severity") == "HIGH" for f in obj.risk_flags) else "#e67e22"
+        return format_html('<span style="color:{};font-weight:700">⚠ {}</span>', color, n)
+
+    @admin.display(description="Live Analytics")
+    def live_link(self, obj):
+        url = reverse("admin:broker_live_analytics")
+        return format_html('<a href="{}">→ Live Desk</a>', url)
+
+    list_display = (
+        "id", "created_at",
+        "total_accounts", "total_open_positions",
+        "net_col", "upnl_col", "broker_pnl_col",
+        "internal_exposure_usd", "hedge_candidate_usd",
+        "flags_col", "live_link",
+    )
+    list_filter  = ("created_at",)
+    readonly_fields = (
+        "created_at", "total_accounts", "total_open_positions",
+        "total_long_usd", "total_short_usd", "net_exposure_usd",
+        "total_unrealized_pnl", "total_realized_pnl_today",
+        "internal_exposure_usd", "review_exposure_usd", "hedge_candidate_usd",
+        "broker_pnl_unrealized", "broker_pnl_today", "risk_flags",
+    )
+    inlines  = [SymbolExposureInline, TraderClassExposureInline]
+    actions  = [take_exposure_snapshot]
+    ordering = ("-created_at",)
+
+    def changelist_view(self, request, extra_context=None):
+        extra_context = extra_context or {}
+        extra_context["live_url"]     = reverse("admin:broker_live_analytics")
+        extra_context["snapshot_url"] = reverse("admin:broker_take_snapshot")
+        return super().changelist_view(request, extra_context)
+
+    def get_urls(self):
+        urls = super().get_urls()
+        custom = [
+            path(
+                "live/",
+                self.admin_site.admin_view(self.live_analytics_view),
+                name="broker_live_analytics",
+            ),
+            path(
+                "snapshot/",
+                self.admin_site.admin_view(self.take_snapshot_view),
+                name="broker_take_snapshot",
+            ),
+        ]
+        return custom + urls
+
+    def live_analytics_view(self, request):
+        from .exposure_engine import compute_live_analytics
+        data = compute_live_analytics()
+
+        # Build risk-flag severity counts
+        high_flags   = [f for f in data["risk_flags"] if f.get("severity") == "HIGH"]
+        medium_flags = [f for f in data["risk_flags"] if f.get("severity") == "MEDIUM"]
+
+        # Long/Short ratio
+        total_gross = data["total_long_usd"] + data["total_short_usd"]
+        long_pct    = round(data["total_long_usd"]  / total_gross * 100, 1) if total_gross else 50.0
+        short_pct   = round(data["total_short_usd"] / total_gross * 100, 1) if total_gross else 50.0
+
+        context = dict(
+            self.admin_site.each_context(request),
+            title      = "Broker Exposure Desk — Live Analytics",
+            data       = data,
+            high_flags = high_flags,
+            medium_flags = medium_flags,
+            long_pct   = long_pct,
+            short_pct  = short_pct,
+            snapshot_url = reverse("admin:broker_take_snapshot"),
+        )
+        return render(request, "admin/broker_analytics.html", context)
+
+    def take_snapshot_view(self, request):
+        from .exposure_engine import save_snapshot
+        snap = save_snapshot()
+        messages.success(
+            request,
+            f"Snapshot #{snap.pk} guardado — net=${float(snap.net_exposure_usd):,.2f}, "
+            f"{snap.total_open_positions} posiciones.",
+        )
+        return redirect("admin:broker_live_analytics")
+
+
+# ─────────────────────────────────────────────
+# Branding
+# ─────────────────────────────────────────────
+
+admin.site.site_header = "Money Brokers — Risk Desk"
 admin.site.site_title = "Money Brokers"
-admin.site.index_title = "Panel de administración"
+admin.site.index_title = "Risk & Dealing Administration"

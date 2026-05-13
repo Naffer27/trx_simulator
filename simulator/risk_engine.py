@@ -18,6 +18,18 @@ from decimal import Decimal, ROUND_HALF_UP
 from django.utils import timezone
 from django.db.models import Sum
 
+# ─────────────────────────────────────────────
+# Account status constants (mirror TradingAccount)
+# ─────────────────────────────────────────────
+
+STATUS_ACTIVE    = "Activo"
+STATUS_SUSPENDED = "Suspendido"
+STATUS_VIOLATED  = "Violado"
+STATUS_CLOSED    = "Cerrado"
+STATUS_FUNDED    = "Completado"
+
+BLOCKED_STATUSES = {STATUS_SUSPENDED, STATUS_VIOLATED, STATUS_CLOSED}
+
 
 def _pct(numerator, denominator) -> Decimal:
     if not denominator or denominator == 0:
@@ -37,6 +49,19 @@ _TIER_DEFAULTS = {
     "100K": {"max_daily_loss_pct": Decimal("3.00"),  "max_drawdown_pct": Decimal("6.00"),  "max_lot_size": Decimal("40.00"), "max_open_positions": 20},
 }
 
+# Crypto symbols trade 1 lot = 1 BTC/ETH (no multiplier), so $82K/BTC means
+# even 1 lot at leverage 50x gives $1/point PnL — max lots must be much smaller
+# than forex to give the DD limits meaningful room.
+#   10K account, 0.25 BTC max → DD blown by $4,000 BTC move (4.9%) — fair challenge
+#   50K account, 1.00 BTC max → DD blown by $4,000 BTC move (2.0%)
+#   100K account, 2.00 BTC max → DD blown by $3,000 BTC move (1.2%)
+_CRYPTO_SYMS = {"BTCUSD", "ETHUSD"}
+_CRYPTO_MAX_LOT = {
+    "10K":  Decimal("0.25"),
+    "50K":  Decimal("1.00"),
+    "100K": Decimal("2.00"),
+}
+
 def get_or_create_risk_rule(account):
     from .models import RiskRule
     tier = getattr(account, "tier", "10K")
@@ -44,6 +69,141 @@ def get_or_create_risk_rule(account):
     defaults["max_exposure_usd"] = account.balance * Decimal("0.50")
     rule, _ = RiskRule.objects.get_or_create(account=account, defaults=defaults)
     return rule
+
+
+# ─────────────────────────────────────────────
+# Pre-trade gate — call before accepting orders
+# ─────────────────────────────────────────────
+
+def validate_order_risk(account, lot_size: float, open_positions_count: int,
+                        symbol: str = "") -> list[dict]:
+    """
+    Validate an incoming order against all risk rules.
+    Returns a list of error dicts — empty means the order is allowed.
+    Hard violations (lot size, drawdown, daily loss) create TradingViolation
+    records and trigger account suspension to STATUS_VIOLATED.
+    Must be called inside a DB transaction.
+
+    Error dict shape: {"code": str, "message": str}
+    """
+    from .models import TradingViolation, LedgerEntry, TradingAccount
+
+    # 1. Account status gate — no DB query needed
+    if account.status in BLOCKED_STATUSES:
+        return [{"code": "account_blocked",
+                 "message": f"Cuenta {account.status} — operaciones bloqueadas"}]
+
+    rule = get_or_create_risk_rule(account)
+    today = timezone.now().date()
+    errors: list[dict] = []
+    hard_violations: list = []
+
+    # 2. Max lot size — crypto uses tighter per-tier limits (1 lot = 1 BTC/ETH ≈ $82K)
+    lot_dec = Decimal(str(lot_size))
+    tier = getattr(account, "tier", "10K")
+    if symbol in _CRYPTO_SYMS:
+        effective_max = _CRYPTO_MAX_LOT.get(tier, Decimal("0.25"))
+    else:
+        effective_max = rule.max_lot_size
+
+    if lot_dec > effective_max:
+        v = TradingViolation.objects.create(
+            account=account,
+            violation_type=TradingViolation.MAX_LOT_SIZE,
+            value_at_violation=lot_dec,
+            limit_value=effective_max,
+            meta={"requested_lot": str(lot_size), "symbol": symbol},
+        )
+        hard_violations.append(v)
+        errors.append({
+            "code": "max_lot_size",
+            "message": f"Lote {lot_size} supera el máximo permitido ({effective_max}) para {symbol or 'este símbolo'}",
+        })
+
+    # 3. Max open positions (soft — no violation record, just reject)
+    if open_positions_count >= rule.max_open_positions:
+        errors.append({
+            "code": "max_positions",
+            "message": f"Posiciones abiertas al límite ({rule.max_open_positions})",
+        })
+
+    # 4. Daily loss limit
+    today_pnl = (
+        LedgerEntry.objects
+        .filter(account=account, event_type=LedgerEntry.EV_REALIZED, created_at__date=today)
+        .aggregate(total=Sum("amount"))["total"]
+    ) or Decimal("0")
+
+    if account.peak_balance > 0 and today_pnl < 0:
+        daily_loss_pct = _pct(abs(today_pnl), account.peak_balance)
+        if daily_loss_pct >= rule.max_daily_loss_pct:
+            v = TradingViolation.objects.create(
+                account=account,
+                violation_type=TradingViolation.MAX_DAILY_LOSS,
+                value_at_violation=daily_loss_pct,
+                limit_value=rule.max_daily_loss_pct,
+                meta={"today_pnl": str(today_pnl), "date": str(today)},
+            )
+            hard_violations.append(v)
+            errors.append({
+                "code": "daily_loss_limit",
+                "message": (
+                    f"Pérdida diaria {daily_loss_pct:.1f}% supera el límite "
+                    f"({rule.max_daily_loss_pct}%)"
+                ),
+            })
+
+    # 5. Max total drawdown from peak
+    if account.peak_balance > 0:
+        dd_pct = _pct(account.peak_balance - account.balance, account.peak_balance)
+        if dd_pct >= rule.max_drawdown_pct:
+            v = TradingViolation.objects.create(
+                account=account,
+                violation_type=TradingViolation.MAX_DRAWDOWN,
+                value_at_violation=dd_pct,
+                limit_value=rule.max_drawdown_pct,
+                meta={
+                    "peak_balance": str(account.peak_balance),
+                    "current_balance": str(account.balance),
+                },
+            )
+            hard_violations.append(v)
+            errors.append({
+                "code": "max_drawdown",
+                "message": (
+                    f"Drawdown {dd_pct:.1f}% supera el máximo permitido "
+                    f"({rule.max_drawdown_pct}%)"
+                ),
+            })
+
+    # Auto-suspend on hard violations
+    if hard_violations:
+        TradingAccount.objects.filter(pk=account.pk).update(status=STATUS_VIOLATED)
+        account.status = STATUS_VIOLATED
+        LedgerEntry.objects.create(
+            account=account,
+            event_type=LedgerEntry.EV_ADJUST,
+            amount=Decimal("0"),
+            balance_after=account.balance,
+            meta={
+                "reason": "pre_trade_violation",
+                "violations": [v.violation_type for v in hard_violations],
+            },
+        )
+
+    return errors
+
+
+def check_equity_stopout(equity: float, peak_balance: float, tier: str) -> bool:
+    """
+    Real-time in-memory equity stopout check (no DB).
+    Returns True if equity has breached the max drawdown level
+    calculated against the peak balance for this tier.
+    """
+    defaults = _TIER_DEFAULTS.get(tier, _TIER_DEFAULTS["10K"])
+    max_dd_pct = float(defaults["max_drawdown_pct"])
+    stopout_level = peak_balance * (1.0 - max_dd_pct / 100.0)
+    return equity <= stopout_level
 
 
 # ─────────────────────────────────────────────

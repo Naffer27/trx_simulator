@@ -106,6 +106,26 @@
   .p-rr{position:absolute;right:68px;display:none;background:rgba(5,5,10,.88);border:1px solid rgba(255,215,0,.3);border-radius:6px;padding:3px 9px;font-size:.7rem;font-weight:700;color:#FFD700;z-index:4;pointer-events:none;font-family:'Orbitron',sans-serif;letter-spacing:.04em;}
   /* TF change toast */
   #tfToast{position:fixed;top:68px;left:50%;transform:translateX(-50%);background:rgba(5,5,10,.92);border:1px solid rgba(255,215,0,.5);color:#FFD700;padding:5px 18px;border-radius:8px;font-size:.78rem;font-weight:700;z-index:60;pointer-events:none;opacity:0;transition:opacity .25s;font-family:'Orbitron',sans-serif;letter-spacing:.08em;}
+  /* Risk / violation alert toast */
+  #riskAlert{position:fixed;top:68px;left:50%;transform:translateX(-50%);min-width:260px;max-width:90vw;text-align:center;background:rgba(20,5,5,.96);border:1px solid rgba(239,83,80,.7);color:#ef5350;padding:10px 22px;border-radius:10px;font-size:.82rem;font-weight:700;z-index:65;pointer-events:auto;opacity:0;transition:opacity .3s;letter-spacing:.04em;cursor:pointer;}
+  #riskAlert.show{opacity:1;}
+  /* Account status badge */
+  .acc-badge{display:inline-block;padding:2px 10px;border-radius:20px;font-size:.7rem;font-weight:700;letter-spacing:.06em;}
+  .acc-badge-active{background:rgba(38,166,154,.15);color:#26a69a;border:1px solid rgba(38,166,154,.35);}
+  .acc-badge-suspended{background:rgba(239,83,80,.15);color:#ef5350;border:1px solid rgba(239,83,80,.35);}
+  .acc-badge-violated{background:rgba(239,83,80,.25);color:#ff5252;border:1px solid rgba(239,83,80,.6);}
+  .acc-badge-closed{background:rgba(128,128,128,.15);color:#888;border:1px solid rgba(128,128,128,.3);}
+  /* Challenge progress card */
+  .chal-row{display:flex;justify-content:space-between;align-items:center;margin:4px 0 2px;font-size:.72rem;}
+  .chal-k{color:var(--muted);}
+  .chal-v{font-weight:700;font-size:.73rem;}
+  .chal-bar-wrap{background:rgba(255,255,255,.06);border-radius:4px;height:5px;margin-bottom:7px;overflow:hidden;}
+  .chal-bar{height:5px;border-radius:4px;transition:width .4s;}
+  .chal-bar-profit{background:linear-gradient(90deg,#26a69a,#00e5bb);}
+  .chal-bar-dd{background:linear-gradient(90deg,#ef5350,#ff7043);}
+  .chal-bar-dd.safe{background:linear-gradient(90deg,#26a69a,#66bb6a);}
+  /* Bid/Ask row */
+  .acct-bid-row .acct-v{font-size:.71rem;letter-spacing:.02em;}
 
   .last-price{position:absolute;right:12px;top:10px;display:flex;gap:6px;z-index:2;}
   .pill{background:var(--panel);border:1px solid var(--accent);padding:4px 10px;border-radius:999px;font-size:.78rem;font-weight:700;}
@@ -480,7 +500,7 @@
 
     <aside class="rightcol">
       <div class="card" id="accountCard">
-        <h6>Account</h6>
+        <h6>Account <span id="accStatusBadge" class="acc-badge acc-badge-active" style="margin-left:6px">Activo</span></h6>
         <div class="acct-grid">
           <div class="acct-kv"><span class="acct-k">Balance</span>   <span class="acct-v" id="accBalance">—</span></div>
           <div class="acct-kv"><span class="acct-k">Equity</span>    <span class="acct-v" id="accEquity">—</span></div>
@@ -488,7 +508,21 @@
           <div class="acct-kv"><span class="acct-k">Margin</span>    <span class="acct-v" id="accMargin">—</span></div>
           <div class="acct-kv"><span class="acct-k">Free Margin</span><span class="acct-v" id="accFree">—</span></div>
           <div class="acct-kv"><span class="acct-k">Leverage</span>  <span class="acct-v" id="accLev">—</span></div>
+          <div class="acct-kv"><span class="acct-k">Margin Lvl</span><span class="acct-v" id="accMarginLevel">—</span></div>
+          <div class="acct-kv"><span class="acct-k">Daily DD</span>  <span class="acct-v" id="accDailyDD">—</span></div>
+          <div class="acct-kv"><span class="acct-k">Total DD</span>  <span class="acct-v" id="accTotalDD">—</span></div>
+          <div class="acct-kv acct-bid-row"><span class="acct-k">Bid / Ask</span><span class="acct-v" id="accBidAsk">—</span></div>
         </div>
+      </div>
+
+      <div class="card" id="challengeCard">
+        <h6>Challenge Progress</h6>
+        <div class="chal-row"><span class="chal-k">Profit Target</span><span class="chal-v" id="chalProfitPct">0%</span></div>
+        <div class="chal-bar-wrap"><div class="chal-bar chal-bar-profit" id="chalProfitBar" style="width:0%"></div></div>
+        <div class="chal-row"><span class="chal-k">Daily DD Used</span><span class="chal-v" id="chalDailyDDPct">0%</span></div>
+        <div class="chal-bar-wrap"><div class="chal-bar chal-bar-dd" id="chalDailyDDBar" style="width:0%"></div></div>
+        <div class="chal-row"><span class="chal-k">Max DD Used</span><span class="chal-v" id="chalMaxDDPct">0%</span></div>
+        <div class="chal-bar-wrap"><div class="chal-bar chal-bar-dd" id="chalMaxDDBar" style="width:0%"></div></div>
       </div>
 
       <div class="card" id="orderCard">
@@ -1012,6 +1046,15 @@ class TradingPanel {
   _handleMsg(msg){
     if(msg.type==='info'||msg.type==='warn'){this.setStatus((msg.type==='info'?'ℹ️ ':'⚠️ ')+(msg.message||''));return;}
     if(msg.type==='account:update'||msg.type==='account:snapshot'){renderAccount(msg);return;}
+    if(msg.type==='account:suspended'){
+      const reasons={'stopout':'⛔ STOPOUT — Cuenta Suspendida','daily_loss_limit':'⚠️ Límite Pérdida Diaria Alcanzado','max_drawdown':'⚠️ Drawdown Máximo Alcanzado','max_lot_size':'⚠️ Tamaño de Lote Excedido'};
+      showRiskAlert(reasons[msg.reason]||'⛔ Cuenta Suspendida: '+String(msg.reason||''),true);
+      return;
+    }
+    if(msg.type==='account:violated'){
+      showRiskAlert('🚫 Cuenta Violada: '+String(msg.reason||msg.status||''),true);
+      return;
+    }
 
     if(msg.type==='price'||msg.type==='tick'){
       if(msg.symbol&&msg.symbol!==this.currentSymbol)return;
@@ -1484,6 +1527,52 @@ function renderAccount(msg){
   // Trading tab hero P&L live update
   const tHero=document.getElementById('trdPnLHero');
   if(tHero){tHero.textContent=(upnl>=0?'+':'')+usd(upnl)+' USD';tHero.className='trd-pnl-val'+(upnl>0.00001?' pos':upnl<-0.00001?' neg':'');}
+
+  // ── Status badge ──
+  const badge=document.getElementById('accStatusBadge');
+  if(badge){
+    const st=msg.status||'Activo';
+    badge.textContent=st;
+    badge.className='acc-badge '+({'Activo':'acc-badge-active','Suspendido':'acc-badge-suspended','Violado':'acc-badge-violated','Cerrado':'acc-badge-closed'}[st]||'acc-badge-closed');
+  }
+
+  // ── Margin Level ──
+  const mlEl=document.getElementById('accMarginLevel');
+  if(mlEl){const ml=Number(msg.margin_level??0);mlEl.textContent=margin>0?ml.toFixed(1)+'%':'∞';mlEl.style.color=ml>0&&ml<150?'#ef5350':ml<300?'#ff9800':'';}
+
+  // ── Daily / Total DD ──
+  const ddyEl=document.getElementById('accDailyDD'),ddtEl=document.getElementById('accTotalDD');
+  if(ddyEl){const v=Number(msg.daily_dd_pct??0);ddyEl.textContent=v.toFixed(2)+'%';ddyEl.style.color=v>3?'#ef5350':v>1.5?'#ff9800':'#26a69a';}
+  if(ddtEl){const v=Number(msg.total_dd_pct??0);ddtEl.textContent=v.toFixed(2)+'%';ddtEl.style.color=v>7?'#ef5350':v>4?'#ff9800':'#26a69a';}
+
+  // ── Bid / Ask ──
+  const baEl=document.getElementById('accBidAsk');
+  if(baEl&&msg.bid!=null&&msg.ask!=null){const p=String(msg.ask||0).split('.')[1]?.length??5;baEl.innerHTML=`<span style="color:#ef5350">${Number(msg.bid).toFixed(p)}</span> / <span style="color:#26a69a">${Number(msg.ask).toFixed(p)}</span>`;}
+
+  // ── Challenge progress bars ──
+  const initBal=Number(msg.initial_balance??10000),profTgt=Number(msg.profit_target??800);
+  const bal=Number(msg.balance??0);
+  const profitGained=bal-initBal;
+  const profitPct=profTgt>0?Math.max(0,Math.min(100,profitGained/profTgt*100)):0;
+  const chalPBar=document.getElementById('chalProfitBar'),chalPPct=document.getElementById('chalProfitPct');
+  if(chalPBar)chalPBar.style.width=profitPct.toFixed(1)+'%';
+  if(chalPPct)chalPPct.textContent=profitPct.toFixed(1)+'%';
+
+  // Daily DD bar — tier limits: 10K→5%, 50K→4%, 100K→3%
+  const dailyLimitMap={'10K':5,'50K':4,'100K':3};
+  const tierKey=msg.tier||'10K';
+  const dailyLimit=dailyLimitMap[tierKey]||5;
+  const maxDDLimit={'10K':10,'50K':8,'100K':6}[tierKey]||10;
+  const dailyDDUsed=Number(msg.daily_dd_pct??0);
+  const totalDDUsed=Number(msg.total_dd_pct??0);
+  const dailyPct=Math.min(100,dailyDDUsed/dailyLimit*100);
+  const maxPct=Math.min(100,totalDDUsed/maxDDLimit*100);
+  const cDBar=document.getElementById('chalDailyDDBar'),cDPct=document.getElementById('chalDailyDDPct');
+  const cMBar=document.getElementById('chalMaxDDBar'),cMPct=document.getElementById('chalMaxDDPct');
+  if(cDBar){cDBar.style.width=dailyPct.toFixed(1)+'%';cDBar.className='chal-bar chal-bar-dd'+(dailyDDUsed<dailyLimit*0.5?' safe':'');}
+  if(cDPct)cDPct.textContent=dailyDDUsed.toFixed(2)+'% / '+dailyLimit+'%';
+  if(cMBar){cMBar.style.width=maxPct.toFixed(1)+'%';cMBar.className='chal-bar chal-bar-dd'+(totalDDUsed<maxDDLimit*0.5?' safe':'');}
+  if(cMPct)cMPct.textContent=totalDDUsed.toFixed(2)+'% / '+maxDDLimit+'%';
 }
 
 /* ── Global quickbar handlers ── */
@@ -1836,6 +1925,14 @@ function showToast(msg){
   if(!el){el=document.createElement('div');el.id='tfToast';document.body.appendChild(el);}
   el.textContent=msg;el.style.opacity='1';
   clearTimeout(_toastTimer);_toastTimer=setTimeout(()=>el.style.opacity='0',1100);
+}
+let _riskAlertTimer=null;
+function showRiskAlert(msg,persist){
+  let el=document.getElementById('riskAlert');
+  if(!el){el=document.createElement('div');el.id='riskAlert';document.body.appendChild(el);el.addEventListener('click',()=>el.classList.remove('show'));}
+  el.textContent=msg;el.classList.add('show');
+  clearTimeout(_riskAlertTimer);
+  if(!persist)_riskAlertTimer=setTimeout(()=>el.classList.remove('show'),5000);
 }
 window.addEventListener('keydown',e=>{
   if(e.key==='F1'){e.preventDefault();dbgOn=!dbgOn;dbgShow();return;}

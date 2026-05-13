@@ -1,0 +1,361 @@
+{% extends "admin/base_site.html" %}
+{% block extrahead %}{{ block.super }}
+<style>
+:root{
+  --bg:#07070f;--panel:#0f0f1c;--panel2:#13131f;--border:#1e1e30;
+  --gold:#e8c84a;--bull:#27ae60;--bear:#e74c3c;--warn:#e67e22;--info:#3498db;
+  --text:#c8ccd8;--muted:#55556a;--r:8px;
+}
+#content{background:var(--bg)!important;color:var(--text);}
+#content h1{color:var(--gold);font-size:1.05rem;letter-spacing:.06em;margin:0;}
+
+/* ── Header ── */
+.da-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;
+  background:var(--panel);border:1px solid var(--border);border-radius:var(--r);padding:12px 16px;margin-bottom:16px;}
+.da-title{font-size:.9rem;font-weight:700;color:var(--text);}
+.da-sub{font-size:.7rem;color:var(--muted);margin-top:2px;}
+.da-btn{display:inline-block;padding:6px 16px;border-radius:6px;font-size:.75rem;font-weight:700;
+  cursor:pointer;border:none;text-decoration:none;letter-spacing:.04em;transition:opacity .15s;}
+.da-btn:hover{opacity:.82;}
+.da-btn-gold{background:rgba(232,200,74,.15);color:var(--gold);border:1px solid rgba(232,200,74,.3);}
+.da-btn-green{background:rgba(39,174,96,.15);color:var(--bull);border:1px solid rgba(39,174,96,.3);}
+.da-btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--border);}
+
+/* ── Risk Alert bar ── */
+.da-risk-bar{background:#2a0000;border:1px solid rgba(231,76,60,.4);border-radius:var(--r);
+  padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.da-risk-bar.warn{background:#2a1a00;border-color:rgba(230,126,34,.4);}
+.da-flag{font-size:.72rem;padding:3px 10px;border-radius:4px;}
+.da-flag-high{background:rgba(231,76,60,.2);color:#ef5350;border:1px solid rgba(231,76,60,.35);}
+.da-flag-med {background:rgba(230,126,34,.2);color:#e67e22;border:1px solid rgba(230,126,34,.35);}
+
+/* ── Global metric cards ── */
+.da-metrics{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-bottom:16px;}
+.da-metric{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+  padding:14px 16px;position:relative;overflow:hidden;}
+.da-metric::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;}
+.da-metric.c-gold::before{background:var(--gold);}
+.da-metric.c-bull::before{background:var(--bull);}
+.da-metric.c-bear::before{background:var(--bear);}
+.da-metric.c-warn::before{background:var(--warn);}
+.da-metric.c-info::before{background:var(--info);}
+.da-metric.c-muted::before{background:var(--border);}
+.dm-label{font-size:.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;}
+.dm-val{font-size:1.25rem;font-weight:800;color:var(--text);line-height:1;}
+.dm-val.pos{color:var(--bull);} .dm-val.neg{color:var(--bear);} .dm-val.warn{color:var(--warn);}
+.dm-sub{font-size:.65rem;color:var(--muted);margin-top:4px;}
+
+/* ── Long/Short bar ── */
+.ls-bar-wrap{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+  padding:12px 16px;margin-bottom:16px;}
+.ls-label{font-size:.7rem;color:var(--muted);display:flex;justify-content:space-between;margin-bottom:6px;}
+.ls-bar{display:flex;height:14px;border-radius:6px;overflow:hidden;}
+.ls-long {background:linear-gradient(90deg,#27ae60,#00e676);}
+.ls-short{background:linear-gradient(90deg,#c0392b,#e74c3c);}
+
+/* ── Section ── */
+.da-section{font-size:.68rem;font-weight:700;color:var(--muted);text-transform:uppercase;
+  letter-spacing:.1em;margin:18px 0 8px;padding-bottom:5px;border-bottom:1px solid var(--border);}
+
+/* ── Two-column ── */
+.da-cols{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;}
+@media(max-width:900px){.da-cols{grid-template-columns:1fr;}}
+
+/* ── Cards ── */
+.da-card{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;}
+.da-card-hdr{display:flex;align-items:center;justify-content:space-between;
+  padding:9px 14px;background:var(--panel2);border-bottom:1px solid var(--border);}
+.da-card-hdr h3{margin:0;font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--gold);font-weight:700;}
+.da-card-body{padding:12px 14px;}
+
+/* ── Tables ── */
+.da-table{width:100%;border-collapse:collapse;font-size:.72rem;}
+.da-table th{background:var(--panel2);color:var(--muted);padding:7px 10px;text-align:left;
+  font-size:.62rem;letter-spacing:.08em;text-transform:uppercase;border-bottom:1px solid var(--border);}
+.da-table td{padding:7px 10px;border-bottom:1px solid rgba(255,255,255,.03);color:var(--text);vertical-align:middle;}
+.da-table tr:hover td{background:rgba(255,255,255,.02);}
+.da-table tr:last-child td{border-bottom:none;}
+.mono{font-family:monospace;font-size:.7rem;}
+.pos{color:var(--bull)!important;font-weight:700;}
+.neg{color:var(--bear)!important;font-weight:700;}
+.warn{color:var(--warn)!important;font-weight:700;}
+
+/* ── Routing badge ── */
+.rt{display:inline-block;padding:2px 9px;border-radius:10px;font-size:.62rem;font-weight:700;}
+.rt-internal       {background:rgba(121,134,203,.1);color:#7986cb;border:1px solid rgba(121,134,203,.3);}
+.rt-elite          {background:rgba(0,230,118,.1);  color:#00e676;border:1px solid rgba(0,230,118,.3);}
+.rt-review         {background:rgba(255,167,38,.1); color:#ffa726;border:1px solid rgba(255,167,38,.3);}
+.rt-hedge_candidate{background:rgba(231,76,60,.15); color:#ef5350;border:1px solid rgba(231,76,60,.35);}
+
+/* ── Class badge ── */
+.cls{display:inline-block;padding:2px 9px;border-radius:10px;font-size:.62rem;font-weight:800;}
+.cls-elite     {background:rgba(0,230,118,.1);  color:#00e676;}
+.cls-consistent{background:rgba(38,166,154,.1); color:#26a69a;}
+.cls-normal    {background:rgba(121,134,203,.1);color:#7986cb;}
+.cls-gambler   {background:rgba(241,196,15,.1); color:#f1c40f;}
+.cls-martingale{background:rgba(255,112,67,.12);color:#ff7043;}
+.cls-risky     {background:rgba(255,167,38,.1); color:#ffa726;}
+.cls-scalper   {background:rgba(41,182,246,.1); color:#29b6f6;}
+.cls-toxic     {background:rgba(231,76,60,.15); color:#ef5350;}
+
+/* ── Conc bar ── */
+.conc-bar{background:rgba(255,255,255,.05);border-radius:3px;height:5px;overflow:hidden;min-width:60px;}
+.conc-fill{height:5px;border-radius:3px;}
+.kv{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.03);}
+.kv:last-child{border-bottom:none;}
+.kv-k{font-size:.7rem;color:var(--muted);}
+.kv-v{font-size:.72rem;font-weight:700;color:var(--text);}
+</style>
+{% endblock %}
+
+{% block content %}
+
+{% if messages %}{% for m in messages %}
+<div class="messagelist"><li class="{{ m.tags }}">{{ m }}</li></div>
+{% endfor %}{% endif %}
+
+{# ── HEADER ── #}
+<div class="da-header">
+  <div>
+    <div class="da-title">📊 Broker Exposure Desk</div>
+    <div class="da-sub">
+      Computed {{ data.computed_at|date:"Y-m-d H:i:s" }} ·
+      {{ data.total_open_positions }} posiciones · {{ data.total_accounts }} cuentas activas
+    </div>
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;">
+    <a href="{{ snapshot_url }}" class="da-btn da-btn-gold">📸 Guardar Snapshot</a>
+    <a href="{% url 'admin:simulator_brokersnapshot_changelist' %}" class="da-btn da-btn-ghost">Historial →</a>
+  </div>
+</div>
+
+{# ── RISK FLAGS ── #}
+{% if high_flags %}
+<div class="da-risk-bar">
+  <span style="font-size:.75rem;font-weight:800;color:#ef5350;">⚠ RIESGO ALTO</span>
+  {% for f in high_flags %}
+  <span class="da-flag da-flag-high">{{ f.msg }}</span>
+  {% endfor %}
+</div>
+{% endif %}
+{% if medium_flags %}
+<div class="da-risk-bar warn">
+  <span style="font-size:.75rem;font-weight:800;color:#e67e22;">△ ATENCIÓN</span>
+  {% for f in medium_flags %}
+  <span class="da-flag da-flag-med">{{ f.msg }}</span>
+  {% endfor %}
+</div>
+{% endif %}
+{% if not data.risk_flags %}
+<div style="background:rgba(39,174,96,.08);border:1px solid rgba(39,174,96,.2);border-radius:8px;
+  padding:10px 14px;margin-bottom:14px;font-size:.75rem;color:#27ae60;">
+  ✓ Sin alertas de riesgo detectadas
+</div>
+{% endif %}
+
+{# ── GLOBAL METRICS ── #}
+<div class="da-metrics">
+
+  <div class="da-metric c-gold">
+    <div class="dm-label">Net Exposure</div>
+    <div class="dm-val {% if data.net_exposure_usd >= 0 %}pos{% else %}neg{% endif %}">${{ data.net_exposure_usd|floatformat:2 }}</div>
+    <div class="dm-sub">Long ${{ data.total_long_usd|floatformat:2 }} · Short ${{ data.total_short_usd|floatformat:2 }}</div>
+  </div>
+
+  <div class="da-metric {% if data.total_unrealized_pnl >= 0 %}c-bull{% else %}c-bear{% endif %}">
+    <div class="dm-label">Unrealized PnL (traders)</div>
+    <div class="dm-val {% if data.total_unrealized_pnl >= 0 %}pos{% else %}neg{% endif %}">${{ data.total_unrealized_pnl|floatformat:2 }}</div>
+    <div class="dm-sub">Realizado hoy: ${{ data.total_realized_pnl_today|floatformat:2 }}</div>
+  </div>
+
+  <div class="da-metric {% if data.broker_pnl_unrealized >= 0 %}c-bull{% else %}c-bear{% endif %}">
+    <div class="dm-label">Broker PnL (simulado)</div>
+    <div class="dm-val {% if data.broker_pnl_unrealized >= 0 %}pos{% else %}neg{% endif %}">${{ data.broker_pnl_unrealized|floatformat:2 }}</div>
+    <div class="dm-sub">Realizado hoy: ${{ data.broker_pnl_today|floatformat:2 }}</div>
+  </div>
+
+  <div class="da-metric c-info">
+    <div class="dm-label">Posiciones Abiertas</div>
+    <div class="dm-val" style="color:var(--info)">{{ data.total_open_positions }}</div>
+    <div class="dm-sub">{{ data.total_accounts }} cuentas activas</div>
+  </div>
+
+  <div class="da-metric c-muted">
+    <div class="dm-label">Exposición Internalizada</div>
+    <div class="dm-val" style="color:var(--info)">${{ data.internal_exposure_usd|floatformat:2 }}</div>
+    <div class="dm-sub">INTERNAL + ELITE → broker es contra-parte</div>
+  </div>
+
+  <div class="da-metric {% if data.hedge_candidate_usd > 0 %}c-bear{% else %}c-muted{% endif %}">
+    <div class="dm-label">Hedge Candidate Exposure</div>
+    <div class="dm-val {% if data.hedge_candidate_usd > 0 %}neg{% endif %}">${{ data.hedge_candidate_usd|floatformat:2 }}</div>
+    <div class="dm-sub">REVIEW: ${{ data.review_exposure_usd|floatformat:2 }}</div>
+  </div>
+
+</div>
+
+{# ── LONG/SHORT RATIO BAR ── #}
+<div class="ls-bar-wrap">
+  <div class="ls-label">
+    <span class="pos">▲ LONG {{ long_pct }}%</span>
+    <span style="color:var(--muted)">Flow Balance</span>
+    <span class="neg">SHORT {{ short_pct }}% ▼</span>
+  </div>
+  <div class="ls-bar">
+    <div class="ls-long"  style="width:{{ long_pct }}%;"></div>
+    <div class="ls-short" style="width:{{ short_pct }}%;"></div>
+  </div>
+</div>
+
+{# ── SYMBOL EXPOSURE TABLE ── #}
+<div class="da-section">Exposición por Símbolo ({{ data.symbol_exposures|length }})</div>
+<div class="da-card" style="margin-bottom:16px;">
+  <div class="da-card-hdr">
+    <h3>Net Exposure by Symbol</h3>
+    <span style="font-size:.65rem;color:var(--muted)">qty × precio_actual</span>
+  </div>
+  <table class="da-table w-full">
+    <thead><tr>
+      <th>Symbol</th><th>Price</th>
+      <th>Long</th><th>Short</th><th>Net USD</th>
+      <th>UPnL</th><th>Traders</th><th>Concentration</th><th>Risk</th>
+    </tr></thead>
+    <tbody>
+      {% if data.symbol_exposures %}
+        {% for s in data.symbol_exposures %}
+        <tr>
+          <td style="font-weight:800;color:var(--gold)">{{ s.symbol }}</td>
+          <td class="mono" style="color:var(--muted)">${{ s.price|floatformat:4 }}</td>
+          <td class="mono pos">${{ s.long_usd|floatformat:2 }}</td>
+          <td class="mono neg">${{ s.short_usd|floatformat:2 }}</td>
+          <td class="mono {% if s.net_usd >= 0 %}pos{% else %}neg{% endif %}">${{ s.net_usd|floatformat:2 }}</td>
+          <td class="mono {% if s.unrealized_pnl >= 0 %}pos{% else %}neg{% endif %}">${{ s.unrealized_pnl|floatformat:2 }}</td>
+          <td style="color:var(--info);font-weight:700">{{ s.trader_count }}</td>
+          <td>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <div class="conc-bar" style="width:80px;">
+                <div class="conc-fill" style="width:{{ s.concentration_pct|floatformat:0 }}%;
+                  background:{% if s.concentration_pct >= 50 %}#ef5350{% elif s.concentration_pct >= 25 %}#e67e22{% else %}#27ae60{% endif %};"></div>
+              </div>
+              <span style="font-size:.68rem;{% if s.concentration_pct >= 50 %}color:#ef5350;font-weight:700{% else %}color:var(--muted){% endif %}">{{ s.concentration_pct|floatformat:1 }}%</span>
+            </div>
+          </td>
+          <td>
+            {% if s.is_high_risk %}
+              <span style="color:#ef5350;font-weight:800;font-size:.7rem;">⚠ HIGH</span>
+            {% elif s.is_one_sided %}
+              <span style="color:#e67e22;font-weight:700;font-size:.7rem;">△ ONE-SIDE</span>
+            {% else %}
+              <span style="color:#27ae60;font-size:.7rem;">✓</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      {% else %}
+        <tr><td colspan="9" style="text-align:center;color:var(--muted);padding:20px;font-style:italic">Sin posiciones abiertas</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+
+{# ── TRADER CLASS BREAKDOWN ── #}
+<div class="da-section">Exposición por Clasificación de Trader</div>
+<div class="da-card" style="margin-bottom:16px;">
+  <div class="da-card-hdr">
+    <h3>Exposure by Trader Class</h3>
+    <span style="font-size:.65rem;color:var(--muted)">basado en intelligence engine</span>
+  </div>
+  <table class="da-table w-full">
+    <thead><tr>
+      <th>Clase</th><th>Routing</th><th>Cuentas</th>
+      <th>Long</th><th>Short</th><th>Net</th><th>UPnL</th>
+    </tr></thead>
+    <tbody>
+      {% if data.class_exposures %}
+        {% for c in data.class_exposures %}
+        <tr>
+          <td><span class="cls cls-{{ c.trader_class|lower }}">{{ c.trader_class }}</span></td>
+          <td><span class="rt rt-{{ c.routing_profile|lower }}">{{ c.routing_profile }}</span></td>
+          <td style="color:var(--info);font-weight:700">{{ c.account_count }}</td>
+          <td class="mono pos">${{ c.long_usd|floatformat:2 }}</td>
+          <td class="mono neg">${{ c.short_usd|floatformat:2 }}</td>
+          <td class="mono {% if c.net_usd >= 0 %}pos{% else %}neg{% endif %}">${{ c.net_usd|floatformat:2 }}</td>
+          <td class="mono {% if c.unrealized_pnl >= 0 %}pos{% else %}neg{% endif %}">${{ c.unrealized_pnl|floatformat:2 }}</td>
+        </tr>
+        {% endfor %}
+      {% else %}
+        <tr><td colspan="7" style="text-align:center;color:var(--muted);padding:20px;font-style:italic">Sin posiciones abiertas</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+
+{# ── ROUTING BREAKDOWN CARDS ── #}
+<div class="da-section">Book Interno vs Hedge</div>
+<div class="da-cols">
+
+  <div class="da-card">
+    <div class="da-card-hdr">
+      <h3>🏠 Book Internalizado</h3>
+      <span class="rt rt-internal">INTERNAL + ELITE</span>
+    </div>
+    <div class="da-card-body">
+      <div class="kv"><span class="kv-k">Exposición bruta</span><span class="kv-v" style="color:var(--info)">${{ data.internal_exposure_usd|floatformat:2 }}</span></div>
+      <div class="kv"><span class="kv-k">Broker UPnL (sim)</span>
+        <span class="kv-v {% if data.broker_pnl_unrealized >= 0 %}pos{% else %}neg{% endif %}">${{ data.broker_pnl_unrealized|floatformat:2 }}</span></div>
+      <div class="kv"><span class="kv-k">Broker realizado hoy</span>
+        <span class="kv-v {% if data.broker_pnl_today >= 0 %}pos{% else %}neg{% endif %}">${{ data.broker_pnl_today|floatformat:2 }}</span></div>
+      <div style="margin-top:10px;font-size:.68rem;color:var(--muted);">
+        El broker es contra-parte de estos traders. Cuando pierden → broker gana.
+      </div>
+    </div>
+  </div>
+
+  <div class="da-card">
+    <div class="da-card-hdr">
+      <h3>⚠ Candidatos a Hedge</h3>
+      <span class="rt rt-hedge_candidate">HEDGE_CANDIDATE</span>
+    </div>
+    <div class="da-card-body">
+      <div class="kv"><span class="kv-k">Exposición bruta</span>
+        <span class="kv-v {% if data.hedge_candidate_usd > 0 %}neg{% endif %}">${{ data.hedge_candidate_usd|floatformat:2 }}</span></div>
+      <div class="kv"><span class="kv-k">En revisión</span>
+        <span class="kv-v warn">${{ data.review_exposure_usd|floatformat:2 }}</span></div>
+      <div style="margin-top:10px;font-size:.68rem;color:var(--muted);">
+        TOXIC + RISKY. Exposición peligrosa — candidata a hedge con LP cuando esté disponible.
+      </div>
+      {% if data.hedge_candidate_usd > 0 %}
+      <div style="margin-top:8px;padding:8px;background:rgba(231,76,60,.08);border:1px solid rgba(231,76,60,.2);border-radius:4px;font-size:.7rem;color:#ef5350;">
+        ⚠ Exposición HEDGE_CANDIDATE activa — monitorear de cerca.
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+
+{# ── ALL RISK FLAGS LIST ── #}
+{% if data.risk_flags %}
+<div class="da-section">Risk Flags Detallados ({{ data.risk_flags|length }})</div>
+<div class="da-card" style="margin-bottom:24px;">
+  <table class="da-table w-full">
+    <thead><tr><th>Severity</th><th>Tipo</th><th>Símbolo</th><th>Mensaje</th></tr></thead>
+    <tbody>
+      {% for f in data.risk_flags %}
+      <tr>
+        <td>
+          {% if f.severity == "HIGH" %}<span style="color:#ef5350;font-weight:800">⚠ HIGH</span>
+          {% else %}<span style="color:#e67e22;font-weight:700">△ MEDIUM</span>{% endif %}
+        </td>
+        <td style="font-size:.68rem;color:var(--muted);font-family:monospace;">{{ f.type }}</td>
+        <td style="font-weight:700;color:var(--gold)">{{ f.symbol|default:"—" }}</td>
+        <td style="font-size:.72rem;">{{ f.msg }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% endblock %}

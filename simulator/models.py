@@ -38,11 +38,21 @@ class TradingAccount(models.Model):
         help_text='True=Netting (consolidar por símbolo); False=Hedging (varias posiciones).'
     )
 
-    status = models.CharField(
-        max_length=20,
-        choices=[('Activo', 'Activo'), ('Suspendido', 'Suspendido'), ('Completado', 'Completado')],
-        default='Activo'
-    )
+    STATUS_ACTIVE    = 'Activo'
+    STATUS_SUSPENDED = 'Suspendido'
+    STATUS_VIOLATED  = 'Violado'
+    STATUS_CLOSED    = 'Cerrado'
+    STATUS_FUNDED    = 'Completado'
+
+    STATUS_CHOICES = [
+        ('Activo',     'Active'),
+        ('Suspendido', 'Suspended'),
+        ('Violado',    'Violated'),
+        ('Cerrado',    'Closed'),
+        ('Completado', 'Funded/Completed'),
+    ]
+
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Activo')
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -175,6 +185,11 @@ class Trade(models.Model):
 
     opened_at = models.DateTimeField(default=timezone.now)
     closed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["account", "closed_at"], name="trade_acc_closed_idx"),
+        ]
 
     def __str__(self):
         return f"{self.trade_type} {self.symbol} — {self.lot_size} lotes"
@@ -328,13 +343,15 @@ class TradingViolation(models.Model):
 
 
 class TraderScore(models.Model):
-    """Current trader classification + metrics. Updated after each trade close."""
+    """Current trader classification + behavioral metrics. Updated after each trade close."""
     NORMAL      = "NORMAL"
     RISKY       = "RISKY"
     MARTINGALE  = "MARTINGALE"
     TOXIC       = "TOXIC"
     CONSISTENT  = "CONSISTENT"
     ELITE       = "ELITE"
+    GAMBLER     = "GAMBLER"
+    SCALPER     = "SCALPER"
 
     CLASS_CHOICES = [
         (NORMAL,     "Normal"),
@@ -343,16 +360,136 @@ class TraderScore(models.Model):
         (TOXIC,      "Toxic"),
         (CONSISTENT, "Consistent"),
         (ELITE,      "Elite"),
+        (GAMBLER,    "Gambler"),
+        (SCALPER,    "Scalper"),
+    ]
+
+    ROUTING_INTERNAL        = "INTERNAL"
+    ROUTING_REVIEW          = "REVIEW"
+    ROUTING_HEDGE_CANDIDATE = "HEDGE_CANDIDATE"
+    ROUTING_ELITE           = "ELITE"
+
+    ROUTING_CHOICES = [
+        (ROUTING_INTERNAL,        "Internal"),
+        (ROUTING_REVIEW,          "Review"),
+        (ROUTING_HEDGE_CANDIDATE, "Hedge Candidate"),
+        (ROUTING_ELITE,           "Elite"),
     ]
 
     account           = models.OneToOneField(TradingAccount, on_delete=models.CASCADE, related_name="trader_score")
+
+    # Classification
     trader_class      = models.CharField(max_length=12, choices=CLASS_CHOICES, default=NORMAL)
-    win_rate          = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    routing_profile   = models.CharField(max_length=20, choices=ROUTING_CHOICES, default=ROUTING_INTERNAL)
+
+    # Basic performance
+    win_rate          = models.DecimalField(max_digits=5,  decimal_places=2, default=0)
+    profit_factor     = models.DecimalField(max_digits=8,  decimal_places=2, default=0)
     avg_lot_size      = models.DecimalField(max_digits=10, decimal_places=4, default=0)
-    martingale_rate   = models.DecimalField(max_digits=5, decimal_places=3, default=0)
-    profit_factor     = models.DecimalField(max_digits=8, decimal_places=2, default=0)
-    consistency_score = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    consistency_score = models.DecimalField(max_digits=5,  decimal_places=2, default=0)
+    avg_rr            = models.DecimalField(max_digits=8,  decimal_places=3, default=0)
+    pnl_volatility    = models.DecimalField(max_digits=8,  decimal_places=3, default=0)
+
+    # Behavioral signals
+    martingale_rate        = models.DecimalField(max_digits=5, decimal_places=3, default=0)
+    lot_growth_rate        = models.DecimalField(max_digits=8, decimal_places=4, default=0)
+    scalping_ratio         = models.DecimalField(max_digits=5, decimal_places=3, default=0)
+    avg_hold_time_seconds  = models.DecimalField(max_digits=10, decimal_places=1, default=0)
+    toxicity_score         = models.DecimalField(max_digits=5,  decimal_places=2, default=0)
+    gambler_score          = models.DecimalField(max_digits=5,  decimal_places=2, default=0)
+    trade_frequency        = models.DecimalField(max_digits=8,  decimal_places=2, default=0)
+    max_consecutive_losses = models.PositiveIntegerField(default=0)
+    max_consecutive_wins   = models.PositiveIntegerField(default=0)
+
     last_evaluated    = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return f"Score #{self.account_id} {self.trader_class} win={self.win_rate}%"
+
+
+# ─────────────────────────────────────────────
+# Exposure / Dealer Analytics models
+# ─────────────────────────────────────────────
+
+class BrokerSnapshot(models.Model):
+    """Point-in-time broker-wide exposure analytics. Created on demand or periodically."""
+
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    # Global exposure
+    total_accounts           = models.PositiveIntegerField(default=0)
+    total_open_positions     = models.PositiveIntegerField(default=0)
+    total_long_usd           = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    total_short_usd          = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    net_exposure_usd         = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    total_unrealized_pnl     = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    total_realized_pnl_today = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+
+    # Routing-profile breakdown
+    internal_exposure_usd    = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    review_exposure_usd      = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    hedge_candidate_usd      = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+
+    # Broker's simulated P&L (counter-party to INTERNAL traders)
+    broker_pnl_unrealized    = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    broker_pnl_today         = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+
+    # Risk flags as JSON list of {type, severity, msg}
+    risk_flags               = models.JSONField(default=list)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "Broker Snapshot"
+        verbose_name_plural = "Broker Snapshots"
+
+    def __str__(self):
+        return f"Snapshot {self.created_at:%Y-%m-%d %H:%M} | net=${self.net_exposure_usd}"
+
+
+class SymbolExposure(models.Model):
+    """Per-symbol exposure breakdown within a BrokerSnapshot."""
+
+    snapshot          = models.ForeignKey(
+        BrokerSnapshot, on_delete=models.CASCADE, related_name="symbol_exposures"
+    )
+    symbol            = models.CharField(max_length=12)
+    long_qty          = models.DecimalField(max_digits=18, decimal_places=6, default=0)
+    short_qty         = models.DecimalField(max_digits=18, decimal_places=6, default=0)
+    net_qty           = models.DecimalField(max_digits=18, decimal_places=6, default=0)
+    long_usd          = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    short_usd         = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    net_usd           = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    trader_count      = models.PositiveIntegerField(default=0)
+    concentration_pct = models.DecimalField(max_digits=6, decimal_places=2, default=0)
+    unrealized_pnl    = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    current_price     = models.DecimalField(max_digits=18, decimal_places=6, default=0)
+    is_high_risk      = models.BooleanField(default=False)
+
+    class Meta:
+        unique_together = [("snapshot", "symbol")]
+        ordering = ["-concentration_pct"]
+
+    def __str__(self):
+        return f"{self.symbol} net=${self.net_usd}"
+
+
+class TraderClassExposure(models.Model):
+    """Per-trader-class exposure breakdown within a BrokerSnapshot."""
+
+    snapshot         = models.ForeignKey(
+        BrokerSnapshot, on_delete=models.CASCADE, related_name="class_exposures"
+    )
+    trader_class     = models.CharField(max_length=12)
+    routing_profile  = models.CharField(max_length=20, default="INTERNAL")
+    account_count    = models.PositiveIntegerField(default=0)
+    long_usd         = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    short_usd        = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    net_usd          = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    unrealized_pnl   = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+
+    class Meta:
+        unique_together = [("snapshot", "trader_class")]
+        ordering = ["trader_class"]
+
+    def __str__(self):
+        return f"{self.trader_class} ({self.account_count} accts) net=${self.net_usd}"
