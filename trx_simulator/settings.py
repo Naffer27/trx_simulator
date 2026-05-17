@@ -273,6 +273,7 @@ LOGGING = {
         "simulator.exposure":      {"handlers": ["console"], "level": os.getenv("SIM_EXP_LOG_LEVEL", "WARNING"), "propagate": False},
         "simulator.risk":          {"handlers": ["console"], "level": os.getenv("SIM_RISK_LOG_LEVEL", "WARNING"), "propagate": False},
         "simulator.observability": {"handlers": ["console"], "level": "INFO",    "propagate": False},
+        "simulator.security":     {"handlers": ["console"], "level": "INFO",    "propagate": False},
         "celery":                  {"handlers": ["console"], "level": "INFO",    "propagate": False},
         "celery.worker":           {"handlers": ["console"], "level": "INFO",    "propagate": False},
         "celery.beat":             {"handlers": ["console"], "level": "INFO",    "propagate": False},

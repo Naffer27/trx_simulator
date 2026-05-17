@@ -9,6 +9,7 @@ from django.db import transaction
 
 from market_data.feeds import get_feed_manager
 from .models import TradingAccount, Position, Trade, LedgerEntry
+from .observability import security_log
 
 log = logging.getLogger("simulator.ws")
 
@@ -98,7 +99,10 @@ class TradingConsumer(AsyncWebsocketConsumer):
         log.info("[connect] user=%s is_auth=%s q_account=%s", uname, is_auth, q_account)
 
         if not is_auth:
-            log.warning("[connect] rejected unauthenticated WS from %s", self.scope.get("client"))
+            client = self.scope.get("client")
+            ip = client[0] if isinstance(client, (list, tuple)) and client else str(client)
+            log.warning("[connect] rejected unauthenticated WS from %s", ip)
+            security_log("ws.rejected_unauthenticated", ip=ip)
             await self.close(code=4001)
             return
 

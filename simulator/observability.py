@@ -25,6 +25,12 @@ def get_request_id() -> str | None:
 class StructuredFormatter(logging.Formatter):
     """Emits one compact JSON line per log record. Enable with LOG_JSON=true."""
 
+    # Fields emitted from `extra={}` dicts in security_log() and log calls
+    _EXTRA_FIELDS = (
+        "task_name", "task_id", "user_id", "account_id",
+        "security_event", "ip", "username", "endpoint", "attempt_count", "detail",
+    )
+
     def format(self, record: logging.LogRecord) -> str:
         doc: dict = {
             "ts": self.formatTime(record, "%Y-%m-%dT%H:%M:%S"),
@@ -35,7 +41,7 @@ class StructuredFormatter(logging.Formatter):
         rid = get_request_id()
         if rid:
             doc["req_id"] = rid
-        for key in ("task_name", "task_id", "user_id", "account_id"):
+        for key in self._EXTRA_FIELDS:
             val = getattr(record, key, None)
             if val is not None:
                 doc[key] = val
@@ -187,3 +193,37 @@ def order_rate_check(redis_url: str, account_id: int, limit: int = 10, window: i
         return count <= limit
     except Exception:
         return True  # allow on Redis failure — don't block trading
+
+
+# ── Security event logging ─────────────────────────────────────────────────────
+_sec_log = logging.getLogger("simulator.security")
+
+
+def get_client_ip(request) -> str:
+    """
+    Return the real client IP, respecting X-Forwarded-For set by ngrok/proxy.
+    Takes only the first (leftmost) address — that's the original client.
+    """
+    xff = request.META.get("HTTP_X_FORWARDED_FOR", "")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.META.get("REMOTE_ADDR", "unknown")
+
+
+def security_log(event: str, level: str = "warning", **fields) -> None:
+    """
+    Emit a structured security event to the simulator.security logger.
+    Never raises — observability must never crash the app.
+
+    Usage:
+        security_log("auth.login_failed", ip=ip, username=username)
+        security_log("auth.login_success", level="info", ip=ip, username=username)
+        security_log("ws.rejected_unauthenticated", ip=ip)
+        security_log("ratelimit.hit", ip=ip, endpoint="/login/", attempt_count=n)
+    """
+    try:
+        extra = {"security_event": event, **fields}
+        parts = [f"[security.{event}]"] + [f"{k}={v}" for k, v in fields.items()]
+        getattr(_sec_log, level)(" ".join(parts), extra=extra)
+    except Exception:
+        pass

@@ -21,6 +21,7 @@ from .models import (
 from .forms import LoginForm, RegisterForm, DepositForm, WithdrawForm, CreateAccountForm, FundAccountForm, WithdrawAccountForm
 from .wallet_ledger import credit_wallet, debit_wallet, transfer_to_account, transfer_to_wallet, get_or_create_wallet, InsufficientFunds
 from .currencies import to_np_code, CURRENCY_MAP
+from .observability import security_log, get_client_ip
 
 logger = logging.getLogger(__name__)
 
@@ -238,9 +239,16 @@ def login_view(request):
         password    = request.POST.get('password', '')
         access_code = (request.POST.get('access_code') or '').strip()
 
+        ip = get_client_ip(request)
         user = authenticate(request, username=username, password=password)
         if user is None:
             error = "Usuario o contraseña inválidos"
+            security_log(
+                "auth.login_failed",
+                ip=ip,
+                username=username,
+                reason="bad_credentials",
+            )
         else:
             expected_global = (getattr(settings, "BROKER_ACCESS_CODE", "") or "").strip()
 
@@ -262,8 +270,21 @@ def login_view(request):
 
             if not ok_code:
                 error = "Código inválido"
+                security_log(
+                    "auth.login_failed",
+                    ip=ip,
+                    username=username,
+                    reason="bad_access_code",
+                )
             else:
                 auth_login(request, user)
+                security_log(
+                    "auth.login_success",
+                    level="info",
+                    ip=ip,
+                    username=username,
+                    user_id=user.pk,
+                )
                 # Set session to the user's most recent active account if one exists,
                 # but never create one here — account management lives in /accounts/.
                 active = (
