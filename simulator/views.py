@@ -1504,3 +1504,19 @@ def metrics_view(request):
     result["elapsed_ms"] = round((_t.monotonic() - t_start) * 1000, 1)
     result["status"] = "degraded" if degraded else "ok"
     return JsonResponse(result, status=200 if not degraded else 503)
+
+
+# ──────────────────────────────────────────────────────────────
+# Broker monitoring — staff-only operational dashboard
+# GET /api/broker/monitoring/  →  200 {"alerts":{}, "pnl":{}, "exposure":{}, ...}
+#                              →  503 if any section failed
+#                              →  403 if not staff
+# ──────────────────────────────────────────────────────────────
+def broker_monitoring_view(request):
+    if not (request.user.is_authenticated and request.user.is_staff):
+        return JsonResponse({"error": "forbidden"}, status=403)
+
+    from .broker_monitoring import full_report
+    report = full_report()
+    has_errors = bool(report.get("errors"))
+    return JsonResponse(report, status=503 if has_errors else 200)
