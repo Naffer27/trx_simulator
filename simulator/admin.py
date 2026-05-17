@@ -12,6 +12,7 @@ from .models import (
     Purchase, Deposit, WithdrawalRequest,
     RiskRule, DrawdownSnapshot, TradingViolation, TraderScore,
     BrokerSnapshot, SymbolExposure, TraderClassExposure,
+    AuditLog,
 )
 
 
@@ -1516,6 +1517,31 @@ class WithdrawalRequestAdmin(admin.ModelAdmin):
             "fields":  ("created_at", "updated_at"),
         }),
     )
+
+
+# ─────────────────────────────────────────────
+# Audit Log — read-only
+# ─────────────────────────────────────────────
+
+@admin.register(AuditLog)
+class AuditLogAdmin(admin.ModelAdmin):
+    list_display  = ("created_at", "event_type", "action", "user", "account", "ip", "request_id")
+    list_filter   = ("event_type",)
+    search_fields = ("event_type", "action", "ip", "request_id", "user__username")
+    readonly_fields = (
+        "event_type", "action", "user", "account",
+        "ip", "endpoint", "method", "request_id", "detail", "created_at",
+    )
+    ordering = ("-created_at",)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.is_superuser  # superuser can purge stale rows if needed
 
 
 # ─────────────────────────────────────────────

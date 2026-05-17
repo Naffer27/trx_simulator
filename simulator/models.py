@@ -895,3 +895,49 @@ class AccountEquitySnapshot(models.Model):
 
     def __str__(self):
         return f"AccEquitySnap #{self.account_id} {self.taken_at:%Y-%m-%d %H:%M} eq={self.equity}"
+
+
+# ─────────────────────────────────────────────
+# Audit Trail
+# ─────────────────────────────────────────────
+
+class AuditLog(models.Model):
+    """
+    Append-only operational audit log.
+    Records who did what, from where, and the before/after state for every
+    sensitive action (deposits, withdrawals, account funding, admin actions).
+
+    Rules:
+    - NEVER update or delete rows (append-only)
+    - NEVER call from model save() — only from views/tasks
+    - All FK fields are nullable so log survives user/account deletion
+    """
+    # Event classification
+    event_type  = models.CharField(max_length=80, db_index=True)   # e.g. "deposit.credited"
+    action      = models.CharField(max_length=120)                  # human-readable label
+
+    # Who
+    user        = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    account     = models.ForeignKey(TradingAccount, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+
+    # Where / how
+    ip          = models.GenericIPAddressField(null=True, blank=True)
+    endpoint    = models.CharField(max_length=200, blank=True)
+    method      = models.CharField(max_length=10, blank=True)
+    request_id  = models.CharField(max_length=40, blank=True, db_index=True)
+
+    # Payload — flexible JSON (before/after state, params, IDs)
+    detail      = models.JSONField(default=dict, blank=True)
+
+    created_at  = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["event_type", "created_at"], name="auditlog_type_ts_idx"),
+            models.Index(fields=["request_id"],               name="auditlog_reqid_idx"),
+            models.Index(fields=["user", "created_at"],       name="auditlog_user_ts_idx"),
+        ]
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"AuditLog[{self.event_type}] user={self.user_id} {self.created_at:%Y-%m-%d %H:%M:%S}"

@@ -224,6 +224,13 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(minute="*"),
         "options":  {"expires": 55},   # drop if not picked up before next tick
     },
+    # Cleanup old audit log entries every night at 2:00 UTC (30-day retention)
+    "cleanup-audit-log-daily": {
+        "task":     "simulator.cleanup_audit_log",
+        "schedule": crontab(hour=2, minute=0),
+        "args":     (30,),               # retention_days=30
+        "options":  {"expires": 55 * 60},
+    },
     # Cleanup old snapshots every night at 3:00 UTC
     "cleanup-snapshots-daily": {
         "task":     "simulator.cleanup_snapshots",

@@ -171,6 +171,30 @@ def take_snapshots_task(self) -> dict:
 
 
 @shared_task(
+    name="simulator.cleanup_audit_log",
+    bind=True,
+    max_retries=1,
+    default_retry_delay=120,
+)
+def cleanup_audit_log_task(self, retention_days: int = 30) -> dict:
+    """
+    Delete AuditLog rows older than retention_days (default 30).
+    Never touches financial data — audit rows only.
+    """
+    from django.utils import timezone
+    from datetime import timedelta
+    from .models import AuditLog
+
+    cutoff = timezone.now() - timedelta(days=retention_days)
+    deleted, _ = AuditLog.objects.filter(created_at__lt=cutoff).delete()
+    logger.info(
+        "[cleanup_audit_log] retention=%dd cutoff=%s deleted=%d",
+        retention_days, cutoff.isoformat(), deleted,
+    )
+    return {"retention_days": retention_days, "deleted": deleted}
+
+
+@shared_task(
     name="simulator.cleanup_snapshots",
     bind=True,
     max_retries=1,

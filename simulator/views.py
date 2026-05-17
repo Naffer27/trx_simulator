@@ -22,6 +22,15 @@ from .forms import LoginForm, RegisterForm, DepositForm, WithdrawForm, CreateAcc
 from .wallet_ledger import credit_wallet, debit_wallet, transfer_to_account, transfer_to_wallet, get_or_create_wallet, InsufficientFunds
 from .currencies import to_np_code, CURRENCY_MAP
 from .observability import security_log, get_client_ip
+from .audit import (
+    log_audit,
+    EV_AUTH_LOGIN_SUCCESS, EV_AUTH_LOGIN_FAILED,
+    EV_DEPOSIT_CREATED, EV_DEPOSIT_CREDITED, EV_DEPOSIT_CALLBACK,
+    EV_WITHDRAW_REQUEST, EV_WITHDRAW_CALLBACK, EV_WITHDRAW_COMPLETE,
+    EV_WITHDRAW_FAILED, EV_WITHDRAW_REFUNDED,
+    EV_ACCOUNT_FUNDED, EV_ACCOUNT_WITHDRAWN,
+    EV_ADMIN_VIEW,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -249,6 +258,8 @@ def login_view(request):
                 username=username,
                 reason="bad_credentials",
             )
+            log_audit(request, EV_AUTH_LOGIN_FAILED, f"Login failed (bad credentials) for {username}",
+                      detail={"username": username, "ip": ip, "reason": "bad_credentials"})
         else:
             expected_global = (getattr(settings, "BROKER_ACCESS_CODE", "") or "").strip()
 
@@ -276,6 +287,8 @@ def login_view(request):
                     username=username,
                     reason="bad_access_code",
                 )
+                log_audit(request, EV_AUTH_LOGIN_FAILED, f"Login failed (bad access code) for {username}",
+                          detail={"username": username, "ip": ip, "reason": "bad_access_code"})
             else:
                 auth_login(request, user)
                 security_log(
@@ -285,6 +298,8 @@ def login_view(request):
                     username=username,
                     user_id=user.pk,
                 )
+                log_audit(request, EV_AUTH_LOGIN_SUCCESS, f"Login success for {username}",
+                          detail={"username": username, "ip": ip})
                 # Set session to the user's most recent active account if one exists,
                 # but never create one here — account management lives in /accounts/.
                 active = (
@@ -762,6 +777,12 @@ def fund_account_view(request, account_id):
             initiated_by=request.user,
         )
         request.session["acct_success"] = f"${amount:.2f} transferred to account #{account.id}."
+        log_audit(
+            request, EV_ACCOUNT_FUNDED,
+            f"Account #{account.id} funded ${amount:.2f} from wallet",
+            account=account,
+            detail={"amount": str(amount), "wallet_id": wallet.id, "account_id": account.id},
+        )
     except InsufficientFunds:
         request.session["acct_error"] = (
             f"Insufficient wallet balance. Available: ${wallet.available_balance:.2f}."
@@ -798,6 +819,12 @@ def withdraw_account_view(request, account_id):
             initiated_by=request.user,
         )
         request.session["acct_success"] = f"${amount:.2f} withdrawn to wallet from account #{account.id}."
+        log_audit(
+            request, EV_ACCOUNT_WITHDRAWN,
+            f"Account #{account.id} withdrew ${amount:.2f} to wallet",
+            account=account,
+            detail={"amount": str(amount), "wallet_id": wallet.id, "account_id": account.id},
+        )
     except (InsufficientFunds, ValueError) as exc:
         request.session["acct_error"] = str(exc)
     except Exception as exc:
@@ -1003,6 +1030,18 @@ def deposit_callback(request):
                 "amount_usd=%s currency=%s wallet_id=%d",
                 deposit.id, payment_id,
                 deposit.amount_usd, deposit.crypto_currency.upper(), wallet.id,
+            )
+            log_audit(
+                request, EV_DEPOSIT_CREDITED,
+                f"Deposit #{deposit.id} credited ${deposit.amount_usd}",
+                detail={
+                    "deposit_id":   deposit.id,
+                    "payment_id":   payment_id,
+                    "amount_usd":   str(deposit.amount_usd),
+                    "currency":     deposit.crypto_currency,
+                    "wallet_id":    wallet.id,
+                    "payment_status": payment_status,
+                },
             )
 
         elif payment_status == Deposit.STATUS_CONFIRMING:
@@ -1219,6 +1258,17 @@ def withdraw_view(request):
                         "[withdraw] created wr_id=%d user=%s amount_usd=%s currency=%s",
                         wr.id, request.user.username, amount_usd, crypto_currency,
                     )
+                    log_audit(
+                        request, EV_WITHDRAW_REQUEST,
+                        f"Withdrawal #{wr.id} requested — ${amount_usd} {crypto_currency.upper()}",
+                        detail={
+                            "withdrawal_id":  wr.id,
+                            "amount_usd":     str(amount_usd),
+                            "currency":       crypto_currency,
+                            "wallet_address": wallet_address,
+                            "debit_tx_id":    debit_tx.id,
+                        },
+                    )
 
                     try:
                         from django.core.mail import send_mail as _send_mail
@@ -1345,6 +1395,17 @@ def withdraw_payout_callback(request):
                     note=f"Refund — payout #{payout_id} failed",
                 )
                 logger.info("[payout_cb] REFUNDED wr_id=%d amount=%s", wr.id, wr.amount_usd)
+                log_audit(
+                    request, EV_WITHDRAW_REFUNDED,
+                    f"Withdrawal #{wr.id} FAILED — refunded ${wr.amount_usd}",
+                    detail={
+                        "withdrawal_id": wr.id,
+                        "payout_id": payout_id,
+                        "np_status": np_status,
+                        "amount_usd": str(wr.amount_usd),
+                        "wallet_id": wallet.id,
+                    },
+                )
                 try:
                     from django.core.mail import send_mail as _send_mail
                     _send_mail(
@@ -1365,6 +1426,18 @@ def withdraw_payout_callback(request):
 
             elif new_status == WithdrawalRequest.STATUS_COMPLETED:
                 logger.info("[payout_cb] COMPLETED wr_id=%d payout_id=%s", wr.id, payout_id)
+                log_audit(
+                    request, EV_WITHDRAW_COMPLETE,
+                    f"Withdrawal #{wr.id} COMPLETED — ${wr.amount_usd}",
+                    detail={
+                        "withdrawal_id": wr.id,
+                        "payout_id": payout_id,
+                        "amount_usd": str(wr.amount_usd),
+                        "crypto_amount": str(wr.crypto_amount),
+                        "currency": wr.crypto_currency,
+                        "wallet_address": wr.wallet_address,
+                    },
+                )
                 try:
                     from django.core.mail import send_mail as _send_mail
                     _send_mail(
