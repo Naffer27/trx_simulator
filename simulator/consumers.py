@@ -19,6 +19,10 @@ DEFAULT_TICK_INTERVAL = float(os.getenv("PRICE_TICK_INTERVAL", "1.0"))
 # Server-side aggregation is bypassed for these — candle_kline() handles chart updates.
 _KLINE_SYMBOLS = frozenset({"BTCUSD", "ETHUSD"})
 
+# Whitelist of symbols accepted from the client — rejects arbitrary strings that
+# would start spurious feed tasks or pollute FeedManager state.
+_ALLOWED_SYMBOLS = frozenset({"EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "BTCUSD", "ETHUSD"})
+
 # ---------------- TF helpers ----------------
 def tf_seconds(tf: str) -> int:
     s = str(tf).strip().lower()
@@ -93,6 +97,11 @@ class TradingConsumer(AsyncWebsocketConsumer):
         uname = getattr(user, "username", None)
         log.info("[connect] user=%s is_auth=%s q_account=%s", uname, is_auth, q_account)
 
+        if not is_auth:
+            log.warning("[connect] rejected unauthenticated WS from %s", self.scope.get("client"))
+            await self.close(code=4001)
+            return
+
         # Priority 0: account_id in WS URL path  ws/trading/<account_id>/
         if is_auth and not self._db_account_id:
             url_account_id = self.scope.get("url_route", {}).get("kwargs", {}).get("account_id")
@@ -140,7 +149,6 @@ class TradingConsumer(AsyncWebsocketConsumer):
         self._bid_state   = {}   # bid (sell/close-buy) por símbolo
         self._ask_state   = {}   # ask (buy/close-sell) por símbolo
         self._order_seq = 1
-        self._order_timestamps = []  # rate limiting: timestamps of recent _order_new calls
         self._positions = []
         self._agg = {}
         self._last_bar_time = {}
@@ -206,6 +214,9 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
         if act == "change_symbol":
             new_sym = data.get("symbol", self.symbol)
+            if new_sym not in _ALLOWED_SYMBOLS:
+                await self.send_json({"type": "error", "code": "invalid_symbol", "message": "simbolo_no_permitido"})
+                return
             old_sym = self.symbol
             if new_sym != old_sym:
                 await self._feed.unsubscribe(old_sym, self.channel_layer, self.channel_name)
@@ -472,13 +483,22 @@ class TradingConsumer(AsyncWebsocketConsumer):
         sl   = data.get("sl")
         tp   = data.get("tp")
 
-        # Rate limit: max 10 new orders per 10 seconds per connection
-        now = time.time()
-        self._order_timestamps = [t for t in self._order_timestamps if now - t < 10]
-        if len(self._order_timestamps) >= 10:
-            await self.send_json({"type": "error", "code": "rate_limited", "message": "demasiadas_ordenes"})
+        if sym not in _ALLOWED_SYMBOLS:
+            await self.send_json({"type": "error", "code": "invalid_symbol", "message": "simbolo_no_permitido"})
             return
-        self._order_timestamps.append(now)
+
+        # Rate limit: max 10 new orders per 10 seconds per account (Redis sliding window)
+        if self._db_account_id:
+            import django.conf as _dc
+            _redis_url = getattr(_dc.settings, "REDIS_URL", "") or "redis://127.0.0.1:6379/0"
+            from .observability import order_rate_check as _rate_check
+            loop = asyncio.get_event_loop()
+            allowed = await loop.run_in_executor(
+                None, _rate_check, _redis_url, self._db_account_id
+            )
+            if not allowed:
+                await self.send_json({"type": "error", "code": "rate_limited", "message": "demasiadas_ordenes"})
+                return
 
         if side not in ("buy","sell") or qty <= 0:
             await self.send_json({"type":"error","code":"invalid_order","message":"orden_invalida"})

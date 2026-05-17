@@ -1395,7 +1395,7 @@ def health_check(request):
             t0 = time.monotonic()
             r = redis_lib.from_url(redis_url, socket_connect_timeout=2)
             r.ping()
-            results["redis"] = {"status": "ok", "ms": round((time.monotonic() - t0) * 1000, 1), "url": redis_url.split("@")[-1]}
+            results["redis"] = {"status": "ok", "ms": round((time.monotonic() - t0) * 1000, 1)}
             results["channel_layer"] = "redis"
         else:
             results["redis"] = {"status": "not_configured"}

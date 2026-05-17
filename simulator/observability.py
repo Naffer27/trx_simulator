@@ -121,13 +121,28 @@ def _push_failure_event(task_name: str, task_id: str, error: str) -> None:
 
 # ── WS connection counter helpers ─────────────────────────────────────────────
 _WS_KEY = "trx:metrics:ws_connections"
+_WS_TTL = 3600  # seconds — auto-expire counter so a crash doesn't leave a stale value
+
+# Module-level Redis client cache: url → client (avoids reconnect on every WS event)
+_redis_clients: dict[str, object] = {}
+_redis_clients_lock = threading.Lock()
+
+
+def _get_redis(redis_url: str):
+    """Return a cached redis client for redis_url."""
+    import redis as _redis
+    with _redis_clients_lock:
+        if redis_url not in _redis_clients:
+            _redis_clients[redis_url] = _redis.from_url(redis_url, socket_connect_timeout=1)
+        return _redis_clients[redis_url]
 
 
 def ws_incr(redis_url: str) -> None:
     """Synchronous increment — call from sync contexts only."""
     try:
-        import redis as _redis
-        _redis.from_url(redis_url, socket_connect_timeout=1).incr(_WS_KEY)
+        r = _get_redis(redis_url)
+        r.incr(_WS_KEY)
+        r.expire(_WS_KEY, _WS_TTL)
     except Exception:
         pass
 
@@ -135,10 +150,40 @@ def ws_incr(redis_url: str) -> None:
 def ws_decr(redis_url: str) -> None:
     """Synchronous decrement clamped at 0."""
     try:
-        import redis as _redis
-        r = _redis.from_url(redis_url, socket_connect_timeout=1)
+        r = _get_redis(redis_url)
         val = r.decr(_WS_KEY)
         if val < 0:
             r.set(_WS_KEY, 0)
     except Exception:
         pass
+
+
+# ── Order rate limiter (Redis sliding window) ──────────────────────────────────
+_RATE_KEY_PREFIX = "trx:rate:orders:"
+
+
+def order_rate_check(redis_url: str, account_id: int, limit: int = 10, window: int = 10) -> bool:
+    """
+    Sliding-window rate check for order submissions, keyed per account_id.
+    Returns True if the request is ALLOWED (under limit), False if rate-limited.
+    Uses a Redis sorted set: score = timestamp, members = unique event IDs.
+    Atomic via pipeline — safe under concurrent connections.
+    """
+    try:
+        import time as _t
+        r = _get_redis(redis_url)
+        key = f"{_RATE_KEY_PREFIX}{account_id}"
+        now = _t.time()
+        cutoff = now - window
+        event_id = f"{now:.6f}"
+
+        pipe = r.pipeline()
+        pipe.zremrangebyscore(key, "-inf", cutoff)   # drop expired entries
+        pipe.zadd(key, {event_id: now})               # add this request
+        pipe.zcard(key)                               # count in window
+        pipe.expire(key, window + 5)                 # auto-clean the key
+        results = pipe.execute()
+        count = results[2]
+        return count <= limit
+    except Exception:
+        return True  # allow on Redis failure — don't block trading

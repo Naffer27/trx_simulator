@@ -149,6 +149,10 @@ class FeedManager:
         if task and not task.done():
             task.cancel()
             log.info("[feed] stopped task for %s (no subscribers)", symbol)
+        self._prices.pop(symbol, None)
+        self._bids.pop(symbol, None)
+        self._asks.pop(symbol, None)
+        self._counts.pop(symbol, None)
 
     async def _broadcast_kline(self, symbol: str, cl, bar: dict) -> None:
         """Broadcast a canonical exchange candle to all consumers subscribed to this symbol."""

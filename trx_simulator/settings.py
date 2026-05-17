@@ -17,20 +17,15 @@ SECRET_KEY = os.getenv(
     "DJANGO_SECRET_KEY",
     "django-insecure-quo5(^mgzytvr!!+qes+#ywpo0y29+x7)pav7m2!k26(pd7ct6",  # fallback dev
 )
-DEBUG = os.getenv("DEBUG", "True").strip().lower() in {"1", "true", "yes"}
+DEBUG = os.getenv("DEBUG", "False").strip().lower() in {"1", "true", "yes"}
 
 # Acceso con código (usado por LoginForm para requerirlo en PROD)
 BROKER_ACCESS_CODE = os.getenv("BROKER_ACCESS_CODE", "").strip()
 
-# Por qué: ngrok cambia subdominio; '*' evita 400 en dev. Mantengo tus hosts.
-ALLOWED_HOSTS = [
-    "*",
-    "0.0.0.0",
-    "127.0.0.1",
-    "localhost",
-    ".ngrok-free.dev",
-    ".ngrok-free.app",
-]
+_BASE_HOSTS = ["0.0.0.0", "127.0.0.1", "localhost", ".ngrok-free.dev", ".ngrok-free.app"]
+# In DEBUG mode allow wildcard so ngrok subdomains don't cause 400s during development.
+# In production, only the explicit list is used.
+ALLOWED_HOSTS = ["*"] + _BASE_HOSTS if DEBUG else _BASE_HOSTS
 
 # Apps
 INSTALLED_APPS = [
@@ -297,7 +292,7 @@ EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
 EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
 EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True").strip().lower() in {"1", "true", "yes"}
-EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "nafferphotographer@gmail.com")
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")  # required in .env
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 ADMINS = [("Admin", os.getenv("ADMIN_EMAIL", "nafferphotographer@gmail.com"))]

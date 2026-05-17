@@ -150,6 +150,8 @@ def reconcile_withdrawals_task(self, hours_back: int = 48) -> dict:
     max_retries=1,
     default_retry_delay=20,
     acks_late=True,          # only ack after the task completes (prevents duplicate snapshots)
+    soft_time_limit=55,      # raises SoftTimeLimitExceeded before the next minute tick
+    time_limit=90,           # hard kill — prevents a hung task from blocking the worker
 )
 def take_snapshots_task(self) -> dict:
     """

@@ -156,7 +156,7 @@ def take_all_snapshots() -> dict:
             net_exposure_usd=broker_net_exposure,
         )
         if acc_rows:
-            AccountEquitySnapshot.objects.bulk_create(acc_rows)
+            AccountEquitySnapshot.objects.bulk_create(acc_rows, batch_size=200)
 
     log.info(
         "[snapshot] taken_at=%s broker_id=%d accounts=%d positions=%d "
