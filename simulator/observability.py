@@ -147,8 +147,9 @@ def ws_incr(redis_url: str) -> None:
     """Synchronous increment — call from sync contexts only."""
     try:
         r = _get_redis(redis_url)
-        r.incr(_WS_KEY)
+        new_val = r.incr(_WS_KEY)
         r.expire(_WS_KEY, _WS_TTL)
+        peak_update(redis_url, "ws_connections", float(new_val))
     except Exception:
         pass
 
@@ -193,6 +194,45 @@ def order_rate_check(redis_url: str, account_id: int, limit: int = 10, window: i
         return count <= limit
     except Exception:
         return True  # allow on Redis failure — don't block trading
+
+
+# ── Stress peak tracking ──────────────────────────────────────────────────────
+_PEAKS_KEY = "trx:metrics:peaks"
+
+
+def peak_update(redis_url: str, field: str, value: float) -> None:
+    """
+    Update a named peak in the Redis hash trx:metrics:peaks if value exceeds the current peak.
+    Fields: ws_connections, snapshot_duration_s, celery_queue_lag, redis_memory_mb.
+    Not perfectly atomic — acceptable for monitoring; worst case is a slightly stale peak.
+    """
+    try:
+        r = _get_redis(redis_url)
+        current = r.hget(_PEAKS_KEY, field)
+        current_val = float(current) if current else 0.0
+        if value > current_val:
+            r.hset(_PEAKS_KEY, field, value)
+    except Exception:
+        pass
+
+
+def get_peaks(redis_url: str) -> dict:
+    """Return all tracked peaks as {field: float}. Returns {} on error."""
+    try:
+        r = _get_redis(redis_url)
+        raw = r.hgetall(_PEAKS_KEY)
+        return {k.decode() if isinstance(k, bytes) else k: float(v) for k, v in raw.items()}
+    except Exception:
+        return {}
+
+
+def reset_peaks(redis_url: str) -> None:
+    """Delete all peak values — for use after intentional load tests."""
+    try:
+        r = _get_redis(redis_url)
+        r.delete(_PEAKS_KEY)
+    except Exception:
+        pass
 
 
 # ── Security event logging ─────────────────────────────────────────────────────

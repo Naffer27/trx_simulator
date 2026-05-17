@@ -240,6 +240,47 @@
 </div>
 {% endif %}
 
+<!-- ── Stress Peaks ──────────────────────────────────────── -->
+<div class="section">
+  <h2>Stress Peaks <span style="font-size:10px;color:#555;">(since last reset — persisted in Redis)</span></h2>
+  {% if peaks %}
+  <div class="grid">
+    {% if peaks.ws_connections is not None %}
+    <div class="card">
+      <div class="label">Peak WS Connections</div>
+      <div class="value {% if peaks.ws_connections > 80 %}err{% elif peaks.ws_connections > 40 %}warn{% else %}ok{% endif %}">
+        {{ peaks.ws_connections|floatformat:0 }}
+      </div>
+    </div>
+    {% endif %}
+    {% if peaks.snapshot_duration_s is not None %}
+    <div class="card">
+      <div class="label">Peak Snapshot Duration</div>
+      <div class="value {% if peaks.snapshot_duration_s > 45 %}err{% elif peaks.snapshot_duration_s > 20 %}warn{% else %}ok{% endif %}">
+        {{ peaks.snapshot_duration_s|floatformat:1 }}s
+      </div>
+    </div>
+    {% endif %}
+    {% if peaks.celery_queue_lag is not None %}
+    <div class="card">
+      <div class="label">Peak Celery Queue Lag</div>
+      <div class="value {% if peaks.celery_queue_lag > 20 %}err{% elif peaks.celery_queue_lag > 5 %}warn{% else %}ok{% endif %}">
+        {{ peaks.celery_queue_lag|floatformat:0 }} tasks
+      </div>
+    </div>
+    {% endif %}
+    {% if peaks.redis_memory_mb is not None %}
+    <div class="card">
+      <div class="label">Peak Redis Memory</div>
+      <div class="value">{{ peaks.redis_memory_mb|floatformat:1 }} MB</div>
+    </div>
+    {% endif %}
+  </div>
+  {% else %}
+    <div class="empty">No stress peaks recorded yet — peaks populate during operation.</div>
+  {% endif %}
+</div>
+
 <!-- ── Task Failures ─────────────────────────────────────── -->
 <div class="section">
   <h2>Recent Task Failures (last 10)</h2>

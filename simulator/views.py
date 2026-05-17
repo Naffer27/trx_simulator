@@ -1600,6 +1600,14 @@ def metrics_view(request):
         result["celery"] = {"error": str(exc)}
         degraded = True
 
+    # ── Stress peaks ──────────────────────────────────────────────────────────
+    try:
+        from .observability import get_peaks
+        redis_url = getattr(settings, "REDIS_URL", "") or "redis://127.0.0.1:6379/0"
+        result["peaks"] = get_peaks(redis_url)
+    except Exception as exc:
+        result["peaks"] = {"error": str(exc)}
+
     result["elapsed_ms"] = round((_t.monotonic() - t_start) * 1000, 1)
     result["status"] = "degraded" if degraded else "ok"
     return JsonResponse(result, status=200 if not degraded else 503)
@@ -1726,7 +1734,15 @@ def ops_panel_view(request):
         redis_info["used_memory_mb"] = round(info["used_memory"] / 1024 / 1024, 1)
         redis_info["maxmemory_mb"]   = round(info.get("maxmemory", 0) / 1024 / 1024, 1)
         redis_info["ws_connections"] = int(r.get("trx:metrics:ws_connections") or 0)
-        redis_info["celery_queue"]   = r.llen("celery")
+        celery_queue_len             = r.llen("celery")
+        redis_info["celery_queue"]   = celery_queue_len
+        # Track peaks inline (queue depth + memory)
+        try:
+            from .observability import peak_update as _pu
+            _pu(_redis_url, "celery_queue_lag", float(celery_queue_len))
+            _pu(_redis_url, "redis_memory_mb", redis_info["used_memory_mb"])
+        except Exception:
+            pass
         # Recent task failures
         raw_failures = r.lrange("trx:metrics:task_failures", 0, 9)
         redis_info["task_failures"] = []
@@ -1739,6 +1755,14 @@ def ops_panel_view(request):
         redis_info["status"] = "error"
         redis_info["error"]  = str(exc)
     ctx["redis"] = redis_info
+
+    # ── Stress peaks ──────────────────────────────────────────────────────────
+    try:
+        from django.conf import settings as _sp
+        from .observability import get_peaks
+        ctx["peaks"] = get_peaks(getattr(_sp, "REDIS_URL", "") or "redis://127.0.0.1:6379/0")
+    except Exception:
+        ctx["peaks"] = {}
 
     # ── Broker monitoring (exposure + margins) ────────────────────────────────
     try:

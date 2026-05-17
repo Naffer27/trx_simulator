@@ -159,14 +159,25 @@ def take_snapshots_task(self) -> dict:
     Writes BrokerEquitySnapshot + AccountEquitySnapshot rows.
     No financial mutations — snapshot rows only.
     """
+    import time as _t
     from .snapshots import take_all_snapshots
     logger.info("[take_snapshots] starting worker=%s", self.request.hostname)
+    t0 = _t.monotonic()
     result = take_all_snapshots()
+    duration_s = _t.monotonic() - t0
     logger.info(
-        "[take_snapshots] done broker_id=%s accounts=%d equity=%.2f",
+        "[take_snapshots] done broker_id=%s accounts=%d equity=%.2f duration_s=%.2f",
         result.get("broker_snapshot_id"), result.get("account_snapshots", 0),
-        result.get("total_equity", 0.0),
+        result.get("total_equity", 0.0), duration_s,
     )
+    try:
+        from django.conf import settings as _s
+        from .observability import peak_update
+        _redis_url = getattr(_s, "REDIS_URL", "") or "redis://127.0.0.1:6379/0"
+        peak_update(_redis_url, "snapshot_duration_s", duration_s)
+    except Exception:
+        pass
+    result["duration_s"] = round(duration_s, 3)
     return result
 
 
