@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Configurar 2FA — Money Brokers</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Courier New', monospace; background: #0d0d0d; color: #c8c8c8;
+         display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+  .card { background: #141414; border: 1px solid #222; border-radius: 8px;
+          padding: 32px; width: 100%; max-width: 420px; }
+  h1 { color: #fff; font-size: 16px; margin-bottom: 4px; }
+  .sub { color: #888; font-size: 12px; margin-bottom: 24px; }
+  .qr { text-align: center; margin-bottom: 20px; }
+  .qr img { border: 4px solid #fff; border-radius: 4px; }
+  .secret { background: #1a1a1a; border: 1px solid #333; border-radius: 4px;
+            padding: 8px 12px; font-size: 12px; color: #4af; word-break: break-all;
+            margin-bottom: 20px; text-align: center; }
+  label { display: block; color: #888; font-size: 11px; margin-bottom: 4px; }
+  input[type=text] { width: 100%; background: #1a1a1a; border: 1px solid #333;
+                     border-radius: 4px; padding: 10px 12px; color: #fff;
+                     font-family: 'Courier New', monospace; font-size: 18px;
+                     letter-spacing: 6px; text-align: center; margin-bottom: 16px; }
+  input:focus { outline: none; border-color: #4af; }
+  button { width: 100%; background: #1a5276; color: #fff; border: none;
+           border-radius: 4px; padding: 12px; font-size: 13px; cursor: pointer; }
+  button:hover { background: #2471a3; }
+  .error { color: #e74c3c; font-size: 12px; margin-bottom: 12px; }
+  .info { color: #888; font-size: 11px; margin-top: 16px; line-height: 1.5; }
+  .existing { background: #1a2a1a; border: 1px solid #2ecc71; border-radius: 4px;
+              padding: 12px; margin-bottom: 20px; color: #2ecc71; font-size: 12px; }
+  .disable-section { margin-top: 24px; border-top: 1px solid #222; padding-top: 20px; }
+  .disable-btn { background: #4a0000; }
+  .disable-btn:hover { background: #7a0000; }
+  a { color: #4af; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>🔐 Autenticación de dos factores</h1>
+  <div class="sub">Protege tu cuenta con un código TOTP.</div>
+
+  {% if existing %}
+  <div class="existing">
+    ✓ 2FA activo desde {{ existing.confirmed_at|date:"Y-m-d H:i" }} UTC
+  </div>
+  <div class="disable-section">
+    <p style="color:#888;font-size:11px;margin-bottom:12px;">Para desactivar 2FA, ingresa tu código actual:</p>
+    <form method="post" action="{% url 'simulator:totp_disable' %}">
+      {% csrf_token %}
+      <label>Código TOTP (6 dígitos)</label>
+      <input type="text" name="code" maxlength="6" inputmode="numeric" autocomplete="one-time-code" placeholder="000000" autofocus>
+      {% if error %}<div class="error">{{ error }}</div>{% endif %}
+      <button class="disable-btn" type="submit">Desactivar 2FA</button>
+    </form>
+  </div>
+  {% else %}
+  <p style="color:#888;font-size:11px;margin-bottom:16px;">
+    Escanea el QR con tu app (Google Authenticator, Authy, etc.) y luego ingresa el código de 6 dígitos.
+  </p>
+
+  <div class="qr">
+    <img src="data:image/png;base64,{{ qr_b64 }}" alt="QR Code" width="180" height="180">
+  </div>
+
+  <p style="color:#888;font-size:11px;margin-bottom:6px;">O ingresa la clave manualmente:</p>
+  <div class="secret">{{ raw_secret }}</div>
+
+  <form method="post">
+    {% csrf_token %}
+    <input type="hidden" name="secret" value="{{ raw_secret }}">
+    <label>Confirma con tu código TOTP</label>
+    <input type="text" name="code" maxlength="6" inputmode="numeric" autocomplete="one-time-code" placeholder="000000" autofocus>
+    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+    <button type="submit">Activar 2FA</button>
+  </form>
+
+  <div class="info">
+    ⚠ Guarda la clave manual en un lugar seguro.<br>
+    Si pierdes acceso a tu app, contacta al administrador.
+  </div>
+  {% endif %}
+
+  <div style="margin-top:20px;"><a href="{% url 'simulator:home' %}">← Volver</a></div>
+</div>
+</body>
+</html>

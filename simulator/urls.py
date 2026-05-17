@@ -34,6 +34,10 @@ from .views import (
     withdraw_account_view,
     # Staff operational panel
     ops_panel_view,
+    # 2FA
+    totp_setup_view,
+    totp_verify_view,
+    totp_disable_view,
 )
 
 app_name = 'simulator'
@@ -91,4 +95,9 @@ urlpatterns = [
 
     # ── Staff Operational Panel ──────────────────────────────────────────────
     path("staff/ops/", ops_panel_view, name="ops_panel"),
+
+    # ── 2FA ─────────────────────────────────────────────────────────────────
+    path("account/2fa/setup/",   totp_setup_view,   name="totp_setup"),
+    path("account/2fa/verify/",  totp_verify_view,  name="totp_verify"),
+    path("account/2fa/disable/", totp_disable_view, name="totp_disable"),
 ]

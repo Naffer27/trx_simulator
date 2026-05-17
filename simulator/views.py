@@ -1781,3 +1781,126 @@ def ops_panel_view(request):
         ctx["recent_security"] = []
 
     return render(request, "simulator/ops_panel.html", ctx)
+
+
+# ──────────────────────────────────────────────────────────────
+# 2FA — TOTP Setup + Verify views
+# ──────────────────────────────────────────────────────────────
+
+@login_required
+def totp_setup_view(request):
+    """
+    GET  /account/2fa/setup/  — generate secret, show QR code
+    POST /account/2fa/setup/  — confirm code → activate device
+    """
+    from .models import TOTPDevice
+    from .two_factor import (
+        generate_totp_secret, get_totp_uri, verify_totp_code,
+        generate_qr_png, _encrypt_secret, mark_session_verified,
+    )
+    from .audit import log_audit, EV_ADMIN_ACTION
+
+    # Already has confirmed device?
+    existing = TOTPDevice.objects.filter(user=request.user, confirmed=True).first()
+    error = None
+
+    if request.method == "POST":
+        code   = request.POST.get("code", "").strip()
+        secret = request.POST.get("secret", "").strip()
+
+        if not secret or not code:
+            error = "Código o secreto inválido."
+        elif verify_totp_code(secret, code):
+            # Save or update device
+            TOTPDevice.objects.update_or_create(
+                user=request.user,
+                defaults={
+                    "secret":       _encrypt_secret(secret),
+                    "confirmed":    True,
+                    "confirmed_at": timezone.now(),
+                },
+            )
+            mark_session_verified(request)
+            security_log("auth.2fa_enabled", level="info", username=request.user.username, user_id=request.user.pk)
+            log_audit(request, EV_ADMIN_ACTION, f"2FA enabled for user {request.user.username}")
+            return redirect("simulator:home")
+        else:
+            error = "Código incorrecto. Intenta de nuevo."
+
+    # GET — generate fresh secret for setup
+    raw_secret = generate_totp_secret()
+    uri        = get_totp_uri(raw_secret, request.user.username)
+    import base64 as _b64
+    qr_b64 = _b64.b64encode(generate_qr_png(uri)).decode()
+
+    return render(request, "simulator/totp_setup.html", {
+        "existing": existing,
+        "raw_secret": raw_secret,
+        "qr_b64": qr_b64,
+        "error": error,
+    })
+
+
+@login_required
+def totp_verify_view(request):
+    """
+    GET  /account/2fa/verify/  — show code entry form
+    POST /account/2fa/verify/  — verify code → set session flag
+    """
+    from .models import TOTPDevice
+    from .two_factor import verify_totp_code, mark_session_verified, totp_session_verified
+
+    # Already verified this session?
+    if totp_session_verified(request):
+        next_url = request.session.pop("2fa_next", None) or "simulator:home"
+        return redirect(next_url)
+
+    device = TOTPDevice.objects.filter(user=request.user, confirmed=True).first()
+    if not device:
+        # No device configured — pass through
+        return redirect("simulator:home")
+
+    error = None
+
+    if request.method == "POST":
+        code = request.POST.get("code", "").strip()
+        if verify_totp_code(device.secret, code):
+            mark_session_verified(request)
+            security_log("auth.2fa_verified", level="info", username=request.user.username, user_id=request.user.pk)
+            next_url = request.session.pop("2fa_next", None) or "simulator:home"
+            return redirect(next_url)
+        else:
+            error = "Código incorrecto."
+            security_log("auth.2fa_failed", username=request.user.username, user_id=request.user.pk)
+
+    return render(request, "simulator/totp_verify.html", {"error": error})
+
+
+@login_required
+def totp_disable_view(request):
+    """
+    POST /account/2fa/disable/  — disable 2FA after code confirmation
+    """
+    from .models import TOTPDevice
+    from .two_factor import verify_totp_code
+    from .audit import log_audit, EV_ADMIN_ACTION
+
+    if request.method != "POST":
+        return redirect("simulator:home")
+
+    device = TOTPDevice.objects.filter(user=request.user, confirmed=True).first()
+    if not device:
+        return redirect("simulator:home")
+
+    code = request.POST.get("code", "").strip()
+    if verify_totp_code(device.secret, code):
+        device.delete()
+        request.session.pop("2fa_verified", None)
+        security_log("auth.2fa_disabled", level="warning", username=request.user.username, user_id=request.user.pk)
+        log_audit(request, EV_ADMIN_ACTION, f"2FA disabled for user {request.user.username}")
+        return redirect("simulator:home")
+
+    return render(request, "simulator/totp_setup.html", {
+        "existing": device,
+        "error": "Código incorrecto — 2FA no desactivado.",
+    })

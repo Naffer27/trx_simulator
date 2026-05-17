@@ -289,6 +289,17 @@ LOGGING = {
     },
 }
 
+# ===============================
+# 🔐 2FA (TOTP)
+# ===============================
+TOTP_ISSUER_NAME    = os.getenv("TOTP_ISSUER_NAME", "Money Brokers")
+# Fernet key for encrypting TOTP secrets at rest.
+# Generate once with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# Must be 32-byte base64-encoded key. If not set, secrets are stored base64-only (dev mode).
+TOTP_ENCRYPTION_KEY = os.getenv("TOTP_ENCRYPTION_KEY", "").strip()
+# Enforce 2FA for all staff/admin users (set True in production after testing)
+TOTP_STAFF_REQUIRED = os.getenv("TOTP_STAFF_REQUIRED", "False").strip().lower() in {"1", "true", "yes"}
+
 # Login / redirecciones
 LOGIN_URL = "simulator:login"
 LOGIN_REDIRECT_URL = "simulator:dashboard"

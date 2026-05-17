@@ -901,6 +901,25 @@ class AccountEquitySnapshot(models.Model):
 # Audit Trail
 # ─────────────────────────────────────────────
 
+class TOTPDevice(models.Model):
+    """
+    One TOTP device per user. Secrets are stored encrypted (see two_factor.py).
+    confirmed=False means setup started but QR not yet scanned and verified.
+    Only confirmed=True devices are enforced.
+    """
+    user        = models.OneToOneField(User, on_delete=models.CASCADE, related_name="totp_device")
+    secret      = models.CharField(max_length=512)   # encrypted; never raw base32 in prod
+    confirmed   = models.BooleanField(default=False)
+    created_at  = models.DateTimeField(auto_now_add=True)
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["user"], name="totpdevice_user_idx")]
+
+    def __str__(self):
+        return f"TOTPDevice(user={self.user_id}, confirmed={self.confirmed})"
+
+
 class AuditLog(models.Model):
     """
     Append-only operational audit log.

@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Verificar 2FA — Money Brokers</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Courier New', monospace; background: #0d0d0d; color: #c8c8c8;
+         display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+  .card { background: #141414; border: 1px solid #222; border-radius: 8px;
+          padding: 32px; width: 100%; max-width: 360px; text-align: center; }
+  h1 { color: #fff; font-size: 16px; margin-bottom: 4px; }
+  .sub { color: #888; font-size: 12px; margin-bottom: 28px; }
+  label { display: block; color: #888; font-size: 11px; margin-bottom: 6px; text-align: left; }
+  input[type=text] { width: 100%; background: #1a1a1a; border: 1px solid #333;
+                     border-radius: 4px; padding: 12px; color: #fff;
+                     font-family: 'Courier New', monospace; font-size: 24px;
+                     letter-spacing: 10px; text-align: center; margin-bottom: 16px; }
+  input:focus { outline: none; border-color: #4af; }
+  button { width: 100%; background: #1a5276; color: #fff; border: none;
+           border-radius: 4px; padding: 12px; font-size: 13px; cursor: pointer; }
+  button:hover { background: #2471a3; }
+  .error { color: #e74c3c; font-size: 12px; margin-bottom: 12px; }
+  .hint { color: #555; font-size: 11px; margin-top: 16px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>🔐 Verificación 2FA</h1>
+  <div class="sub">Ingresa el código de 6 dígitos de tu app autenticadora.</div>
+
+  <form method="post">
+    {% csrf_token %}
+    <label>Código TOTP</label>
+    <input type="text" name="code" maxlength="6" inputmode="numeric"
+           autocomplete="one-time-code" placeholder="000000" autofocus>
+    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+    <button type="submit">Verificar</button>
+  </form>
+
+  <div class="hint">El código cambia cada 30 segundos.</div>
+</div>
+</body>
+</html>
