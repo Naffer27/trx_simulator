@@ -22,6 +22,7 @@ from .views import (
     health_check,
     metrics_view,
     broker_monitoring_view,
+    snapshots_view,
     # Withdrawals
     withdraw_view,
     withdraw_history_view,
@@ -84,4 +85,5 @@ urlpatterns = [
     path("api/health/",                   health_check,                 name="health_check"),
     path("api/metrics/",                  metrics_view,                 name="metrics"),
     path("api/broker/monitoring/",        broker_monitoring_view,       name="broker_monitoring"),
+    path("api/broker/snapshots/",         snapshots_view,               name="broker_snapshots"),
 ]

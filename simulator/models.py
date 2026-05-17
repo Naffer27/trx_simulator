@@ -831,3 +831,67 @@ class TraderClassExposure(models.Model):
 
     def __str__(self):
         return f"{self.trader_class} ({self.account_count} accts) net=${self.net_usd}"
+
+
+# ─────────────────────────────────────────────
+# Equity / Financial time-series snapshots
+# Separate from BrokerSnapshot (dealer analytics).
+# These are lightweight minute-by-minute financial state rows
+# written by the Celery snapshot task and kept for SNAPSHOT_RETENTION_DAYS.
+# ─────────────────────────────────────────────
+
+class BrokerEquitySnapshot(models.Model):
+    """
+    Broker-wide financial state at a point in time.
+    Written every minute by simulator.take_snapshots task.
+    Pruned by simulator.cleanup_snapshots after SNAPSHOT_RETENTION_DAYS.
+    """
+    taken_at          = models.DateTimeField(db_index=True)
+    active_accounts   = models.PositiveIntegerField(default=0)
+    open_positions    = models.PositiveIntegerField(default=0)
+    total_balance     = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal("0"))
+    total_equity      = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal("0"))
+    floating_pnl      = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal("0"))
+    total_margin_used = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal("0"))
+    total_free_margin = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal("0"))
+    gross_long_usd    = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal("0"))
+    gross_short_usd   = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal("0"))
+    net_exposure_usd  = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal("0"))
+
+    class Meta:
+        indexes = [models.Index(fields=["taken_at"], name="brokerequitysnap_ts_idx")]
+        ordering = ["-taken_at"]
+        verbose_name = "Broker Equity Snapshot"
+
+    def __str__(self):
+        return f"BrokerEquitySnap {self.taken_at:%Y-%m-%d %H:%M} equity={self.total_equity}"
+
+
+class AccountEquitySnapshot(models.Model):
+    """
+    Per-account financial state at a point in time.
+    Written every minute (alongside BrokerEquitySnapshot) for every active account.
+    Pruned alongside BrokerEquitySnapshot.
+    """
+    account        = models.ForeignKey(
+        TradingAccount, on_delete=models.CASCADE, related_name="equity_snapshots"
+    )
+    taken_at       = models.DateTimeField()
+    balance        = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0"))
+    equity         = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0"))
+    floating_pnl   = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0"))
+    margin_used    = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0"))
+    free_margin    = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0"))
+    drawdown       = models.DecimalField(max_digits=7,  decimal_places=2, default=Decimal("0"))
+    open_positions = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["account", "taken_at"], name="accequitysnap_acc_ts_idx"),
+            models.Index(fields=["taken_at"],             name="accequitysnap_ts_idx"),
+        ]
+        ordering = ["-taken_at"]
+        verbose_name = "Account Equity Snapshot"
+
+    def __str__(self):
+        return f"AccEquitySnap #{self.account_id} {self.taken_at:%Y-%m-%d %H:%M} eq={self.equity}"

@@ -223,7 +223,23 @@ CELERY_BEAT_SCHEDULE = {
         "args":     ("beat-heartbeat",),
         "options":  {"expires": 4 * 60},
     },
+    # Equity snapshots every minute — broker + account financial state
+    "take-snapshots-1m": {
+        "task":     "simulator.take_snapshots",
+        "schedule": crontab(minute="*"),
+        "options":  {"expires": 55},   # drop if not picked up before next tick
+    },
+    # Cleanup old snapshots every night at 3:00 UTC
+    "cleanup-snapshots-daily": {
+        "task":     "simulator.cleanup_snapshots",
+        "schedule": crontab(hour=3, minute=0),
+        "args":     (),                # uses SNAPSHOT_RETENTION_DAYS from settings
+        "options":  {"expires": 55 * 60},
+    },
 }
+
+# ── Equity snapshot retention ─────────────────────────────────────────────────
+SNAPSHOT_RETENTION_DAYS = int(os.getenv("SNAPSHOT_RETENTION_DAYS", "7"))
 
 # ===============================
 # 📋 Logging — JSON or verbose

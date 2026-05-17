@@ -139,3 +139,51 @@ def reconcile_withdrawals_task(self, hours_back: int = 48) -> dict:
         logger.info("[reconcile_withdrawals] no stuck withdrawals in %dh window", hours_back)
 
     return {"checked": True, "stuck_count": len(ids), "stuck_ids": ids}
+
+
+# ──────────────────────────────────────────────────────
+# EQUITY SNAPSHOTS — time-series financial state capture
+# ──────────────────────────────────────────────────────
+@shared_task(
+    name="simulator.take_snapshots",
+    bind=True,
+    max_retries=1,
+    default_retry_delay=20,
+    acks_late=True,          # only ack after the task completes (prevents duplicate snapshots)
+)
+def take_snapshots_task(self) -> dict:
+    """
+    Capture broker-wide + per-account equity state.
+    Writes BrokerEquitySnapshot + AccountEquitySnapshot rows.
+    No financial mutations — snapshot rows only.
+    """
+    from .snapshots import take_all_snapshots
+    logger.info("[take_snapshots] starting worker=%s", self.request.hostname)
+    result = take_all_snapshots()
+    logger.info(
+        "[take_snapshots] done broker_id=%s accounts=%d equity=%.2f",
+        result.get("broker_snapshot_id"), result.get("account_snapshots", 0),
+        result.get("total_equity", 0.0),
+    )
+    return result
+
+
+@shared_task(
+    name="simulator.cleanup_snapshots",
+    bind=True,
+    max_retries=1,
+    default_retry_delay=60,
+)
+def cleanup_snapshots_task(self, retention_days: int | None = None) -> dict:
+    """
+    Delete equity snapshot rows older than retention_days (default: SNAPSHOT_RETENTION_DAYS env).
+    Never touches financial data.
+    """
+    from .snapshots import cleanup_old_snapshots
+    result = cleanup_old_snapshots(retention_days)
+    logger.info(
+        "[cleanup_snapshots] retention=%dd broker_del=%d account_del=%d",
+        result["retention_days"], result["broker_snapshots_deleted"],
+        result["account_snapshots_deleted"],
+    )
+    return result

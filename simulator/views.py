@@ -1520,3 +1520,55 @@ def broker_monitoring_view(request):
     report = full_report()
     has_errors = bool(report.get("errors"))
     return JsonResponse(report, status=503 if has_errors else 200)
+
+
+# ──────────────────────────────────────────────────────────────
+# Equity snapshots — staff-only time-series query
+#
+# GET /api/broker/snapshots/?type=broker
+# GET /api/broker/snapshots/?type=account&account_id=<id>
+#
+# Optional: &since=<ISO8601>&until=<ISO8601>&limit=<1-10080>
+# Defaults:  since = now-24h,  until = now,  limit = 1440
+# ──────────────────────────────────────────────────────────────
+def snapshots_view(request):
+    if not (request.user.is_authenticated and request.user.is_staff):
+        return JsonResponse({"error": "forbidden"}, status=403)
+
+    from django.utils.dateparse import parse_datetime
+    from .snapshots import query_broker_snapshots, query_account_snapshots
+
+    snap_type  = request.GET.get("type", "broker")
+    limit      = min(max(int(request.GET.get("limit", 1440)), 1), 10080)
+    now        = timezone.now()
+    default_since = now - timezone.timedelta(hours=24)
+
+    raw_since = request.GET.get("since", "")
+    raw_until = request.GET.get("until", "")
+    since = parse_datetime(raw_since) if raw_since else default_since
+    until = parse_datetime(raw_until) if raw_until else now
+    if since is None or until is None:
+        return JsonResponse({"error": "invalid since/until — use ISO 8601"}, status=400)
+    if since >= until:
+        return JsonResponse({"error": "since must be before until"}, status=400)
+
+    if snap_type == "broker":
+        data = query_broker_snapshots(since, until, limit)
+        return JsonResponse({
+            "type": "broker", "since": since.isoformat(), "until": until.isoformat(),
+            "count": len(data), "limit": limit, "data": data,
+        })
+
+    elif snap_type == "account":
+        try:
+            account_id = int(request.GET.get("account_id", ""))
+        except (TypeError, ValueError):
+            return JsonResponse({"error": "account_id is required for type=account"}, status=400)
+        data = query_account_snapshots(account_id, since, until, limit)
+        return JsonResponse({
+            "type": "account", "account_id": account_id,
+            "since": since.isoformat(), "until": until.isoformat(),
+            "count": len(data), "limit": limit, "data": data,
+        })
+
+    return JsonResponse({"error": "type must be 'broker' or 'account'"}, status=400)
