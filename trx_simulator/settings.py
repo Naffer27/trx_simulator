@@ -56,7 +56,8 @@ INSTALLED_APPS = [
 # Middleware
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
-    "whitenoise.middleware.WhiteNoiseMiddleware",  # estáticos en prod
+    "whitenoise.middleware.WhiteNoiseMiddleware",
+    "simulator.middleware.RequestIDMiddleware",   # injects X-Request-ID for log correlation
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -224,7 +225,12 @@ CELERY_BEAT_SCHEDULE = {
     },
 }
 
-# Logging
+# ===============================
+# 📋 Logging — JSON or verbose
+# ===============================
+_LOG_JSON = os.getenv("LOG_JSON", "false").strip().lower() in {"1", "true", "yes"}
+_CONSOLE_FORMATTER = "structured" if _LOG_JSON else "verbose"
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
@@ -235,18 +241,32 @@ LOGGING = {
             "style": "{",
             "datefmt": "%Y-%m-%d %H:%M:%S",
         },
+        # Structured JSON — one line per record, includes req_id/task_id fields.
+        # Activate with LOG_JSON=true (e.g. in production / log aggregation).
+        "structured": {
+            "()": "simulator.observability.StructuredFormatter",
+        },
     },
-    "handlers": {"console": {"class": "logging.StreamHandler", "formatter": "verbose"}},
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": _CONSOLE_FORMATTER,
+        }
+    },
     "loggers": {
-        # ── Broad simulator catch-all (views, nowpayments, wallet_ledger, etc.) ──
-        "simulator":            {"handlers": ["console"], "level": os.getenv("SIM_LOG_LEVEL", "INFO"),        "propagate": False},
-        # ── Specialised sub-loggers (override level independently if needed) ──
-        "simulator.ws":         {"handlers": ["console"], "level": os.getenv("SIM_WS_LOG_LEVEL", "INFO"),    "propagate": False},
-        "simulator.population": {"handlers": ["console"], "level": os.getenv("SIM_POP_LOG_LEVEL", "INFO"),   "propagate": False},
-        "simulator.exposure":   {"handlers": ["console"], "level": os.getenv("SIM_EXP_LOG_LEVEL", "WARNING"),"propagate": False},
-        "simulator.risk":       {"handlers": ["console"], "level": os.getenv("SIM_RISK_LOG_LEVEL", "WARNING"),"propagate": False},
-        "django.channels":      {"handlers": ["console"], "level": "WARNING", "propagate": False},
-        "daphne":               {"handlers": ["console"], "level": "INFO",    "propagate": False},
+        # ── Broad simulator catch-all ──
+        "simulator":               {"handlers": ["console"], "level": os.getenv("SIM_LOG_LEVEL", "INFO"),        "propagate": False},
+        # ── Specialised sub-loggers (tune independently via env vars) ──
+        "simulator.ws":            {"handlers": ["console"], "level": os.getenv("SIM_WS_LOG_LEVEL", "INFO"),    "propagate": False},
+        "simulator.population":    {"handlers": ["console"], "level": os.getenv("SIM_POP_LOG_LEVEL", "INFO"),   "propagate": False},
+        "simulator.exposure":      {"handlers": ["console"], "level": os.getenv("SIM_EXP_LOG_LEVEL", "WARNING"), "propagate": False},
+        "simulator.risk":          {"handlers": ["console"], "level": os.getenv("SIM_RISK_LOG_LEVEL", "WARNING"), "propagate": False},
+        "simulator.observability": {"handlers": ["console"], "level": "INFO",    "propagate": False},
+        "celery":                  {"handlers": ["console"], "level": "INFO",    "propagate": False},
+        "celery.worker":           {"handlers": ["console"], "level": "INFO",    "propagate": False},
+        "celery.beat":             {"handlers": ["console"], "level": "INFO",    "propagate": False},
+        "django.channels":         {"handlers": ["console"], "level": "WARNING", "propagate": False},
+        "daphne":                  {"handlers": ["console"], "level": "INFO",    "propagate": False},
     },
 }
 
@@ -297,3 +317,18 @@ NOWPAYMENTS_WEBHOOK_URL   = os.getenv("NOWPAYMENTS_WEBHOOK_URL", "")
 # Payouts API (separate JWT auth — used for crypto withdrawals)
 NOWPAYMENTS_EMAIL         = os.getenv("NOWPAYMENTS_EMAIL", "")
 NOWPAYMENTS_PASSWORD      = os.getenv("NOWPAYMENTS_PASSWORD", "")
+
+# ===============================
+# 🔭 Observability — Sentry
+# ===============================
+SENTRY_DSN         = os.getenv("SENTRY_DSN", "").strip()
+SENTRY_ENVIRONMENT = os.getenv("SENTRY_ENVIRONMENT", "development" if DEBUG else "production")
+SENTRY_RELEASE     = os.getenv("SENTRY_RELEASE", "")  # e.g. git SHA injected by CI
+
+if SENTRY_DSN:
+    from simulator.observability import init_sentry
+    init_sentry(
+        dsn=SENTRY_DSN,
+        environment=SENTRY_ENVIRONMENT,
+        release=SENTRY_RELEASE or None,
+    )

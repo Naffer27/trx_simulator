@@ -20,6 +20,7 @@ from .views import (
     np_diagnostics_view,
     np_supported_currencies_view,
     health_check,
+    metrics_view,
     # Withdrawals
     withdraw_view,
     withdraw_history_view,
@@ -80,4 +81,5 @@ urlpatterns = [
     path("api/np-check/",                 np_diagnostics_view,          name="np_check"),
     path("api/np-supported-currencies/",  np_supported_currencies_view, name="np_supported_currencies"),
     path("api/health/",                   health_check,                 name="health_check"),
+    path("api/metrics/",                  metrics_view,                 name="metrics"),
 ]

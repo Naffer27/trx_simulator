@@ -21,6 +21,9 @@ app.config_from_object("django.conf:settings", namespace="CELERY")
 # Explicit package list — more reliable than lambda form in all envs
 app.autodiscover_tasks(["simulator"])
 
+# Register observability signal hooks (task_failure, task_retry → Redis ring buffer)
+import simulator.observability  # noqa: F401, E402
+
 
 @worker_ready.connect
 def on_worker_ready(sender, **kwargs):

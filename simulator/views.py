@@ -1407,3 +1407,100 @@ def health_check(request):
 
     payload = {"status": "ok" if ok else "degraded", **results}
     return JsonResponse(payload, status=200 if ok else 503)
+
+
+# ──────────────────────────────────────────────────────────────
+# Operational metrics — staff-only
+# GET /api/metrics/  →  200 {"status":"ok", accounts:{}, redis:{}, celery:{}, ...}
+#                    →  503 if any subsystem is degraded
+#                    →  403 if not staff
+# ──────────────────────────────────────────────────────────────
+def metrics_view(request):
+    if not (request.user.is_authenticated and request.user.is_staff):
+        return JsonResponse({"error": "forbidden"}, status=403)
+
+    import time as _t
+    from datetime import timedelta
+
+    t_start = _t.monotonic()
+    result: dict = {"ts": _t.time(), "status": "ok"}
+    degraded = False
+
+    # ── DB counters ───────────────────────────────────────────────────────────
+    try:
+        result["accounts"] = {
+            "total": TradingAccount.objects.count(),
+            "active": TradingAccount.objects.filter(status="Activo").count(),
+        }
+        from .models import Deposit, WithdrawalRequest
+        result["positions"] = {
+            "open": Position.objects.count(),
+        }
+        result["deposits"] = {
+            "pending": Deposit.objects.filter(credited=False).count(),
+            "credited_24h": Deposit.objects.filter(
+                credited=True,
+                created_at__gte=timezone.now() - timedelta(hours=24),
+            ).count(),
+        }
+        result["withdrawals"] = {
+            "pending": WithdrawalRequest.objects.filter(status="pending").count(),
+            "processing": WithdrawalRequest.objects.filter(status="processing").count(),
+        }
+    except Exception as exc:
+        result["db_metrics"] = {"error": str(exc)}
+        degraded = True
+
+    # ── Redis stats + WS counter + failure ring buffer ────────────────────────
+    try:
+        import redis as redis_lib
+        redis_url = getattr(settings, "REDIS_URL", "") or "redis://127.0.0.1:6379/0"
+        t0 = _t.monotonic()
+        r = redis_lib.from_url(redis_url, socket_connect_timeout=2)
+        r.ping()
+        info = r.info()
+        ws_count = int(r.get("trx:metrics:ws_connections") or 0)
+        raw_failures = r.lrange("trx:metrics:task_failures", 0, 9)
+        failure_total = r.llen("trx:metrics:task_failures")
+        result["redis"] = {
+            "status": "ok",
+            "ping_ms": round((_t.monotonic() - t0) * 1000, 1),
+            "memory_mb": round(info.get("used_memory", 0) / 1_048_576, 2),
+            "peak_memory_mb": round(info.get("used_memory_peak", 0) / 1_048_576, 2),
+            "connected_clients": info.get("connected_clients", 0),
+            "uptime_days": info.get("uptime_in_days", 0),
+            "keyspace_hits": info.get("keyspace_hits", 0),
+            "keyspace_misses": info.get("keyspace_misses", 0),
+        }
+        result["websockets"] = {"active_connections": max(0, ws_count)}
+        result["task_failures"] = {
+            "stored_total": failure_total,
+            "last_10": [json.loads(e) for e in raw_failures],
+        }
+    except Exception as exc:
+        result["redis"] = {"status": "error", "detail": str(exc)}
+        degraded = True
+
+    # ── Celery worker inspection ──────────────────────────────────────────────
+    # Uses a single ping broadcast (fast) — avoids 3 × timeout serial calls.
+    try:
+        from trx_simulator.celery import app as celery_app
+        insp = celery_app.control.inspect(timeout=1.0)
+        ping_resp = insp.ping() or {}
+        workers   = list(ping_resp.keys())
+        active    = insp.active()   or {} if workers else {}
+        active_tasks = sum(len(v) for v in active.values()) if workers else 0
+        result["celery"] = {
+            "workers_online": len(workers),
+            "worker_names": workers,
+            "active_tasks": active_tasks,
+        }
+        if not workers:
+            result["celery"]["warning"] = "no workers online"
+    except Exception as exc:
+        result["celery"] = {"error": str(exc)}
+        degraded = True
+
+    result["elapsed_ms"] = round((_t.monotonic() - t_start) * 1000, 1)
+    result["status"] = "degraded" if degraded else "ok"
+    return JsonResponse(result, status=200 if not degraded else 503)

@@ -131,6 +131,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
             log.warning("[connect] NO db_account_id resolved — all DB writes will be skipped")
 
         await self.accept()
+        await self._ws_counter(1)
 
         # --- Estado inicial (memoria) ---
         self.symbol = "EUR/USD"
@@ -178,6 +179,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
                               "timeframe":self.timeframe,"tf_sec":tf_seconds(self.timeframe)})
 
     async def disconnect(self, close_code):
+        await self._ws_counter(-1)
         # Cancel heartbeat
         hb = getattr(self, "_heartbeat_task", None)
         if hb and not hb.done():
@@ -1328,6 +1330,22 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 # Intelligence engine — behavioral analysis + classification + routing
                 from .intelligence_engine import update_intelligence
                 update_intelligence(account)
+
+    # ---------------- Observability ----------------
+    async def _ws_counter(self, delta: int) -> None:
+        """Increment (+1) or decrement (-1) the active WS connections counter in Redis."""
+        try:
+            from django.conf import settings as _s
+            import asyncio
+            from .observability import ws_incr, ws_decr
+            url = getattr(_s, "REDIS_URL", "") or "redis://127.0.0.1:6379/0"
+            loop = asyncio.get_event_loop()
+            if delta > 0:
+                await loop.run_in_executor(None, ws_incr, url)
+            else:
+                await loop.run_in_executor(None, ws_decr, url)
+        except Exception:
+            pass  # counter failure must never break WS
 
     # ---------------- Util: enviar JSON ----------------
     async def send_json(self, payload: dict):
