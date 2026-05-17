@@ -1,0 +1,38 @@
+# ============================================================
+# logrotate config for trx_sim
+#
+# Install:
+#   sudo cp deploy/logrotate/trx_sim /etc/logrotate.d/trx_sim
+#   sudo logrotate -d /etc/logrotate.d/trx_sim   # dry-run to verify
+# ============================================================
+
+/var/log/trx_sim/*.log {
+    daily
+    missingok
+    rotate 14
+    compress
+    delaycompress
+    notifempty
+    create 0640 trx_sim trx_sim
+    sharedscripts
+
+    postrotate
+        # Send SIGUSR1 to Daphne to reopen log files without downtime
+        systemctl kill --signal=USR1 daphne.service 2>/dev/null || true
+        # Celery workers do not need to reopen logs (they write to journald)
+    endscript
+}
+
+/var/log/nginx/trx_sim.*.log {
+    daily
+    missingok
+    rotate 14
+    compress
+    delaycompress
+    notifempty
+    create 0640 www-data adm
+
+    postrotate
+        nginx -s reopen 2>/dev/null || true
+    endscript
+}

@@ -1,0 +1,60 @@
+# ============================================================
+# celery-worker.service — Celery task worker
+#
+# Install:
+#   sudo cp deploy/systemd/celery-worker.service /etc/systemd/system/celery-worker.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable celery-worker
+#   sudo systemctl start celery-worker
+#
+# Tune --concurrency to match your CPU cores (default: auto-detect).
+# For I/O-bound tasks (HTTP calls, DB), use more workers than CPUs.
+# ============================================================
+
+[Unit]
+Description=trx_sim Celery worker
+After=network.target postgresql.service redis.service
+Requires=redis.service
+
+[Service]
+Type=simple
+User=trx_sim
+Group=trx_sim
+WorkingDirectory=/opt/trx_sim
+
+EnvironmentFile=/opt/trx_sim/.env
+Environment=DJANGO_SETTINGS_MODULE=trx_simulator.settings
+# C_FORCE_ROOT prevents accidental root execution
+Environment=C_FORCE_ROOT=false
+
+ExecStart=/opt/trx_sim/venv/bin/celery \
+    -A trx_simulator \
+    worker \
+    --loglevel=INFO \
+    --concurrency=4 \
+    --max-tasks-per-child=500 \
+    --hostname=worker@%h \
+    --logfile=/var/log/trx_sim/celery-worker.log
+
+Restart=on-failure
+# RestartSec must be > 0 to prevent rapid cycling on persistent errors
+RestartSec=10s
+StartLimitInterval=60s
+StartLimitBurst=3
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=celery-worker
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/trx_sim /var/log/trx_sim
+
+TimeoutStopSec=60s
+# Celery workers need a graceful shutdown window to finish in-flight tasks
+KillMode=mixed
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,57 @@
+# ============================================================
+# celery-beat.service — Celery Beat scheduler (redBeat)
+#
+# CRITICAL: Run EXACTLY ONE instance of Beat.
+# redBeat stores schedule state in Redis under trx:beat: prefix.
+# The distributed lock (REDBEAT_LOCK_TIMEOUT=300s) prevents duplicate
+# executions, but TWO Beat processes still cause scheduling jitter.
+#
+# Install:
+#   sudo cp deploy/systemd/celery-beat.service /etc/systemd/system/celery-beat.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable celery-beat
+#   sudo systemctl start celery-beat
+# ============================================================
+
+[Unit]
+Description=trx_sim Celery Beat scheduler (redBeat)
+After=network.target redis.service celery-worker.service
+Requires=redis.service
+
+[Service]
+Type=simple
+User=trx_sim
+Group=trx_sim
+WorkingDirectory=/opt/trx_sim
+
+EnvironmentFile=/opt/trx_sim/.env
+Environment=DJANGO_SETTINGS_MODULE=trx_simulator.settings
+
+ExecStart=/opt/trx_sim/venv/bin/celery \
+    -A trx_simulator \
+    beat \
+    --scheduler redbeat.RedBeatScheduler \
+    --loglevel=INFO \
+    --logfile=/var/log/trx_sim/celery-beat.log
+
+# IMPORTANT: RestartSec must be > REDBEAT_LOCK_TIMEOUT / 2 to prevent
+# the restarted Beat from racing with the old lock before it expires.
+# REDBEAT_LOCK_TIMEOUT=300s → RestartSec=30s is safe.
+Restart=on-failure
+RestartSec=30s
+StartLimitInterval=120s
+StartLimitBurst=3
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=celery-beat
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/trx_sim /var/log/trx_sim
+
+TimeoutStopSec=30s
+
+[Install]
+WantedBy=multi-user.target
