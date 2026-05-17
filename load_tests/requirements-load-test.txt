@@ -1,0 +1,6 @@
+# Load test dependencies — NOT part of the main app requirements.
+# Install ONLY on the machine running load tests:
+#   pip install -r load_tests/requirements-load-test.txt
+locust==2.33.0
+websockets>=13.0
+aiohttp>=3.9
