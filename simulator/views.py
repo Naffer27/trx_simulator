@@ -22,6 +22,7 @@ from .forms import LoginForm, RegisterForm, DepositForm, WithdrawForm, CreateAcc
 from .wallet_ledger import credit_wallet, debit_wallet, transfer_to_account, transfer_to_wallet, get_or_create_wallet, InsufficientFunds
 from .currencies import to_np_code, CURRENCY_MAP
 from .observability import security_log, get_client_ip
+from .ratelimit import rate_limit
 from .audit import (
     log_audit,
     EV_AUTH_LOGIN_SUCCESS, EV_AUTH_LOGIN_FAILED,
@@ -234,6 +235,7 @@ Un nuevo usuario ha creado cuenta:
 # -----------------------
 # LOGIN CON CÓDIGO DE ACCESO (flexible)
 # -----------------------
+@rate_limit("login", limit=8, window=300)
 def login_view(request):
     """
     En DEV (DEBUG=True) o si BROKER_ACCESS_CODE está vacío → el código es opcional.
@@ -926,6 +928,7 @@ def deposit_view(request):
 
 
 @csrf_exempt
+@rate_limit("deposit_callback", limit=30, window=60)
 def deposit_callback(request):
     """
     IPN webhook from NowPayments → credit Wallet.
@@ -1217,6 +1220,7 @@ def np_supported_currencies_view(request):
 # ── Crypto Withdrawal ─────────────────────────────────────────────────────────
 
 @login_required
+@rate_limit("withdraw", limit=5, window=60, by="user")
 def withdraw_view(request):
     """
     GET  /withdraw/  — show withdrawal form with wallet balance.
@@ -1321,6 +1325,7 @@ def withdraw_history_view(request):
 
 
 @csrf_exempt
+@rate_limit("withdraw_callback", limit=30, window=60)
 def withdraw_payout_callback(request):
     """
     IPN webhook from NowPayments for payout status updates.
