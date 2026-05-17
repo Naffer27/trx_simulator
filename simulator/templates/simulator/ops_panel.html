@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ops Panel — {{ git_version }}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Courier New', monospace; background: #0d0d0d; color: #c8c8c8; font-size: 13px; padding: 16px; }
+  h1 { color: #fff; font-size: 16px; margin-bottom: 4px; }
+  .meta { color: #888; font-size: 11px; margin-bottom: 20px; }
+  h2 { color: #4af; font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
+       border-bottom: 1px solid #222; padding-bottom: 4px; margin: 20px 0 8px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+  .card { background: #141414; border: 1px solid #222; border-radius: 4px; padding: 12px; }
+  .card .label { color: #888; font-size: 11px; }
+  .card .value { color: #fff; font-size: 18px; font-weight: bold; margin-top: 2px; }
+  .card .value.ok   { color: #2ecc71; }
+  .card .value.warn { color: #f39c12; }
+  .card .value.err  { color: #e74c3c; }
+  table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+  th { background: #1a1a1a; color: #888; font-size: 11px; text-align: left; padding: 5px 8px; }
+  td { padding: 5px 8px; border-bottom: 1px solid #1a1a1a; color: #c8c8c8; }
+  tr:hover td { background: #181818; }
+  .badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; }
+  .badge-ok   { background: #1a3a1a; color: #2ecc71; }
+  .badge-warn { background: #3a2a00; color: #f39c12; }
+  .badge-err  { background: #3a0000; color: #e74c3c; }
+  .badge-info { background: #0a1a3a; color: #4af; }
+  .section { margin-bottom: 24px; }
+  a.refresh { display: inline-block; margin-left: 12px; color: #4af; font-size: 11px; text-decoration: none; }
+  a.refresh:hover { text-decoration: underline; }
+  .empty { color: #555; font-style: italic; padding: 6px 0; }
+  pre { background: #1a1a1a; padding: 8px; border-radius: 4px; overflow-x: auto; font-size: 11px; color: #aaa; }
+  .snapshot-age { font-size: 11px; color: #888; }
+  .snapshot-age.stale { color: #e74c3c; }
+</style>
+</head>
+<body>
+
+<h1>Money Brokers — Ops Panel</h1>
+<div class="meta">
+  Version: <strong>{{ git_version }}</strong> &nbsp;|&nbsp;
+  Server time: <strong>{{ server_time|date:"Y-m-d H:i:s" }} UTC</strong>
+  <a href="{% url 'simulator:ops_panel' %}" class="refresh">[↻ Refresh]</a>
+</div>
+
+<!-- ── Quick Stats ────────────────────────────────────────── -->
+<div class="grid section">
+
+  <div class="card">
+    <div class="label">Redis</div>
+    <div class="value {% if redis.status == 'ok' %}ok{% else %}err{% endif %}">
+      {% if redis.status == 'ok' %}● OK{% else %}✗ ERROR{% endif %}
+    </div>
+    {% if redis.used_memory_mb %}
+    <div class="label" style="margin-top:6px;">{{ redis.used_memory_mb }} MB used{% if redis.maxmemory_mb %} / {{ redis.maxmemory_mb }} MB max{% endif %}</div>
+    {% endif %}
+    {% if redis.error %}<div class="label" style="color:#e74c3c;">{{ redis.error }}</div>{% endif %}
+  </div>
+
+  <div class="card">
+    <div class="label">Active WebSockets</div>
+    <div class="value">{{ redis.ws_connections|default:"—" }}</div>
+  </div>
+
+  <div class="card">
+    <div class="label">Celery Queue Lag</div>
+    {% with lag=redis.celery_queue %}
+    <div class="value {% if lag > 20 %}err{% elif lag > 5 %}warn{% else %}ok{% endif %}">
+      {{ lag|default:"—" }} tasks
+    </div>
+    {% endwith %}
+  </div>
+
+  <div class="card">
+    <div class="label">Last Snapshot</div>
+    {% if last_snapshot %}
+      <div class="value ok">{{ last_snapshot.taken_at|date:"H:i:s" }}</div>
+      <div class="snapshot-age">{{ last_snapshot.taken_at|date:"Y-m-d" }} UTC</div>
+    {% else %}
+      <div class="value err">No snapshots yet</div>
+    {% endif %}
+  </div>
+
+  {% with stuck=stuck_withdrawals %}
+  <div class="card">
+    <div class="label">Stuck Withdrawals (&gt;48h)</div>
+    <div class="value {% if stuck %}err{% else %}ok{% endif %}">
+      {{ stuck|length }}
+    </div>
+    {% if stuck %}<div class="label" style="color:#e74c3c;">Action required</div>{% endif %}
+  </div>
+  {% endwith %}
+
+  <div class="card">
+    <div class="label">Recent Task Failures</div>
+    <div class="value {% if redis.task_failures %}warn{% else %}ok{% endif %}">
+      {{ redis.task_failures|length }} (last 10)
+    </div>
+  </div>
+
+</div>
+
+<!-- ── Broker Exposure ───────────────────────────────────── -->
+{% with exp=broker_report.exposure %}
+{% if exp %}
+<div class="section">
+  <h2>Broker Net Exposure</h2>
+  <div class="grid">
+    <div class="card">
+      <div class="label">Net Exposure</div>
+      <div class="value">$&nbsp;{{ exp.net_exposure_usd|floatformat:2 }}</div>
+    </div>
+    <div class="card">
+      <div class="label">Gross Long</div>
+      <div class="value">$&nbsp;{{ exp.gross_long_usd|floatformat:2 }}</div>
+    </div>
+    <div class="card">
+      <div class="label">Gross Short</div>
+      <div class="value">$&nbsp;{{ exp.gross_short_usd|floatformat:2 }}</div>
+    </div>
+    <div class="card">
+      <div class="label">Open Positions</div>
+      <div class="value">{{ exp.open_positions }}</div>
+    </div>
+  </div>
+
+  {% if exp.by_symbol %}
+  <table style="margin-top:12px;">
+    <tr><th>Symbol</th><th>Direction</th><th>Net Qty</th><th>Long USD</th><th>Short USD</th><th>Conc %</th></tr>
+    {% for row in exp.by_symbol %}
+    <tr>
+      <td>{{ row.symbol }}</td>
+      <td>
+        <span class="badge {% if row.net_direction == 'LONG' %}badge-ok{% elif row.net_direction == 'SHORT' %}badge-err{% else %}badge-info{% endif %}">
+          {{ row.net_direction }}
+        </span>
+      </td>
+      <td>{{ row.net_qty|floatformat:4 }}</td>
+      <td>${{ row.buy_notional_usd|floatformat:2 }}</td>
+      <td>${{ row.sell_notional_usd|floatformat:2 }}</td>
+      <td>{% if row.concentration_pct > 25 %}<span style="color:#e74c3c;">{% endif %}{{ row.concentration_pct|floatformat:1 }}%{% if row.concentration_pct > 25 %}</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+</div>
+{% endif %}
+{% endwith %}
+
+<!-- ── Critical Margin Accounts ──────────────────────────── -->
+{% with margins=broker_report.critical_margin_accounts %}
+{% if margins %}
+<div class="section">
+  <h2>Critical Margin Accounts ({{ margins|length }})</h2>
+  <table>
+    <tr><th>Account</th><th>User</th><th>Equity</th><th>Margin Level</th><th>Free Margin</th><th>Status</th></tr>
+    {% for acc in margins %}
+    <tr>
+      <td>#{{ acc.account_id }}</td>
+      <td>{{ acc.username|default:"—" }}</td>
+      <td>${{ acc.equity|floatformat:2 }}</td>
+      <td>
+        <span class="badge {% if acc.margin_level_pct < 130 %}badge-err{% elif acc.margin_level_pct < 200 %}badge-warn{% else %}badge-ok{% endif %}">
+          {{ acc.margin_level_pct|floatformat:0 }}%
+        </span>
+      </td>
+      <td>${{ acc.free_margin|floatformat:2 }}</td>
+      <td>
+        <span class="badge {% if acc.alert == 'CRITICAL' %}badge-err{% else %}badge-warn{% endif %}">
+          {{ acc.alert }}
+        </span>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+{% endwith %}
+
+<!-- ── Broker PnL ────────────────────────────────────────── -->
+{% with pnl=broker_report.pnl %}
+{% if pnl %}
+<div class="section">
+  <h2>Broker PnL Summary</h2>
+  <div class="grid">
+    <div class="card">
+      <div class="label">Total Deposited</div>
+      <div class="value">${{ pnl.total_deposited|floatformat:2 }}</div>
+    </div>
+    <div class="card">
+      <div class="label">Total Withdrawn</div>
+      <div class="value">${{ pnl.total_withdrawn|floatformat:2 }}</div>
+    </div>
+    <div class="card">
+      <div class="label">Realized PnL</div>
+      <div class="value {% if pnl.total_realized_pnl >= 0 %}ok{% else %}err{% endif %}">
+        ${{ pnl.total_realized_pnl|floatformat:2 }}
+      </div>
+    </div>
+    <div class="card">
+      <div class="label">Unrealized PnL</div>
+      <div class="value {% if pnl.total_unrealized_pnl >= 0 %}ok{% else %}err{% endif %}">
+        ${{ pnl.total_unrealized_pnl|floatformat:2 }}
+      </div>
+    </div>
+    <div class="card">
+      <div class="label">Pending Deposits</div>
+      <div class="value {% if pnl.pending_deposits > 0 %}warn{% else %}ok{% endif %}">
+        {{ pnl.pending_deposits }}
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endwith %}
+
+<!-- ── Stuck Withdrawals ──────────────────────────────────── -->
+{% if stuck_withdrawals %}
+<div class="section">
+  <h2>Stuck Withdrawals (&gt;48h pending/processing)</h2>
+  <table>
+    <tr><th>ID</th><th>User</th><th>Amount USD</th><th>Status</th><th>Created</th></tr>
+    {% for wr in stuck_withdrawals %}
+    <tr>
+      <td>#{{ wr.id }}</td>
+      <td>{{ wr.user__username }}</td>
+      <td>${{ wr.amount_usd }}</td>
+      <td><span class="badge badge-warn">{{ wr.status }}</span></td>
+      <td>{{ wr.created_at|date:"Y-m-d H:i" }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% else %}
+<div class="section">
+  <h2>Stuck Withdrawals</h2>
+  <div class="empty">No stuck withdrawals — all clear.</div>
+</div>
+{% endif %}
+
+<!-- ── Task Failures ─────────────────────────────────────── -->
+<div class="section">
+  <h2>Recent Task Failures (last 10)</h2>
+  {% if redis.task_failures %}
+  <table>
+    <tr><th>Task</th><th>Error</th><th>Time</th></tr>
+    {% for f in redis.task_failures %}
+    <tr>
+      <td>{{ f.task }}</td>
+      <td style="color:#e74c3c;">{{ f.error|truncatechars:80 }}</td>
+      <td>{{ f.ts|floatformat:0 }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+    <div class="empty">No recent task failures.</div>
+  {% endif %}
+</div>
+
+<!-- ── Security Events ───────────────────────────────────── -->
+<div class="section">
+  <h2>Recent Security Events</h2>
+  {% if recent_security %}
+  <table>
+    <tr><th>Time</th><th>Event</th><th>IP</th><th>Detail</th></tr>
+    {% for ev in recent_security %}
+    <tr>
+      <td>{{ ev.created_at|date:"H:i:s" }}</td>
+      <td>
+        <span class="badge {% if 'failed' in ev.event_type %}badge-err{% elif 'success' in ev.event_type %}badge-ok{% else %}badge-info{% endif %}">
+          {{ ev.event_type }}
+        </span>
+      </td>
+      <td>{{ ev.ip|default:"—" }}</td>
+      <td>{{ ev.detail.username|default:"" }}{% if ev.detail.reason %} — {{ ev.detail.reason }}{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+    <div class="empty">No recent security events.</div>
+  {% endif %}
+</div>
+
+<!-- ── Audit Trail ───────────────────────────────────────── -->
+<div class="section">
+  <h2>Recent Audit Events (last 20)</h2>
+  {% if recent_audit %}
+  <table>
+    <tr><th>Time</th><th>Event</th><th>Action</th><th>User</th><th>IP</th><th>Req ID</th></tr>
+    {% for ev in recent_audit %}
+    <tr>
+      <td>{{ ev.created_at|date:"H:i:s" }}</td>
+      <td><span class="badge badge-info">{{ ev.event_type }}</span></td>
+      <td>{{ ev.action|truncatechars:50 }}</td>
+      <td>{{ ev.user__username|default:"—" }}</td>
+      <td>{{ ev.ip|default:"—" }}</td>
+      <td style="font-size:10px;color:#555;">{{ ev.request_id }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+    <div class="empty">No audit events yet.</div>
+  {% endif %}
+</div>
+
+</body>
+</html>

@@ -32,6 +32,8 @@ from .views import (
     create_account_view,
     fund_account_view,
     withdraw_account_view,
+    # Staff operational panel
+    ops_panel_view,
 )
 
 app_name = 'simulator'
@@ -86,4 +88,7 @@ urlpatterns = [
     path("api/metrics/",                  metrics_view,                 name="metrics"),
     path("api/broker/monitoring/",        broker_monitoring_view,       name="broker_monitoring"),
     path("api/broker/snapshots/",         snapshots_view,               name="broker_snapshots"),
+
+    # ── Staff Operational Panel ──────────────────────────────────────────────
+    path("staff/ops/", ops_panel_view, name="ops_panel"),
 ]

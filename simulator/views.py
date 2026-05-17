@@ -1671,3 +1671,113 @@ def snapshots_view(request):
         })
 
     return JsonResponse({"error": "type must be 'broker' or 'account'"}, status=400)
+
+
+# ──────────────────────────────────────────────────────────────
+# Admin Operational Panel — staff-only HTML dashboard
+#
+# GET /staff/ops/
+# Read-only aggregation of operational state.
+# No polling, no WebSocket — manual refresh.
+# ──────────────────────────────────────────────────────────────
+def ops_panel_view(request):
+    if not (request.user.is_authenticated and request.user.is_staff):
+        return redirect("simulator:login")
+
+    from .audit import log_audit, EV_ADMIN_VIEW
+    log_audit(request, EV_ADMIN_VIEW, "Staff accessed ops panel")
+
+    import subprocess
+    import os as _os
+    import json as _json
+
+    ctx: dict = {}
+
+    # ── Version / uptime ───────────────────────────────────────────────────────
+    try:
+        git_ver = subprocess.check_output(
+            ["git", "describe", "--tags", "--always"],
+            stderr=subprocess.DEVNULL,
+            cwd=_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+        ).decode().strip()
+    except Exception:
+        git_ver = "unknown"
+    ctx["git_version"] = git_ver
+    ctx["server_time"] = timezone.now()
+
+    # ── Last successful snapshot ──────────────────────────────────────────────
+    try:
+        from .models import BrokerEquitySnapshot
+        last_snap = BrokerEquitySnapshot.objects.order_by("-taken_at").first()
+        ctx["last_snapshot"] = last_snap
+    except Exception:
+        ctx["last_snapshot"] = None
+
+    # ── Redis health + WS counter + queue lag ─────────────────────────────────
+    redis_info: dict = {}
+    try:
+        import redis as _redis_lib
+        from django.conf import settings as _s
+        _redis_url = getattr(_s, "REDIS_URL", "") or "redis://127.0.0.1:6379/0"
+        r = _redis_lib.from_url(_redis_url, socket_connect_timeout=2)
+        r.ping()
+        info = r.info("memory")
+        redis_info["status"]         = "ok"
+        redis_info["used_memory_mb"] = round(info["used_memory"] / 1024 / 1024, 1)
+        redis_info["maxmemory_mb"]   = round(info.get("maxmemory", 0) / 1024 / 1024, 1)
+        redis_info["ws_connections"] = int(r.get("trx:metrics:ws_connections") or 0)
+        redis_info["celery_queue"]   = r.llen("celery")
+        # Recent task failures
+        raw_failures = r.lrange("trx:metrics:task_failures", 0, 9)
+        redis_info["task_failures"] = []
+        for raw in raw_failures:
+            try:
+                redis_info["task_failures"].append(_json.loads(raw))
+            except Exception:
+                pass
+    except Exception as exc:
+        redis_info["status"] = "error"
+        redis_info["error"]  = str(exc)
+    ctx["redis"] = redis_info
+
+    # ── Broker monitoring (exposure + margins) ────────────────────────────────
+    try:
+        from .broker_monitoring import full_report
+        ctx["broker_report"] = full_report()
+    except Exception as exc:
+        ctx["broker_report"] = {"error": str(exc)}
+
+    # ── Stuck withdrawals ─────────────────────────────────────────────────────
+    try:
+        from datetime import timedelta
+        from .models import WithdrawalRequest
+        stuck_cutoff = timezone.now() - timedelta(hours=48)
+        ctx["stuck_withdrawals"] = list(
+            WithdrawalRequest.objects
+            .filter(status__in=["pending", "processing"], created_at__lte=stuck_cutoff)
+            .order_by("created_at")
+            .values("id", "amount_usd", "status", "created_at", "user__username")
+        )
+    except Exception as exc:
+        ctx["stuck_withdrawals"] = []
+        ctx["stuck_withdrawals_error"] = str(exc)
+
+    # ── Recent audit events ───────────────────────────────────────────────────
+    try:
+        from .models import AuditLog
+        ctx["recent_audit"] = list(
+            AuditLog.objects
+            .order_by("-created_at")
+            .values("created_at", "event_type", "action", "ip", "user__username", "request_id")[:20]
+        )
+        ctx["recent_security"] = list(
+            AuditLog.objects
+            .filter(event_type__startswith="auth.")
+            .order_by("-created_at")
+            .values("created_at", "event_type", "action", "ip", "detail")[:10]
+        )
+    except Exception as exc:
+        ctx["recent_audit"] = []
+        ctx["recent_security"] = []
+
+    return render(request, "simulator/ops_panel.html", ctx)
