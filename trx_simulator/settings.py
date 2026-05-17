@@ -99,7 +99,21 @@ if _db_name:
             "PASSWORD": os.getenv("DB_PASSWORD", ""),
             "HOST": os.getenv("DB_HOST", "localhost"),
             "PORT": os.getenv("DB_PORT", "5432"),
+            # Keep connections alive for 60 s — avoids per-request handshake.
+            # Combined with CONN_HEALTH_CHECKS, stale connections are replaced
+            # automatically instead of raising OperationalError.
             "CONN_MAX_AGE": 60,
+            "CONN_HEALTH_CHECKS": True,
+            "OPTIONS": {
+                # Abort if Postgres is unreachable within 10 s (prevents silent hangs).
+                "connect_timeout": 10,
+                # Identifies this process in pg_stat_activity — useful for debugging.
+                "application_name": os.getenv("APP_NAME", "trx_sim"),
+            },
+            "TEST": {
+                # Separate DB name for test runs so prod data is never touched.
+                "NAME": os.getenv("DB_TEST_NAME", f"{_db_name}_test"),
+            },
         }
     }
 else:
@@ -147,13 +161,68 @@ if REDIS_URL:
     CHANNEL_LAYERS = {
         "default": {
             "BACKEND": "channels_redis.core.RedisChannelLayer",
-            "CONFIG": {"hosts": [REDIS_URL]},
+            "CONFIG": {
+                "hosts": [REDIS_URL],
+                "capacity": 1500,       # max msgs per channel before back-pressure
+                "expiry": 10,           # msg TTL seconds (prevents stale price ticks)
+                "group_expiry": 86400,  # group membership TTL (1 day)
+            },
         }
     }
 else:
-    CHANNEL_LAYERS = {  # memoria (dev)
+    CHANNEL_LAYERS = {  # memoria (dev sin Redis)
         "default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}
     }
+
+# ===============================
+# ⚙️  Celery
+# ===============================
+_CELERY_BROKER = REDIS_URL or "redis://127.0.0.1:6379/0"
+CELERY_BROKER_URL              = _CELERY_BROKER
+CELERY_RESULT_BACKEND          = _CELERY_BROKER
+CELERY_TASK_SERIALIZER         = "json"
+CELERY_RESULT_SERIALIZER       = "json"
+CELERY_ACCEPT_CONTENT          = ["json"]
+CELERY_TIMEZONE                = TIME_ZONE          # inherit Django TZ (UTC)
+CELERY_TASK_TRACK_STARTED      = True
+CELERY_TASK_TIME_LIMIT         = 30 * 60            # 30 min hard kill
+CELERY_TASK_SOFT_TIME_LIMIT    = 5 * 60             # 5 min SoftTimeLimitExceeded
+CELERY_WORKER_MAX_TASKS_PER_CHILD = 500             # restart worker after N tasks (memory safety)
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True    # don't crash if Redis momentarily down on start
+
+# ── Beat scheduler (redbeat — state in Redis, distributed-safe) ──
+CELERY_BEAT_SCHEDULER            = "redbeat.RedBeatScheduler"
+REDBEAT_REDIS_URL                = _CELERY_BROKER
+REDBEAT_KEY_PREFIX               = "trx:beat:"     # namespace in Redis
+REDBEAT_LOCK_TIMEOUT             = 60 * 5          # 5 min — beat must renew lock or release it
+CELERY_BEAT_MAX_LOOP_INTERVAL    = 5               # seconds between schedule checks
+
+# ── Scheduled tasks (READ-ONLY audit only) ──────────────────────
+from celery.schedules import crontab  # noqa: E402
+
+CELERY_BEAT_SCHEDULE = {
+    # Audit unconfirmed deposits every 15 min
+    "reconcile-deposits-15m": {
+        "task":     "simulator.reconcile_deposits",
+        "schedule": crontab(minute="*/15"),
+        "args":     (24,),   # hours_back=24
+        "options":  {"expires": 14 * 60},  # drop if not picked up in 14 min
+    },
+    # Audit stuck withdrawals every 15 min
+    "reconcile-withdrawals-15m": {
+        "task":     "simulator.reconcile_withdrawals",
+        "schedule": crontab(minute="*/15"),
+        "args":     (48,),   # hours_back=48
+        "options":  {"expires": 14 * 60},
+    },
+    # Heartbeat ping every 5 min — confirms beat + worker are alive
+    "beat-heartbeat-5m": {
+        "task":     "simulator.ping",
+        "schedule": crontab(minute="*/5"),
+        "args":     ("beat-heartbeat",),
+        "options":  {"expires": 4 * 60},
+    },
+}
 
 # Logging
 LOGGING = {
@@ -169,9 +238,15 @@ LOGGING = {
     },
     "handlers": {"console": {"class": "logging.StreamHandler", "formatter": "verbose"}},
     "loggers": {
-        "simulator.ws": {"handlers": ["console"], "level": os.getenv("SIM_LOG_LEVEL", "INFO"), "propagate": False},
-        "django.channels": {"handlers": ["console"], "level": "WARNING", "propagate": False},
-        "daphne": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        # ── Broad simulator catch-all (views, nowpayments, wallet_ledger, etc.) ──
+        "simulator":            {"handlers": ["console"], "level": os.getenv("SIM_LOG_LEVEL", "INFO"),        "propagate": False},
+        # ── Specialised sub-loggers (override level independently if needed) ──
+        "simulator.ws":         {"handlers": ["console"], "level": os.getenv("SIM_WS_LOG_LEVEL", "INFO"),    "propagate": False},
+        "simulator.population": {"handlers": ["console"], "level": os.getenv("SIM_POP_LOG_LEVEL", "INFO"),   "propagate": False},
+        "simulator.exposure":   {"handlers": ["console"], "level": os.getenv("SIM_EXP_LOG_LEVEL", "WARNING"),"propagate": False},
+        "simulator.risk":       {"handlers": ["console"], "level": os.getenv("SIM_RISK_LOG_LEVEL", "WARNING"),"propagate": False},
+        "django.channels":      {"handlers": ["console"], "level": "WARNING", "propagate": False},
+        "daphne":               {"handlers": ["console"], "level": "INFO",    "propagate": False},
     },
 }
 
@@ -216,5 +291,9 @@ CSRF_COOKIE_SAMESITE = "Lax"
 # 📡 API Keys externas
 # ===============================
 FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")
-NOWPAYMENTS_API_KEY = os.getenv("NOWPAYMENTS_API_KEY", "")
-NOWPAYMENTS_IPN_SECRET = os.getenv("NOWPAYMENTS_IPN_SECRET", "")
+NOWPAYMENTS_API_KEY       = os.getenv("NOWPAYMENTS_API_KEY", "")
+NOWPAYMENTS_IPN_SECRET    = os.getenv("NOWPAYMENTS_IPN_SECRET", "")
+NOWPAYMENTS_WEBHOOK_URL   = os.getenv("NOWPAYMENTS_WEBHOOK_URL", "")
+# Payouts API (separate JWT auth — used for crypto withdrawals)
+NOWPAYMENTS_EMAIL         = os.getenv("NOWPAYMENTS_EMAIL", "")
+NOWPAYMENTS_PASSWORD      = os.getenv("NOWPAYMENTS_PASSWORD", "")

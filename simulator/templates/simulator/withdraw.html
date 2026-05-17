@@ -1,27 +1,27 @@
 {% extends "simulator/base_app.html" %}
 {% load static %}
-{% block title %}Deposit — Money Brokers{% endblock %}
-{% block page_title %}Depositar{% endblock %}
+{% block title %}Withdraw — Money Brokers{% endblock %}
+{% block page_title %}Retirar{% endblock %}
 
 {% block extra_head %}
 <style>
-  .deposit-wrap {
+  .wd-wrap {
     min-height: calc(100vh - 56px);
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 40px 16px;
   }
-  .deposit-card {
+  .wd-card {
     background: #0d0d14;
     border: 1px solid rgba(255,215,0,.15);
     border-radius: 16px;
     padding: 40px 36px;
     width: 100%;
-    max-width: 480px;
+    max-width: 500px;
     box-shadow: 0 8px 40px rgba(0,0,0,.6);
   }
-  .deposit-card h2 {
+  .wd-card h2 {
     font-family: 'Orbitron', sans-serif;
     font-size: 1.3rem;
     font-weight: 700;
@@ -29,7 +29,7 @@
     letter-spacing: .06em;
     margin-bottom: 6px;
   }
-  .deposit-card .subtitle {
+  .wd-card .subtitle {
     color: #787b86;
     font-size: .82rem;
     margin-bottom: 28px;
@@ -54,6 +54,7 @@
     transition: border-color .2s;
     appearance: none;
     -webkit-appearance: none;
+    box-sizing: border-box;
   }
   .deposit-input:focus {
     border-color: #FFD700;
@@ -77,8 +78,7 @@
     cursor: pointer;
     transition: background .15s, border-color .15s;
   }
-  .preset-btn:hover,
-  .preset-btn.active {
+  .preset-btn:hover, .preset-btn.active {
     background: rgba(255,215,0,.18);
     border-color: #FFD700;
   }
@@ -98,7 +98,8 @@
     margin-top: 24px;
   }
   .submit-btn:hover { opacity: .88; }
-  .deposit-error {
+  .submit-btn:disabled { opacity: .5; cursor: not-allowed; }
+  .wd-error {
     background: rgba(239,83,80,.12);
     border: 1px solid rgba(239,83,80,.4);
     border-radius: 8px;
@@ -107,13 +108,24 @@
     padding: 12px 14px;
     margin-bottom: 20px;
   }
+  .warn-box {
+    background: rgba(255,152,0,.08);
+    border: 1px solid rgba(255,152,0,.3);
+    border-radius: 8px;
+    color: rgba(255,165,0,.9);
+    font-size: .78rem;
+    padding: 12px 14px;
+    margin-top: 20px;
+    line-height: 1.6;
+  }
+  .warn-box strong { color: #FFA500; }
   .info-row {
     display: flex;
     align-items: center;
     gap: 8px;
     color: #787b86;
     font-size: .76rem;
-    margin-top: 16px;
+    margin-top: 14px;
   }
   .info-row span { color: rgba(255,215,0,.7); }
   .divider {
@@ -121,55 +133,61 @@
     border-top: 1px solid rgba(255,215,0,.08);
     margin: 24px 0;
   }
-  .crypto-icons {
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-    margin-top: 6px;
-  }
-  .crypto-tag {
-    background: rgba(255,215,0,.08);
-    border: 1px solid rgba(255,215,0,.15);
-    border-radius: 4px;
-    color: rgba(255,215,0,.7);
-    font-size: .7rem;
-    font-weight: 600;
-    padding: 3px 8px;
-  }
   .form-group { margin-bottom: 20px; }
+  .balance-pill {
+    background: rgba(255,215,0,.06);
+    border: 1px solid rgba(255,215,0,.18);
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin-bottom: 22px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: .83rem;
+  }
+  .addr-check {
+    font-size: .72rem;
+    color: #787b86;
+    margin-top: 6px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .addr-check.ok   { color: #27ae60; }
+  .addr-check.warn { color: #e67e22; }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="deposit-wrap">
-  <div class="deposit-card">
-    <h2>Deposit Funds</h2>
-    <p class="subtitle">Depósito instantáneo con criptomonedas · Sin comisiones · Desde $20</p>
-    {% if wallet %}
-    <div style="background:rgba(255,215,0,.06);border:1px solid rgba(255,215,0,.18);border-radius:10px;padding:12px 16px;margin-bottom:22px;display:flex;align-items:center;gap:10px;font-size:.83rem;">
+<div class="wd-wrap">
+  <div class="wd-card">
+    <h2>Withdraw Funds</h2>
+    <p class="subtitle">Retiro a tu wallet crypto personal · Revisión manual en 24-48h</p>
+
+    <!-- Wallet balance -->
+    <div class="balance-pill">
       <i class="fa-solid fa-wallet" style="color:var(--gold)"></i>
-      <span style="color:rgba(255,255,255,.55);">Wallet disponible:</span>
+      <span style="color:rgba(255,255,255,.55);">Balance disponible:</span>
       <strong style="color:var(--gold);margin-left:auto;">${{ wallet.available_balance|floatformat:2 }}</strong>
     </div>
-    {% endif %}
 
     {% if error %}
-    <div class="deposit-error">{{ error }}</div>
+    <div class="wd-error">{{ error }}</div>
     {% endif %}
 
-    <form method="post" id="depositForm">
+    <form method="post" id="wdForm">
       {% csrf_token %}
 
       <!-- Amount -->
       <div class="form-group">
         <div class="field-label">Monto en USD</div>
         <div class="preset-grid" id="presetGrid">
-          <button type="button" class="preset-btn" data-amount="20">$20</button>
           <button type="button" class="preset-btn" data-amount="50">$50</button>
           <button type="button" class="preset-btn" data-amount="100">$100</button>
           <button type="button" class="preset-btn" data-amount="250">$250</button>
           <button type="button" class="preset-btn" data-amount="500">$500</button>
           <button type="button" class="preset-btn" data-amount="1000">$1,000</button>
+          <button type="button" class="preset-btn" data-amount="{{ wallet.available_balance|floatformat:0 }}">MAX</button>
         </div>
         {{ form.amount_usd }}
         {% if form.amount_usd.errors %}
@@ -186,32 +204,46 @@
         {% if form.crypto_currency.errors %}
           <div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{{ form.crypto_currency.errors|join:", " }}</div>
         {% endif %}
-        <div class="crypto-icons" style="margin-top:10px;">
-          <span class="crypto-tag">BTC</span>
-          <span class="crypto-tag">ETH</span>
-          <span class="crypto-tag">USDT</span>
-          <span class="crypto-tag">SOL</span>
-          <span class="crypto-tag">BNB</span>
-          <span class="crypto-tag">USDC</span>
-        </div>
       </div>
 
-      <button type="submit" class="submit-btn">CONTINUAR AL PAGO</button>
+      <!-- Wallet address -->
+      <div class="form-group">
+        <div class="field-label">Dirección de tu wallet</div>
+        {{ form.wallet_address }}
+        <div class="addr-check" id="addrHint">
+          <i class="fa-solid fa-circle-info"></i>
+          Ingresa la dirección exacta de tu wallet personal.
+        </div>
+        {% if form.wallet_address.errors %}
+          <div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{{ form.wallet_address.errors|join:", " }}</div>
+        {% endif %}
+      </div>
+
+      <div class="warn-box">
+        <strong>&#9888; Verifica tu dirección antes de continuar.</strong><br>
+        Los retiros crypto son <strong>irreversibles</strong>. Una dirección incorrecta
+        significa pérdida permanente de fondos. El equipo NO puede recuperar envíos a
+        direcciones equivocadas.
+      </div>
+
+      <button type="submit" class="submit-btn" id="submitBtn">
+        SOLICITAR RETIRO
+      </button>
     </form>
 
     <div class="info-row">
       <span>&#9432;</span>
-      Serás redirigido a NowPayments para completar el pago de forma segura.
+      Los fondos se reservan inmediatamente. El pago se envía tras aprobación del equipo.
     </div>
-    <div class="info-row" style="margin-top:8px;">
+    <div class="info-row">
       <span>&#128274;</span>
-      Confirmación en ~15 minutos · Balance acreditado automáticamente.
+      Tiempo de procesamiento: 24-48h hábiles · Mínimo $20 USD.
     </div>
 
     <hr class="divider">
     <div style="text-align:center;">
-      <a href="{% url 'simulator:deposit_history' %}" style="color:rgba(255,215,0,.6);font-size:.78rem;text-decoration:none;">
-        Ver historial de depósitos →
+      <a href="{% url 'simulator:withdraw_history' %}" style="color:rgba(255,215,0,.6);font-size:.78rem;text-decoration:none;">
+        Ver historial de retiros →
       </a>
     </div>
   </div>
@@ -220,20 +252,50 @@
 
 {% block extra_scripts %}
 <script>
-  const amountInput = document.getElementById('id_amount_usd');
+  const amtInput  = document.getElementById('id_wd_amount');
+  const addrInput = document.getElementById('id_wd_address');
+  const addrHint  = document.getElementById('addrHint');
+  const available = {{ wallet.available_balance|floatformat:2 }};
+
+  // Preset buttons
   document.querySelectorAll('.preset-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      amountInput.value = btn.dataset.amount;
+      amtInput.value = btn.dataset.amount;
       document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
     });
   });
-  amountInput.addEventListener('input', () => {
+  amtInput.addEventListener('input', () => {
     document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
-    const v = parseFloat(amountInput.value);
+    const v = parseFloat(amtInput.value);
     document.querySelectorAll('.preset-btn').forEach(b => {
       if (parseFloat(b.dataset.amount) === v) b.classList.add('active');
     });
+  });
+
+  // Address length hint
+  addrInput.addEventListener('input', () => {
+    const len = addrInput.value.trim().length;
+    if (len === 0) {
+      addrHint.className = 'addr-check';
+      addrHint.innerHTML = '<i class="fa-solid fa-circle-info"></i> Ingresa la dirección exacta de tu wallet personal.';
+    } else if (len < 20) {
+      addrHint.className = 'addr-check warn';
+      addrHint.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> Dirección demasiado corta.';
+    } else {
+      addrHint.className = 'addr-check ok';
+      addrHint.innerHTML = '<i class="fa-solid fa-circle-check"></i> Dirección válida — verifica que sea correcta.';
+    }
+  });
+
+  // Disable submit if amount > available
+  document.getElementById('wdForm').addEventListener('submit', function(e) {
+    const v = parseFloat(amtInput.value);
+    if (v > available) {
+      e.preventDefault();
+      amtInput.style.borderColor = '#ef5350';
+      alert('El monto excede tu balance disponible ($' + available.toFixed(2) + ')');
+    }
   });
 </script>
 {% endblock %}

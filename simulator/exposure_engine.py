@@ -12,6 +12,7 @@ All functions are synchronous — safe to call from Django views/admin.
 import json
 import logging
 import urllib.request
+from datetime import timedelta
 from decimal import Decimal
 
 from django.db.models import Sum
@@ -128,7 +129,10 @@ def compute_live_analytics() -> dict:
 
     _price_cache.clear()  # fresh prices per compute call
 
-    today = timezone.now().date()
+    _now = timezone.now()
+    today = _now.date()
+    today_start = _now.replace(hour=0, minute=0, second=0, microsecond=0)
+    tomorrow_start = today_start + timedelta(days=1)
 
     # ── 1. All open positions with related trader scores ──
     positions = list(
@@ -286,7 +290,8 @@ def compute_live_analytics() -> dict:
     broker_pnl_today = -float(
         LedgerEntry.objects.filter(
             event_type=LedgerEntry.EV_REALIZED,
-            created_at__date=today,
+            created_at__gte=today_start,
+            created_at__lt=tomorrow_start,
             account_id__in=all_internal_ids,
         ).aggregate(t=Sum("amount"))["t"] or 0
     )
@@ -295,7 +300,8 @@ def compute_live_analytics() -> dict:
     today_realized = float(
         LedgerEntry.objects.filter(
             event_type=LedgerEntry.EV_REALIZED,
-            created_at__date=today,
+            created_at__gte=today_start,
+            created_at__lt=tomorrow_start,
         ).aggregate(t=Sum("amount"))["t"] or 0
     )
 

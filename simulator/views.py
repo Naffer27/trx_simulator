@@ -12,11 +12,15 @@ from django.conf import settings
 from django.db.models import Sum, Count, Max, Min, Q
 from django.db import transaction
 from django.urls import reverse
-import json, random, hmac, hashlib, logging
-import requests as http_requests
+import json, random, logging, time
 
-from .models import Purchase, TradingAccount, Trade, Position, LedgerEntry, Deposit
-from .forms import LoginForm, RegisterForm, DepositForm
+from .models import (
+    Purchase, TradingAccount, Trade, Position, LedgerEntry, Deposit,
+    WalletTransaction, WithdrawalRequest, MARGIN_ENGINE_TYPES,
+)
+from .forms import LoginForm, RegisterForm, DepositForm, WithdrawForm, CreateAccountForm, FundAccountForm, WithdrawAccountForm
+from .wallet_ledger import credit_wallet, debit_wallet, transfer_to_account, transfer_to_wallet, get_or_create_wallet, InsufficientFunds
+from .currencies import to_np_code, CURRENCY_MAP
 
 logger = logging.getLogger(__name__)
 
@@ -259,25 +263,18 @@ def login_view(request):
             if not ok_code:
                 error = "Código inválido"
             else:
-                # Elegir tier/balance desde Purchase si existe, si no por defecto/última cuenta
-                existing_acc = TradingAccount.objects.filter(user=user).first()
-                tier = (purchase.tier if purchase else (existing_acc.tier if existing_acc else "10K"))
-                base_balance = 10000 if tier == "10K" else (50000 if tier == "50K" else 100000)
-
-                account, created = TradingAccount.objects.get_or_create(
-                    user=user,
-                    defaults={
-                        'tier': tier,
-                        'phase': 'Fase 1',
-                        'balance': base_balance,
-                        'equity': base_balance,
-                        'status': "Activo"
-                    }
-                )
-
-                request.session['account_id'] = account.id
                 auth_login(request, user)
-                return redirect('simulator:home')
+                # Set session to the user's most recent active account if one exists,
+                # but never create one here — account management lives in /accounts/.
+                active = (
+                    TradingAccount.objects
+                    .filter(user=user, status="Activo")
+                    .order_by("-id")
+                    .first()
+                )
+                if active:
+                    request.session["account_id"] = active.id
+                return redirect("simulator:home")
 
     return render(request, 'simulator/login.html', {
         'error': error,
@@ -298,12 +295,14 @@ def logout_view(request):
 # DASHBOARD
 # -----------------------
 @login_required
-def trading_dashboard(request):
-    acc_id = request.session.get("account_id")
-    account = TradingAccount.objects.filter(pk=acc_id, user=request.user).first()
+def trading_dashboard(request, account_id=None):
+    if account_id:
+        account = TradingAccount.objects.filter(pk=account_id, user=request.user).first()
+    else:
+        account = _resolve_account(request)
 
     if not account:
-        return redirect("simulator:login")
+        return redirect("simulator:accounts")
 
     if request.method == 'POST':
         trade_type  = request.POST.get('trade_type', 'BUY').upper()
@@ -393,8 +392,10 @@ def trading_dashboard(request):
 
     context = {
         'account': account,
+        'account_id': account.id,
         'trades': trades,
         'open_trades_json': json.dumps(formatted_trades, cls=DjangoJSONEncoder),
+        'active_section': 'trading',
     }
     return render(request, 'simulator/dashboard.html', context)
 
@@ -485,11 +486,46 @@ def api_orden(request):
 # HOME DASHBOARD
 # -----------------------
 @login_required
-def home_view(request):
+def switch_account_view(request, account_id):
+    """Set session account_id and return to the page that triggered the switch."""
+    acc = TradingAccount.objects.filter(pk=account_id, user=request.user).first()
+    if acc:
+        request.session['account_id'] = acc.id
+    next_url = request.GET.get('next', '')
+    return redirect(next_url or 'simulator:home')
+
+
+def _resolve_account(request):
+    """
+    Return the TradingAccount for this session, falling back to the user's
+    most-recent active account.  Updates session if a fallback is used.
+    Returns None only when the user has no accounts at all.
+    """
     acc_id = request.session.get("account_id")
     account = TradingAccount.objects.filter(pk=acc_id, user=request.user).first()
     if not account:
+        account = (
+            TradingAccount.objects
+            .filter(user=request.user, status='Activo')
+            .order_by('-created_at')
+            .first()
+        )
+        if account:
+            request.session['account_id'] = account.id
+    return account
+
+
+@login_required
+def home_view(request):
+    account = _resolve_account(request)
+    if not account:
         return redirect("simulator:login")
+
+    all_accounts = (
+        TradingAccount.objects
+        .filter(user=request.user)
+        .order_by('-created_at')
+    )
 
     today = timezone.now().date()
 
@@ -506,9 +542,7 @@ def home_view(request):
         for p in open_positions
     )
 
-    initial_balance = float({
-        '10K': 10000, '50K': 50000, '100K': 100000,
-    }.get(account.tier, float(account.balance)))
+    initial_balance = float(account.initial_balance or account.balance or 1)
     daily_loss = float(pnl_today) if float(pnl_today) < 0 else 0.0
     daily_dd_pct = round(abs(daily_loss) / initial_balance * 100, 1) if initial_balance else 0.0
     daily_dd_pct = min(daily_dd_pct, 100)
@@ -519,6 +553,7 @@ def home_view(request):
 
     return render(request, 'simulator/home.html', {
         'account': account,
+        'all_accounts': all_accounts,
         'pnl_today': pnl_today,
         'margin_used': round(margin_used, 2),
         'open_positions_count': open_positions.count(),
@@ -579,47 +614,182 @@ def clean_dashboard(request):
     return render(request, 'simulator/dashboard_clean.html')
 
 
-# ===================================================
-# NOWPAYMENTS — helpers privados
-# ===================================================
+# ═══════════════════════════════════════════════════════
+# MY ACCOUNTS  —  User Capital Flow
+# ═══════════════════════════════════════════════════════
 
-def _nowpayments_create_payment(amount_usd, pay_currency, deposit_id, callback_url):
-    resp = http_requests.post(
-        "https://api.nowpayments.io/v1/payment",
-        headers={
-            "x-api-key": getattr(settings, "NOWPAYMENTS_API_KEY", ""),
-            "Content-Type": "application/json",
-        },
-        json={
-            "price_amount": float(amount_usd),
-            "price_currency": "usd",
-            "pay_currency": pay_currency,
-            "ipn_callback_url": callback_url,
-            "order_id": str(deposit_id),
-            "order_description": f"Money Brokers Deposit #{deposit_id}",
-        },
-        timeout=15,
+@login_required
+def accounts_view(request):
+    """My Accounts page — wallet summary + all trading accounts."""
+    # Pop flash messages so they're consumed and won't re-display on refresh
+    acct_success = request.session.pop("acct_success", None)
+    acct_error   = request.session.pop("acct_error",   None)
+
+    wallet, _ = get_or_create_wallet(request.user)
+    accounts  = (
+        TradingAccount.objects
+        .filter(user=request.user)
+        .prefetch_related("positions")
+        .order_by("-created_at")
     )
-    resp.raise_for_status()
-    return resp.json()
+    accounts_data = []
+    for acc in accounts:
+        pos_count = Position.objects.filter(account=acc).count()
+        accounts_data.append({"account": acc, "open_positions": pos_count})
+
+    return render(request, "simulator/accounts.html", {
+        "wallet":        wallet,
+        "accounts_data": accounts_data,
+        "create_form":   CreateAccountForm(),
+        "active_section": "accounts",
+        "acct_success":  acct_success,
+        "acct_error":    acct_error,
+    })
 
 
-def _verify_nowpayments_ipn(body_bytes, signature):
-    secret = getattr(settings, "NOWPAYMENTS_IPN_SECRET", "")
-    if not secret:
-        logger.error("NOWPAYMENTS_IPN_SECRET not set — rejecting IPN to prevent unauthorized credits")
-        return False
+@login_required
+def create_account_view(request):
+    """POST: create a new trading account and optionally fund it from wallet."""
+    if request.method != "POST":
+        return redirect("simulator:accounts")
+
+    form = CreateAccountForm(request.POST)
+    if not form.is_valid():
+        errors = " ".join(
+            f"{f}: {', '.join(e)}" for f, e in form.errors.items()
+        )
+        request.session["acct_error"] = errors
+        return redirect("simulator:accounts")
+
+    account_type    = form.cleaned_data["account_type"]
+    initial_deposit = form.cleaned_data.get("initial_deposit") or Decimal("0")
+    leverage        = int(form.cleaned_data["leverage"])
+    is_demo         = account_type == "DEMO"
+
+    wallet, _ = get_or_create_wallet(request.user)
+
+    if not is_demo and initial_deposit > 0:
+        if wallet.available_balance < initial_deposit:
+            request.session["acct_error"] = (
+                f"Insufficient wallet balance. Available: ${wallet.available_balance:.2f}, "
+                f"requested: ${initial_deposit:.2f}. Please deposit funds first."
+            )
+            return redirect("simulator:accounts")
+
     try:
-        payload = json.loads(body_bytes)
-        sorted_payload = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-        computed = hmac.new(
-            secret.encode("utf-8"),
-            sorted_payload.encode("utf-8"),
-            hashlib.sha512,
-        ).hexdigest()
-        return hmac.compare_digest(computed, signature)
-    except Exception:
-        return False
+        with transaction.atomic():
+            if is_demo:
+                # Demo: virtual $10,000 — no wallet debit
+                account = TradingAccount.objects.create(
+                    user=request.user,
+                    wallet=wallet,
+                    account_type="DEMO",
+                    leverage=leverage,
+                    initial_balance=Decimal("10000"),
+                )
+            else:
+                # Real account: start at $0 then fund via transfer
+                account = TradingAccount.objects.create(
+                    user=request.user,
+                    wallet=wallet,
+                    account_type=account_type,
+                    leverage=leverage,
+                    initial_balance=Decimal("0"),
+                )
+                if initial_deposit > 0:
+                    transfer_to_account(
+                        wallet.id, account.id, initial_deposit,
+                        note=f"Initial funding — {account_type} #{account.id}",
+                        initiated_by=request.user,
+                    )
+    except InsufficientFunds as exc:
+        request.session["acct_error"] = str(exc)
+        return redirect("simulator:accounts")
+    except Exception as exc:
+        logger.error("create_account_view error: %s", exc, exc_info=True)
+        request.session["acct_error"] = "Account creation failed. Please try again."
+        return redirect("simulator:accounts")
+
+    request.session["acct_success"] = (
+        f"{account_type} account #{account.id} created successfully."
+    )
+    return redirect("simulator:dashboard_account", account_id=account.id)
+
+
+@login_required
+def fund_account_view(request, account_id):
+    """POST: transfer funds from wallet into an existing trading account."""
+    if request.method != "POST":
+        return redirect("simulator:accounts")
+
+    account = TradingAccount.objects.filter(pk=account_id, user=request.user).first()
+    if not account:
+        return redirect("simulator:accounts")
+
+    form = FundAccountForm(request.POST)
+    if not form.is_valid():
+        request.session["acct_error"] = "Invalid amount."
+        return redirect("simulator:accounts")
+
+    amount = form.cleaned_data["amount"]
+    wallet, _ = get_or_create_wallet(request.user)
+
+    try:
+        transfer_to_account(
+            wallet.id, account.id, amount,
+            note=f"Fund account #{account.id}",
+            initiated_by=request.user,
+        )
+        request.session["acct_success"] = f"${amount:.2f} transferred to account #{account.id}."
+    except InsufficientFunds:
+        request.session["acct_error"] = (
+            f"Insufficient wallet balance. Available: ${wallet.available_balance:.2f}."
+        )
+    except Exception as exc:
+        logger.error("fund_account_view error: %s", exc, exc_info=True)
+        request.session["acct_error"] = "Transfer failed. Please try again."
+
+    return redirect("simulator:accounts")
+
+
+@login_required
+def withdraw_account_view(request, account_id):
+    """POST: transfer funds from trading account back to wallet."""
+    if request.method != "POST":
+        return redirect("simulator:accounts")
+
+    account = TradingAccount.objects.filter(pk=account_id, user=request.user).first()
+    if not account:
+        return redirect("simulator:accounts")
+
+    form = WithdrawAccountForm(request.POST)
+    if not form.is_valid():
+        request.session["acct_error"] = "Invalid amount."
+        return redirect("simulator:accounts")
+
+    amount = form.cleaned_data["amount"]
+    wallet, _ = get_or_create_wallet(request.user)
+
+    try:
+        transfer_to_wallet(
+            wallet.id, account.id, amount,
+            note=f"Withdraw from account #{account.id}",
+            initiated_by=request.user,
+        )
+        request.session["acct_success"] = f"${amount:.2f} withdrawn to wallet from account #{account.id}."
+    except (InsufficientFunds, ValueError) as exc:
+        request.session["acct_error"] = str(exc)
+    except Exception as exc:
+        logger.error("withdraw_account_view error: %s", exc, exc_info=True)
+        request.session["acct_error"] = "Withdrawal failed. Please try again."
+
+    return redirect("simulator:accounts")
+
+
+# ===================================================
+# NOWPAYMENTS — imported from service layer
+# ===================================================
+from . import nowpayments as _np
 
 
 # ===================================================
@@ -628,81 +798,127 @@ def _verify_nowpayments_ipn(body_bytes, signature):
 
 @login_required
 def deposit_view(request):
-    acc_id = request.session.get("account_id")
-    account = TradingAccount.objects.filter(pk=acc_id, user=request.user).first()
-    if not account:
-        return redirect("simulator:login")
+    """
+    Show deposit form (GET) or create a NowPayments payment and redirect to
+    the on-platform payment status page (POST).
 
+    Wallet-first: no trading account needed. Funds land in Wallet.
+    """
+    wallet, _ = get_or_create_wallet(request.user)
     error = None
+
     if request.method == "POST":
         form = DepositForm(request.POST)
         if form.is_valid():
-            amount_usd = form.cleaned_data["amount_usd"]
+            amount_usd      = form.cleaned_data["amount_usd"]
             crypto_currency = form.cleaned_data["crypto_currency"]
 
-            if not getattr(settings, "NOWPAYMENTS_API_KEY", ""):
-                error = "Sistema de depósitos no configurado. Contacta al soporte."
-            else:
-                deposit = Deposit.objects.create(
-                    user=request.user,
-                    amount_usd=amount_usd,
-                    crypto_currency=crypto_currency,
-                    status=Deposit.STATUS_PENDING,
-                )
-                try:
-                    callback_url = request.build_absolute_uri(
-                        reverse("simulator:deposit_callback")
-                    )
-                    data = _nowpayments_create_payment(
-                        amount_usd, crypto_currency, deposit.id, callback_url
-                    )
-                    deposit.nowpayments_payment_id = str(data.get("payment_id", ""))
-                    deposit.nowpayments_invoice_url = data.get("invoice_url", "")
-                    deposit.status = data.get("payment_status", Deposit.STATUS_WAITING)
-                    deposit.save()
+            # ── Guard: validate our code maps to a real NP currency ──────────
+            try:
+                np_code = to_np_code(crypto_currency)
+            except ValueError as exc:
+                logger.error("[deposit] invalid currency key '%s': %s", crypto_currency, exc)
+                error = f"Moneda no soportada: {crypto_currency}"
+                form = DepositForm()
+                return render(request, "simulator/deposit.html", {
+                    "form": form, "wallet": wallet, "error": error,
+                    "active_section": "deposit",
+                })
 
-                    invoice_url = deposit.nowpayments_invoice_url
-                    if invoice_url:
-                        return redirect(invoice_url)
-                    return redirect("simulator:deposit_history")
-                except Exception as exc:
-                    logger.error("NowPayments create payment error: %s", exc)
-                    deposit.status = Deposit.STATUS_FAILED
-                    deposit.save()
-                    error = "Error al crear el pago. Por favor intenta más tarde."
+            deposit = Deposit.objects.create(
+                user=request.user,
+                amount_usd=amount_usd,
+                crypto_currency=crypto_currency,
+                status=Deposit.STATUS_PENDING,
+            )
+            logger.info(
+                "[deposit] row created deposit_id=%d user=%s amount_usd=%.2f currency=%s",
+                deposit.id, request.user.username, float(amount_usd), crypto_currency,
+            )
+            try:
+                callback_url = request.build_absolute_uri(
+                    reverse("simulator:deposit_callback")
+                )
+                data = _np.create_payment(
+                    amount_usd, crypto_currency, deposit.id, callback_url
+                )
+                from django.utils.dateparse import parse_datetime
+                exp_raw = data.get("expiration_estimate_date")
+                Deposit.objects.filter(pk=deposit.pk).update(
+                    nowpayments_payment_id = str(data.get("payment_id", "")),
+                    nowpayments_invoice_url= data.get("invoice_url", "") or "",
+                    pay_address            = data.get("pay_address", "") or "",
+                    pay_amount             = data.get("pay_amount"),
+                    expires_at             = parse_datetime(exp_raw) if exp_raw else None,
+                    status                 = data.get("payment_status", Deposit.STATUS_WAITING),
+                )
+                logger.info(
+                    "[deposit] invoice created deposit_id=%d payment_id=%s → redirect",
+                    deposit.id, data.get("payment_id", "?"),
+                )
+                return redirect("simulator:deposit_status", deposit_id=deposit.id)
+
+            except Exception as exc:
+                np_body = getattr(getattr(exc, "response", None), "text", "")[:500]
+                logger.error(
+                    "[deposit] FAILED deposit_id=%d %s: %s np=%s",
+                    deposit.id, type(exc).__name__, exc, np_body, exc_info=True,
+                )
+                Deposit.objects.filter(pk=deposit.pk).update(status=Deposit.STATUS_FAILED)
+                error = "No se pudo crear el pago. Por favor intenta más tarde."
     else:
         form = DepositForm()
 
     return render(request, "simulator/deposit.html", {
-        "form": form,
-        "account": account,
-        "error": error,
+        "form":           form,
+        "wallet":         wallet,
+        "error":          error,
         "active_section": "deposit",
     })
 
 
 @csrf_exempt
 def deposit_callback(request):
-    """IPN webhook from NowPayments."""
+    """
+    IPN webhook from NowPayments → credit Wallet.
+
+    Idempotency: Deposit.credited is committed atomically with credit_wallet()
+    inside select_for_update(). Any duplicate/retry sees credited=True and exits
+    immediately — double-credit is impossible regardless of retry frequency.
+
+    Security: HMAC-SHA512 signature verified before ANY DB read.
+    """
     if request.method != "POST":
         return JsonResponse({"error": "Method not allowed"}, status=405)
 
     body = request.body
-    sig = request.headers.get("x-nowpayments-sig", "")
+    sig  = request.headers.get("x-nowpayments-sig", "")
 
-    if not _verify_nowpayments_ipn(body, sig):
-        logger.warning("Invalid NowPayments IPN signature")
+    logger.info(
+        "[callback] IPN received body_len=%d sig=%s…",
+        len(body), sig[:16] if sig else "(none)",
+    )
+
+    if not _np.verify_ipn_signature(body, sig):
+        logger.warning("[callback] IPN REJECTED — signature invalid sig=%s…", sig[:16])
         return JsonResponse({"error": "Invalid signature"}, status=400)
+
+    logger.info("[callback] IPN signature VERIFIED")
 
     try:
         data = json.loads(body)
     except json.JSONDecodeError:
         return JsonResponse({"error": "Invalid JSON"}, status=400)
 
-    payment_id = str(data.get("payment_id", ""))
+    payment_id     = str(data.get("payment_id", ""))
     payment_status = data.get("payment_status", "")
-    order_id = str(data.get("order_id", ""))
+    order_id       = str(data.get("order_id", ""))
+    logger.info(
+        "[callback] payment_id=%s order_id=%s status=%s",
+        payment_id, order_id, payment_status,
+    )
 
+    # Locate deposit: payment_id first, fallback to order_id (our Deposit pk)
     deposit = Deposit.objects.filter(nowpayments_payment_id=payment_id).first()
     if not deposit and order_id:
         try:
@@ -711,61 +927,483 @@ def deposit_callback(request):
             pass
 
     if not deposit:
-        logger.warning("Deposit not found for payment_id=%s order_id=%s", payment_id, order_id)
+        logger.warning(
+            "[callback] deposit NOT FOUND payment_id=%s order_id=%s", payment_id, order_id,
+        )
         return JsonResponse({"error": "Deposit not found"}, status=404)
 
+    logger.info("[callback] matched deposit_id=%d user=%s", deposit.id, deposit.user_id)
+
     with transaction.atomic():
-        # Re-fetch inside lock — prevents double-credit on concurrent IPNs
+        # Two concurrent callbacks serialize here; the loser reads credited=True.
         deposit = Deposit.objects.select_for_update().get(pk=deposit.pk)
-        old_status = deposit.status
 
-        if old_status in Deposit.CREDITED_STATUSES:
-            return JsonResponse({"ok": True})  # already credited — idempotent
+        # ── Idempotency gate ──────────────────────────────────────────────
+        if deposit.credited:
+            logger.info(
+                "[callback] DUPLICATE skipped — deposit_id=%d already credited",
+                deposit.id,
+            )
+            return JsonResponse({"ok": True, "idempotent": True})
+        # ─────────────────────────────────────────────────────────────────
 
-        deposit.status = payment_status
+        update_fields = {"status": payment_status}
         if not deposit.nowpayments_payment_id and payment_id:
-            deposit.nowpayments_payment_id = payment_id
+            update_fields["nowpayments_payment_id"] = payment_id
 
-        if payment_status in Deposit.CREDITED_STATUSES and old_status not in Deposit.CREDITED_STATUSES:
-            deposit.confirmed_at = timezone.now()
-            account = TradingAccount.objects.select_for_update().filter(user=deposit.user).first()
-            if account:
-                new_balance = account.balance + deposit.amount_usd
-                new_equity = account.equity + deposit.amount_usd
-                LedgerEntry.objects.create(
-                    account=account,
-                    event_type=LedgerEntry.EV_DEPOSIT,
-                    amount=deposit.amount_usd,
-                    balance_after=new_balance,
-                    meta={
-                        "source": "nowpayments",
-                        "payment_id": payment_id,
-                        "crypto": deposit.crypto_currency,
-                        "deposit_id": deposit.id,
-                    },
-                )
-                account.balance = new_balance
-                account.equity = new_equity
-                account.save(update_fields=["balance", "equity"])
-                logger.info(
-                    "Credited $%s to account #%s (deposit #%s)",
-                    deposit.amount_usd, account.id, deposit.id,
+        actually_paid = data.get("actually_paid_amount") or data.get("outcome_amount")
+        if actually_paid:
+            update_fields["confirmed_amount_usd"] = Decimal(str(actually_paid))
+
+        if payment_status in Deposit.CREDITED_STATUSES:
+            wallet, _ = get_or_create_wallet(deposit.user)
+            credit_wallet(
+                wallet.id,
+                deposit.amount_usd,
+                WalletTransaction.TX_DEPOSIT,
+                deposit=deposit,
+                note=f"NowPayments #{payment_id} {deposit.crypto_currency.upper()}",
+            )
+
+            # Drain pending_balance if it was incremented during confirming
+            if deposit.status == Deposit.STATUS_CONFIRMING:
+                from django.db.models import F
+                from .models import Wallet as WalletModel
+                WalletModel.objects.filter(pk=wallet.pk).update(
+                    pending_balance=F("pending_balance") - deposit.amount_usd
                 )
 
-        deposit.save()
+            update_fields["credited"]     = True
+            update_fields["credited_at"]  = timezone.now()
+            update_fields["confirmed_at"] = timezone.now()
+
+            logger.info(
+                "[callback] WALLET CREDITED deposit_id=%d payment_id=%s "
+                "amount_usd=%s currency=%s wallet_id=%d",
+                deposit.id, payment_id,
+                deposit.amount_usd, deposit.crypto_currency.upper(), wallet.id,
+            )
+
+        elif payment_status == Deposit.STATUS_CONFIRMING:
+            # Funds on-chain but not yet final — show as pending in wallet
+            from django.db.models import F
+            from .models import Wallet as WalletModel
+            wallet, _ = get_or_create_wallet(deposit.user)
+            WalletModel.objects.filter(pk=wallet.pk).update(
+                pending_balance=F("pending_balance") + deposit.amount_usd
+            )
+            logger.info(
+                "[callback] status → confirming deposit_id=%d — pending_balance +%s",
+                deposit.id, deposit.amount_usd,
+            )
+
+        else:
+            logger.info(
+                "[callback] status update deposit_id=%d %s → %s (no credit)",
+                deposit.id, deposit.status, payment_status,
+            )
+
+        Deposit.objects.filter(pk=deposit.pk).update(**update_fields)
+
     return JsonResponse({"ok": True})
+
+
+# ── Payment status page (on-platform) ────────────────────────────────────────
+
+@login_required
+def deposit_status_view(request, deposit_id):
+    """
+    Show the on-platform payment page for a specific deposit.
+    Includes crypto address, amount, expiry, and live-polling status banner.
+    """
+    deposit = Deposit.objects.filter(pk=deposit_id, user=request.user).first()
+    if not deposit:
+        return redirect("simulator:deposit_history")
+
+    wallet, _ = get_or_create_wallet(request.user)
+
+    is_final = deposit.credited or deposit.status in (
+        Deposit.STATUS_FAILED, Deposit.STATUS_EXPIRED, Deposit.STATUS_REFUNDED
+    )
+
+    return render(request, "simulator/deposit_status.html", {
+        "deposit":        deposit,
+        "wallet":         wallet,
+        "is_final":       is_final,
+        "active_section": "deposit",
+    })
+
+
+@login_required
+def deposit_status_json(request, deposit_id):
+    """
+    Lightweight JSON endpoint polled by the payment status page every 5 s.
+    Returns: status, credited, pay_address, pay_amount, wallet_balance
+    """
+    deposit = Deposit.objects.filter(pk=deposit_id, user=request.user).only(
+        "status", "credited", "amount_usd", "pay_address", "pay_amount",
+        "crypto_currency", "nowpayments_payment_id",
+    ).first()
+    if not deposit:
+        return JsonResponse({"error": "not found"}, status=404)
+
+    logger.debug(
+        "[poll] deposit_id=%d user=%s status=%s credited=%s",
+        deposit.id, request.user.username, deposit.status, deposit.credited,
+    )
+
+    # Refresh from NP if still active and has a payment_id
+    if (
+        not deposit.credited
+        and deposit.nowpayments_payment_id
+        and deposit.status not in (
+            Deposit.STATUS_EXPIRED, Deposit.STATUS_FAILED, Deposit.STATUS_REFUNDED
+        )
+    ):
+        try:
+            np_data = _np.get_payment_status(deposit.nowpayments_payment_id)
+            new_status = np_data.get("payment_status", deposit.status)
+            if new_status != deposit.status:
+                logger.info(
+                    "[poll] status change deposit_id=%d %s → %s",
+                    deposit.id, deposit.status, new_status,
+                )
+                Deposit.objects.filter(pk=deposit.pk).update(status=new_status)
+                deposit.status = new_status
+        except Exception as exc:
+            logger.debug("[poll] NP fetch error deposit_id=%d: %s", deposit_id, exc)
+
+    wallet, _ = get_or_create_wallet(request.user)
+
+    return JsonResponse({
+        "status":          deposit.status,
+        "credited":        deposit.credited,
+        "amount_usd":      str(deposit.amount_usd),
+        "pay_address":     deposit.pay_address or "",
+        "pay_amount":      str(deposit.pay_amount) if deposit.pay_amount else "",
+        "crypto_currency": deposit.crypto_currency.upper(),
+        "wallet_balance":  str(wallet.available_balance),
+    })
 
 
 @login_required
 def deposit_history_view(request):
-    acc_id = request.session.get("account_id")
-    account = TradingAccount.objects.filter(pk=acc_id, user=request.user).first()
-    if not account:
-        return redirect("simulator:login")
-
-    deposits = Deposit.objects.filter(user=request.user)
+    wallet, _ = get_or_create_wallet(request.user)
+    deposits  = Deposit.objects.filter(user=request.user)
     return render(request, "simulator/deposit_history.html", {
-        "account": account,
-        "deposits": deposits,
-        "active_section": "deposit",
+        "wallet":         wallet,
+        "deposits":       deposits,
+        "active_section": "deposit_history",
     })
+
+
+@login_required
+def wallet_balance_json(request):
+    wallet, _ = get_or_create_wallet(request.user)
+    pending = Deposit.objects.filter(
+        user=request.user, credited=False
+    ).exclude(
+        status__in=["failed", "expired", "refunded"]
+    ).aggregate(total=Sum("amount_usd"))["total"] or Decimal("0")
+    return JsonResponse({
+        "balance": str(wallet.available_balance),
+        "pending": str(pending),
+    })
+
+
+@login_required
+def np_diagnostics_view(request):
+    """
+    Staff-only: verify API key, connectivity, and currency code mapping.
+    GET /api/np-check/
+    """
+    if not request.user.is_staff:
+        return JsonResponse({"error": "forbidden"}, status=403)
+    result = _np.api_status()
+    logger.info("[NP-diag] %s", json.dumps(result, indent=2))
+    return JsonResponse(result, json_dumps_params={"indent": 2})
+
+
+@login_required
+def np_supported_currencies_view(request):
+    """
+    Returns our CURRENCY_MAP with each code's NP support status.
+    Uses the 30-min cached NP currencies list.
+    GET /api/np-supported-currencies/
+    """
+    if not request.user.is_staff:
+        return JsonResponse({"error": "forbidden"}, status=403)
+
+    force = request.GET.get("refresh") == "1"
+    try:
+        live = set(_np.get_available_currencies(force_refresh=force))
+        status_map = {
+            db_key: {
+                "np_code":   np_code,
+                "label":     label,
+                "supported": np_code in live,
+            }
+            for db_key, (np_code, label) in CURRENCY_MAP.items()
+        }
+        return JsonResponse({
+            "our_currencies": status_map,
+            "total_np_currencies": len(live),
+            "cache_ttl_seconds": _np._NP_CURRENCIES_CACHE_TTL,
+        }, json_dumps_params={"indent": 2})
+    except Exception as exc:
+        logger.error("[NP] np_supported_currencies_view error: %s", exc)
+        return JsonResponse({"error": str(exc)}, status=502)
+
+# ── Crypto Withdrawal ─────────────────────────────────────────────────────────
+
+@login_required
+def withdraw_view(request):
+    """
+    GET  /withdraw/  — show withdrawal form with wallet balance.
+    POST /withdraw/  — validate, debit wallet atomically, create WithdrawalRequest.
+    Funds are reserved immediately; admin approval triggers the NP payout.
+    """
+    wallet, _ = get_or_create_wallet(request.user)
+    error = None
+
+    if request.method == "POST":
+        form = WithdrawForm(request.POST)
+        if form.is_valid():
+            amount_usd      = form.cleaned_data["amount_usd"]
+            crypto_currency = form.cleaned_data["crypto_currency"]
+            wallet_address  = form.cleaned_data["wallet_address"]
+
+            if wallet.available_balance < amount_usd:
+                error = f"Balance insuficiente. Disponible: ${wallet.available_balance:,.2f}"
+            else:
+                try:
+                    with transaction.atomic():
+                        debit_tx = debit_wallet(
+                            wallet.id,
+                            amount_usd,
+                            WalletTransaction.TX_WITHDRAW,
+                            note=f"Retiro #{crypto_currency.upper()} → {wallet_address[:16]}… (pendiente)",
+                            initiated_by=request.user,
+                        )
+                        wr = WithdrawalRequest.objects.create(
+                            user=request.user,
+                            amount_usd=amount_usd,
+                            crypto_currency=crypto_currency,
+                            wallet_address=wallet_address,
+                            status=WithdrawalRequest.STATUS_PENDING,
+                            debit_tx=debit_tx,
+                        )
+
+                    logger.info(
+                        "[withdraw] created wr_id=%d user=%s amount_usd=%s currency=%s",
+                        wr.id, request.user.username, amount_usd, crypto_currency,
+                    )
+
+                    try:
+                        from django.core.mail import send_mail as _send_mail
+                        _send_mail(
+                            subject=f"Solicitud de retiro #{wr.id} recibida — Money Brokers",
+                            message=(
+                                f"Hola {request.user.username},\n\n"
+                                f"Tu solicitud de retiro #{wr.id} fue recibida y está siendo revisada.\n\n"
+                                f"  Monto:        ${amount_usd} USD\n"
+                                f"  Criptomoneda: {crypto_currency.upper()}\n"
+                                f"  Dirección:    {wallet_address}\n\n"
+                                f"Te notificaremos cuando sea procesada (24-48h).\n\n"
+                                f"— Money Brokers"
+                            ),
+                            from_email=settings.DEFAULT_FROM_EMAIL,
+                            recipient_list=[request.user.email],
+                            fail_silently=True,
+                        )
+                    except Exception as mail_exc:
+                        logger.warning("[withdraw] confirmation email failed: %s", mail_exc)
+
+                    return redirect("simulator:withdraw_history")
+
+                except InsufficientFunds:
+                    error = "Balance insuficiente."
+                except Exception as exc:
+                    logger.error("[withdraw] failed user=%s: %s", request.user.username, exc, exc_info=True)
+                    error = "Error al procesar la solicitud. Intenta de nuevo."
+    else:
+        form = WithdrawForm()
+
+    wallet.refresh_from_db()
+    return render(request, "simulator/withdraw.html", {
+        "form":           form,
+        "wallet":         wallet,
+        "error":          error,
+        "active_section": "withdraw",
+    })
+
+
+@login_required
+def withdraw_history_view(request):
+    wallet, _   = get_or_create_wallet(request.user)
+    withdrawals = WithdrawalRequest.objects.filter(user=request.user)
+    return render(request, "simulator/withdraw_history.html", {
+        "wallet":         wallet,
+        "withdrawals":    withdrawals,
+        "active_section": "withdraw_history",
+    })
+
+
+@csrf_exempt
+def withdraw_payout_callback(request):
+    """
+    IPN webhook from NowPayments for payout status updates.
+    POST /withdraw/callback/
+
+    NP payout IPN body:
+      { "id": batch_id, "status": "...", "withdrawals": [{id, status, ...}] }
+
+    On FINISHED → mark completed.
+    On FAILED   → refund wallet via TX_CORRECTION.
+    """
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    body = request.body
+    sig  = request.headers.get("x-nowpayments-sig", "")
+    logger.info("[payout_cb] IPN received body_len=%d sig=%s…", len(body), sig[:16] if sig else "(none)")
+
+    if not _np.verify_ipn_signature(body, sig):
+        logger.warning("[payout_cb] IPN REJECTED — signature invalid")
+        return JsonResponse({"error": "Invalid signature"}, status=400)
+
+    logger.info("[payout_cb] IPN signature VERIFIED")
+
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+    batch_id      = str(data.get("id", ""))
+    batch_status  = data.get("status", "")
+    withdrawals_d = data.get("withdrawals", [])
+    logger.info("[payout_cb] batch_id=%s status=%s items=%d", batch_id, batch_status, len(withdrawals_d))
+
+    _NP_TO_STATUS = {
+        "FINISHED": WithdrawalRequest.STATUS_COMPLETED,
+        "FAILED":   WithdrawalRequest.STATUS_FAILED,
+        "ROLLING":  WithdrawalRequest.STATUS_PROCESSING,
+        "CREATED":  WithdrawalRequest.STATUS_PROCESSING,
+    }
+
+    for wd in withdrawals_d:
+        payout_id  = str(wd.get("id", ""))
+        np_status  = str(wd.get("status", "")).upper()
+        new_status = _NP_TO_STATUS.get(np_status)
+        if not new_status:
+            continue
+
+        wr = WithdrawalRequest.objects.filter(np_payout_id=payout_id).first()
+        if not wr and batch_id:
+            wr = WithdrawalRequest.objects.filter(np_batch_id=batch_id).first()
+        if not wr:
+            logger.warning("[payout_cb] no withdrawal found payout_id=%s batch_id=%s", payout_id, batch_id)
+            continue
+
+        with transaction.atomic():
+            wr = WithdrawalRequest.objects.select_for_update().get(pk=wr.pk)
+            if wr.status in (WithdrawalRequest.STATUS_COMPLETED, WithdrawalRequest.STATUS_REJECTED):
+                logger.info("[payout_cb] already final wr_id=%d status=%s — skip", wr.id, wr.status)
+                continue
+
+            update = {"status": new_status, "np_payout_status": wd.get("status", "")}
+            if payout_id and not wr.np_payout_id:
+                update["np_payout_id"] = payout_id
+
+            if new_status == WithdrawalRequest.STATUS_FAILED:
+                wallet, _ = get_or_create_wallet(wr.user)
+                credit_wallet(
+                    wallet.id,
+                    wr.amount_usd,
+                    WalletTransaction.TX_CORRECTION,
+                    note=f"Refund — payout #{payout_id} failed",
+                )
+                logger.info("[payout_cb] REFUNDED wr_id=%d amount=%s", wr.id, wr.amount_usd)
+                try:
+                    from django.core.mail import send_mail as _send_mail
+                    _send_mail(
+                        subject=f"Retiro #{wr.id} fallido — fondos devueltos",
+                        message=(
+                            f"Hola {wr.user.username},\n\n"
+                            f"El pago de tu retiro #{wr.id} no pudo completarse.\n"
+                            f"${wr.amount_usd} USD fueron devueltos a tu wallet automáticamente.\n\n"
+                            f"Contacta a soporte si tienes dudas.\n\n"
+                            f"— Money Brokers"
+                        ),
+                        from_email=settings.DEFAULT_FROM_EMAIL,
+                        recipient_list=[wr.user.email],
+                        fail_silently=True,
+                    )
+                except Exception:
+                    pass
+
+            elif new_status == WithdrawalRequest.STATUS_COMPLETED:
+                logger.info("[payout_cb] COMPLETED wr_id=%d payout_id=%s", wr.id, payout_id)
+                try:
+                    from django.core.mail import send_mail as _send_mail
+                    _send_mail(
+                        subject=f"Retiro #{wr.id} completado — Money Brokers",
+                        message=(
+                            f"Hola {wr.user.username},\n\n"
+                            f"Tu retiro #{wr.id} fue enviado exitosamente.\n\n"
+                            f"  Monto:     ${wr.amount_usd} USD\n"
+                            f"  Cripto:    {wr.crypto_amount} {wr.crypto_currency.upper()}\n"
+                            f"  Dirección: {wr.wallet_address}\n\n"
+                            f"— Money Brokers"
+                        ),
+                        from_email=settings.DEFAULT_FROM_EMAIL,
+                        recipient_list=[wr.user.email],
+                        fail_silently=True,
+                    )
+                except Exception:
+                    pass
+
+            WithdrawalRequest.objects.filter(pk=wr.pk).update(**update)
+
+    return JsonResponse({"ok": True})
+
+
+# ──────────────────────────────────────────────────────────────
+# Health check — Redis + DB + Channels layer
+# GET /api/health/  →  200 OK   {"status":"ok", ...}
+#                   →  503      {"status":"degraded", ...}
+# ──────────────────────────────────────────────────────────────
+def health_check(request):
+    results = {}
+    ok = True
+
+    # ── Database ──
+    try:
+        from django.db import connection
+        t0 = time.monotonic()
+        connection.ensure_connection()
+        results["db"] = {"status": "ok", "ms": round((time.monotonic() - t0) * 1000, 1)}
+    except Exception as exc:
+        results["db"] = {"status": "error", "detail": str(exc)}
+        ok = False
+
+    # ── Redis / Channel layer ──
+    try:
+        import redis as redis_lib
+        redis_url = getattr(settings, "REDIS_URL", "") or ""
+        if redis_url:
+            t0 = time.monotonic()
+            r = redis_lib.from_url(redis_url, socket_connect_timeout=2)
+            r.ping()
+            results["redis"] = {"status": "ok", "ms": round((time.monotonic() - t0) * 1000, 1), "url": redis_url.split("@")[-1]}
+            results["channel_layer"] = "redis"
+        else:
+            results["redis"] = {"status": "not_configured"}
+            results["channel_layer"] = "in_memory"
+    except Exception as exc:
+        results["redis"] = {"status": "error", "detail": str(exc)}
+        results["channel_layer"] = "error"
+        ok = False
+
+    payload = {"status": "ok" if ok else "degraded", **results}
+    return JsonResponse(payload, status=200 if ok else 503)

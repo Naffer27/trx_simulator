@@ -1,20 +1,76 @@
+from decimal import Decimal
+
 from django.db import models
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 User = get_user_model()
 
+# ─────────────────────────────────────────────
+# Engine type classification
+# Single source of truth — used in risk_engine, consumers, admin, wallet_ledger
+# ─────────────────────────────────────────────
+MARGIN_ENGINE_TYPES = frozenset({"RETAIL", "ECN", "STANDARD", "DEMO", "CRYPTO"})
+DD_ENGINE_TYPES     = frozenset({"CHALLENGE", "FUNDED"})
+
+
+# ─────────────────────────────────────────────
+# Wallet system
+# ─────────────────────────────────────────────
+
+class Wallet(models.Model):
+    """
+    One per user. The single source of unallocated funds.
+
+    available_balance is a MATERIALIZED sum of WalletTransaction.amount.
+    It must NEVER be updated outside wallet_ledger.credit_wallet() /
+    wallet_ledger.debit_wallet(). All writes are atomic and append a ledger row.
+
+    pending_balance is informational (in-flight deposits, display only).
+    It does NOT enter the ledger until the deposit is confirmed.
+    """
+    user              = models.OneToOneField(User, on_delete=models.PROTECT, related_name="wallet")
+    currency          = models.CharField(max_length=6, default="USD")
+    available_balance = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal("0"))
+    pending_balance   = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal("0"))
+    created_at        = models.DateTimeField(auto_now_add=True)
+    updated_at        = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["user"], name="wallet_user_idx")]
+
+    def __str__(self):
+        return f"Wallet({self.user_id}) {self.currency} avail={self.available_balance}"
+
 
 class TradingAccount(models.Model):
     # Nivel de cuenta (fondo)
     ACCOUNT_TIERS = [
-        ('10K', 'Cuenta 10 000'),
-        ('50K', 'Cuenta 50 000'),
+        ('10K',  'Cuenta 10 000'),
+        ('50K',  'Cuenta 50 000'),
         ('100K', 'Cuenta 100 000'),
     ]
 
-    user = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True)
-    tier = models.CharField(max_length=4, choices=ACCOUNT_TIERS, default='10K', help_text="Elige el plan de fondeo")
+    ACCOUNT_TYPES = [
+        # Margin engine (broker real) — risk_engine uses margin_level / liquidation
+        ('RETAIL',    'Retail'),
+        ('ECN',       'ECN'),
+        ('STANDARD',  'Standard'),
+        ('DEMO',      'Demo'),
+        ('CRYPTO',    'Crypto'),
+        # DD engine (prop firm) — risk_engine uses drawdown / violations
+        ('CHALLENGE', 'Challenge'),
+        ('FUNDED',    'Funded'),
+    ]
+
+    user         = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True)
+    wallet       = models.ForeignKey(
+        "Wallet", on_delete=models.PROTECT,
+        null=True, blank=True, related_name="trading_accounts",
+        help_text="Wallet from which this account was funded",
+    )
+    account_type = models.CharField(max_length=10, choices=ACCOUNT_TYPES, default='CHALLENGE')
+    tier         = models.CharField(max_length=4, choices=ACCOUNT_TIERS, null=True, blank=True, help_text="Elige el plan de fondeo (Challenge/Funded only)")
 
     phase = models.CharField(
         max_length=20,
@@ -27,8 +83,9 @@ class TradingAccount(models.Model):
     equity = models.DecimalField(max_digits=12, decimal_places=2, default=10000.00)
     peak_balance = models.DecimalField(max_digits=12, decimal_places=2, default=10000.00)
     drawdown = models.DecimalField(max_digits=5, decimal_places=2, default=0.00)
-    profit_target = models.DecimalField(max_digits=12, decimal_places=2, default=800.00)
-    max_drawdown = models.DecimalField(max_digits=12, decimal_places=2, default=1200.00)
+    initial_balance = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    profit_target   = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    max_drawdown    = models.DecimalField(max_digits=12, decimal_places=2, default=1200.00)
 
     # Config cuenta
     currency = models.CharField(max_length=6, default='USD')  # presente hasta 0007
@@ -55,9 +112,18 @@ class TradingAccount(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Activo')
     created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=["status"], name="acc_status_idx"),
+            models.Index(fields=["user", "phase"], name="acc_user_phase_idx"),
+        ]
+
     def __str__(self):
         usr = getattr(self.user, 'username', self.user_id)
-        return f"{usr} — {self.tier} — {self.phase}"
+        if self.account_type in MARGIN_ENGINE_TYPES:
+            bal = self.initial_balance or self.balance
+            return f"{usr} — {self.account_type} ${bal} — {self.status}"
+        return f"{usr} — {self.account_type}/{self.tier} — {self.phase}"
 
     # ------------------------------
     # 🆕 Validador de reglas de fondeo
@@ -65,8 +131,20 @@ class TradingAccount(models.Model):
     def check_rules(self):
         from .models import LedgerEntry
 
-        # ---- Profit Target ----
-        if self.balance >= (self.profit_target + (self.equity or 0)):
+        # New accounts have no PK yet — skip suspension/ledger checks entirely.
+        # Balance at $0 on creation is intentional (wallet-funded flow), not a wipeout.
+        if self._state.adding:
+            return
+
+        def _d(v):
+            return Decimal(str(v)) if not isinstance(v, Decimal) else v
+
+        # ---- Profit Target (Challenge/Funded only) ----
+        if (
+            self.account_type in ('CHALLENGE', 'FUNDED')
+            and self.profit_target is not None
+            and _d(self.balance) >= (_d(self.profit_target) + _d(self.equity or 0))
+        ):
             if self.phase == 'Fase 1':
                 self.phase = 'Fase 2'
                 LedgerEntry.objects.create(
@@ -87,21 +165,68 @@ class TradingAccount(models.Model):
                 )
 
         # ---- Max Drawdown ----
-        if self.drawdown >= self.max_drawdown or self.balance <= 0:
-            self.status = 'Suspendido'
-            LedgerEntry.objects.create(
-                account=self,
-                event_type=LedgerEntry.EV_ADJUST,
-                amount=0,
-                balance_after=self.balance,
-                meta={"msg": "Cuenta suspendida por drawdown"},
-            )
+        # DD engine (CHALLENGE/FUNDED): drawdown breach suspends account.
+        # Margin engine (RETAIL/ECN/STANDARD/DEMO/CRYPTO): only full wipeout suspends;
+        # real stopout is handled by the consumer's margin-level check.
+        if self.account_type not in MARGIN_ENGINE_TYPES:
+            if _d(self.drawdown) >= _d(self.max_drawdown) or _d(self.balance) <= 0:
+                self.status = 'Suspendido'
+                LedgerEntry.objects.create(
+                    account=self,
+                    event_type=LedgerEntry.EV_ADJUST,
+                    amount=0,
+                    balance_after=self.balance,
+                    meta={"msg": "Cuenta suspendida por drawdown"},
+                )
+        else:
+            if _d(self.balance) <= 0:
+                self.status = 'Suspendido'
+                LedgerEntry.objects.create(
+                    account=self,
+                    event_type=LedgerEntry.EV_ADJUST,
+                    amount=0,
+                    balance_after=self.balance,
+                    meta={"msg": "Cuenta suspendida — balance agotado"},
+                )
 
         # ---- Equity Check ----
-        if self.equity <= 0:
+        if _d(self.equity) <= 0:
             self.status = 'Completado'
 
+    # Tier → starting balance used when initial_balance is omitted (challenge/funded path)
+    _TIER_INITIAL = {
+        '10K':  Decimal('10000'),
+        '50K':  Decimal('50000'),
+        '100K': Decimal('100000'),
+    }
+
     def save(self, *args, **kwargs):
+        def _d(v):
+            return Decimal(str(v)) if not isinstance(v, Decimal) else v
+
+        if self._state.adding:
+            # ── Determine the canonical starting balance ───────────────────
+            # Priority order:
+            #  1. initial_balance — set explicitly (RETAIL admin form, or API)
+            #  2. tier default    — challenge/funded accounts without explicit initial_balance
+            #  3. balance field   — population_engine / anything that set balance directly
+            if self.initial_balance is not None:
+                ib = _d(self.initial_balance)
+            elif self.tier and self.tier in self._TIER_INITIAL:
+                ib = self._TIER_INITIAL[self.tier]
+            else:
+                ib = _d(self.balance)
+
+            # Sync all three balance fields to the canonical starting value
+            self.initial_balance = ib
+            self.balance         = ib
+            self.equity          = ib
+            self.peak_balance    = ib
+        else:
+            # Existing account: ensure initial_balance is populated (pre-migration safety)
+            if self.initial_balance is None:
+                self.initial_balance = _d(self.balance)
+
         self.check_rules()
         super().save(*args, **kwargs)
 
@@ -126,6 +251,8 @@ class Position(models.Model):
     class Meta:
         indexes = [
             models.Index(fields=['account', 'symbol']),
+            # Supports ORDER BY opened_at in simulation tick + force-close queries
+            models.Index(fields=["account", "opened_at"], name="pos_acc_opened_idx"),
         ]
 
     def __str__(self):
@@ -159,6 +286,12 @@ class LedgerEntry(models.Model):
 
     class Meta:
         ordering = ['-created_at', '-id']
+        indexes = [
+            # Covering index for daily PnL aggregate (account + event_type + range on created_at)
+            models.Index(fields=["account", "event_type", "created_at"], name="ledger_acc_type_ts_idx"),
+            # Standalone index for broker-wide date-range scans in exposure_engine
+            models.Index(fields=["created_at"], name="ledger_created_at_idx"),
+        ]
 
     def __str__(self):
         return f"[{self.created_at:%Y-%m-%d %H:%M:%S}] {self.account_id} {self.event_type} {self.amount}"
@@ -222,15 +355,7 @@ class Deposit(models.Model):
         (STATUS_EXPIRED, 'Expirado'),
     ]
 
-    CRYPTO_CHOICES = [
-        ('btc', 'Bitcoin (BTC)'),
-        ('eth', 'Ethereum (ETH)'),
-        ('usdttrc20', 'USDT TRC-20'),
-        ('usdterc20', 'USDT ERC-20'),
-        ('sol', 'Solana (SOL)'),
-        ('bnbmainnet', 'BNB (BSC)'),
-        ('usdcsol', 'USDC (Solana)'),
-    ]
+    from .currencies import CRYPTO_CHOICES  # single source of truth in currencies.py
 
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='deposits')
     amount_usd = models.DecimalField(max_digits=12, decimal_places=2)
@@ -241,11 +366,97 @@ class Deposit(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     confirmed_at = models.DateTimeField(null=True, blank=True)
 
+    # Payment details returned by NowPayments on creation
+    pay_address  = models.CharField(max_length=128, null=True, blank=True)
+    pay_amount   = models.DecimalField(max_digits=24, decimal_places=10, null=True, blank=True)
+    expires_at   = models.DateTimeField(null=True, blank=True)
+
+    # Idempotency gate — set to True atomically with the wallet credit.
+    # Once True, NO subsequent callback, retry, or replay can credit funds again.
+    # Only an admin correction can reset this (with a corresponding reversal ledger entry).
+    credited              = models.BooleanField(default=False, db_index=True)
+    credited_at           = models.DateTimeField(null=True, blank=True)
+    confirmed_amount_usd  = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+
     class Meta:
         ordering = ['-created_at']
 
     def __str__(self):
         return f"{self.user.username} — ${self.amount_usd} {self.crypto_currency} [{self.status}]"
+
+
+class WithdrawalRequest(models.Model):
+    """
+    User-initiated crypto withdrawal.
+
+    Lifecycle:
+      pending    — created; wallet already debited (funds reserved)
+      approved   — admin approved, NP payout submitted
+      processing — NP confirms the batch is in flight
+      completed  — NP payout finished; crypto delivered to user
+      rejected   — admin rejected; wallet refunded via TX_CORRECTION
+      failed     — NP payout failed; wallet refunded automatically
+
+    The wallet debit happens ATOMICALLY with the creation of this row.
+    Rejection / failure credits back via credit_wallet(TX_CORRECTION).
+    """
+
+    STATUS_PENDING    = "pending"
+    STATUS_APPROVED   = "approved"
+    STATUS_REJECTED   = "rejected"
+    STATUS_PROCESSING = "processing"
+    STATUS_COMPLETED  = "completed"
+    STATUS_FAILED     = "failed"
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING,    "Pending"),
+        (STATUS_APPROVED,   "Approved"),
+        (STATUS_REJECTED,   "Rejected"),
+        (STATUS_PROCESSING, "Processing"),
+        (STATUS_COMPLETED,  "Completed"),
+        (STATUS_FAILED,     "Failed"),
+    ]
+
+    from .currencies import WITHDRAWAL_CHOICES
+
+    user            = models.ForeignKey(User, on_delete=models.CASCADE, related_name="withdrawals")
+    amount_usd      = models.DecimalField(max_digits=12, decimal_places=2)
+    crypto_currency = models.CharField(max_length=20, choices=WITHDRAWAL_CHOICES)
+    wallet_address  = models.CharField(max_length=200)
+    status          = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING, db_index=True)
+
+    # NowPayments payout references
+    np_batch_id      = models.CharField(max_length=100, blank=True, default="", db_index=True)
+    np_payout_id     = models.CharField(max_length=100, blank=True, default="", db_index=True)
+    np_payout_status = models.CharField(max_length=40,  blank=True, default="")
+    crypto_amount    = models.DecimalField(max_digits=24, decimal_places=10, null=True, blank=True)
+
+    # Admin review
+    admin_note  = models.TextField(blank=True, default="")
+    reviewed_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="reviewed_withdrawals",
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+
+    # Wallet ledger reference (the TX_WITHDRAW row created at request time)
+    debit_tx = models.OneToOneField(
+        "WalletTransaction", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="withdrawal_request",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["user", "status"], name="wr_user_status_idx"),
+            models.Index(fields=["created_at"],     name="wr_created_at_idx"),
+        ]
+
+    def __str__(self):
+        return f"Withdrawal #{self.id} {self.user} ${self.amount_usd} {self.crypto_currency} [{self.status}]"
 
 
 class Purchase(models.Model):
@@ -265,6 +476,133 @@ class Purchase(models.Model):
     def __str__(self):
         estado = "usado" if self.used else "nuevo"
         return f"{self.user} – {self.code} ({estado})"
+
+
+# ─────────────────────────────────────────────
+# Wallet ledger models
+# ─────────────────────────────────────────────
+
+class InternalTransfer(models.Model):
+    """
+    Records every movement of funds between a Wallet and a TradingAccount.
+
+    Lifecycle:
+      PENDING    — created, locks have not been applied yet
+      PROCESSING — atomic section started (select_for_update held)
+      COMPLETED  — both wallet debit/credit and account credit/debit committed
+      FAILED     — atomic section failed; balances untouched
+      REVERSED   — a COMPLETED transfer was administratively reversed
+
+    The matching WalletTransaction row(s) reference this record via FK.
+    """
+    DIR_TO_ACCOUNT = "WALLET_TO_ACCOUNT"
+    DIR_TO_WALLET  = "ACCOUNT_TO_WALLET"
+    DIRECTION_CHOICES = [
+        (DIR_TO_ACCOUNT, "Wallet → Trading Account"),
+        (DIR_TO_WALLET,  "Trading Account → Wallet"),
+    ]
+
+    ST_PENDING    = "PENDING"
+    ST_PROCESSING = "PROCESSING"
+    ST_COMPLETED  = "COMPLETED"
+    ST_FAILED     = "FAILED"
+    ST_REVERSED   = "REVERSED"
+    STATUS_CHOICES = [
+        (ST_PENDING,    "Pending"),
+        (ST_PROCESSING, "Processing"),
+        (ST_COMPLETED,  "Completed"),
+        (ST_FAILED,     "Failed"),
+        (ST_REVERSED,   "Reversed"),
+    ]
+
+    wallet          = models.ForeignKey(Wallet, on_delete=models.PROTECT, related_name="transfers")
+    trading_account = models.ForeignKey(TradingAccount, on_delete=models.PROTECT, related_name="wallet_transfers")
+    direction       = models.CharField(max_length=20, choices=DIRECTION_CHOICES)
+    amount          = models.DecimalField(max_digits=18, decimal_places=2)
+    status          = models.CharField(max_length=12, choices=STATUS_CHOICES, default=ST_PENDING)
+    note            = models.TextField(null=True, blank=True)
+    initiated_by    = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name="initiated_transfers"
+    )
+    failure_reason  = models.CharField(max_length=256, null=True, blank=True)
+    created_at      = models.DateTimeField(auto_now_add=True)
+    updated_at      = models.DateTimeField(auto_now=True)
+    completed_at    = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["wallet", "status"],          name="itx_wallet_status_idx"),
+            models.Index(fields=["trading_account", "status"], name="itx_acc_status_idx"),
+            models.Index(fields=["created_at"],                name="itx_created_at_idx"),
+        ]
+
+    def __str__(self):
+        return f"InternalTransfer #{self.id} {self.direction} ${self.amount} [{self.status}]"
+
+
+class WalletTransaction(models.Model):
+    """
+    Append-only ledger for Wallet.available_balance.
+
+    INVARIANT (verified by reconcile_wallet()):
+        SUM(WalletTransaction.amount WHERE wallet=W) == W.available_balance
+
+    amount sign convention:
+        positive (+) = credit  (DEPOSIT, TRANSFER_IN, BONUS, REBATE, CORRECTION+)
+        negative (-) = debit   (WITHDRAW, TRANSFER_OUT, COMMISSION, CORRECTION-)
+
+    NEVER modify Wallet.available_balance directly.
+    ALWAYS go through wallet_ledger.credit_wallet() or wallet_ledger.debit_wallet().
+    """
+    TX_DEPOSIT      = "DEPOSIT"       # + depósito crypto confirmado
+    TX_WITHDRAW     = "WITHDRAW"      # - retiro al usuario
+    TX_TRANSFER_OUT = "TRANSFER_OUT"  # - wallet → trading account
+    TX_TRANSFER_IN  = "TRANSFER_IN"   # + trading account → wallet
+    TX_BONUS        = "BONUS"         # + bono promocional
+    TX_REBATE       = "REBATE"        # + rebate / cashback
+    TX_COMMISSION   = "COMMISSION"    # - comisión de plataforma
+    TX_CORRECTION   = "CORRECTION"    # ± corrección admin (firmada)
+
+    TX_CHOICES = [
+        (TX_DEPOSIT,      "Deposit"),
+        (TX_WITHDRAW,     "Withdraw"),
+        (TX_TRANSFER_OUT, "Transfer Out (→ Account)"),
+        (TX_TRANSFER_IN,  "Transfer In (← Account)"),
+        (TX_BONUS,        "Bonus"),
+        (TX_REBATE,       "Rebate"),
+        (TX_COMMISSION,   "Commission"),
+        (TX_CORRECTION,   "Correction"),
+    ]
+
+    wallet            = models.ForeignKey(Wallet, on_delete=models.PROTECT, related_name="transactions")
+    tx_type           = models.CharField(max_length=20, choices=TX_CHOICES)
+    amount            = models.DecimalField(max_digits=18, decimal_places=2)   # signed
+    balance_after     = models.DecimalField(max_digits=18, decimal_places=2)   # snapshot post-tx
+
+    # At most one reference is set per transaction
+    deposit           = models.ForeignKey(
+        Deposit, null=True, blank=True, on_delete=models.SET_NULL, related_name="wallet_txs"
+    )
+    internal_transfer = models.ForeignKey(
+        InternalTransfer, null=True, blank=True, on_delete=models.SET_NULL, related_name="wallet_txs"
+    )
+
+    initiated_by      = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name="wallet_transactions"
+    )
+    note              = models.TextField(null=True, blank=True)
+    created_at        = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [
+            models.Index(fields=["wallet", "created_at"], name="wtx_wallet_ts_idx"),
+            models.Index(fields=["tx_type", "created_at"], name="wtx_type_ts_idx"),
+        ]
+
+    def __str__(self):
+        sign = "+" if self.amount >= 0 else ""
+        return f"WalletTx #{self.id} {self.tx_type} {sign}{self.amount} → bal={self.balance_after}"
 
 
 # ─────────────────────────────────────────────
@@ -302,7 +640,7 @@ class DrawdownSnapshot(models.Model):
 
     class Meta:
         unique_together = [("account", "date")]
-        indexes = [models.Index(fields=["account", "date"])]
+        indexes = [models.Index(fields=["account", "date"], name="dd_snap_acc_date_idx")]
         ordering = ["-date"]
 
     def __str__(self):
@@ -335,7 +673,7 @@ class TradingViolation(models.Model):
     created_at         = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        indexes = [models.Index(fields=["account", "created_at"])]
+        indexes = [models.Index(fields=["account", "created_at"], name="violation_acc_ts_idx")]
         ordering = ["-created_at"]
 
     def __str__(self):

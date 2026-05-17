@@ -15,6 +15,10 @@ log = logging.getLogger("simulator.ws")
 FINNHUB_API_KEY = (os.getenv("FINNHUB_API_KEY", "") or "").strip()
 DEFAULT_TICK_INTERVAL = float(os.getenv("PRICE_TICK_INTERVAL", "1.0"))
 
+# Symbols that receive canonical OHLCV from the exchange kline stream.
+# Server-side aggregation is bypassed for these — candle_kline() handles chart updates.
+_KLINE_SYMBOLS = frozenset({"BTCUSD", "ETHUSD"})
+
 # ---------------- TF helpers ----------------
 def tf_seconds(tf: str) -> int:
     s = str(tf).strip().lower()
@@ -89,13 +93,23 @@ class TradingConsumer(AsyncWebsocketConsumer):
         uname = getattr(user, "username", None)
         log.info("[connect] user=%s is_auth=%s q_account=%s", uname, is_auth, q_account)
 
-        if is_auth and q_account:
+        # Priority 0: account_id in WS URL path  ws/trading/<account_id>/
+        if is_auth and not self._db_account_id:
+            url_account_id = self.scope.get("url_route", {}).get("kwargs", {}).get("account_id")
+            if url_account_id:
+                acc = await self._db_get_account_for_user(int(url_account_id), user.id)
+                if acc:
+                    self._db_account_id = acc["id"]
+                    log.info("[connect] db_account_id=%s (from URL path)", self._db_account_id)
+
+        # Priority 1: querystring ?account=<id>
+        if is_auth and not self._db_account_id and q_account:
             acc = await self._db_get_account_for_user(q_account, user.id)
             if acc:
                 self._db_account_id = acc["id"]
                 log.info("[connect] db_account_id=%s (from URL param)", self._db_account_id)
 
-        # Fallback 1: account_id stored in Django session by login_view
+        # Fallback 3: account_id stored in Django session by login_view
         if is_auth and not self._db_account_id:
             session = self.scope.get("session", {})
             sess_acc_id = session.get("account_id")
@@ -106,7 +120,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
                     self._db_account_id = acc["id"]
                     log.info("[connect] db_account_id=%s (from session)", self._db_account_id)
 
-        # Fallback 2: most-recent active account for this user
+        # Fallback 4: most-recent active account for this user
         if is_auth and not self._db_account_id:
             acc = await self._db_get_latest_account_for_user(getattr(user, "id", None))
             if acc:
@@ -131,17 +145,18 @@ class TradingConsumer(AsyncWebsocketConsumer):
         self._last_bar_time = {}
 
         self.account = {
-            "balance": 10000.0,
-            "equity": 10000.0,
-            "peak_balance": 10000.0,
-            "pnl_unreal": 0.0,
-            "margin_used": 0.0,
-            "leverage": 50,
-            "netting_mode": False,
-            "status": "Activo",
-            "tier": "10K",
-            "profit_target": 800.0,
-            "initial_balance": 10000.0,
+            "balance":       0.0,
+            "equity":        0.0,
+            "peak_balance":  0.0,
+            "pnl_unreal":    0.0,
+            "margin_used":   0.0,
+            "leverage":      50,
+            "netting_mode":  False,
+            "status":        "Activo",
+            "account_type":  "CHALLENGE",
+            "tier":          "",
+            "profit_target": 0.0,
+            "initial_balance": 0.0,
         }
         self._daily_realized_pnl = 0.0
         self._daily_pnl_date = None
@@ -196,7 +211,8 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 self._reset_agg(new_sym)
                 self._seed_price_state(new_sym)
                 await self._feed.subscribe(new_sym, self.channel_layer, self.channel_name)
-            hist = self.generate_history(new_sym, self.timeframe, bars=240)
+            self._last_bar_time.pop(new_sym, None)
+            hist = await self.generate_history(new_sym, self.timeframe, bars=240)
             await self.send_json({"type": "history", "symbol": new_sym, "data": hist})
             await self._send_bridge_candle(new_sym, self.timeframe)
             await self.send_json({"type": "ack", "action": "symbol_changed", "symbol": new_sym})
@@ -207,7 +223,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
             self.timeframe = tf
             self._reset_agg(self.symbol)
             self._last_bar_time.pop(self.symbol, None)
-            hist = self.generate_history(self.symbol, tf, bars=240)
+            hist = await self.generate_history(self.symbol, tf, bars=240)
             await self.send_json({"type": "history", "symbol": self.symbol, "data": hist})
             await self._send_bridge_candle(self.symbol, tf)
             await self.send_json({"type":"ack","action":"change_timeframe","timeframe":tf,"tf_sec":tf_seconds(tf)})
@@ -215,7 +231,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
         elif act == "load_history":
             sym = data.get("symbol", self.symbol)
             tf  = normalize_tf(data.get("timeframe", self.timeframe))
-            hist = self.generate_history(sym, tf, bars=240)
+            hist = await self.generate_history(sym, tf, bars=240)
             await self.send_json({"type":"history","symbol":sym,"data":hist})
             await self._send_bridge_candle(sym, tf)
 
@@ -227,6 +243,9 @@ class TradingConsumer(AsyncWebsocketConsumer):
             if isinstance(nm, bool):
                 self.account["netting_mode"] = nm
                 await self.send_json({"type":"info","message":f"netting_mode={nm}"})
+
+        elif act == "order:risk_preview":
+            await self._handle_risk_preview(data)
 
         elif act == "order:new":
             await self._order_new(data)
@@ -259,6 +278,38 @@ class TradingConsumer(AsyncWebsocketConsumer):
         await self._check_tp_sl(symbol, bid, ask)
         await self._recalc_account_and_push()
 
+    async def candle_kline(self, event: dict):
+        """Receives canonical OHLCV from exchange kline stream (Binance @kline_1m).
+        Bypasses server-side aggregation — the exchange owns candle lifecycle."""
+        symbol = event.get("symbol")
+        if symbol != self.symbol:
+            return
+        bar = event["data"]
+        t   = int(bar["time"])
+        last = self._last_bar_time.get(symbol)
+        if last is None or t > last:
+            self._last_bar_time[symbol] = t
+            msg_type = "candle_new"
+        else:
+            msg_type = "candle_update"
+        await self.send_json({
+            "type": msg_type, "symbol": symbol,
+            "data": {
+                "time":  t,
+                "open":  float(bar["open"]),
+                "high":  float(bar["high"]),
+                "low":   float(bar["low"]),
+                "close": float(bar["close"]),
+            },
+        })
+        await self.send_json({
+            "type":   "volume_update",
+            "symbol": symbol,
+            "time":   t,
+            "value":  float(bar.get("volume", 0.0)),
+            "color":  "#26a69a" if float(bar["close"]) >= float(bar["open"]) else "#f44336",
+        })
+
     # ---------------- Heartbeat ----------------
 
     async def _heartbeat_loop(self):
@@ -282,6 +333,10 @@ class TradingConsumer(AsyncWebsocketConsumer):
         self._agg[symbol] = {"t0":None,"o":None,"h":None,"l":None,"c":None,"v":0.0,"tf_sec":tf_seconds(self.timeframe)}
 
     async def _on_tick(self, symbol: str, price: float, volume: float = 0.0, ts: int | None = None):
+        # Exchange-kline symbols send canonical OHLCV via candle_kline().
+        # Server-side aggregation from price ticks would produce a second, divergent series.
+        if symbol in _KLINE_SYMBOLS:
+            return
         if ts is None: ts = int(time.time())
         acc = self._agg.get(symbol)
         if acc is None or acc["tf_sec"] != tf_seconds(self.timeframe):
@@ -338,26 +393,34 @@ class TradingConsumer(AsyncWebsocketConsumer):
             "symbol": symbol,
             "data": {"time": bucket, "open": px, "high": px, "low": px, "close": px},
         })
-    def generate_history(self, symbol, timeframe, bars=200):
+    async def generate_history(self, symbol, timeframe, bars=200):
+        # For exchange-kline symbols, fetch real historical data from Binance REST.
+        if symbol in _KLINE_SYMBOLS:
+            hist = await self._feed.fetch_kline_history(symbol, interval=timeframe, limit=bars)
+            if hist:
+                # Snap the in-memory price state to the last closed bar so the
+                # bridge candle and bid/ask calculations start at a real price.
+                last_close = hist[-1]["close"]
+                spr = spread_for(symbol)
+                _, dec = step_decimals_for(symbol)
+                self._price_state[symbol] = last_close
+                self._bid_state[symbol]   = round(last_close - spr / 2, dec)
+                self._ask_state[symbol]   = round(last_close + spr / 2, dec)
+                return hist
+            log.warning("[consumer] Binance REST history failed for %s — falling back to synthetic", symbol)
+
+        # Synthetic history for non-Binance symbols (and Binance emergency fallback).
         base = self._price_state.get(symbol, base_price_for(symbol))
         step, dec = step_decimals_for(symbol)
         d = drift_for(symbol)
         now = int(time.time())
         tf_sec = tf_seconds(timeframe)
-
-        # Align to canonical period boundaries so bars sit at proper
-        # LightweightCharts timestamps (e.g. 12:30:00, 12:45:00 for 15m).
-        # current_bucket is the OPEN time of the still-open live candle;
-        # history fills the bars BEFORE it so there is no time overlap.
         current_bucket = (now // tf_sec) * tf_sec
-
-        # Walk backward from current live price so the last history bar's
-        # close = base, keeping the price continuous with incoming live ticks.
         series = []
         price = base
         rnd = random.Random(symbol + timeframe)
         for i in range(1, bars + 1):
-            ts = current_bucket - i * tf_sec      # canonical period starts
+            ts = current_bucket - i * tf_sec
             c = price
             o = c + (rnd.random() - 0.5) * d
             h = max(o, c) + abs(rnd.random() - 0.5) * d * 0.6
@@ -365,7 +428,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
             price = o
             series.append({"time": ts, "open": round(o, dec), "high": round(h, dec),
                            "low": round(l, dec), "close": round(c, dec)})
-        series.reverse()  # oldest first for LightweightCharts
+        series.reverse()
         return series
 
     # ---------------- Estado de precio ----------------
@@ -427,16 +490,47 @@ class TradingConsumer(AsyncWebsocketConsumer):
             await self.send_json({"type":"positions","items":self._positions_snapshot()})
             return
 
+        # ── Position risk assessment ──────────────────────────────────
+        eq_now = self.account["balance"] + self._unrealized_pnl_total()
+        mg_now = self._margin_used_total()
+        lev    = max(1, int(self.account.get("leverage", 50)))
+        risk_assessment = await self._db_evaluate_risk(sym, qty, eq_now, mg_now, lev)
+        risk_level = risk_assessment.get("risk_level", "LOW")
+
+        if risk_level == "EXTREME":
+            # Reject order without suspending account
+            await self.send_json({
+                "type": "order_rejected",
+                "code": "extreme_risk",
+                **risk_assessment,
+            })
+            return
+
+        if risk_level == "HIGH" and not data.get("risk_confirmed"):
+            # Require explicit client confirmation before executing
+            await self.send_json({
+                "type": "risk_warning",
+                "requires_confirm": True,
+                "pending_side": side,
+                "pending_qty": qty,
+                "pending_symbol": sym,
+                **risk_assessment,
+            })
+            return
+        # ─────────────────────────────────────────────────────────────
+
         # Risk engine gate (DB: lot size, positions count, daily dd, max dd, account status)
         risk_errors = await self._db_validate_order_risk(qty, len(self._positions), sym)
-        if risk_errors:
-            first = risk_errors[0]
+        _blocking = [e for e in risk_errors if e.get("blocking", True)]
+        _warnings  = [e for e in risk_errors if not e.get("blocking", True)]
+
+        if _blocking:
+            first = _blocking[0]
             await self.send_json({
                 "type": "error",
                 "code": first["code"],
                 "message": first["message"],
             })
-            # If account was suspended, notify client and push updated state
             if self.account.get("status") not in ("Activo",):
                 await self.send_json({
                     "type": "account:suspended",
@@ -444,6 +538,13 @@ class TradingConsumer(AsyncWebsocketConsumer):
                     "reason": first["code"],
                 })
             return
+
+        # Non-blocking warnings (RETAIL exposure/DD warnings) — order still proceeds
+        if _warnings:
+            await self.send_json({
+                "type": "risk:warning",
+                "warnings": [{"code": w["code"], "message": w["message"]} for w in _warnings],
+            })
 
         dec = step_decimals_for(sym)[1]
         px_exec = round(self.exec_price(sym, side), dec)
@@ -561,6 +662,29 @@ class TradingConsumer(AsyncWebsocketConsumer):
             log.warning("[close] NO MATCH for pid=%r sym_hint=%r — sending order_close_not_found", pid, sym_hint)
             await self.send_json({"type":"warn","message":"order_close_not_found"})
 
+    # ---------------- Risk Preview ----------------
+    async def _handle_risk_preview(self, data: dict):
+        sym = data.get("symbol", self.symbol)
+        qty = float(data.get("qty", 0) or 0)
+        if qty <= 0:
+            return
+        equity = self.account["balance"] + self._unrealized_pnl_total()
+        margin = self._margin_used_total()
+        lev = max(1, int(self.account.get("leverage", 50)))
+        assessment = await self._db_evaluate_risk(sym, qty, equity, margin, lev)
+        await self.send_json({"type": "risk_preview", **assessment})
+
+    @database_sync_to_async
+    def _db_evaluate_risk(self, symbol: str, lot_size: float,
+                           equity: float, margin_used: float, leverage: int) -> dict:
+        if not self._db_account_id:
+            return {"risk_level": "LOW"}
+        from .risk_engine import evaluate_position_risk
+        account = TradingAccount.objects.filter(id=self._db_account_id).first()
+        if not account:
+            return {"risk_level": "LOW"}
+        return evaluate_position_risk(account, symbol, lot_size, equity, margin_used, leverage)
+
     # ---------------- Cuenta / PnL ----------------
     def commission_for(self, symbol, notional): return max(0.0, notional*0.0002)
     def min_qty_for(self, symbol): return 0.001 if symbol in ("BTCUSD","ETHUSD") else 0.01
@@ -638,16 +762,23 @@ class TradingConsumer(AsyncWebsocketConsumer):
             await self._db_sync_account_balances()
             self._last_db_sync = now
 
-        # Real-time equity stopout — only check if account is currently active
+        # Real-time stopout — only check if account is currently active
         if self.account.get("status") == "Activo" and self._positions:
+            _acct_type = self.account.get("account_type", "CHALLENGE")
             from .risk_engine import check_equity_stopout
             if check_equity_stopout(
                 equity=self.account["equity"],
                 peak_balance=self.account["peak_balance"],
                 tier=self.account.get("tier", "10K"),
+                account_type=_acct_type,
+                margin_used=self.account.get("margin_used", 0.0),
             ):
-                await self._do_stopout()
-                return  # _do_stopout pushes its own account:update
+                from .models import MARGIN_ENGINE_TYPES
+                if _acct_type in MARGIN_ENGINE_TYPES:
+                    await self._do_retail_liquidation()
+                else:
+                    await self._do_stopout()
+                return  # handler pushes its own account:update
 
         # Risk / challenge metrics
         peak = self.account["peak_balance"]
@@ -660,6 +791,12 @@ class TradingConsumer(AsyncWebsocketConsumer):
         margin_used = self.account["margin_used"]
         equity_val = self.account["equity"]
         margin_level = round(equity_val / margin_used * 100, 2) if margin_used > 0 else 0.0
+
+        from .risk_engine import compute_margin_state
+        _ms = compute_margin_state(equity_val, margin_used)
+        used_margin_pct   = _ms["used_margin_pct"]
+        maintenance_margin = _ms["maintenance_margin"]
+        liquidation_distance = _ms["liquidation_distance"]
 
         dec = step_decimals_for(self.symbol)[1]
         bid = round(self.get_bid(self.symbol), dec)
@@ -674,9 +811,13 @@ class TradingConsumer(AsyncWebsocketConsumer):
             "upnl": self.account["pnl_unreal"],
             "margin_used": margin_used,
             "free_margin": free_margin,
+            "used_margin_pct": used_margin_pct,
+            "maintenance_margin": maintenance_margin,
+            "liquidation_distance": liquidation_distance,
             "leverage": self.account["leverage"],
             "netting_mode": bool(self.account.get("netting_mode", False)),
             "status": self.account.get("status", "Activo"),
+            "account_type": self.account.get("account_type", "CHALLENGE"),
             "total_dd_pct": total_dd_pct,
             "daily_dd_pct": daily_dd_pct,
             "daily_pnl": round(daily_pnl, 2),
@@ -685,7 +826,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
             "ask": ask,
             "spread": spread,
             "profit_target": self.account.get("profit_target", 800.0),
-            "initial_balance": self.account.get("initial_balance", 10000.0),
+            "initial_balance": self.account.get("initial_balance", self.account.get("balance", 0.0)),
         })
 
     async def _do_stopout(self) -> None:
@@ -750,9 +891,13 @@ class TradingConsumer(AsyncWebsocketConsumer):
             "upnl": 0.0,
             "margin_used": 0.0,
             "free_margin": self.account["equity"],
+            "used_margin_pct": 0.0,
+            "maintenance_margin": 0.0,
+            "liquidation_distance": self.account["equity"],
             "leverage": self.account["leverage"],
             "netting_mode": bool(self.account.get("netting_mode", False)),
             "status": "Suspendido",
+            "account_type": self.account.get("account_type", "CHALLENGE"),
             "total_dd_pct": total_dd_pct,
             "daily_dd_pct": daily_dd_pct,
             "daily_pnl": round(daily_pnl, 2),
@@ -761,7 +906,73 @@ class TradingConsumer(AsyncWebsocketConsumer):
             "ask": round(self.get_ask(self.symbol), step_decimals_for(self.symbol)[1]),
             "spread": 0.0,
             "profit_target": self.account.get("profit_target", 800.0),
-            "initial_balance": self.account.get("initial_balance", 10000.0),
+            "initial_balance": self.account.get("initial_balance", self.account.get("balance", 0.0)),
+        })
+
+    async def _do_retail_liquidation(self) -> None:
+        """RETAIL margin call — close all positions, account stays ACTIVE.
+        Triggers when margin_level < 50%. Unlike _do_stopout, no suspension."""
+        log.warning("[margin_call] margin_level<50%% equity=%.2f margin=%.2f account #%s",
+                    self.account["equity"], self.account.get("margin_used", 0.0),
+                    self._db_account_id)
+        closed_items = []
+        now_ts = int(time.time())
+
+        for p in list(self._positions):
+            sym  = p["symbol"]
+            dec  = step_decimals_for(sym)[1]
+            cpx  = round(self.close_price(sym, p["side"]), dec)
+            realized = self._realized_pnl_for(p, cpx)
+            self.account["balance"] += realized
+            self._track_daily_pnl(realized)
+            closed_items.append({
+                "id": p["id"], "symbol": sym, "side": p["side"],
+                "qty": p["qty"], "avg": p["avg"],
+                "close_px": cpx, "reason": "margin_call",
+                "realized_pnl": realized, "ts": now_ts,
+            })
+            try:
+                await self._db_mirror_close_position(
+                    p, close_px=cpx, reason="margin_call", realized_pnl=realized
+                )
+            except Exception as exc:
+                log.error("[margin_call] DB mirror failed pos %s: %s", p["id"], exc)
+
+        self._positions = []
+        self.account["pnl_unreal"]  = 0.0
+        self.account["margin_used"] = 0.0
+        self.account["equity"]      = round(self.account["balance"], 2)
+
+        for c in closed_items:
+            await self.send_json({"type": "order_close", **c})
+        await self.send_json({"type": "positions", "items": []})
+        await self.send_json({
+            "type": "account:margin_call",
+            "reason": "margin_level_below_50pct",
+            "balance": round(self.account["balance"], 2),
+        })
+        dec = step_decimals_for(self.symbol)[1]
+        balance = self.account["balance"]
+        await self.send_json({
+            "type": "account:update",
+            "balance": round(balance, 2),
+            "equity": self.account["equity"],
+            "pnl_unreal": 0.0, "upnl": 0.0,
+            "margin_used": 0.0, "free_margin": self.account["equity"],
+            "used_margin_pct": 0.0, "maintenance_margin": 0.0,
+            "liquidation_distance": self.account["equity"],
+            "leverage": self.account["leverage"],
+            "netting_mode": bool(self.account.get("netting_mode", False)),
+            "status": self.account.get("status", "Activo"),  # stays Active
+            "account_type": "RETAIL",
+            "total_dd_pct": 0.0, "daily_dd_pct": 0.0,
+            "daily_pnl": round(self._daily_realized_pnl, 2),
+            "margin_level": 0.0,
+            "bid": round(self.get_bid(self.symbol), dec),
+            "ask": round(self.get_ask(self.symbol), dec),
+            "spread": 0.0,
+            "profit_target": self.account.get("profit_target", 0.0),
+            "initial_balance": self.account.get("initial_balance", balance),
         })
 
     async def _check_tp_sl(self, symbol: str, bid: float, ask: float):
@@ -798,11 +1009,15 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 realized = self._realized_pnl_for(p, close_px)
                 self.account["balance"] += realized
                 self._track_daily_pnl(realized)
+                reason = "tp" if tp_hit else "sl"
                 closed.append({"id":p["id"],"symbol":symbol,"side":side,"qty":p["qty"],"avg":p["avg"],
-                               "close_px":close_px,"reason":"tp" if tp_hit else "sl",
+                               "close_px":close_px,"reason":reason,
                                "realized_pnl":realized,"ts":now})
-                await self._db_mirror_close_position(p, close_px=close_px, reason=("tp" if tp_hit else "sl"),
-                                                     realized_pnl=realized)
+                try:
+                    await self._db_mirror_close_position(p, close_px=close_px, reason=reason,
+                                                         realized_pnl=realized)
+                except Exception as exc:
+                    log.error("[tp_sl] db close FAILED pos id=%r: %s", p["id"], exc, exc_info=True)
             else:
                 remaining.append(p)
 
@@ -817,7 +1032,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
         items = await self._db_fetch_open_positions()
         self._positions = [
             {
-                "id": it["id"], "symbol": it["symbol"], "side": it["side"],
+                "id": it["id"], "symbol": it["symbol"], "side": it["side"].lower(),
                 "qty": float(it["qty"]), "avg": float(it["avg_price"]),
                 "sl": it.get("sl"), "tp": it.get("tp"),
                 "opened_at": it.get("opened_ts", int(time.time())),
@@ -843,11 +1058,14 @@ class TradingConsumer(AsyncWebsocketConsumer):
         self.account["peak_balance"] = float(acc.get("peak_balance", self.account["balance"]))
         self.account["leverage"]     = int(acc.get("leverage",       self.account["leverage"]))
         self.account["netting_mode"] = bool(acc.get("netting_mode",  self.account["netting_mode"]))
-        self.account["status"]       = acc.get("status", "Activo")
-        self.account["tier"]         = acc.get("tier", "10K")
-        self.account["profit_target"] = float(acc.get("profit_target", 800.0))
-        _tier_start = {"10K": 10000.0, "50K": 50000.0, "100K": 100000.0}
-        self.account["initial_balance"] = _tier_start.get(self.account["tier"], 10000.0)
+        self.account["status"]          = acc.get("status", "Activo")
+        self.account["tier"]            = acc.get("tier", "")
+        self.account["account_type"]    = acc.get("account_type", "CHALLENGE")
+        self.account["profit_target"]   = float(acc.get("profit_target") or 0.0)
+        # Use the stored initial_balance from DB; fall back to current balance, never to a tier dict.
+        self.account["initial_balance"] = float(
+            acc.get("initial_balance") or self.account["balance"]
+        )
         log.info("[hydrate] balance=%.2f equity=%.2f status=%s tier=%s",
                  self.account["balance"], self.account["equity"],
                  self.account["status"], self.account["tier"])
@@ -856,7 +1074,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
         self._positions = []
         for it in items:
             self._positions.append({
-                "id":it["id"], "symbol":it["symbol"], "side":it["side"],
+                "id":it["id"], "symbol":it["symbol"], "side":it["side"].lower(),
                 "qty":float(it["qty"]), "avg":float(it["avg_price"]),
                 "sl":it.get("sl"), "tp":it.get("tp"),
                 "opened_at":it.get("opened_ts", int(time.time())),
@@ -912,15 +1130,17 @@ class TradingConsumer(AsyncWebsocketConsumer):
         try:
             obj = TradingAccount.objects.get(id=acc_id)
             return {
-                "id": obj.id,
-                "balance": obj.balance,
-                "equity": obj.equity,
-                "peak_balance": obj.peak_balance,
-                "leverage": getattr(obj, "leverage", 50),
-                "netting_mode": getattr(obj, "netting_mode", False),
-                "status": obj.status,
-                "tier": getattr(obj, "tier", "10K"),
-                "profit_target": float(obj.profit_target),
+                "id":              obj.id,
+                "account_type":    obj.account_type,
+                "balance":         obj.balance,
+                "equity":          obj.equity,
+                "peak_balance":    obj.peak_balance,
+                "initial_balance": obj.initial_balance,
+                "leverage":        getattr(obj, "leverage", 50),
+                "netting_mode":    getattr(obj, "netting_mode", False),
+                "status":          obj.status,
+                "tier":            obj.tier or "",
+                "profit_target":   float(obj.profit_target) if obj.profit_target is not None else 0.0,
             }
         except TradingAccount.DoesNotExist:
             return None

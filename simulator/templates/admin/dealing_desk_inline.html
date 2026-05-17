@@ -261,6 +261,92 @@
 {% endwith %}
 
 {# ══════════════════════════════════════════════════════════
+   RETAIL MARGIN ENGINE (solo visible para cuentas RETAIL)
+══════════════════════════════════════════════════════════ #}
+{% if retail_margin %}
+<div class="dd-card" style="margin-bottom:16px;border-top:2px solid #3498db;">
+  <div class="dd-card-hdr" style="background:#0a1a2a;">
+    <h3 style="color:#3498db;">RETAIL MARGIN ENGINE</h3>
+    <span class="hdr-meta" style="color:{{ retail_margin.status_color }};font-weight:800;">
+      {{ retail_margin.status_label }}
+    </span>
+  </div>
+  <div class="dd-card-body">
+
+    {# Margin utilization bar #}
+    <div style="margin-bottom:14px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <span style="font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;">Margin Utilization</span>
+        <span style="font-size:1.1rem;font-weight:800;color:{{ retail_margin.status_color }};">
+          {{ retail_margin.used_margin_pct|floatformat:2 }}%
+        </span>
+      </div>
+      <div style="background:rgba(255,255,255,.05);border-radius:5px;height:12px;overflow:hidden;">
+        <div style="width:{% widthratio retail_margin.used_margin_pct 100 100 %}%;height:12px;border-radius:5px;background:{{ retail_margin.status_color }};transition:width .5s;"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:4px;">
+        <span style="font-size:.6rem;color:var(--muted);">0% NORMAL</span>
+        <span style="font-size:.6rem;color:#f1c40f;">20% WARN</span>
+        <span style="font-size:.6rem;color:#e67e22;">50% HIGH</span>
+        <span style="font-size:.6rem;color:#e74c3c;">80% DANGER</span>
+      </div>
+    </div>
+
+    {# KV grid — two columns #}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 16px;">
+      <div>
+        <div class="kv"><span class="kv-k">Margin Used</span><span class="kv-v">${{ retail_margin.margin_used|floatformat:2 }}</span></div>
+        <div class="kv"><span class="kv-k">Free Margin</span>
+          <span class="kv-v {% if retail_margin.free_margin >= 0 %}pos{% else %}neg{% endif %}">${{ retail_margin.free_margin|floatformat:2 }}</span>
+        </div>
+        <div class="kv"><span class="kv-k">Maintenance Req.</span><span class="kv-v">${{ retail_margin.maintenance_margin|floatformat:2 }}</span></div>
+        <div class="kv"><span class="kv-k">Liq. Distance</span>
+          <span class="kv-v" style="color:{{ retail_margin.status_color }};">${{ retail_margin.liquidation_distance|floatformat:2 }}</span>
+        </div>
+      </div>
+      <div>
+        <div class="kv"><span class="kv-k">Margin Level</span>
+          <span class="kv-v" style="color:{{ retail_margin.margin_level_color }};">
+            {% if retail_margin.margin_used > 0 %}{{ retail_margin.margin_level|floatformat:0 }}%{% else %}—{% endif %}
+          </span>
+        </div>
+        <div class="kv"><span class="kv-k">Used Margin %</span>
+          <span class="kv-v" style="color:{{ retail_margin.status_color }};">{{ retail_margin.used_margin_pct|floatformat:2 }}%</span>
+        </div>
+        <div class="kv"><span class="kv-k">Equity</span><span class="kv-v">${{ account.equity|floatformat:2 }}</span></div>
+        <div class="kv"><span class="kv-k">Balance</span><span class="kv-v">${{ account.balance|floatformat:2 }}</span></div>
+      </div>
+    </div>
+
+    {# Margin level bar (inverse — 0% used = 100% margin level) #}
+    {% if retail_margin.margin_used > 0 %}
+    <div style="margin-top:12px;">
+      <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+        <span style="font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;">Margin Level</span>
+        <span style="font-size:.75rem;font-weight:700;color:{{ retail_margin.margin_level_color }};">
+          {{ retail_margin.margin_level|floatformat:0 }}%
+        </span>
+      </div>
+      {# Level bar: cap display at 300%, stopout zone highlighted #}
+      <div style="position:relative;background:rgba(255,255,255,.05);border-radius:4px;height:6px;overflow:hidden;">
+        <div style="position:absolute;left:0;top:0;height:6px;background:#e74c3c;opacity:.2;
+             width:{% widthratio 50 300 100 %}%;"></div>
+        <div style="width:{% if retail_margin.margin_level > 300 %}100{% else %}{% widthratio retail_margin.margin_level 300 100 %}{% endif %}%;
+             height:6px;border-radius:4px;background:{{ retail_margin.margin_level_color }};"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:3px;">
+        <span style="font-size:.6rem;color:#e74c3c;">0% STOPOUT</span>
+        <span style="font-size:.6rem;color:#e67e22;">100% WARN</span>
+        <span style="font-size:.6rem;color:#27ae60;">300%+ SAFE</span>
+      </div>
+    </div>
+    {% endif %}
+
+  </div>
+</div>
+{% endif %}
+
+{# ══════════════════════════════════════════════════════════
    RISK RULE + TRADER SCORE
 ══════════════════════════════════════════════════════════ #}
 <div class="dd-cols">

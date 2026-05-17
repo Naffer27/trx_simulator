@@ -1,0 +1,213 @@
+{% extends "simulator/base_app.html" %}
+{% load static %}
+{% block title %}Withdrawal History — Money Brokers{% endblock %}
+{% block page_title %}Historial de Retiros{% endblock %}
+
+{% block extra_head %}
+<style>
+  .wh-wrap {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 40px 16px;
+  }
+  .wh-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 28px;
+  }
+  .wh-header h2 {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: #FFD700;
+    letter-spacing: .05em;
+    margin: 0;
+  }
+  .new-btn {
+    background: linear-gradient(135deg, #FFD700, #FFA500);
+    border: none;
+    border-radius: 8px;
+    color: #000;
+    font-family: 'Orbitron', sans-serif;
+    font-size: .78rem;
+    font-weight: 700;
+    letter-spacing: .06em;
+    padding: 10px 18px;
+    text-decoration: none;
+    transition: opacity .2s;
+  }
+  .new-btn:hover { opacity: .85; }
+
+  .wallet-pill {
+    background: rgba(255,215,0,.06);
+    border: 1px solid rgba(255,215,0,.18);
+    border-radius: 10px;
+    padding: 12px 18px;
+    margin-bottom: 24px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: .83rem;
+    flex-wrap: wrap;
+  }
+
+  .wh-table-wrap {
+    background: #0d0d14;
+    border: 1px solid rgba(255,215,0,.1);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  th {
+    background: rgba(255,215,0,.05);
+    color: rgba(255,255,255,.45);
+    font-size: .7rem;
+    font-weight: 700;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    padding: 12px 16px;
+    text-align: left;
+    border-bottom: 1px solid rgba(255,215,0,.08);
+    white-space: nowrap;
+  }
+  td {
+    padding: 14px 16px;
+    font-size: .83rem;
+    color: rgba(255,255,255,.8);
+    border-bottom: 1px solid rgba(255,255,255,.04);
+    vertical-align: middle;
+  }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255,215,0,.02); }
+
+  .badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: .7rem;
+    font-weight: 700;
+    letter-spacing: .04em;
+    white-space: nowrap;
+  }
+  .s-pending    { background:#1a1a2a; color:#7986cb; }
+  .s-approved   { background:#0a2a1a; color:#27ae60; }
+  .s-processing { background:#2a1a00; color:#f1c40f; }
+  .s-completed  { background:#0a2a1a; color:#00e676; }
+  .s-rejected   { background:#2a0000; color:#e74c3c; }
+  .s-failed     { background:#2a0000; color:#ef5350; }
+
+  .addr-cell {
+    font-family: monospace;
+    font-size: .75rem;
+    color: rgba(255,255,255,.5);
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .empty-state {
+    padding: 60px 20px;
+    text-align: center;
+    color: #555;
+  }
+  .empty-state p { margin: 12px 0 20px; font-size: .85rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="wh-wrap">
+  <div class="wh-header">
+    <h2>Historial de Retiros</h2>
+    <a href="{% url 'simulator:withdraw' %}" class="new-btn">+ NUEVO RETIRO</a>
+  </div>
+
+  <!-- Wallet summary -->
+  <div class="wallet-pill">
+    <i class="fa-solid fa-wallet" style="color:var(--gold)"></i>
+    <span style="color:rgba(255,255,255,.55);">Balance disponible:</span>
+    <strong style="color:var(--gold);">${{ wallet.available_balance|floatformat:2 }}</strong>
+    {% if wallet.pending_balance > 0 %}
+    <span style="color:#787b86;font-size:.77rem;margin-left:8px;">
+      · Pendiente: ${{ wallet.pending_balance|floatformat:2 }}
+    </span>
+    {% endif %}
+  </div>
+
+  <div class="wh-table-wrap">
+    {% if withdrawals %}
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Fecha</th>
+          <th>Monto</th>
+          <th>Cripto</th>
+          <th>Dirección</th>
+          <th>Cripto enviado</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for wr in withdrawals %}
+        <tr>
+          <td style="color:rgba(255,215,0,.5);font-weight:600;">{{ wr.id }}</td>
+          <td style="color:#787b86;font-size:.77rem;white-space:nowrap;">
+            {{ wr.created_at|date:"d/m/Y" }}<br>
+            <span style="color:#55556a;">{{ wr.created_at|time:"H:i" }}</span>
+          </td>
+          <td><strong style="color:#fff;">${{ wr.amount_usd|floatformat:2 }}</strong></td>
+          <td>
+            <span style="color:rgba(255,215,0,.8);font-weight:600;font-size:.8rem;">
+              {{ wr.get_crypto_currency_display }}
+            </span>
+          </td>
+          <td class="addr-cell" title="{{ wr.wallet_address }}">{{ wr.wallet_address }}</td>
+          <td style="font-size:.78rem;color:#787b86;">
+            {% if wr.crypto_amount %}
+              {{ wr.crypto_amount }} {{ wr.crypto_currency|upper }}
+            {% else %}—{% endif %}
+          </td>
+          <td>
+            {% if wr.status == "pending" %}
+              <span class="badge s-pending">Pendiente</span>
+            {% elif wr.status == "approved" %}
+              <span class="badge s-approved">Aprobado</span>
+            {% elif wr.status == "processing" %}
+              <span class="badge s-processing">En proceso</span>
+            {% elif wr.status == "completed" %}
+              <span class="badge s-completed">Completado</span>
+            {% elif wr.status == "rejected" %}
+              <span class="badge s-rejected">Rechazado</span>
+            {% elif wr.status == "failed" %}
+              <span class="badge s-failed">Fallido</span>
+            {% else %}
+              <span class="badge" style="background:#1a1a2a;color:#aaa;">{{ wr.status }}</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">
+      <i class="fa-solid fa-arrow-up-from-bracket" style="font-size:2rem;color:rgba(255,215,0,.2);"></i>
+      <p>No tienes solicitudes de retiro aún.</p>
+      <a href="{% url 'simulator:withdraw' %}" class="new-btn">Crear primer retiro</a>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Status legend -->
+  {% if withdrawals %}
+  <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:18px;">
+    <span class="badge s-pending">Pendiente — en revisión</span>
+    <span class="badge s-processing">En proceso — enviando</span>
+    <span class="badge s-completed">Completado — crypto enviado</span>
+    <span class="badge s-rejected">Rechazado — fondos devueltos</span>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

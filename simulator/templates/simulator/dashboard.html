@@ -31,7 +31,7 @@
 
   #dash-canvas{position:fixed;inset:0;z-index:0;pointer-events:none;}
 
-  .wrap{position:relative;z-index:1;max-width:1600px;margin:0 auto;padding:10px 12px calc(var(--nav-h)+16px);}
+  .wrap{position:relative;z-index:1;max-width:1600px;margin:0 auto;padding:10px 12px 10px;display:flex;flex-direction:column;height:calc(100vh - var(--nav-h));overflow:hidden;}
 
   /* ── Mobile trade bar ── */
   .toptrade{position:sticky;top:0;z-index:6;display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:8px;background:rgba(5,5,10,.92);backdrop-filter:saturate(140%) blur(10px);border:1px solid var(--accent);border-radius:10px;padding:8px 10px;margin-bottom:10px;align-items:center;justify-items:center;}
@@ -46,15 +46,48 @@
   .lot button:hover{border-color:var(--gold);color:var(--gold);}
   .lot .val{min-width:52px;text-align:center;}
 
-  /* ── Global topbar ── */
-  .topbar{display:flex;gap:10px;align-items:center;border:1px solid var(--accent);border-radius:10px;padding:8px 14px;margin:8px 0 10px;background:var(--panel);}
-  .topbar .group{display:flex;gap:8px;align-items:center;}
-  .topbar strong{font-family:'Orbitron',sans-serif;font-size:.82rem;font-weight:700;color:var(--gold);letter-spacing:.06em;}
-  .topbar select,.topbar input{background:var(--bg);border:1px solid var(--accent);color:var(--text);padding:5px 10px;border-radius:6px;font-family:'Inter',sans-serif;font-size:.82rem;transition:border-color .15s;appearance:none;}
-  .topbar select:focus,.topbar input:focus{outline:none;border-color:var(--gold);box-shadow:0 0 0 2px rgba(255,215,0,.08);}
-  .status{margin-left:auto;font-size:.72rem;color:var(--muted);letter-spacing:.04em;}
-  .status.ok{color:var(--bull);}
-  .status.err{color:var(--bear);}
+  /* ── Tools sidebar ── */
+  .tools-sidebar{display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 0;background:var(--panel);border:1px solid var(--accent);border-radius:10px;flex-shrink:0;overflow:hidden;}
+  .tool-btn{width:30px;height:30px;background:transparent;border:none;border-radius:5px;color:var(--muted);font-size:.88rem;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .12s,color .12s;padding:0;line-height:1;}
+  .tool-btn:hover{background:rgba(255,215,0,.08);color:var(--gold);}
+  .tool-btn.active{background:rgba(255,215,0,.12);color:var(--gold);}
+  .tool-sep{width:18px;height:1px;background:rgba(255,215,0,.1);margin:3px 0;flex-shrink:0;}
+
+  /* ── Metric bar ── */
+  .metric-bar{
+    display:flex;align-items:stretch;
+    background:var(--panel);
+    border:1px solid var(--accent);
+    border-radius:10px;
+    margin:0 0 10px;
+    overflow:hidden;
+    flex-shrink:0;
+  }
+  .mb-item{
+    flex:1;
+    display:flex;flex-direction:column;justify-content:center;
+    padding:8px 14px;
+    border-right:1px solid rgba(255,215,0,.07);
+    min-width:0;
+  }
+  .mb-item:last-child{border-right:none;}
+  .mb-label{
+    font-size:.62rem;font-weight:600;letter-spacing:.07em;text-transform:uppercase;
+    color:var(--muted);white-space:nowrap;margin-bottom:3px;
+  }
+  .mb-value{
+    font-size:.88rem;font-weight:700;
+    font-variant-numeric:tabular-nums;
+    color:var(--text);white-space:nowrap;
+    transition:color .25s;
+  }
+  .mb-value.pos{color:#26a69a;}
+  .mb-value.neg{color:#ef5350;}
+  .mb-value.warn{color:#ff9800;}
+  .mb-value.danger{color:#ef5350;}
+  @media(max-width:900px){
+    .metric-bar{display:none;}
+  }
 
   /* ── Layout switcher ── */
   .layout-switcher{display:flex;gap:4px;margin-left:8px;}
@@ -63,14 +96,15 @@
   .ls-btn.active{background:var(--gold-dim);color:var(--gold);border-color:var(--gold);}
 
   /* ── Main layout ── */
-  .layout{display:grid;grid-template-columns:1fr 300px;gap:10px;}
+  .layout{display:grid;grid-template-columns:36px 1fr 290px;gap:8px;flex:1;min-height:0;}
 
   /* ── Panels grid ── */
-  .panels-grid{display:grid;gap:8px;min-height:0;position:relative;}
-  .layout-1{grid-template-columns:1fr;height:clamp(480px,78vh,980px);}
-  .layout-2{grid-template-columns:1fr 1fr;height:clamp(420px,70vh,850px);}
-  .layout-3{grid-template-columns:1fr 1fr 1fr;height:clamp(420px,70vh,850px);}
-  .layout-4{grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;height:clamp(520px,76vh,900px);}
+  .left-col{display:flex;flex-direction:column;gap:8px;min-height:0;overflow:hidden;}
+  .panels-grid{display:grid;gap:8px;min-height:0;position:relative;flex:1;}
+  .layout-1{grid-template-columns:1fr;grid-template-rows:1fr;}
+  .layout-2{grid-template-columns:1fr 1fr;grid-template-rows:1fr;}
+  .layout-3{grid-template-columns:1fr 1fr 1fr;grid-template-rows:1fr;}
+  .layout-4{grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;}
 
   /* ── Panel resizer ── */
   .p-resizer{
@@ -93,8 +127,8 @@
   .panel-status.ok{color:var(--bull);}
   .panel-status.err{color:var(--bear);}
 
-  .panel-chart{position:relative;flex:1;min-height:0;}
-  .p-chart{width:100%;height:100%;}
+  .panel-chart{position:relative;flex:1;min-height:0;overflow:hidden;}
+  .p-chart{position:absolute;inset:0;}
 
   .drag-badge{position:absolute;right:12px;transform:translateY(-50%);display:none;z-index:6;background:var(--panel);border:1px solid var(--accent);border-radius:6px;padding:4px 10px;font-weight:700;font-size:.78rem;pointer-events:none;}
   .drag-badge.up{color:var(--bull);border-color:rgba(38,166,154,.35);}
@@ -127,13 +161,54 @@
   /* Bid/Ask row */
   .acct-bid-row .acct-v{font-size:.71rem;letter-spacing:.02em;}
 
+  /* ── Risk Preview Panel ── */
+  .risk-panel{margin:10px 0 6px;border-radius:8px;padding:10px 12px;border:1px solid transparent;transition:border-color .2s,background .2s;}
+  .risk-panel.rl-LOW    {background:rgba(38,166,154,.07); border-color:rgba(38,166,154,.25);}
+  .risk-panel.rl-MEDIUM {background:rgba(255,193,7,.07);  border-color:rgba(255,193,7,.3);}
+  .risk-panel.rl-HIGH   {background:rgba(255,152,0,.09);  border-color:rgba(255,152,0,.4);}
+  .risk-panel.rl-EXTREME{background:rgba(239,83,80,.1);   border-color:rgba(239,83,80,.5);}
+  .rp-header{display:flex;align-items:center;gap:8px;margin-bottom:7px;}
+  .rp-badge{padding:2px 9px;border-radius:12px;font-size:.63rem;font-weight:800;letter-spacing:.08em;font-family:'Orbitron',sans-serif;}
+  .rp-badge-LOW    {background:rgba(38,166,154,.2); color:#26a69a;}
+  .rp-badge-MEDIUM {background:rgba(255,193,7,.2);  color:#ffc107;}
+  .rp-badge-HIGH   {background:rgba(255,152,0,.25); color:#ff9800;}
+  .rp-badge-EXTREME{background:rgba(239,83,80,.25); color:#ef5350;}
+  .rp-label{font-size:.68rem;color:var(--muted);flex:1;}
+  .rp-bar-wrap{height:4px;background:rgba(255,255,255,.07);border-radius:2px;overflow:hidden;margin-bottom:8px;}
+  .rp-bar-fill{height:100%;border-radius:2px;transition:width .3s,background .3s;}
+  .rp-metrics{display:grid;grid-template-columns:1fr 1fr;gap:4px 8px;}
+  .rp-metric{font-size:.68rem;display:flex;justify-content:space-between;align-items:center;padding:2px 0;}
+  .rp-metric span{color:var(--muted);}
+  .rp-metric strong{color:var(--text);font-weight:600;}
+  .rp-rec{margin-top:6px;font-size:.67rem;color:var(--muted);text-align:center;border-top:1px solid rgba(255,255,255,.05);padding-top:6px;}
+  .rp-rec strong{color:#26a69a;cursor:pointer;text-decoration:underline dotted;}
+
+  /* ── Risk Confirm Modal ── */
+  #riskConfirmModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:200;align-items:center;justify-content:center;padding:16px;}
+  .rcm-box{background:#0e0e1a;border:1px solid rgba(255,152,0,.5);border-radius:14px;padding:24px;max-width:340px;width:100%;}
+  .rcm-title{font-family:'Orbitron',sans-serif;font-size:.72rem;font-weight:800;letter-spacing:.1em;color:#ff9800;margin-bottom:16px;text-align:center;}
+  .rcm-metrics{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;}
+  .rcm-metric{background:rgba(255,255,255,.04);border-radius:8px;padding:10px;text-align:center;}
+  .rcm-metric-label{font-size:.62rem;color:var(--muted);margin-bottom:4px;letter-spacing:.04em;}
+  .rcm-metric-val{font-size:.9rem;font-weight:700;color:var(--text);}
+  .rcm-warn{font-size:.72rem;color:rgba(255,152,0,.85);text-align:center;margin-bottom:16px;line-height:1.5;}
+  .rcm-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .rcm-btn-cancel{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);color:var(--muted);border-radius:8px;padding:10px;font-size:.78rem;font-weight:600;cursor:pointer;transition:background .15s;}
+  .rcm-btn-cancel:hover{background:rgba(255,255,255,.1);}
+  .rcm-btn-confirm{background:rgba(255,152,0,.15);border:1px solid rgba(255,152,0,.5);color:#ff9800;border-radius:8px;padding:10px;font-size:.78rem;font-weight:700;cursor:pointer;transition:background .15s;}
+  .rcm-btn-confirm:hover{background:rgba(255,152,0,.25);}
+
   .last-price{position:absolute;right:12px;top:10px;display:flex;gap:6px;z-index:2;}
   .pill{background:var(--panel);border:1px solid var(--accent);padding:4px 10px;border-radius:999px;font-size:.78rem;font-weight:700;}
   .pill.green{color:var(--bull);border-color:rgba(38,166,154,.3);}
   .pill.red{color:var(--bear);border-color:rgba(239,83,80,.3);}
 
   /* ── Right column ── */
-  .rightcol{display:flex;flex-direction:column;gap:10px;}
+  .rightcol{display:flex;flex-direction:column;gap:10px;overflow-y:auto;min-height:0;scrollbar-width:thin;scrollbar-color:rgba(255,215,0,.2) transparent;}
+  .rightcol::-webkit-scrollbar{width:4px;}
+  .rightcol::-webkit-scrollbar-track{background:transparent;}
+  .rightcol::-webkit-scrollbar-thumb{background:rgba(255,215,0,.2);border-radius:2px;}
+  .rightcol::-webkit-scrollbar-thumb:hover{background:rgba(255,215,0,.4);}
   .card{background:var(--panel);border:1px solid var(--accent);border-radius:10px;padding:14px 16px;}
   #accountCard{min-height:0;overflow:hidden;}
   .card h6{margin:0 0 12px;font-family:'Orbitron',sans-serif;font-size:.68rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,215,0,.55);}
@@ -159,7 +234,8 @@
   .wl:hover{border-color:var(--gold);color:var(--gold);}
 
   /* ── Positions table ── */
-  .positions-card{margin-top:10px;}
+  .positions-card{flex-shrink:0;height:190px;overflow:hidden;display:flex;flex-direction:column;}
+  .pos-table-wrap{flex:1;min-height:0;overflow-y:auto;}
   table{width:100%;border-collapse:collapse;font-size:.78rem;}
   thead tr{background:rgba(255,215,0,.04);}
   th{padding:8px 10px;color:var(--muted);font-size:.68rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;border-bottom:1px solid var(--accent);text-align:left;}
@@ -381,6 +457,8 @@
     html,body{overflow:hidden;}
     .wrap{max-width:100%;padding:44px 0 96px;height:100dvh;overflow-y:auto;-webkit-overflow-scrolling:touch;}
     .layout{grid-template-columns:1fr;height:calc(100dvh - 44px - 96px);margin:0;gap:0;}
+    .tools-sidebar{display:none;}
+    .left-col{height:100%;}
     .panels-grid{height:100%;}
     .layout-1,.layout-2,.layout-3,.layout-4{height:100%;}
     .panel-unit{height:100%;border-radius:0;border:none;}
@@ -469,50 +547,107 @@
     <button id="btnTopBuy" class="deal buy" aria-label="Buy"><span class="lab">BUY</span><span id="pxBuy" class="px">—</span></button>
   </div>
 
-  <div class="topbar">
-    <div class="group">
-      <strong>MONEY BROKERS</strong>
+  <!-- ── Metric bar (TradeLocker-style) ── -->
+  <div class="metric-bar" id="metricBar">
+    <div class="mb-item">
+      <div class="mb-label">Balance</div>
+      <div class="mb-value" id="mbBalance">—</div>
     </div>
-
-    <div class="layout-switcher">
-      <button class="ls-btn active" data-layout="1" title="1 panel">▣ ×1</button>
-      <button class="ls-btn" data-layout="2" title="2 panels">⊟ ×2</button>
-      <button class="ls-btn" data-layout="3" title="3 panels">⊞ ×3</button>
-      <button class="ls-btn" data-layout="4" title="4 panels">⊟⊟ ×4</button>
+    <div class="mb-item">
+      <div class="mb-label">Equity</div>
+      <div class="mb-value" id="mbEquity">—</div>
     </div>
-
-    <div class="group desktop-only">
-      <label style="font-size:.75rem;color:var(--muted);">Provider:
-        <select id="provider">
-          <option value="sim" selected>Simulator</option>
-          <option value="binance">Binance</option>
-          <option value="finnhub">Finnhub</option>
-        </select>
-      </label>
-      <input id="fhToken" placeholder="FINNHUB_API_KEY" type="password" style="display:none;width:180px" />
+    <div class="mb-item">
+      <div class="mb-label">Profit &amp; Loss</div>
+      <div class="mb-value" id="mbPnL">—</div>
     </div>
-
-    <span class="status" id="status">—</span>
+    <div class="mb-item">
+      <div class="mb-label">Margin Used</div>
+      <div class="mb-value" id="mbMarginUsed">—</div>
+    </div>
+    <div class="mb-item">
+      <div class="mb-label">Margin Available</div>
+      <div class="mb-value" id="mbFreeMargin">—</div>
+    </div>
+    <div class="mb-item">
+      <div class="mb-label">Margin Level</div>
+      <div class="mb-value" id="mbMarginLevel">—</div>
+    </div>
   </div>
 
   <div class="layout">
-    <div id="panelsGrid" class="panels-grid layout-1"></div>
+    <nav class="tools-sidebar" id="toolsSidebar">
+      <button class="tool-btn active" data-tool="cursor" title="Cursor">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 3l14 9-7 1-4 7L5 3z"/></svg>
+      </button>
+      <button class="tool-btn" data-tool="cross" title="Crosshair">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="2" x2="12" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/></svg>
+      </button>
+      <div class="tool-sep"></div>
+      <button class="tool-btn" data-tool="trendline" title="Trend Line">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="20" x2="21" y2="4"/><circle cx="3" cy="20" r="2" fill="currentColor"/><circle cx="21" cy="4" r="2" fill="currentColor"/></svg>
+      </button>
+      <button class="tool-btn" data-tool="hline" title="Horizontal Line">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="2" y1="12" x2="22" y2="12"/><circle cx="4" cy="12" r="2" fill="currentColor"/><circle cx="20" cy="12" r="2" fill="currentColor"/></svg>
+      </button>
+      <button class="tool-btn" data-tool="fib" title="Fibonacci">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="3" y1="5" x2="21" y2="5"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="3" y1="14" x2="21" y2="14"/><line x1="3" y1="19" x2="21" y2="19"/></svg>
+      </button>
+      <div class="tool-sep"></div>
+      <button class="tool-btn" data-tool="rect" title="Rectangle">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="1"/></svg>
+      </button>
+      <button class="tool-btn" data-tool="text" title="Text" style="font-size:.75rem;font-weight:700;font-family:'Inter',sans-serif;">T</button>
+      <div class="tool-sep"></div>
+      <button class="tool-btn" data-tool="erase" title="Erase All" style="color:rgba(239,83,80,.5);">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+      </button>
+    </nav>
+
+    <div class="left-col">
+      <div id="panelsGrid" class="panels-grid layout-1"></div>
+
+      <div class="card positions-card">
+        <h6>Open Positions (All Panels)</h6>
+        <div class="pos-table-wrap">
+          <table id="posTable">
+            <thead>
+              <tr><th>ID</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Avg</th><th>SL</th><th>TP</th><th>Opened</th><th></th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
 
     <aside class="rightcol">
-      <div class="card" id="accountCard">
-        <h6>Account <span id="accStatusBadge" class="acc-badge acc-badge-active" style="margin-left:6px">Activo</span></h6>
-        <div class="acct-grid">
+      <div class="card" id="accountCard" style="padding:10px 12px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:8px;">
+          <div>
+            {% if account %}
+            <div style="font-family:'Orbitron',sans-serif;font-size:.58rem;font-weight:700;color:var(--gold);letter-spacing:.1em;text-transform:uppercase;">
+              {{ account.account_type }} <span style="color:rgba(255,215,0,.4);font-size:.55rem">#{{ account_id }}</span>
+            </div>
+            <div style="font-size:.63rem;color:var(--muted);margin-top:1px;letter-spacing:.02em;">{{ request.user.username }} · 1:{{ account.leverage }}</div>
+            {% else %}
+            <div style="font-family:'Orbitron',sans-serif;font-size:.63rem;font-weight:700;color:rgba(255,215,0,.55);letter-spacing:.1em;text-transform:uppercase;">Account</div>
+            {% endif %}
+          </div>
+          <span id="accStatusBadge" class="acc-badge acc-badge-active">Activo</span>
+        </div>
+        <div class="acct-grid" style="gap:4px 8px;">
           <div class="acct-kv"><span class="acct-k">Balance</span>   <span class="acct-v" id="accBalance">—</span></div>
           <div class="acct-kv"><span class="acct-k">Equity</span>    <span class="acct-v" id="accEquity">—</span></div>
           <div class="acct-kv"><span class="acct-k">UPnL</span>      <span class="acct-v" id="accPnL">—</span></div>
-          <div class="acct-kv"><span class="acct-k">Margin</span>    <span class="acct-v" id="accMargin">—</span></div>
           <div class="acct-kv"><span class="acct-k">Free Margin</span><span class="acct-v" id="accFree">—</span></div>
-          <div class="acct-kv"><span class="acct-k">Leverage</span>  <span class="acct-v" id="accLev">—</span></div>
+          <div class="acct-kv"><span class="acct-k">Margin</span>    <span class="acct-v" id="accMargin">—</span></div>
           <div class="acct-kv"><span class="acct-k">Margin Lvl</span><span class="acct-v" id="accMarginLevel">—</span></div>
-          <div class="acct-kv"><span class="acct-k">Daily DD</span>  <span class="acct-v" id="accDailyDD">—</span></div>
-          <div class="acct-kv"><span class="acct-k">Total DD</span>  <span class="acct-v" id="accTotalDD">—</span></div>
-          <div class="acct-kv acct-bid-row"><span class="acct-k">Bid / Ask</span><span class="acct-v" id="accBidAsk">—</span></div>
         </div>
+        <!-- hidden elements kept for JS compatibility -->
+        <span id="accLev" style="display:none">—</span>
+        <span id="accDailyDD" style="display:none">—</span>
+        <span id="accTotalDD" style="display:none">—</span>
+        <span id="accBidAsk" style="display:none">—</span>
       </div>
 
       <div class="card" id="challengeCard">
@@ -529,7 +664,7 @@
         <h6>New Order</h6>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
           <label>Qty
-            <input id="qty" type="number" min="0.01" step="0.01" value="1">
+            <input id="qty" type="number" min="0.001" step="0.01" value="0.01">
           </label>
           <label>Type
             <select id="ordType">
@@ -544,11 +679,38 @@
             <input id="tp" type="number" step="0.00001" placeholder="optional">
           </label>
         </div>
-        <div style="display:flex;gap:8px;margin-top:12px;">
+
+        <!-- Risk Preview Panel -->
+        <div id="riskPanel" class="risk-panel rl-LOW" style="display:none">
+          <div class="rp-header">
+            <span class="rp-badge rp-badge-LOW" id="rpBadge">LOW</span>
+            <span class="rp-label" id="rpLabel">Riesgo de posición</span>
+          </div>
+          <div class="rp-bar-wrap">
+            <div class="rp-bar-fill" id="rpBarFill" style="width:0%;background:#26a69a"></div>
+          </div>
+          <div class="rp-metrics">
+            <div class="rp-metric"><span>Exposición</span><strong id="rpExposure">—</strong></div>
+            <div class="rp-metric"><span>Margen req.</span><strong id="rpMargin">—</strong></div>
+            <div class="rp-metric"><span>Impacto 2% move</span><strong id="rpImpact">—</strong></div>
+            <div class="rp-metric"><span>Margen total</span><strong id="rpMgTotal">—</strong></div>
+          </div>
+          <div class="rp-rec">Sugerido: <strong id="rpRec" title="Usar lot sugerido">—</strong></div>
+        </div>
+
+        <div style="display:flex;gap:8px;margin-top:10px;">
           <button id="btnSell">SELL</button>
           <button id="btnBuy">BUY</button>
         </div>
       </div>
+
+      {% if account %}
+      <a href="{% url 'simulator:accounts' %}" style="display:flex;align-items:center;gap:8px;padding:9px 14px;background:rgba(255,215,0,.04);border:1px solid rgba(255,215,0,.12);border-radius:9px;text-decoration:none;font-size:.74rem;font-weight:600;color:var(--muted-2);transition:border-color .15s,color .15s;">
+        <i class="fa-solid fa-briefcase" style="color:var(--gold);font-size:.72rem;"></i>
+        <span>Mis Cuentas</span>
+        <span style="margin-left:auto;font-size:.65rem;background:rgba(255,215,0,.08);padding:2px 8px;border-radius:4px;color:var(--gold)">{{ account.account_type }} #{{ account_id }}</span>
+      </a>
+      {% endif %}
 
       <div class="card watchlist">
         <h6>Watchlist</h6>
@@ -561,16 +723,6 @@
         <button class="wl" data-sym="XAU/USD">XAUUSD</button>
       </div>
     </aside>
-  </div>
-
-  <div class="card positions-card" style="margin-top:10px;">
-    <h6>Open Positions (All Panels)</h6>
-    <table id="posTable">
-      <thead>
-        <tr><th>ID</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Avg</th><th>SL</th><th>TP</th><th>Opened</th><th></th></tr>
-      </thead>
-      <tbody></tbody>
-    </table>
   </div>
 
   <div id="quotesPanel" class="quotes-panel">
@@ -624,7 +776,10 @@
       <!-- User card -->
       <div class="cta-user-card">
         <div class="cta-user-name">{{ request.user.username }}</div>
-        <div class="cta-user-broker">Money Brokers · Demo</div>
+        <div class="cta-user-broker">
+          Money Brokers · {% if account %}{{ account.account_type }} #{{ account_id }} · 1:{{ account.leverage }}{% else %}Demo{% endif %}
+          <span id="ctaAccStatusBadge" style="margin-left:6px;font-size:.63rem;font-weight:700;padding:1px 7px;border-radius:4px;background:rgba(38,166,154,.15);color:#26a69a;"></span>
+        </div>
         <div class="cta-user-stats">
           <div class="cta-stat">
             <span class="cta-stat-lbl">Balance</span>
@@ -708,6 +863,18 @@
       <div class="trd-pnl-val" id="trdPnLHero">—</div>
       <button class="trd-add-btn" id="trdAddBtn">+</button>
     </div>
+    {% if account %}
+    <div style="padding:8px 20px;background:rgba(255,215,0,.04);border-bottom:1px solid rgba(255,215,0,.07);display:flex;align-items:center;justify-content:space-between;">
+      <div>
+        <span style="font-family:'Orbitron',sans-serif;font-size:.6rem;font-weight:700;color:rgba(255,215,0,.75);letter-spacing:.1em;text-transform:uppercase;">{{ account.account_type }}</span>
+        <span style="font-size:.65rem;color:var(--muted);margin-left:6px">#{{ account_id }}</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="font-size:.65rem;color:var(--muted)">1:{{ account.leverage }}</span>
+        <span id="trdAccStatusBadge" style="font-size:.6rem;font-weight:700;padding:1px 7px;border-radius:4px;background:rgba(38,166,154,.15);color:#26a69a;"></span>
+      </div>
+    </div>
+    {% endif %}
     <div class="trd-metrics" id="trdMetrics"></div>
     <div class="trd-pos-section-hdr">
       <span class="trd-pos-section-title">Posiciones</span>
@@ -786,6 +953,37 @@
 
   <div id="wsDebug"><b>WS Debug</b><pre id="wsDebugPre">—</pre></div>
 </div>
+
+<!-- ── Risk Confirm Modal ── -->
+<div id="riskConfirmModal">
+  <div class="rcm-box">
+    <div class="rcm-title">RIESGO ALTO — Confirmar Operación</div>
+    <div class="rcm-metrics">
+      <div class="rcm-metric">
+        <div class="rcm-metric-label">EXPOSICIÓN</div>
+        <div class="rcm-metric-val" id="rcmExposure">—</div>
+      </div>
+      <div class="rcm-metric">
+        <div class="rcm-metric-label">MARGEN REQ.</div>
+        <div class="rcm-metric-val" id="rcmMargin">—</div>
+      </div>
+      <div class="rcm-metric">
+        <div class="rcm-metric-label">IMPACTO 2% MOVE</div>
+        <div class="rcm-metric-val" id="rcmAdverse" style="color:#ff9800">—</div>
+      </div>
+      <div class="rcm-metric">
+        <div class="rcm-metric-label">DD RESTANTE</div>
+        <div class="rcm-metric-val" id="rcmDDRem">—</div>
+      </div>
+    </div>
+    <div class="rcm-warn" id="rcmWarnText">Esta operación consume más del 60% de tu equity. El riesgo es elevado.</div>
+    <div class="rcm-actions">
+      <button class="rcm-btn-cancel" onclick="cancelRiskConfirm()">Cancelar</button>
+      <button class="rcm-btn-confirm" onclick="confirmRiskOrder()">Confirmar igualmente</button>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block extra_scripts %}
@@ -860,7 +1058,7 @@ class TradingPanel {
     this.ws=null; this.hb=null; this.reconnTimer=null; this.reconnDelay=800; this.connecting=false;
     this.chart=null; this.candleSeries=null; this.volumeSeries=null; this.priceLine=null;
     this.stayLive=true; this.agg={sizeSec:60,curStart:null,o:null,h:null,l:null,c:null,vol:0};
-    this.lastClose=null; this.prevClose=null; this.bid=null; this.ask=null; this.spread=0;
+    this.lastClose=null; this.prevClose=null; this.prevCandleClose=null; this.bid=null; this.ask=null; this.spread=0;
     this.positionsCache=[]; this.linesById=new Map(); this.selectedPosIds=new Set();
     this.lastSelectedId=null; this.pendingTmp=[]; this.dragging=null;
     this.chartEl=null; this.statusEl=null; this.symSel=null; this.tfSel=null;
@@ -884,6 +1082,12 @@ class TradingPanel {
           <option value="1h">1h</option><option value="1d">1d</option>
         </select>
         <span class="panel-status p-status">connecting…</span>
+        ${this.id==='p0'?`<div class="layout-switcher" style="margin-left:auto;">
+          <button class="ls-btn active" data-layout="1" title="1 panel">▣ ×1</button>
+          <button class="ls-btn" data-layout="2" title="2 panels">⊟ ×2</button>
+          <button class="ls-btn" data-layout="3" title="3 panels">⊞ ×3</button>
+          <button class="ls-btn" data-layout="4" title="4 panels">⊟⊟ ×4</button>
+        </div>`:''}
       </div>
       <div class="panel-chart">
         <div class="p-chart"></div>
@@ -958,7 +1162,7 @@ class TradingPanel {
     this.candleSeries?.applyOptions({priceFormat:priceFormatFor(this.currentSymbol)});
     this._clearLines(); this.selectedPosIds.clear(); this.lastSelectedId=null;
     if(isMobile())updatePanelTabs();
-    this.lastClose=null; this.prevClose=null; this.bid=this.ask=null; this._resetAgg();
+    this.lastClose=null; this.prevClose=null; this.prevCandleClose=null; this.bid=this.ask=null; this._resetAgg();
     hideQB();
     if(this.ws?.readyState===WebSocket.OPEN){
       this.ws.send(JSON.stringify({action:'change_symbol',symbol:this.currentSymbol}));
@@ -1011,10 +1215,14 @@ class TradingPanel {
   }
 
   wsUrl(){
+    {% if account_id %}
+    const u=new URL('/ws/trading/{{ account_id }}/',window.location.href);
+    {% else %}
     const u=new URL('/ws/trading/',window.location.href);
+    {% if account %}u.searchParams.set('account','{{ account.id }}');{% endif %}
+    {% endif %}
     u.protocol=(u.protocol==='https:')?'wss:':'ws:';
     u.searchParams.set('provider',globalProvider);
-    {% if account %}u.searchParams.set('account','{{ account.id }}');{% endif %}
     if(globalProvider==='finnhub'){const t=(document.getElementById('fhToken')?.value||localStorage.finnhubToken||'').trim();if(t)u.searchParams.set('token',t);}
     return u.toString();
   }
@@ -1055,11 +1263,23 @@ class TradingPanel {
       showRiskAlert('🚫 Cuenta Violada: '+String(msg.reason||msg.status||''),true);
       return;
     }
+    if(msg.type==='risk_warning'){
+      _showRiskConfirmModal(msg,this);
+      return;
+    }
+    if(msg.type==='order_rejected'&&msg.code==='extreme_risk'){
+      showRiskAlert('🚫 RIESGO EXTREMO — Exposición '+msg.exposure_pct+'%. Reduce el tamaño de posición.',false);
+      return;
+    }
+    if(msg.type==='risk_preview'){
+      updateRiskPanel(msg);
+      return;
+    }
 
     if(msg.type==='price'||msg.type==='tick'){
       if(msg.symbol&&msg.symbol!==this.currentSymbol)return;
       this.bid=n(msg.bid??msg.best_bid??null);this.ask=n(msg.ask??msg.best_ask??null);
-      if(this.bid!=null&&this.ask!=null&&this.ask>this.bid){this.spread=this.ask-this.bid;this.lastClose=(this.ask+this.bid)/2;this._updateBidAsk();this.setPrice(this.lastClose,this.prevClose);const _qs=msg.symbol||this.currentSymbol;if(_qs){const _qe=quotesLivePx[_qs];quotesLivePx[_qs]={price:this.lastClose,prev:_qe?_qe.price:null};}if(document.getElementById('quotesPanel')?.style.display!=='none')renderQuotes(quotesSearch?.value||'');}
+      if(this.bid!=null&&this.ask!=null&&this.ask>this.bid){this.spread=this.ask-this.bid;this.lastClose=(this.ask+this.bid)/2;this._updateBidAsk();const _qs=msg.symbol||this.currentSymbol;if(_qs){const _qe=quotesLivePx[_qs];quotesLivePx[_qs]={price:this.lastClose,prev:_qe?_qe.price:null};}if(document.getElementById('quotesPanel')?.style.display!=='none')renderQuotes(quotesSearch?.value||'');}
       return;
     }
 
@@ -1076,8 +1296,10 @@ class TradingPanel {
       if(msg.symbol&&msg.symbol!==this.currentSymbol)return;
       const b={time:normTime(msg.data.time),open:n(msg.data.open),high:n(msg.data.high),low:n(msg.data.low),close:n(msg.data.close)};
       if(b.time&&b.open!=null&&b.high!=null&&b.low!=null&&b.close!=null){
-        if(this.stayLive){this.candleSeries.update(b);this.volumeSeries.update(volPointForBar(b));this.chart.timeScale().scrollToRealTime();}
-        this.prevClose=this.lastClose??b.open;this.lastClose=b.close;this.setPrice(this.lastClose,this.prevClose);
+        this.candleSeries.update(b);this.volumeSeries.update(volPointForBar(b));
+        if(this.stayLive)this.chart.timeScale().scrollToRealTime();
+        if(msg.type==='candle_new')this.prevCandleClose=this.lastClose??b.open;
+        this.prevClose=this.prevCandleClose??b.open;this.lastClose=b.close;this.setPrice(this.lastClose,this.prevClose);
         if(this.bid==null||this.ask==null)this._updateBidAsk();
       }return;
     }
@@ -1232,6 +1454,7 @@ class TradingPanel {
     if(this.chart)return;
     if(!window.LightweightCharts){await new Promise(res=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js';s.onload=res;s.onerror=res;document.head.appendChild(s);});}
     this.chart=LightweightCharts.createChart(this.chartEl,{
+      autoSize:true,
       layout:{background:{type:'solid',color:'#000000'},textColor:'#d1d4dc'},
       grid:{vertLines:{color:'rgba(255,215,0,.04)'},horzLines:{color:'rgba(255,215,0,.04)'}},
       crosshair:{
@@ -1307,11 +1530,12 @@ class TradingPanel {
   }
   _hideDragBadge(){if(this.dragBadge)this.dragBadge.style.display='none';}
 
-  sendOrder(side,qty,slV,tpV){
+  sendOrder(side,qty,slV,tpV,riskConfirmed=false){
     if(!this.ws||this.ws.readyState!==WebSocket.OPEN)return;
     if(!this.currentSymbol||this.lastClose==null){this.setStatus('⚠️ Wait for first tick');return;}
     const type=document.getElementById('ordType').value;
     const payload={action:'order:new',symbol:this.currentSymbol,side,type,qty,price:this.lastClose,sl:slV,tp:tpV};
+    if(riskConfirmed)payload.risk_confirmed=true;
     this.ws.send(JSON.stringify(payload));
     const tmpId=`tmp-${Date.now()}`;
     this._drawLines(tmpId,{id:tmpId,symbol:this.currentSymbol,side,avg:this.lastClose,sl:slV,tp:tpV});
@@ -1528,13 +1752,21 @@ function renderAccount(msg){
   const tHero=document.getElementById('trdPnLHero');
   if(tHero){tHero.textContent=(upnl>=0?'+':'')+usd(upnl)+' USD';tHero.className='trd-pnl-val'+(upnl>0.00001?' pos':upnl<-0.00001?' neg':'');}
 
-  // ── Status badge ──
+  // ── Status badge (all locations) ──
+  const _st=msg.status||'Activo';
+  const _stClass='acc-badge '+({'Activo':'acc-badge-active','Suspendido':'acc-badge-suspended','Violado':'acc-badge-violated','Cerrado':'acc-badge-closed'}[_st]||'acc-badge-closed');
   const badge=document.getElementById('accStatusBadge');
-  if(badge){
-    const st=msg.status||'Activo';
-    badge.textContent=st;
-    badge.className='acc-badge '+({'Activo':'acc-badge-active','Suspendido':'acc-badge-suspended','Violado':'acc-badge-violated','Cerrado':'acc-badge-closed'}[st]||'acc-badge-closed');
-  }
+  if(badge){badge.textContent=_st;badge.className=_stClass;}
+  // Mini badges in Trading tab + Ajustes panel
+  ['trdAccStatusBadge','ctaAccStatusBadge'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(!el)return;
+    el.textContent=_st;
+    const colors={'Activo':'rgba(38,166,154,.15)','Suspendido':'rgba(239,83,80,.15)','Violado':'rgba(239,83,80,.2)','Cerrado':'rgba(120,123,134,.15)'};
+    const fgs={'Activo':'#26a69a','Suspendido':'#ef5350','Violado':'#ff5252','Cerrado':'#888'};
+    el.style.background=colors[_st]||colors['Cerrado'];
+    el.style.color=fgs[_st]||fgs['Cerrado'];
+  });
 
   // ── Margin Level ──
   const mlEl=document.getElementById('accMarginLevel');
@@ -1544,6 +1776,38 @@ function renderAccount(msg){
   const ddyEl=document.getElementById('accDailyDD'),ddtEl=document.getElementById('accTotalDD');
   if(ddyEl){const v=Number(msg.daily_dd_pct??0);ddyEl.textContent=v.toFixed(2)+'%';ddyEl.style.color=v>3?'#ef5350':v>1.5?'#ff9800':'#26a69a';}
   if(ddtEl){const v=Number(msg.total_dd_pct??0);ddtEl.textContent=v.toFixed(2)+'%';ddtEl.style.color=v>7?'#ef5350':v>4?'#ff9800':'#26a69a';}
+
+  // ── Metric bar ──
+  const mb={
+    bal:  document.getElementById('mbBalance'),
+    eq:   document.getElementById('mbEquity'),
+    pnl:  document.getElementById('mbPnL'),
+    mg:   document.getElementById('mbMarginUsed'),
+    free: document.getElementById('mbFreeMargin'),
+    ml:   document.getElementById('mbMarginLevel'),
+  };
+  if(mb.bal){
+    mb.bal.textContent  = usd(msg.balance);
+    mb.eq.textContent   = usd(equity);
+
+    const pnlSign = upnl >= 0 ? '+' : '';
+    mb.pnl.textContent  = pnlSign + usd(upnl);
+    mb.pnl.className    = 'mb-value' + (upnl > 0.00001 ? ' pos' : upnl < -0.00001 ? ' neg' : '');
+
+    mb.mg.textContent   = usd(margin);
+
+    const freeVal = msg.free_margin != null ? Number(msg.free_margin) : equity - margin;
+    mb.free.textContent = usd(freeVal);
+
+    const ml = Number(msg.margin_level ?? 0);
+    if(margin > 0){
+      mb.ml.textContent = ml.toFixed(1) + '%';
+      mb.ml.className   = 'mb-value' + (ml < 100 ? ' danger' : ml < 200 ? ' warn' : ' pos');
+    } else {
+      mb.ml.textContent = '∞';
+      mb.ml.className   = 'mb-value pos';
+    }
+  }
 
   // ── Bid / Ask ──
   const baEl=document.getElementById('accBidAsk');
@@ -1664,7 +1928,14 @@ if(providerSel)providerSel.addEventListener('change',()=>{
 if(fhTokenInput)fhTokenInput.addEventListener('change',()=>{localStorage.finnhubToken=fhTokenInput.value||'';if(globalProvider==='finnhub'){allPanels.forEach(p=>p.disconnect());setTimeout(()=>allPanels.filter(p=>p.wrapper.style.display!=='none').forEach(p=>p.connect()),300);}});
 
 /* ── Layout switcher ── */
-document.querySelectorAll('.ls-btn').forEach(b=>b.addEventListener('click',()=>setLayout(Number(b.dataset.layout))));
+document.addEventListener('click',e=>{
+  const b=e.target.closest('.ls-btn');if(b)setLayout(Number(b.dataset.layout));
+  const t=e.target.closest('.tool-btn[data-tool]');
+  if(t&&t.dataset.tool!=='erase'){
+    document.querySelectorAll('.tool-btn').forEach(x=>x.classList.remove('active'));
+    t.classList.add('active');
+  }
+});
 
 /* ── Mobile tabs ── */
 function showTab(tab){
@@ -1934,6 +2205,112 @@ function showRiskAlert(msg,persist){
   clearTimeout(_riskAlertTimer);
   if(!persist)_riskAlertTimer=setTimeout(()=>el.classList.remove('show'),5000);
 }
+
+/* ── Risk Preview ── */
+const _CRYPTO_SYMS_FE=new Set(['BTCUSD','ETHUSD']);
+const _RL_COLORS={LOW:'#26a69a',MEDIUM:'#ffc107',HIGH:'#ff9800',EXTREME:'#ef5350'};
+const _RL_BAR={LOW:12,MEDIUM:45,HIGH:78,EXTREME:100};
+const _RL_LABELS={LOW:'Riesgo Bajo',MEDIUM:'Riesgo Moderado',HIGH:'Riesgo Alto — se requiere confirmación',EXTREME:'Riesgo Extremo — operación bloqueada'};
+
+function computeRiskLocal(qty){
+  const msg=window._lastAccountMsg;
+  const panel=activePanel;
+  if(!msg||!panel||!qty||qty<=0)return null;
+  const equity=Number(msg.equity||0);
+  const margin=Number(msg.margin_used||0);
+  const lev=Number(msg.leverage||50);
+  const price=panel.lastClose||0;
+  if(!price||!equity)return null;
+  const sym=panel.currentSymbol||'';
+  const notional=qty*price;
+  const newMargin=notional/Math.max(1,lev);
+  const exposurePct=notional/equity*100;
+  const marginAfterPct=(margin+newMargin)/equity*100;
+  const adversePct=_CRYPTO_SYMS_FE.has(sym)?2.0:0.5;
+  const estAdverse=notional*(adversePct/100);
+  const recommended=Math.max(0.001,(equity*0.20/price));
+  let rl='LOW';
+  if(exposurePct>=100)rl='EXTREME';
+  else if(exposurePct>=60)rl='HIGH';
+  else if(exposurePct>=25)rl='MEDIUM';
+  return{risk_level:rl,exposure_pct:exposurePct.toFixed(1),margin_required:newMargin.toFixed(2),margin_after_pct:marginAfterPct.toFixed(1),est_adverse_loss:estAdverse.toFixed(2),recommended_lot:recommended.toFixed(3)};
+}
+
+function updateRiskPanel(data){
+  const panel=document.getElementById('riskPanel');
+  if(!panel)return;
+  const rl=data.risk_level||'LOW';
+  const color=_RL_COLORS[rl]||'#26a69a';
+  const barW=_RL_BAR[rl]||10;
+  panel.className='risk-panel rl-'+rl;
+  panel.style.display='block';
+  const badge=document.getElementById('rpBadge');
+  if(badge){badge.textContent=rl;badge.className='rp-badge rp-badge-'+rl;}
+  const label=document.getElementById('rpLabel');
+  if(label)label.textContent=_RL_LABELS[rl]||'';
+  const fill=document.getElementById('rpBarFill');
+  if(fill){fill.style.width=barW+'%';fill.style.background=color;}
+  const exp=document.getElementById('rpExposure');
+  if(exp)exp.textContent=(data.exposure_pct||0)+'%';
+  const mg=document.getElementById('rpMargin');
+  if(mg)mg.textContent='$'+Number(data.margin_required||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const imp=document.getElementById('rpImpact');
+  if(imp){imp.textContent='$'+Number(data.est_adverse_loss||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2});imp.style.color=color;}
+  const mgt=document.getElementById('rpMgTotal');
+  if(mgt)mgt.textContent=(data.margin_after_pct||0)+'%';
+  const rec=document.getElementById('rpRec');
+  if(rec)rec.textContent=Number(data.recommended_lot||0).toFixed(3)+' lots';
+}
+
+const _qtyEl=document.getElementById('qty');
+if(_qtyEl){
+  _qtyEl.addEventListener('input',()=>{
+    const qty=parseFloat(_qtyEl.value)||0;
+    if(qty<=0){const p=document.getElementById('riskPanel');if(p)p.style.display='none';return;}
+    const local=computeRiskLocal(qty);
+    if(local)updateRiskPanel(local);
+  });
+}
+
+// Update risk panel when clicking recommended lot
+document.getElementById('rpRec')?.addEventListener('click',()=>{
+  const rec=document.getElementById('rpRec');
+  if(!rec||!_qtyEl)return;
+  const lot=parseFloat(rec.textContent);
+  if(lot>0){_qtyEl.value=lot.toFixed(3);_qtyEl.dispatchEvent(new Event('input'));}
+});
+
+/* ── Risk Confirm Modal ── */
+let _pendingRiskOrder=null;
+function _showRiskConfirmModal(msg,panel){
+  _pendingRiskOrder={panel,side:msg.pending_side,qty:msg.pending_qty,symbol:msg.pending_symbol};
+  const modal=document.getElementById('riskConfirmModal');
+  if(!modal)return;
+  const usd2=v=>Number(v||0).toLocaleString('en',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const el=(id,txt)=>{const e=document.getElementById(id);if(e)e.textContent=txt;};
+  el('rcmExposure',(msg.exposure_pct||0)+'%');
+  el('rcmMargin','$'+usd2(msg.margin_required));
+  el('rcmAdverse','$'+usd2(msg.est_adverse_loss));
+  el('rcmDDRem','$'+usd2(msg.dd_remaining));
+  const warn=document.getElementById('rcmWarnText');
+  if(warn)warn.textContent='Esta operación usa '+msg.exposure_pct+'% de tu equity. Un movimiento del 2% en contra equivale a $'+usd2(msg.est_adverse_loss)+'. ¿Confirmar igualmente?';
+  modal.style.display='flex';
+}
+function confirmRiskOrder(){
+  const modal=document.getElementById('riskConfirmModal');
+  if(modal)modal.style.display='none';
+  if(!_pendingRiskOrder)return;
+  const{panel,side,qty}=_pendingRiskOrder;
+  _pendingRiskOrder=null;
+  if(!panel)return;
+  const sl=document.getElementById('sl')?.value;
+  const tp=document.getElementById('tp')?.value;
+  panel.sendOrder(side,qty,sl!==''?Number(sl):null,tp!==''?Number(tp):null,true);
+}
+function cancelRiskConfirm(){
+  document.getElementById('riskConfirmModal').style.display='none';
+  _pendingRiskOrder=null;
+}
 window.addEventListener('keydown',e=>{
   if(e.key==='F1'){e.preventDefault();dbgOn=!dbgOn;dbgShow();return;}
   if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT'||e.target.tagName==='TEXTAREA')return;
@@ -2009,6 +2386,7 @@ document.getElementById('trdAddBtn')?.addEventListener('click',()=>{
   showTab('chart');
   renderQuotes('');
   window.addEventListener('beforeunload',()=>allPanels.forEach(p=>p.disconnect()));
+  window.addEventListener('resize',()=>allPanels.forEach(p=>p._fixChartHeight()));
 })();
 </script>
 {% endblock %}

@@ -392,14 +392,13 @@
       </a>
 
       <!-- Mis Cuentas -->
-      <a href="#" class="sb-link {% if active_section == 'accounts' %}active{% endif %}">
+      <a href="{% url 'simulator:accounts' %}" class="sb-link {% if active_section == 'accounts' %}active{% endif %}">
         <span class="sb-icon"><i class="fa-solid fa-briefcase"></i></span>
         <span class="sb-text">Mis Cuentas</span>
-        <span class="sb-badge sb-badge-soon">Pronto</span>
       </a>
 
       <!-- Cartera (dropdown) -->
-      <div class="sb-group {% if active_section == 'deposit' or active_section == 'withdraw' %}open{% endif %}"
+      <div class="sb-group {% if active_section == 'deposit' or active_section == 'deposit_history' or active_section == 'withdraw' or active_section == 'withdraw_history' %}open{% endif %}"
            data-group="cartera">
         <div class="sb-link sb-group-hd">
           <span class="sb-icon"><i class="fa-solid fa-wallet"></i></span>
@@ -411,8 +410,17 @@
              class="sb-child {% if active_section == 'deposit' %}active{% endif %}">
             <span class="sb-cdot"></span>Depositar
           </a>
-          <a href="#" class="sb-child">
+          <a href="{% url 'simulator:deposit_history' %}"
+             class="sb-child {% if active_section == 'deposit_history' %}active{% endif %}">
+            <span class="sb-cdot"></span>Historial depósitos
+          </a>
+          <a href="{% url 'simulator:withdraw' %}"
+             class="sb-child {% if active_section == 'withdraw' %}active{% endif %}">
             <span class="sb-cdot"></span>Retirar
+          </a>
+          <a href="{% url 'simulator:withdraw_history' %}"
+             class="sb-child {% if active_section == 'withdraw_history' %}active{% endif %}">
+            <span class="sb-cdot"></span>Historial retiros
           </a>
           <a href="#" class="sb-child">
             <span class="sb-cdot"></span>Transferencia interna

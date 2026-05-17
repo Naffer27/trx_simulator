@@ -3,7 +3,7 @@ from decimal import Decimal
 from django import forms
 from django.contrib.auth.models import User
 from django.conf import settings
-from .models import TradingAccount, Deposit
+from .models import TradingAccount, Deposit, MARGIN_ENGINE_TYPES
 
 
 class LoginForm(forms.Form):
@@ -82,16 +82,17 @@ class RegisterForm(forms.ModelForm):
 
 
 class DepositForm(forms.Form):
+    # $20 floor covers NowPayments minimum for BTC (~$19.19) and all other currencies.
     amount_usd = forms.DecimalField(
         label="Monto (USD)",
-        min_value=Decimal("10"),
+        min_value=Decimal("20"),
         max_digits=12,
         decimal_places=2,
         widget=forms.NumberInput(attrs={
             "class": "deposit-input",
-            "min": "10",
+            "min": "20",
             "step": "1",
-            "placeholder": "Mínimo $10",
+            "placeholder": "Mínimo $20",
             "id": "id_amount_usd",
         }),
     )
@@ -99,4 +100,129 @@ class DepositForm(forms.Form):
         label="Criptomoneda",
         choices=Deposit.CRYPTO_CHOICES,
         widget=forms.Select(attrs={"class": "deposit-input", "id": "id_crypto_currency"}),
+    )
+
+
+class WithdrawForm(forms.Form):
+    """Crypto withdrawal request — amount in USD + destination address."""
+
+    amount_usd = forms.DecimalField(
+        label="Monto (USD)",
+        min_value=Decimal("20"),
+        max_digits=12,
+        decimal_places=2,
+        widget=forms.NumberInput(attrs={
+            "class": "deposit-input",
+            "min": "20",
+            "step": "1",
+            "placeholder": "Mínimo $20",
+            "id": "id_wd_amount",
+        }),
+    )
+    crypto_currency = forms.ChoiceField(
+        label="Criptomoneda",
+        widget=forms.Select(attrs={"class": "deposit-input", "id": "id_wd_crypto"}),
+    )
+    wallet_address = forms.CharField(
+        label="Dirección destino",
+        max_length=200,
+        widget=forms.TextInput(attrs={
+            "class": "deposit-input",
+            "placeholder": "Dirección de tu wallet personal",
+            "id": "id_wd_address",
+            "autocomplete": "off",
+        }),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from .currencies import WITHDRAWAL_CHOICES
+        self.fields["crypto_currency"].choices = WITHDRAWAL_CHOICES
+
+    def clean_wallet_address(self):
+        addr = self.cleaned_data.get("wallet_address", "").strip()
+        if len(addr) < 20:
+            raise forms.ValidationError("Dirección inválida (mínimo 20 caracteres).")
+        return addr
+
+
+# ──────────────────────────────────────────────────────────────
+# Wallet / Account management forms
+# ──────────────────────────────────────────────────────────────
+
+class CreateAccountForm(forms.Form):
+    """Create a new trading account funded from the user's wallet."""
+
+    # Only margin-engine (real broker) types are user-selectable.
+    # CHALLENGE/FUNDED accounts are created through the purchase flow.
+    ACCOUNT_TYPE_CHOICES = [
+        ("RETAIL",   "Retail — margin engine, leverage, liquidation"),
+        ("ECN",      "ECN — tighter spreads, commission-based"),
+        ("STANDARD", "Standard — normal spreads, no commission"),
+        ("DEMO",     "Demo — practice account with virtual $10,000"),
+        ("CRYPTO",   "Crypto — crypto-focused, higher leverage"),
+    ]
+
+    LEVERAGE_CHOICES = [
+        (50,   "1:50"),
+        (100,  "1:100"),
+        (200,  "1:200"),
+        (500,  "1:500"),
+    ]
+
+    account_type = forms.ChoiceField(
+        choices=ACCOUNT_TYPE_CHOICES,
+        widget=forms.Select(attrs={"class": "form-input"}),
+    )
+    initial_deposit = forms.DecimalField(
+        label="Initial deposit (USD)",
+        min_value=Decimal("0"),
+        max_digits=12,
+        decimal_places=2,
+        required=False,
+        initial=Decimal("0"),
+        widget=forms.NumberInput(attrs={
+            "class": "form-input", "step": "1", "min": "0", "placeholder": "0.00",
+        }),
+    )
+    leverage = forms.ChoiceField(
+        choices=LEVERAGE_CHOICES,
+        initial=100,
+        widget=forms.Select(attrs={"class": "form-input"}),
+    )
+
+    def clean(self):
+        cleaned = super().clean()
+        acct = cleaned.get("account_type")
+        deposit = cleaned.get("initial_deposit") or Decimal("0")
+        if acct != "DEMO" and deposit <= 0:
+            raise forms.ValidationError(
+                "Initial deposit is required for non-Demo accounts."
+            )
+        return cleaned
+
+
+class FundAccountForm(forms.Form):
+    """Transfer funds from wallet into an existing trading account."""
+    amount = forms.DecimalField(
+        label="Amount (USD)",
+        min_value=Decimal("1"),
+        max_digits=12,
+        decimal_places=2,
+        widget=forms.NumberInput(attrs={
+            "class": "form-input", "step": "1", "min": "1", "placeholder": "100.00",
+        }),
+    )
+
+
+class WithdrawAccountForm(forms.Form):
+    """Transfer funds from a trading account back to the wallet."""
+    amount = forms.DecimalField(
+        label="Amount (USD)",
+        min_value=Decimal("1"),
+        max_digits=12,
+        decimal_places=2,
+        widget=forms.NumberInput(attrs={
+            "class": "form-input", "step": "1", "min": "1", "placeholder": "100.00",
+        }),
     )

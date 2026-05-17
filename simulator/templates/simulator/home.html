@@ -206,10 +206,102 @@
 .trade-row-sym { font-weight: 600; color: var(--text); }
 .trade-row-buy  { color: var(--bull); font-weight: 600; font-size: .72rem; }
 .trade-row-sell { color: var(--bear); font-weight: 600; font-size: .72rem; }
+
+/* ─── Account Selector ─── */
+.acc-switcher {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+  padding: 12px 16px;
+  background: var(--bg-card-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.acc-switcher-label {
+  font-size: .72rem;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.acc-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 14px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: .78rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: border-color .15s, background .15s;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.acc-pill:hover { border-color: rgba(255,215,0,.35); background: rgba(255,215,0,.04); }
+.acc-pill.active {
+  border-color: var(--gold);
+  background: rgba(255,215,0,.08);
+  color: var(--gold);
+}
+.acc-pill-type {
+  font-size: .65rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 8px;
+  letter-spacing: .04em;
+}
+.type-RETAIL    { background: rgba(52,152,219,.18); color: #3498db; }
+.type-CHALLENGE { background: rgba(230,126,34,.18);  color: #e67e22; }
+.type-FUNDED    { background: rgba(39,174,96,.18);   color: #27ae60; }
+.acc-pill-bal { color: var(--muted); font-size: .75rem; font-weight: 400; }
+.acc-switcher-trade {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 18px;
+  border-radius: 20px;
+  background: var(--gold);
+  color: #000;
+  font-size: .78rem;
+  font-weight: 700;
+  text-decoration: none;
+  transition: opacity .15s;
+  flex-shrink: 0;
+}
+.acc-switcher-trade:hover { opacity: .85; }
 {% endblock %}
 
 {% block content %}
 <div>
+
+  <!-- ╔══════════════════ ACCOUNT SELECTOR ══════════════════╗ -->
+  {% if all_accounts %}
+  <div class="acc-switcher">
+    <span class="acc-switcher-label">Cuenta activa:</span>
+
+    {% for acc in all_accounts %}
+    <a href="{% url 'simulator:switch_account' acc.id %}?next={% url 'simulator:home' %}"
+       class="acc-pill {% if acc.id == account.id %}active{% endif %}">
+      <span class="acc-pill-type type-{{ acc.account_type }}">{{ acc.account_type }}</span>
+      {% if acc.tier %}{{ acc.tier }} — {% endif %}
+      ${{ acc.initial_balance|floatformat:0 }}
+      <span class="acc-pill-bal">#{{ acc.id }}</span>
+    </a>
+    {% endfor %}
+
+    <a href="{% url 'simulator:dashboard' %}" class="acc-switcher-trade">
+      <i class="fa-solid fa-chart-line"></i> Tradear →
+    </a>
+  </div>
+  {% endif %}
+  <!-- /ACCOUNT SELECTOR -->
 
   <!-- ╔══════════════════ STATS ══════════════════╗ -->
   <div class="stats-grid">
@@ -224,7 +316,7 @@
         <div class="stat-value">${{ account.balance|floatformat:2 }}</div>
         <div class="stat-meta">
           <i class="fa-solid fa-circle-dot" style="font-size:.55rem; color:var(--bull)"></i>
-          Cuenta {{ account.tier }}
+          {% if account.tier %}Cuenta {{ account.tier }}{% else %}{{ account.account_type }}{% endif %}
         </div>
       </div>
     </div>
@@ -311,13 +403,17 @@
 
         <div class="acc-rows">
           <div class="acc-row">
-            <span class="acc-row-lbl">Nivel de cuenta</span>
-            <span class="acc-row-val gold">{{ account.tier }}</span>
+            <span class="acc-row-lbl">Tipo de cuenta</span>
+            <span class="acc-row-val gold">
+              {% if account.tier %}{{ account.tier }} — {% endif %}{{ account.account_type }}
+            </span>
           </div>
+          {% if account.account_type != 'RETAIL' %}
           <div class="acc-row">
             <span class="acc-row-lbl">Fase</span>
             <span class="acc-row-val">{{ account.phase }}</span>
           </div>
+          {% endif %}
           <div class="acc-row">
             <span class="acc-row-lbl">Apalancamiento</span>
             <span class="acc-row-val">1:{{ account.leverage|default:50 }}</span>

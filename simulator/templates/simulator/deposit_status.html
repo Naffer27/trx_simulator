@@ -1,0 +1,524 @@
+{% extends "simulator/base_app.html" %}
+{% block title %}Pago en progreso — Money Brokers{% endblock %}
+{% block page_title %}Depósito{% endblock %}
+
+{% block extra_styles %}
+.ps-wrap {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 32px 0 60px;
+}
+
+/* ── Status banner ── */
+.ps-banner {
+  border-radius: 14px;
+  padding: 20px 22px;
+  margin-bottom: 24px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.ps-banner-icon {
+  font-size: 2rem;
+  flex-shrink: 0;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ps-banner-title {
+  font-family: 'Orbitron', sans-serif;
+  font-size: .82rem;
+  font-weight: 700;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.ps-banner-sub { font-size: .78rem; color: var(--muted-2); }
+
+.ps-banner-waiting  { background: rgba(255,215,0,.07);  border: 1px solid rgba(255,215,0,.2); }
+.ps-banner-waiting .ps-banner-icon  { background: rgba(255,215,0,.12); color: var(--gold); }
+.ps-banner-waiting .ps-banner-title { color: var(--gold); }
+
+.ps-banner-confirming { background: rgba(255,165,0,.07); border: 1px solid rgba(255,165,0,.22); }
+.ps-banner-confirming .ps-banner-icon { background: rgba(255,165,0,.14); color: #FFA500; }
+.ps-banner-confirming .ps-banner-title { color: #FFA500; }
+
+.ps-banner-success { background: rgba(38,166,154,.1); border: 1px solid rgba(38,166,154,.3); }
+.ps-banner-success .ps-banner-icon { background: rgba(38,166,154,.18); color: #26a69a; }
+.ps-banner-success .ps-banner-title { color: #26a69a; }
+
+.ps-banner-failed  { background: rgba(239,83,80,.08); border: 1px solid rgba(239,83,80,.25); }
+.ps-banner-failed .ps-banner-icon  { background: rgba(239,83,80,.15); color: #ef5350; }
+.ps-banner-failed .ps-banner-title { color: #ef5350; }
+
+/* ── Payment card ── */
+.ps-card {
+  background: var(--bg-card-2);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.ps-card-header {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border-dim);
+  font-family: 'Orbitron', sans-serif;
+  font-size: .65rem;
+  font-weight: 700;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.ps-card-body { padding: 18px 20px; display: flex; flex-direction: column; gap: 16px; }
+
+/* ── Amount row ── */
+.ps-amount-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.ps-usd {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: #fff;
+}
+.ps-currency-badge {
+  background: rgba(255,215,0,.1);
+  border: 1px solid rgba(255,215,0,.2);
+  border-radius: 6px;
+  color: var(--gold);
+  font-size: .72rem;
+  font-weight: 700;
+  padding: 3px 10px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+/* ── Crypto amount ── */
+.ps-crypto-row {
+  background: rgba(255,255,255,.03);
+  border: 1px solid rgba(255,255,255,.06);
+  border-radius: 10px;
+  padding: 12px 16px;
+}
+.ps-crypto-label {
+  font-size: .68rem;
+  color: var(--muted);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.ps-crypto-amount {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--gold);
+  font-variant-numeric: tabular-nums;
+  word-break: break-all;
+}
+
+/* ── Address ── */
+.ps-addr-wrap {
+  background: rgba(255,255,255,.03);
+  border: 1px solid rgba(255,255,255,.06);
+  border-radius: 10px;
+  padding: 12px 16px;
+}
+.ps-addr-label {
+  font-size: .68rem;
+  color: var(--muted);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.ps-addr-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ps-addr {
+  font-family: 'Courier New', monospace;
+  font-size: .78rem;
+  color: var(--text);
+  word-break: break-all;
+  flex: 1;
+  line-height: 1.5;
+}
+.ps-copy-btn {
+  background: rgba(255,215,0,.08);
+  border: 1px solid rgba(255,215,0,.2);
+  border-radius: 7px;
+  color: var(--gold);
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: .72rem;
+  font-weight: 600;
+  padding: 6px 12px;
+  transition: background .15s;
+  white-space: nowrap;
+}
+.ps-copy-btn:hover { background: rgba(255,215,0,.18); }
+.ps-copy-btn.copied { background: rgba(38,166,154,.18); border-color: rgba(38,166,154,.3); color: #26a69a; }
+
+/* ── QR Code ── */
+#qrCanvas {
+  display: block;
+  margin: 0 auto;
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px;
+}
+
+/* ── Status badge ── */
+.ps-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: .72rem;
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+.psb-waiting   { background: rgba(255,215,0,.12);  color: var(--gold);  border: 1px solid rgba(255,215,0,.25); }
+.psb-confirming{ background: rgba(255,165,0,.12);  color: #FFA500;      border: 1px solid rgba(255,165,0,.3); }
+.psb-finished,
+.psb-confirmed { background: rgba(38,166,154,.15); color: #26a69a;      border: 1px solid rgba(38,166,154,.3); }
+.psb-failed,
+.psb-expired   { background: rgba(239,83,80,.12);  color: #ef5350;      border: 1px solid rgba(239,83,80,.25); }
+
+/* ── Countdown ── */
+.ps-countdown {
+  text-align: center;
+  font-size: .78rem;
+  color: var(--muted-2);
+  padding: 10px 0 2px;
+}
+.ps-countdown span { color: var(--gold); font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* ── External link ── */
+.ps-ext-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 11px 18px;
+  background: rgba(255,215,0,.05);
+  border: 1px solid rgba(255,215,0,.15);
+  border-radius: 9px;
+  color: rgba(255,215,0,.7);
+  font-size: .78rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: border-color .15s, color .15s;
+}
+.ps-ext-link:hover { border-color: rgba(255,215,0,.35); color: var(--gold); }
+
+/* ── Info pills ── */
+.ps-info-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: .74rem;
+  color: var(--muted);
+  padding: 4px 0;
+}
+.ps-info-row i { color: rgba(255,215,0,.55); }
+
+/* ── Pulse dot ── */
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+.pulse-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--gold);
+  animation: pulse 1.4s infinite;
+  flex-shrink: 0;
+}
+{% endblock %}
+
+{% block content %}
+<div class="ps-wrap">
+
+  <!-- ═══════════════ STATUS BANNER ═══════════════ -->
+  <div id="psBanner" class="ps-banner {% if deposit.credited %}ps-banner-success{% elif deposit.status == 'waiting' %}ps-banner-waiting{% elif deposit.status == 'confirming' %}ps-banner-confirming{% else %}ps-banner-failed{% endif %}">
+    <div class="ps-banner-icon" id="psBannerIcon">
+      {% if deposit.credited %}
+        <i class="fa-solid fa-circle-check"></i>
+      {% elif deposit.status == 'waiting' %}
+        <i class="fa-solid fa-clock"></i>
+      {% elif deposit.status == 'confirming' %}
+        <i class="fa-solid fa-spinner fa-spin"></i>
+      {% else %}
+        <i class="fa-solid fa-triangle-exclamation"></i>
+      {% endif %}
+    </div>
+    <div>
+      <div class="ps-banner-title" id="psBannerTitle">
+        {% if deposit.credited %}Depósito acreditado{% elif deposit.status == 'waiting' %}Esperando pago{% elif deposit.status == 'confirming' %}Confirmando en blockchain{% else %}{{ deposit.get_status_display }}{% endif %}
+      </div>
+      <div class="ps-banner-sub" id="psBannerSub">
+        {% if deposit.credited %}
+          ${{ deposit.amount_usd }} añadidos a tu wallet.
+        {% elif deposit.status == 'waiting' %}
+          Envía exactamente el monto indicado a la dirección de abajo.
+        {% elif deposit.status == 'confirming' %}
+          Pago recibido — esperando confirmaciones en blockchain.
+        {% else %}
+          {{ deposit.get_status_display }}
+        {% endif %}
+      </div>
+    </div>
+    {% if not is_final %}
+    <div class="pulse-dot" style="margin-left:auto;"></div>
+    {% endif %}
+  </div>
+
+  <!-- ═══════════════ ORDER SUMMARY ═══════════════ -->
+  <div class="ps-card">
+    <div class="ps-card-header">Resumen del depósito · #{{ deposit.id }}</div>
+    <div class="ps-card-body">
+
+      <!-- USD Amount -->
+      <div>
+        <div style="font-size:.68rem;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px;">Monto a depositar</div>
+        <div class="ps-amount-row">
+          <span class="ps-usd">${{ deposit.amount_usd }}</span>
+          <span class="ps-currency-badge">{{ deposit.crypto_currency|upper }}</span>
+        </div>
+      </div>
+
+      {% if deposit.pay_amount %}
+      <!-- Crypto amount -->
+      <div class="ps-crypto-row">
+        <div class="ps-crypto-label">Monto exacto a enviar</div>
+        <div class="ps-crypto-amount" id="psCryptoAmount">{{ deposit.pay_amount }} {{ deposit.crypto_currency|upper }}</div>
+      </div>
+      {% endif %}
+
+      {% if deposit.pay_address %}
+      <!-- QR Code -->
+      <div style="text-align:center;padding:8px 0 4px;">
+        <canvas id="qrCanvas" width="190" height="190"></canvas>
+      </div>
+
+      <!-- Address -->
+      <div class="ps-addr-wrap">
+        <div class="ps-addr-label">Dirección de pago ({{ deposit.crypto_currency|upper }})</div>
+        <div class="ps-addr-row">
+          <div class="ps-addr" id="psAddr">{{ deposit.pay_address }}</div>
+          <button class="ps-copy-btn" id="copyAddrBtn" onclick="copyAddress()">
+            <i class="fa-solid fa-copy"></i> Copiar
+          </button>
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- Status + countdown -->
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+        <div>
+          <div style="font-size:.68rem;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;margin-bottom:5px;">Estado</div>
+          <span class="ps-status-badge psb-{{ deposit.status }}" id="psStatusBadge">
+            {{ deposit.get_status_display }}
+          </span>
+        </div>
+        {% if deposit.expires_at and not is_final %}
+        <div class="ps-countdown" id="psCountdown">
+          Expira en <span id="cdTimer">—</span>
+        </div>
+        {% endif %}
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ═══════════════ NP HOSTED PAGE ═══════════════ -->
+  {% if deposit.nowpayments_invoice_url and not is_final %}
+  <a href="{{ deposit.nowpayments_invoice_url }}" target="_blank" rel="noopener" class="ps-ext-link">
+    <i class="fa-solid fa-arrow-up-right-from-square"></i>
+    Abrir página de pago de NowPayments
+  </a>
+  {% endif %}
+
+  <!-- ═══════════════ INFO ═══════════════ -->
+  {% if not is_final %}
+  <div style="margin-top:18px;display:flex;flex-direction:column;gap:6px;">
+    <div class="ps-info-row">
+      <i class="fa-solid fa-shield-halved"></i>
+      Envía únicamente {{ deposit.crypto_currency|upper }} a esta dirección.
+    </div>
+    <div class="ps-info-row">
+      <i class="fa-solid fa-bolt"></i>
+      El balance se acredita automáticamente en tu wallet al confirmar.
+    </div>
+    <div class="ps-info-row">
+      <i class="fa-solid fa-clock"></i>
+      Confirmación ~15 min · No cierres esta página.
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- ═══════════════ ACTIONS ═══════════════ -->
+  <div style="display:flex;gap:10px;margin-top:22px;flex-wrap:wrap;">
+    {% if deposit.credited %}
+    <a href="{% url 'simulator:accounts' %}" class="btn btn-primary" style="flex:1;justify-content:center;">
+      <i class="fa-solid fa-briefcase"></i> Ver Mis Cuentas
+    </a>
+    {% endif %}
+    <a href="{% url 'simulator:deposit_history' %}" class="btn btn-outline {% if deposit.credited %}btn-sm{% endif %}" style="flex:1;justify-content:center;">
+      <i class="fa-solid fa-clock-rotate-left"></i> Historial
+    </a>
+    <a href="{% url 'simulator:deposit' %}" class="btn btn-outline btn-sm" style="flex:1;justify-content:center;">
+      <i class="fa-solid fa-plus"></i> Nuevo depósito
+    </a>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+<script>
+const DEPOSIT_ID   = {{ deposit.id }};
+const IS_FINAL     = {{ is_final|lower }};
+const PAY_ADDRESS  = "{{ deposit.pay_address|default:'' }}";
+const PAY_AMOUNT   = "{{ deposit.pay_amount|default:'' }}";
+const CRYPTO       = "{{ deposit.crypto_currency|upper }}";
+const EXPIRES_AT   = {% if deposit.expires_at %}"{{ deposit.expires_at|date:'c' }}"{% else %}null{% endif %};
+const POLL_URL     = "{% url 'simulator:deposit_status_json' deposit.id %}";
+
+/* ── QR Code ── */
+function buildCryptoURI(crypto, address, amount) {
+  const schemes = { BTC:'bitcoin', LTC:'litecoin', BCH:'bitcoincash', ETH:'ethereum', SOL:'solana' };
+  const scheme = schemes[crypto.toUpperCase()];
+  if (!scheme) return address;
+  let uri = scheme + ':' + address;
+  // BIP21 / BIP321 — only append amount for UTXO-based chains
+  if (amount && ['BTC','LTC','BCH'].includes(crypto.toUpperCase()))
+    uri += '?amount=' + amount;
+  return uri;
+}
+if (PAY_ADDRESS) {
+  const qrData = buildCryptoURI(CRYPTO, PAY_ADDRESS, PAY_AMOUNT);
+  QRCode.toCanvas(
+    document.getElementById('qrCanvas'),
+    qrData,
+    { width: 190, margin: 1, color: { dark: '#000000', light: '#ffffff' } },
+    err => { if (err) document.getElementById('qrCanvas').style.display = 'none'; }
+  );
+}
+
+/* ── Copy address ── */
+function copyAddress() {
+  if (!PAY_ADDRESS) return;
+  navigator.clipboard.writeText(PAY_ADDRESS).then(() => {
+    const btn = document.getElementById('copyAddrBtn');
+    btn.innerHTML = '<i class="fa-solid fa-check"></i> Copiado';
+    btn.classList.add('copied');
+    setTimeout(() => {
+      btn.innerHTML = '<i class="fa-solid fa-copy"></i> Copiar';
+      btn.classList.remove('copied');
+    }, 2500);
+  });
+}
+
+/* ── Countdown ── */
+function updateCountdown() {
+  if (!EXPIRES_AT) return;
+  const diff = Math.floor((new Date(EXPIRES_AT) - Date.now()) / 1000);
+  const el = document.getElementById('cdTimer');
+  if (!el) return;
+  if (diff <= 0) { el.textContent = 'Expirado'; return; }
+  const m = Math.floor(diff / 60), s = diff % 60;
+  el.textContent = `${m}:${s.toString().padStart(2, '0')}`;
+}
+if (EXPIRES_AT) { updateCountdown(); setInterval(updateCountdown, 1000); }
+
+/* ── Status labels ── */
+const STATUS_LABELS = {
+  pending:        'Pendiente',
+  waiting:        'Esperando pago',
+  confirming:     'Confirmando',
+  confirmed:      'Confirmado',
+  sending:        'Enviando',
+  partially_paid: 'Pago parcial',
+  finished:       'Completado',
+  failed:         'Fallido',
+  refunded:       'Reembolsado',
+  expired:        'Expirado',
+};
+
+/* ── State machine for banner ── */
+function applyState(status, credited) {
+  const banner    = document.getElementById('psBanner');
+  const bannerIcon= document.getElementById('psBannerIcon');
+  const title     = document.getElementById('psBannerTitle');
+  const sub       = document.getElementById('psBannerSub');
+  const badge     = document.getElementById('psStatusBadge');
+
+  if (badge) {
+    badge.textContent = credited ? 'Completado' : (STATUS_LABELS[status] || status);
+    badge.className = `ps-status-badge psb-${credited ? 'finished' : status}`;
+  }
+
+  if (credited || status === 'finished' || status === 'confirmed') {
+    banner.className = 'ps-banner ps-banner-success';
+    bannerIcon.innerHTML = '<i class="fa-solid fa-circle-check"></i>';
+    title.textContent = 'Depósito acreditado';
+    sub.textContent   = 'Fondos añadidos a tu wallet.';
+    // Remove pulse dot
+    const dot = document.querySelector('.pulse-dot');
+    if (dot) dot.remove();
+  } else if (status === 'confirming') {
+    banner.className = 'ps-banner ps-banner-confirming';
+    bannerIcon.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+    title.textContent = 'Confirmando en blockchain';
+    sub.textContent   = 'Pago recibido — esperando confirmaciones.';
+  } else if (status === 'failed' || status === 'expired') {
+    banner.className = 'ps-banner ps-banner-failed';
+    bannerIcon.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i>';
+    title.textContent = STATUS_LABELS[status] || status;
+    sub.textContent   = status === 'expired'
+      ? 'El pago expiró. Crea un nuevo depósito.'
+      : 'El pago no pudo completarse.';
+    const dot = document.querySelector('.pulse-dot');
+    if (dot) dot.remove();
+  }
+}
+
+/* ── Polling ── */
+if (!IS_FINAL) {
+  let pollInterval = 5000;
+
+  async function poll() {
+    try {
+      const resp = await fetch(POLL_URL, { credentials: 'same-origin' });
+      if (!resp.ok) return;
+      const data = await resp.json();
+
+      applyState(data.status, data.credited);
+
+      // Update wallet balance in sidebar if shown
+      const walletBal = document.querySelector('.wallet-amount');
+      if (walletBal && data.wallet_balance)
+        walletBal.textContent = '$' + parseFloat(data.wallet_balance).toFixed(2);
+
+      const FINAL_STATUSES = ['finished', 'confirmed', 'failed', 'expired', 'refunded'];
+      if (data.credited || FINAL_STATUSES.includes(data.status)) {
+        clearInterval(poller);
+        if (data.credited) {
+          // Redirect to accounts after 3 s
+          setTimeout(() => { window.location.href = "{% url 'simulator:accounts' %}"; }, 3000);
+        }
+      }
+    } catch (_) {}
+  }
+
+  const poller = setInterval(poll, pollInterval);
+  poll(); // immediate first check
+}
+</script>
+{% endblock %}

@@ -138,7 +138,15 @@
 {% block content %}
 <div class="dh-wrap">
   <div class="dh-header">
-    <div class="dh-title">Historial de Depósitos</div>
+    <div>
+      <div class="dh-title">Historial de Depósitos</div>
+      {% if wallet %}
+      <div style="font-size:.78rem;color:#787b86;margin-top:4px;">
+        <i class="fa-solid fa-wallet" style="color:rgba(255,215,0,.6);margin-right:5px;"></i>
+        Wallet disponible: <strong style="color:#FFD700;">${{ wallet.available_balance|floatformat:2 }}</strong>
+      </div>
+      {% endif %}
+    </div>
     <a href="{% url 'simulator:deposit' %}" class="dh-new-btn">+ NUEVO DEPÓSITO</a>
   </div>
 
@@ -154,6 +162,7 @@
           <th>Payment ID</th>
           <th>Fecha</th>
           <th>Confirmado</th>
+          <th></th>
         </tr>
       </thead>
       <tbody>
@@ -164,7 +173,7 @@
           <td><span class="dh-crypto">{{ dep.crypto_currency }}</span></td>
           <td>
             <span class="badge-status badge-{{ dep.status }}">
-              {{ dep.get_status_display }}
+              {% if dep.credited %}Completado{% else %}{{ dep.get_status_display }}{% endif %}
             </span>
           </td>
           <td class="pid-cell">
@@ -176,10 +185,20 @@
           </td>
           <td style="color:#787b86;">{{ dep.created_at|date:"d/m/Y H:i" }}</td>
           <td style="color:#787b86;">
-            {% if dep.confirmed_at %}
+            {% if dep.credited_at %}
+              {{ dep.credited_at|date:"d/m/Y H:i" }}
+            {% elif dep.confirmed_at %}
               {{ dep.confirmed_at|date:"d/m/Y H:i" }}
             {% else %}
               <span style="color:#3a3a4a;">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if not dep.credited and dep.status not in "failed,expired,refunded" %}
+            <a href="{% url 'simulator:deposit_status' dep.id %}"
+               style="font-size:.72rem;font-weight:600;color:rgba(255,215,0,.7);text-decoration:none;white-space:nowrap;">
+              Ver pago →
+            </a>
             {% endif %}
           </td>
         </tr>

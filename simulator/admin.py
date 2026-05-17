@@ -9,7 +9,7 @@ from django.utils.html import format_html
 
 from .models import (
     TradingAccount, Position, Trade, LedgerEntry,
-    Purchase, Deposit,
+    Purchase, Deposit, WithdrawalRequest,
     RiskRule, DrawdownSnapshot, TradingViolation, TraderScore,
     BrokerSnapshot, SymbolExposure, TraderClassExposure,
 )
@@ -293,12 +293,20 @@ class TraderIntelligenceInline(admin.StackedInline):
 # Admin actions
 # ─────────────────────────────────────────────
 
-@admin.action(description="Resetear balance al valor inicial del tier")
+_ACCOUNT_TYPE_COLORS = {
+    "CHALLENGE": ("#3d1a00", "#e67e22"),
+    "FUNDED":    ("#0a2a1a", "#27ae60"),
+    "RETAIL":    ("#0a1a2a", "#3498db"),
+}
+
+_TIER_INITIAL = {"10K": 10000, "50K": 50000, "100K": 100000}
+
+
+@admin.action(description="Resetear balance al valor inicial")
 def reset_balance(modeladmin, request, queryset):
-    tier_defaults = {"10K": 10000, "50K": 50000, "100K": 100000}
     updated = 0
     for acc in queryset:
-        base = tier_defaults.get(getattr(acc, "tier", "10K"), 10000)
+        base = acc.initial_balance or _TIER_INITIAL.get(getattr(acc, "tier", "10K"), 10000)
         acc.balance = base
         acc.equity = base
         acc.peak_balance = base
@@ -359,6 +367,11 @@ class TradingAccountAdmin(admin.ModelAdmin):
 
     # ── Computed display columns ──
 
+    @admin.display(description="Type", ordering="account_type")
+    def account_type_badge(self, obj):
+        bg, fg = _ACCOUNT_TYPE_COLORS.get(obj.account_type, ("#1a1a1a", "#aaa"))
+        return _badge(obj.account_type, bg, fg)
+
     @admin.display(description="Status", ordering="status")
     def status_badge(self, obj):
         bg, fg = _STATUS_COLORS.get(obj.status, ("#1a1a1a", "#aaa"))
@@ -376,36 +389,177 @@ class TradingAccountAdmin(admin.ModelAdmin):
     def peak_balance_display(self, obj):
         return f"${float(obj.peak_balance):,.2f}"
 
+    @admin.display(description="Retail Margin Engine")
+    def margin_panel(self, obj):
+        if not obj or obj.account_type != "RETAIL":
+            return "Solo visible para cuentas RETAIL."
+        from .models import Position
+        from .risk_engine import compute_margin_state, _MARGIN_THRESHOLDS
+        from django.utils.html import mark_safe
+
+        lev = max(1, obj.leverage or 50)
+        positions = list(Position.objects.filter(account=obj))
+        total_margin = sum(float(p.avg_price) * float(p.qty) / lev for p in positions)
+        equity = float(obj.equity or obj.balance or 0)
+        balance = float(obj.balance or 0)
+        mg = compute_margin_state(equity, total_margin)
+
+        used_pct = mg["used_margin_pct"]
+        mlevel = mg["margin_level"]
+        if used_pct >= _MARGIN_THRESHOLDS["DANGER"]:
+            bar_color, status_label = "#e74c3c", "DANGER"
+        elif used_pct >= _MARGIN_THRESHOLDS["HIGH"]:
+            bar_color, status_label = "#e67e22", "HIGH RISK"
+        elif used_pct >= _MARGIN_THRESHOLDS["WARNING"]:
+            bar_color, status_label = "#f1c40f", "WARNING"
+        else:
+            bar_color, status_label = "#27ae60", "NORMAL"
+
+        bar_w = min(int(used_pct), 100)
+        ml_color = ("#e74c3c" if (mlevel > 0 and mlevel < 100)
+                    else "#e67e22" if (mlevel > 0 and mlevel < 150)
+                    else "#27ae60")
+
+        def _kv(label, val, color="#c8ccd8"):
+            return (f'<div style="display:flex;justify-content:space-between;padding:5px 0;'
+                    f'border-bottom:1px solid rgba(255,255,255,.04);">'
+                    f'<span style="font-size:11px;color:#55556a;">{label}</span>'
+                    f'<span style="font-size:12px;font-weight:700;color:{color};">{val}</span></div>')
+
+        rows = (
+            _kv("Balance",       f"${balance:,.2f}")
+            + _kv("Equity",        f"${equity:,.2f}")
+            + _kv("Margin Used",   f"${mg['margin_used']:,.2f}")
+            + _kv("Free Margin",   f"${mg['free_margin']:,.2f}",
+                  "#27ae60" if mg["free_margin"] >= 0 else "#e74c3c")
+            + _kv("Used Margin %", f"{used_pct:.2f}%", bar_color)
+            + _kv("Margin Level",
+                  f"{mlevel:.0f}%" if mg["margin_used"] > 0 else "—",
+                  ml_color if mg["margin_used"] > 0 else "#55556a")
+            + _kv("Maintenance Req.", f"${mg['maintenance_margin']:,.2f}")
+            + _kv("Liq. Distance",
+                  f"${mg['liquidation_distance']:,.2f}",
+                  "#27ae60" if mg["liquidation_distance"] > balance * 0.1 else "#e74c3c")
+            + _kv("Open Positions", str(len(positions)))
+            + _kv("Leverage", f"1:{lev}")
+        )
+
+        html = (
+            '<div style="background:#0f0f1c;border:1px solid #1e1e30;border-radius:8px;padding:16px;">'
+            '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">'
+            '<span style="background:#0a1a2a;color:#3498db;padding:3px 12px;border-radius:12px;'
+            'font-size:11px;font-weight:700;">RETAIL MARGIN ENGINE</span>'
+            f'<span style="padding:3px 10px;border-radius:8px;font-size:11px;font-weight:800;'
+            f'color:{bar_color};background:rgba(0,0,0,.3);border:1px solid {bar_color}33;">'
+            f'{status_label}</span>'
+            '</div>'
+            '<div style="margin-bottom:14px;">'
+            '<div style="display:flex;justify-content:space-between;margin-bottom:6px;">'
+            '<span style="font-size:10px;color:#55556a;text-transform:uppercase;letter-spacing:.08em;">'
+            'Margin Utilization</span>'
+            f'<span style="font-size:14px;font-weight:800;color:{bar_color};">{used_pct:.2f}%</span>'
+            '</div>'
+            '<div style="background:rgba(255,255,255,.05);border-radius:4px;height:10px;overflow:hidden;">'
+            f'<div style="width:{bar_w}%;height:10px;border-radius:4px;background:{bar_color};"></div>'
+            '</div>'
+            '<div style="display:flex;justify-content:space-between;margin-top:4px;">'
+            '<span style="font-size:9px;color:#55556a;">0%  NORMAL</span>'
+            '<span style="font-size:9px;color:#f1c40f;">20% WARN</span>'
+            '<span style="font-size:9px;color:#e67e22;">50% HIGH</span>'
+            '<span style="font-size:9px;color:#e74c3c;">80% DANGER</span>'
+            '</div></div>'
+            + rows +
+            '</div>'
+        )
+        return mark_safe(html)
+
     @admin.display(description="Desk")
     def dealing_link(self, obj):
         url = reverse("admin:simulator_tradingaccount_dealing_desk", args=[obj.pk])
         return format_html('<a class="button" href="{}">→ Desk</a>', url)
 
+    class Media:
+        js = ("simulator/admin/account_type_toggle.js",)
+
     # ── List config ──
 
     list_display = (
-        "id", "user", "tier", "phase",
+        "id", "user", "account_type_badge", "tier", "phase",
         "balance", "equity", "peak_balance_display",
         "total_dd_pct", "open_positions", "violations_count",
         "status_badge", "trader_class_badge",
         "leverage", "netting_mode", "created_at",
         "dealing_link",
     )
-    list_filter = ("tier", "phase", "status", "netting_mode", "created_at")
+    list_filter  = ("account_type", "tier", "phase", "status", "netting_mode", "created_at")
     search_fields = ("user__username", "user__email")
-    readonly_fields = ("created_at",)
+    # On change forms: peak_balance and drawdown are read-only computed values.
+    # On add forms they are excluded entirely (save() auto-derives them from balance).
+    readonly_fields = ("created_at", "peak_balance", "drawdown", "margin_panel")
+
+    # ── Add form: only the fields the operator actually needs to fill in ──
+    _ADD_FIELDSETS = (
+        ("Cuenta", {
+            "fields": ("user", "account_type", "status"),
+        }),
+        ("Balance inicial", {
+            "description": (
+                "Introduce solo el balance. "
+                "equity y peak_balance se calculan automáticamente al guardar."
+            ),
+            "fields": ("initial_balance",),
+        }),
+        ("Configuración", {
+            "fields": ("leverage", "currency", "netting_mode"),
+        }),
+        ("Challenge / Funded", {
+            "classes": ("challenge-section", "collapse"),
+            "description": "Solo para cuentas Challenge y Funded.",
+            "fields": ("tier", "phase", "profit_target", "max_drawdown"),
+        }),
+    )
+
+    # ── Change form: full view including computed fields ──────────────────
+    _CHANGE_FIELDSETS = (
+        ("Cuenta", {
+            "fields": ("user", "account_type", "status"),
+        }),
+        ("Balances", {
+            "fields": ("initial_balance", "balance", "equity", "peak_balance", "drawdown"),
+        }),
+        ("Configuración", {
+            "fields": ("leverage", "currency", "netting_mode"),
+        }),
+        ("Challenge / Funded", {
+            "classes": ("challenge-section", "collapse"),
+            "description": "Estos campos aplican solo a cuentas Challenge y Funded.",
+            "fields": ("tier", "phase", "profit_target", "max_drawdown"),
+        }),
+        ("Retail — Margin Engine", {
+            "description": "Estado en tiempo real del motor de margen. Solo para cuentas RETAIL.",
+            "fields": ("margin_panel",),
+        }),
+        ("Metadatos", {
+            "classes": ("collapse",),
+            "fields": ("created_at",),
+        }),
+    )
+
+    # fieldsets required by ModelAdmin (used as default; overridden by get_fieldsets)
+    fieldsets = _CHANGE_FIELDSETS
+
+    def get_fieldsets(self, request, obj=None):
+        return self._ADD_FIELDSETS if obj is None else self._CHANGE_FIELDSETS
+
+    def get_readonly_fields(self, request, obj=None):
+        if obj is None:
+            # Add form: nothing is read-only (computed fields aren't shown at all)
+            return ("created_at",)
+        return self.readonly_fields
+
     inlines = [RiskRuleInline, TraderIntelligenceInline, ViolationInline, DrawdownSnapshotInline, PositionInline, TradeInline]
     actions = [reset_balance, suspend_accounts, activate_accounts, enable_netting, disable_netting,
                recalc_risk_rules, recalc_trader_scores]
-
-    fieldsets = (
-        ("Propietario y plan", {"fields": ("user", "tier", "phase", "status")}),
-        ("Parámetros", {"fields": ("currency", "leverage", "netting_mode")}),
-        ("Saldos", {
-            "fields": ("balance", "equity", "peak_balance", "drawdown", "profit_target", "max_drawdown")
-        }),
-        ("Metadatos", {"fields": ("created_at",)}),
-    )
 
     def get_queryset(self, request):
         qs = super().get_queryset(request)
@@ -476,8 +630,7 @@ class TradingAccountAdmin(admin.ModelAdmin):
                 return redirect("admin:simulator_tradingaccount_dealing_desk", account_id=account.id)
 
             if desk_action == "reset":
-                tier_defaults = {"10K": 10000, "50K": 50000, "100K": 100000}
-                base = Decimal(str(tier_defaults.get(account.tier, 10000)))
+                base = account.initial_balance or Decimal(str(_TIER_INITIAL.get(account.tier, 10000)))
                 account.balance = base
                 account.equity = base
                 account.peak_balance = base
@@ -597,21 +750,47 @@ class TradingAccountAdmin(admin.ModelAdmin):
         daily_dd_pct = abs(today_pnl) / peak * 100 if (peak > 0 and today_pnl < 0) else 0.0
 
         # Challenge progress
-        tier_initial = {"10K": 10000.0, "50K": 50000.0, "100K": 100000.0}
-        initial_balance = tier_initial.get(account.tier, 10000.0)
+        initial_balance = float(
+            account.initial_balance
+            or _TIER_INITIAL.get(account.tier, 10000)
+        )
         profit_gained = balance - initial_balance
         profit_target = float(account.profit_target or 1)
         profit_pct = max(0.0, min(100.0, profit_gained / profit_target * 100)) if profit_target else 0.0
 
         # Limits from risk rule or tier defaults
-        daily_limit = float(risk_rule.max_daily_loss_pct) if risk_rule else {"10K": 5, "50K": 4, "100K": 3}.get(account.tier, 5)
-        max_dd_limit = float(risk_rule.max_drawdown_pct)  if risk_rule else {"10K": 10, "50K": 8, "100K": 6}.get(account.tier, 10)
+        daily_limit  = float(risk_rule.max_daily_loss_pct) if risk_rule else {"10K": 5, "50K": 4, "100K": 3}.get(account.tier, 5)
+        max_dd_limit = float(risk_rule.max_drawdown_pct)   if risk_rule else {"10K": 10, "50K": 8, "100K": 6}.get(account.tier, 10)
 
         upnl = round(float(account.equity or 0) - float(account.balance or 0), 2)
 
+        # Retail margin engine metrics
+        retail_margin = None
+        if account.account_type == "RETAIL":
+            from .risk_engine import compute_margin_state, _MARGIN_THRESHOLDS
+            lev = max(1, account.leverage or 50)
+            total_mg = sum(float(p.avg_price) * float(p.qty) / lev for p in open_positions)
+            eq_f = float(account.equity or account.balance or 0)
+            _mg = compute_margin_state(eq_f, total_mg)
+            used_pct = _mg["used_margin_pct"]
+            if used_pct >= _MARGIN_THRESHOLDS["DANGER"]:
+                _mg["status_label"], _mg["status_color"] = "DANGER", "#e74c3c"
+            elif used_pct >= _MARGIN_THRESHOLDS["HIGH"]:
+                _mg["status_label"], _mg["status_color"] = "HIGH RISK", "#e67e22"
+            elif used_pct >= _MARGIN_THRESHOLDS["WARNING"]:
+                _mg["status_label"], _mg["status_color"] = "WARNING", "#f1c40f"
+            else:
+                _mg["status_label"], _mg["status_color"] = "NORMAL", "#27ae60"
+            _mg["margin_level_color"] = (
+                "#e74c3c" if (_mg["margin_level"] > 0 and _mg["margin_level"] < 100)
+                else "#e67e22" if (_mg["margin_level"] > 0 and _mg["margin_level"] < 150)
+                else "#27ae60"
+            )
+            retail_margin = _mg
+
         context = dict(
             self.admin_site.each_context(request),
-            title=f"Dealing Desk — {account.user} / #{account.id} / {account.tier}",
+            title=f"Dealing Desk — {account.user} / #{account.id} / {account.tier or account.account_type}",
             account=account,
             upnl=upnl,
             open_positions=open_positions,
@@ -628,6 +807,7 @@ class TradingAccountAdmin(admin.ModelAdmin):
             profit_gained=round(profit_gained, 2),
             profit_target=round(profit_target, 2),
             today_pnl=round(today_pnl, 2),
+            retail_margin=retail_margin,
         )
         return render(request, "admin/dealing_desk_inline.html", context)
 
@@ -696,7 +876,7 @@ class RiskRuleAdmin(admin.ModelAdmin):
         "max_lot_size", "max_open_positions", "max_exposure_usd",
         "updated_at",
     )
-    list_filter = ("account__tier",)
+    list_filter = ("account__account_type", "account__tier")
     search_fields = ("account__user__username", "account__user__email")
     readonly_fields = ("created_at", "updated_at")
 
@@ -1136,6 +1316,206 @@ class BrokerSnapshotAdmin(admin.ModelAdmin):
             f"{snap.total_open_positions} posiciones.",
         )
         return redirect("admin:broker_live_analytics")
+
+
+# ─────────────────────────────────────────────
+# WithdrawalRequest
+# ─────────────────────────────────────────────
+
+import logging as _logging
+_wlog = _logging.getLogger(__name__)
+
+
+@admin.action(description="✅ Aprobar — enviar pago crypto vía NowPayments")
+def approve_withdrawals(modeladmin, request, queryset):
+    from . import nowpayments as _np
+    from .wallet_ledger import get_or_create_wallet
+    from .models import WalletTransaction
+    from django.core.mail import send_mail
+    from django.conf import settings as _cfg
+    from django.urls import reverse as _rev
+
+    pending = queryset.filter(status=WithdrawalRequest.STATUS_PENDING)
+    if not pending.exists():
+        modeladmin.message_user(request, "No hay retiros pendientes seleccionados.", messages.WARNING)
+        return
+
+    ok, errs = 0, []
+    for wr in pending:
+        try:
+            crypto_amount = _np.estimate_price(wr.amount_usd, wr.crypto_currency)
+            cb_url = request.build_absolute_uri(
+                reverse("simulator:withdraw_payout_callback")
+            )
+            data      = _np.create_payout(wr.wallet_address, wr.crypto_currency, crypto_amount, wr.id, cb_url)
+            batch_wds = data.get("withdrawals", [])
+            batch_id  = str(data.get("id", ""))
+            payout_id = str(batch_wds[0].get("id", "")) if batch_wds else ""
+
+            WithdrawalRequest.objects.filter(pk=wr.pk).update(
+                status           = WithdrawalRequest.STATUS_PROCESSING,
+                np_batch_id      = batch_id,
+                np_payout_id     = payout_id,
+                np_payout_status = str(data.get("status", "")),
+                crypto_amount    = crypto_amount,
+                reviewed_by      = request.user,
+                reviewed_at      = now(),
+            )
+            try:
+                send_mail(
+                    subject=f"Retiro #{wr.id} aprobado — en proceso",
+                    message=(
+                        f"Hola {wr.user.username},\n\n"
+                        f"Tu retiro #{wr.id} fue aprobado y está siendo enviado.\n\n"
+                        f"  Monto:     ${wr.amount_usd} USD\n"
+                        f"  Cripto:    {crypto_amount} {wr.crypto_currency.upper()}\n"
+                        f"  Dirección: {wr.wallet_address}\n\n"
+                        f"El pago llegará en los próximos minutos según la red.\n\n"
+                        f"— Money Brokers"
+                    ),
+                    from_email=_cfg.DEFAULT_FROM_EMAIL,
+                    recipient_list=[wr.user.email],
+                    fail_silently=True,
+                )
+            except Exception:
+                pass
+            ok += 1
+
+        except Exception as exc:
+            _wlog.error("[admin] approve withdrawal #%d failed: %s", wr.id, exc, exc_info=True)
+            errs.append(f"#{wr.id}: {exc}")
+
+    if ok:
+        modeladmin.message_user(request, f"{ok} retiro(s) aprobados y enviados.", messages.SUCCESS)
+    for e in errs:
+        modeladmin.message_user(request, f"Error — {e}", messages.ERROR)
+
+
+@admin.action(description="❌ Rechazar — devolver fondos al wallet")
+def reject_withdrawals(modeladmin, request, queryset):
+    from .wallet_ledger import credit_wallet, get_or_create_wallet
+    from .models import WalletTransaction
+    from django.core.mail import send_mail
+    from django.conf import settings as _cfg
+
+    pending = queryset.filter(status=WithdrawalRequest.STATUS_PENDING)
+    if not pending.exists():
+        modeladmin.message_user(request, "No hay retiros pendientes seleccionados.", messages.WARNING)
+        return
+
+    count = 0
+    for wr in pending:
+        try:
+            wallet, _ = get_or_create_wallet(wr.user)
+            credit_wallet(
+                wallet.id,
+                wr.amount_usd,
+                WalletTransaction.TX_CORRECTION,
+                note=f"Refund — retiro #{wr.id} rechazado por admin",
+                initiated_by=request.user,
+            )
+            WithdrawalRequest.objects.filter(pk=wr.pk).update(
+                status      = WithdrawalRequest.STATUS_REJECTED,
+                reviewed_by = request.user,
+                reviewed_at = now(),
+            )
+            try:
+                send_mail(
+                    subject=f"Retiro #{wr.id} rechazado — fondos devueltos",
+                    message=(
+                        f"Hola {wr.user.username},\n\n"
+                        f"Tu solicitud de retiro #{wr.id} fue rechazada por el equipo.\n"
+                        f"${wr.amount_usd} USD fueron devueltos a tu wallet.\n\n"
+                        f"Contacta a soporte para más información.\n\n"
+                        f"— Money Brokers"
+                    ),
+                    from_email=_cfg.DEFAULT_FROM_EMAIL,
+                    recipient_list=[wr.user.email],
+                    fail_silently=True,
+                )
+            except Exception:
+                pass
+            count += 1
+        except Exception as exc:
+            _wlog.error("[admin] reject withdrawal #%d failed: %s", wr.id, exc, exc_info=True)
+            modeladmin.message_user(request, f"Error #{wr.id}: {exc}", messages.ERROR)
+
+    if count:
+        modeladmin.message_user(request, f"{count} retiro(s) rechazados y fondos devueltos.", messages.SUCCESS)
+
+
+@admin.register(WithdrawalRequest)
+class WithdrawalRequestAdmin(admin.ModelAdmin):
+
+    @admin.display(description="Status")
+    def status_badge(self, obj):
+        colors = {
+            "pending":    ("#1a1a2a", "#7986cb"),
+            "approved":   ("#0a2a1a", "#27ae60"),
+            "rejected":   ("#2a0000", "#e74c3c"),
+            "processing": ("#2a1a00", "#f1c40f"),
+            "completed":  ("#0a2a1a", "#00e676"),
+            "failed":     ("#2a0000", "#ef5350"),
+        }
+        bg, fg = colors.get(obj.status, ("#1a1a1a", "#aaa"))
+        return _badge(obj.get_status_display(), bg, fg)
+
+    @admin.display(description="User")
+    def user_col(self, obj):
+        return format_html(
+            '<strong>{}</strong><br><small style="color:#888">{}</small>',
+            obj.user.username, obj.user.email,
+        )
+
+    @admin.display(description="Amount")
+    def amount_col(self, obj):
+        return format_html('<span style="color:#FFD700;font-weight:700">${}</span>', obj.amount_usd)
+
+    @admin.display(description="Address")
+    def address_short(self, obj):
+        a = obj.wallet_address
+        return f"{a[:10]}…{a[-6:]}" if len(a) > 18 else a
+
+    @admin.display(description="Crypto Amount")
+    def crypto_col(self, obj):
+        if not obj.crypto_amount:
+            return "—"
+        return f"{obj.crypto_amount} {obj.crypto_currency.upper()}"
+
+    list_display  = (
+        "id", "user_col", "amount_col", "crypto_currency", "address_short",
+        "status_badge", "crypto_col", "np_payout_id", "created_at", "reviewed_by",
+    )
+    list_filter   = ("status", "crypto_currency", "created_at")
+    search_fields = ("user__username", "user__email", "wallet_address", "np_payout_id", "np_batch_id")
+    ordering      = ("-created_at",)
+    date_hierarchy = "created_at"
+    actions       = [approve_withdrawals, reject_withdrawals]
+
+    readonly_fields = (
+        "user", "amount_usd", "crypto_currency", "wallet_address",
+        "debit_tx", "np_payout_id", "np_batch_id", "np_payout_status",
+        "crypto_amount", "reviewed_by", "reviewed_at", "created_at", "updated_at",
+    )
+
+    fieldsets = (
+        ("Request", {
+            "fields": ("user", "amount_usd", "crypto_currency", "wallet_address"),
+        }),
+        ("Review", {
+            "fields": ("status", "admin_note", "reviewed_by", "reviewed_at"),
+        }),
+        ("NowPayments Payout", {
+            "fields": ("np_batch_id", "np_payout_id", "np_payout_status", "crypto_amount"),
+        }),
+        ("Ledger", {
+            "fields": ("debit_tx",),
+        }),
+        ("Timestamps", {
+            "classes": ("collapse",),
+            "fields":  ("created_at", "updated_at"),
+        }),
+    )
 
 
 # ─────────────────────────────────────────────
