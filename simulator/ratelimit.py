@@ -36,12 +36,28 @@ def _get_rl_redis():
     return _get_redis(url)
 
 
+def _load_test_mode() -> bool:
+    """
+    LOAD_TEST_MODE=True bypasses all rate limits during load testing.
+    NEVER enable in production — only valid in staging .env files.
+    Fail-safe: any error reading the setting returns False.
+    """
+    try:
+        from django.conf import settings as _s
+        return bool(getattr(_s, "LOAD_TEST_MODE", False))
+    except Exception:
+        return False
+
+
 def rate_check(key: str, limit: int, window: int) -> tuple[bool, int]:
     """
     Increment the counter for `key` and check against `limit` within `window` seconds.
     Returns (allowed: bool, current_count: int).
     On Redis failure: returns (True, 0) — fail-open.
+    On LOAD_TEST_MODE=True: returns (True, 0) — bypass for load testing.
     """
+    if _load_test_mode():
+        return True, 0
     try:
         r = _get_rl_redis()
         full_key = f"{_RL_PREFIX}{key}"

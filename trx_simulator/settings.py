@@ -300,6 +300,16 @@ TOTP_ENCRYPTION_KEY = os.getenv("TOTP_ENCRYPTION_KEY", "").strip()
 # Enforce 2FA for all staff/admin users (set True in production after testing)
 TOTP_STAFF_REQUIRED = os.getenv("TOTP_STAFF_REQUIRED", "False").strip().lower() in {"1", "true", "yes"}
 
+# Load-test bypass — disables HTTP rate limiting for load testing scenarios.
+# MUST be False (default) in production. Only set True in .env.staging during tests.
+LOAD_TEST_MODE = os.getenv("LOAD_TEST_MODE", "False").strip().lower() in {"1", "true", "yes"}
+if LOAD_TEST_MODE:
+    import logging as _logging
+    _logging.getLogger("simulator.security").warning(
+        "[ratelimit] LOAD_TEST_MODE is ENABLED — rate limiting is DISABLED. "
+        "This MUST be False in production."
+    )
+
 # Login / redirecciones
 LOGIN_URL = "simulator:login"
 LOGIN_REDIRECT_URL = "simulator:dashboard"
