@@ -2,6 +2,7 @@
 {% load static %}
 
 {% block title %}Dashboard — TRX Simulator{% endblock %}
+{% block navbar_brand %}TRX SIMULATOR{% endblock %}
 
 {% block extra_head %}
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -25,7 +26,11 @@
     --dim:     .28;
   }
   html,body{height:100%;margin:0;overflow:hidden;background:var(--bg)!important;color:var(--text);font-family:'Inter',system-ui,sans-serif;}
-  .navbar,.bg-dark{background:var(--bg)!important;}
+  .navbar,.bg-dark{background:var(--bg)!important;border-bottom:1px solid rgba(0,180,216,.12)!important;}
+  .navbar-brand{color:var(--gold)!important;}
+  .navbar .nav-link:hover{color:var(--gold)!important;}
+  .navbar .nav-cta{background:rgba(0,180,216,.15)!important;color:var(--gold)!important;border:1px solid rgba(0,180,216,.3);}
+  .navbar .nav-cta:hover{background:rgba(0,180,216,.28)!important;}
   main.container-fluid,main.container,.container{background:transparent!important;padding:0!important;margin:0!important;}
   *,*::before,*::after{box-sizing:border-box;}
 
