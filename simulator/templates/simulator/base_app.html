@@ -203,6 +203,20 @@
     /* divider */
     .sb-divider { height: 1px; background: var(--border); margin: 6px 16px; }
 
+    /* Section labels */
+    .sb-section-label {
+      font-size: .58rem; font-weight: 700;
+      color: var(--muted); letter-spacing: .12em;
+      text-transform: uppercase;
+      padding: 16px 16px 5px;
+      overflow: hidden; white-space: nowrap;
+      transition: opacity var(--tr), padding var(--tr);
+    }
+    .sb-collapsed .sb-section-label { opacity: 0; padding-left: 0; padding-right: 0; pointer-events: none; }
+
+    /* Hidden sidebar items — visually disabled, code preserved for future phases */
+    .sb-hidden { display: none !important; }
+
     /* ── Footer ── */
     .sb-footer {
       border-top: 1px solid var(--border);
@@ -384,6 +398,8 @@
     <!-- Navigation -->
     <nav class="sb-nav" role="navigation">
 
+      <div class="sb-section-label">Cuenta</div>
+
       <!-- Dashboard -->
       <a href="{% url 'simulator:home' %}"
          class="sb-link {% if active_section == 'dashboard' %}active{% endif %}">
@@ -422,24 +438,19 @@
              class="sb-child {% if active_section == 'withdraw_history' %}active{% endif %}">
             <span class="sb-cdot"></span>Historial retiros
           </a>
-          <a href="#" class="sb-child">
+          <a href="#" class="sb-child sb-hidden" data-sb-future="transferencia-interna">
             <span class="sb-cdot"></span>Transferencia interna
           </a>
         </div>
       </div>
+
+      <div class="sb-section-label">Mercados</div>
 
       <!-- Panel de Trading -->
       <a href="{% url 'simulator:dashboard' %}"
          class="sb-link {% if active_section == 'trading' %}active{% endif %}">
         <span class="sb-icon"><i class="fa-solid fa-chart-line"></i></span>
         <span class="sb-text">Panel de Trading</span>
-      </a>
-
-      <!-- Calendario -->
-      <a href="#" class="sb-link">
-        <span class="sb-icon"><i class="fa-solid fa-calendar-days"></i></span>
-        <span class="sb-text">Calendario</span>
-        <span class="sb-badge sb-badge-soon">Pronto</span>
       </a>
 
       <!-- Análisis -->
@@ -449,11 +460,21 @@
         <span class="sb-text">Análisis</span>
       </a>
 
-      <div class="sb-divider"></div>
+      <!-- ══ HIDDEN ITEMS — code preserved, visually disabled ══ -->
+      <!-- To re-enable: remove class="sb-hidden" and data-sb-future attribute -->
 
-      <!-- Asociados (dropdown) -->
-      <div class="sb-group {% if active_section == 'asociados' %}open{% endif %}"
-           data-group="asociados">
+      <!-- Calendario — sb-hidden: feature not ready -->
+      <a href="#" class="sb-link sb-hidden" data-sb-future="calendario">
+        <span class="sb-icon"><i class="fa-solid fa-calendar-days"></i></span>
+        <span class="sb-text">Calendario</span>
+        <span class="sb-badge sb-badge-soon">Pronto</span>
+      </a>
+
+      <div class="sb-divider sb-hidden" data-sb-future="divider-after-analysis"></div>
+
+      <!-- Asociados — sb-hidden: feature not ready -->
+      <div class="sb-group sb-hidden {% if active_section == 'asociados' %}open{% endif %}"
+           data-group="asociados" data-sb-future="asociados">
         <div class="sb-link sb-group-hd">
           <span class="sb-icon"><i class="fa-solid fa-handshake"></i></span>
           <span class="sb-text">Asociados</span>
@@ -467,32 +488,33 @@
         </div>
       </div>
 
-      <!-- Bonos -->
-      <a href="#" class="sb-link">
+      <!-- Bonos — sb-hidden: feature not ready -->
+      <a href="#" class="sb-link sb-hidden" data-sb-future="bonos">
         <span class="sb-icon"><i class="fa-solid fa-gift"></i></span>
         <span class="sb-text">Bonos</span>
         <span class="sb-badge sb-badge-new">New</span>
       </a>
 
-      <!-- PAMM -->
-      <a href="#" class="sb-link">
+      <!-- PAMM — sb-hidden: feature not ready -->
+      <a href="#" class="sb-link sb-hidden" data-sb-future="pamm">
         <span class="sb-icon"><i class="fa-solid fa-people-group"></i></span>
         <span class="sb-text">PAMM</span>
         <span class="sb-badge sb-badge-soon">Pronto</span>
       </a>
 
-      <!-- Archivos -->
-      <a href="#" class="sb-link">
+      <!-- Archivos — sb-hidden: feature not ready -->
+      <a href="#" class="sb-link sb-hidden" data-sb-future="archivos">
         <span class="sb-icon"><i class="fa-solid fa-folder-open"></i></span>
         <span class="sb-text">Archivos</span>
       </a>
 
-      <!-- Expertos -->
-      <a href="#" class="sb-link">
+      <!-- Expertos (EAs) — sb-hidden: feature not ready -->
+      <a href="#" class="sb-link sb-hidden" data-sb-future="expertos-eas">
         <span class="sb-icon"><i class="fa-solid fa-robot"></i></span>
         <span class="sb-text">Expertos (EAs)</span>
         <span class="sb-badge sb-badge-soon">Pronto</span>
       </a>
+      <!-- ══ /HIDDEN ITEMS ══ -->
 
     </nav>
 
