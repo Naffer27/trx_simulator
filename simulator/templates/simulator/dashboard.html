@@ -264,10 +264,10 @@
   /* ── Bottom nav (mobile) ── */
   .bottom-nav{position:fixed;left:0;right:0;bottom:0;height:var(--nav-h);display:none;z-index:7;padding:6px 10px max(6px,env(safe-area-inset-bottom)) 10px;background:transparent;}
   .bottom-nav .tabs{height:100%;display:grid;grid-template-columns:repeat(5,1fr);gap:0;background:rgba(22,22,30,.97);backdrop-filter:blur(20px);border-radius:20px;border:1px solid rgba(255,255,255,.07);overflow:hidden;}
-  .tabbtn{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:none;color:rgba(255,255,255,.42);font-size:9px;font-family:'Inter',sans-serif;background:transparent;cursor:pointer;transition:color .18s;position:relative;padding:6px 0;}
+  .tabbtn{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:none;color:rgba(255,255,255,.42);font-size:9px;font-family:'Inter',sans-serif;background:transparent;cursor:pointer;transition:color .18s,transform .1s;position:relative;padding:6px 0;min-height:44px;}
   .tabbtn .tb-icon{width:24px;height:24px;display:flex;align-items:center;justify-content:center;border-radius:999px;transition:background .18s;}
   .tabbtn .tb-lbl{font-size:9px;font-weight:500;letter-spacing:.01em;line-height:1;}
-  .tabbtn:active{opacity:.7;}
+  .tabbtn:active{opacity:.7;transform:scale(.9);}
   .tabbtn.active{color:#FFD700;}
   .tabbtn.active .tb-icon{background:rgba(255,215,0,.18);}
   .tab-badge{position:absolute;top:4px;right:10px;background:#ef5350;color:#fff;border-radius:999px;font-size:9px;font-weight:800;min-width:14px;height:14px;line-height:14px;text-align:center;padding:0 3px;display:none;}
@@ -417,29 +417,29 @@
 
   /* ── Mobile float trade overlay ── */
   .mob-trade-bar{display:none!important;} /* disabled — replaced by float overlay */
-  .mob-float-wrap{display:none;position:fixed;top:44px;left:8px;z-index:10;flex-direction:column;align-items:flex-start;gap:4px;}
+  .mob-float-wrap{display:none;position:fixed;bottom:96px;left:0;right:0;z-index:10;flex-direction:column;align-items:stretch;gap:0;}
   .q-pos{color:#26a69a!important;}
   .q-neg{color:#ef5350!important;}
   .mob-float-toggle{background:rgba(8,8,20,.75);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.13);border-radius:999px;padding:4px 10px;color:rgba(255,255,255,.48);font-size:10px;font-weight:600;cursor:pointer;letter-spacing:.04em;font-family:'Inter',sans-serif;display:flex;align-items:center;gap:4px;line-height:1;transition:border-color .15s,color .15s,background .15s;}
   .mob-float-toggle:active{opacity:.7;}
   .mob-float-toggle.open{border-color:rgba(255,215,0,.28);color:rgba(255,215,0,.7);background:rgba(8,8,20,.9);}
-  .mob-float-panel{background:rgba(6,6,18,.92);backdrop-filter:saturate(160%) blur(14px);border:1px solid rgba(255,255,255,.1);border-radius:13px;padding:7px;flex-direction:column;gap:5px;overflow:visible;}
-  .mfp-sell{flex:1;background:rgba(239,83,80,.13);border:1.5px solid #ef5350;color:#ef5350;border-radius:14px;padding:8px 10px;font-size:.72rem;font-weight:800;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;letter-spacing:.07em;transition:opacity .12s,background .12s;min-width:62px;}
-  .mfp-sell:active{background:rgba(239,83,80,.28);}
-  .mfp-buy{flex:1;background:rgba(38,166,154,.13);border:1.5px solid #26a69a;color:#26a69a;border-radius:14px;padding:8px 10px;font-size:.72rem;font-weight:800;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;letter-spacing:.07em;transition:opacity .12s,background .12s;min-width:62px;}
-  .mfp-buy:active{background:rgba(38,166,154,.28);}
-  .mfp-lab{font-size:9px;letter-spacing:.1em;line-height:1;text-transform:uppercase;}
-  .mfp-px{font-size:.72rem;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.3;opacity:.9;}
-  .mfp-mid{display:flex;flex-direction:column;align-items:center;gap:3px;}
-  .mfp-row{display:flex;align-items:center;gap:5px;}
+  .mob-float-panel{background:rgba(6,6,18,.97);backdrop-filter:saturate(160%) blur(18px);border:none;border-top:1px solid rgba(255,255,255,.1);border-radius:0;padding:10px 14px max(10px,env(safe-area-inset-bottom));flex-direction:column;gap:6px;overflow:visible;}
+  .mfp-sell{flex:1;background:rgba(239,83,80,.13);border:1.5px solid #ef5350;color:#ef5350;border-radius:16px;padding:14px 10px;font-size:.8rem;font-weight:800;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:4px;letter-spacing:.07em;transition:opacity .12s,background .12s,transform .1s;min-width:72px;min-height:52px;}
+  .mfp-sell:active{background:rgba(239,83,80,.3);transform:scale(.97);}
+  .mfp-buy{flex:1;background:rgba(38,166,154,.13);border:1.5px solid #26a69a;color:#26a69a;border-radius:16px;padding:14px 10px;font-size:.8rem;font-weight:800;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:4px;letter-spacing:.07em;transition:opacity .12s,background .12s,transform .1s;min-width:72px;min-height:52px;}
+  .mfp-buy:active{background:rgba(38,166,154,.3);transform:scale(.97);}
+  .mfp-lab{font-size:10px;letter-spacing:.1em;line-height:1;text-transform:uppercase;}
+  .mfp-px{font-size:.78rem;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.3;opacity:.9;}
+  .mfp-mid{display:flex;flex-direction:column;align-items:center;gap:4px;flex:1;}
+  .mfp-row{display:flex;align-items:center;gap:8px;}
   .mfp-lot-lbl{font-size:7.5px;color:rgba(255,255,255,.3);letter-spacing:.06em;text-transform:uppercase;line-height:1;}
-  .mfp-lot{display:flex;align-items:center;gap:4px;background:rgba(255,255,255,.06);border-radius:999px;padding:4px 8px;}
-  .mfp-lot button{background:rgba(255,255,255,.12);border:none;color:#fff;height:22px;padding:0 9px;border-radius:999px;font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-weight:700;line-height:1;transition:background .1s;flex-shrink:0;}
-  .mfp-lot button:active{background:rgba(255,255,255,.32);}
-  .mfp-lot-val{font-size:.75rem;font-weight:700;color:#fff;width:40px;text-align:center;font-variant-numeric:tabular-nums;background:transparent;border:none;outline:none;padding:0;font-family:'Inter',sans-serif;}
+  .mfp-lot{display:flex;align-items:center;gap:6px;background:rgba(255,255,255,.06);border-radius:999px;padding:6px 12px;}
+  .mfp-lot button{background:rgba(255,255,255,.12);border:none;color:#fff;height:44px;width:44px;padding:0;border-radius:50%;font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-weight:700;line-height:1;transition:background .1s,transform .1s;flex-shrink:0;}
+  .mfp-lot button:active{background:rgba(255,255,255,.32);transform:scale(.85);}
+  .mfp-lot-val{font-size:.92rem;font-weight:700;color:#fff;width:52px;text-align:center;font-variant-numeric:tabular-nums;background:transparent;border:none;outline:none;padding:0;font-family:'Inter',sans-serif;}
   /* TF badge + popover */
   .mfp-bottom-row{display:flex;justify-content:flex-end;padding-top:5px;position:relative;}
-  .mfp-tf-badge{background:rgba(255,215,0,.1);border:1px solid rgba(255,215,0,.28);color:rgba(255,215,0,.8);border-radius:999px;padding:3px 10px;font-size:.65rem;font-weight:700;font-family:'Inter',sans-serif;cursor:pointer;letter-spacing:.06em;line-height:1.4;transition:background .12s;}
+  .mfp-tf-badge{background:rgba(255,215,0,.1);border:1px solid rgba(255,215,0,.28);color:rgba(255,215,0,.8);border-radius:999px;padding:6px 14px;font-size:.68rem;font-weight:700;font-family:'Inter',sans-serif;cursor:pointer;letter-spacing:.06em;line-height:1.4;transition:background .12s;min-height:32px;display:flex;align-items:center;}
   .mfp-tf-badge:active{background:rgba(255,215,0,.22);}
   .mfp-tf-pop{position:absolute;top:calc(100% + 4px);right:0;background:rgba(10,10,20,.97);backdrop-filter:blur(16px);border:1px solid rgba(255,215,0,.2);border-radius:12px;overflow:hidden;z-index:20;min-width:58px;}
   .mfp-tf-pop-item{display:block;width:100%;text-align:center;background:transparent;border:none;color:rgba(255,255,255,.55);font-size:.72rem;font-weight:600;font-family:'Inter',sans-serif;padding:8px 14px;cursor:pointer;transition:background .1s,color .1s;letter-spacing:.04em;}
@@ -455,8 +455,8 @@
   @media(max-width:980px){
     nav.navbar{display:none!important;}
     html,body{overflow:hidden;}
-    .wrap{max-width:100%;padding:44px 0 96px;height:100dvh;overflow-y:auto;-webkit-overflow-scrolling:touch;}
-    .layout{grid-template-columns:1fr;height:calc(100dvh - 44px - 96px);margin:0;gap:0;}
+    .wrap{max-width:100%;padding:44px 0 172px;height:100dvh;overflow-y:auto;-webkit-overflow-scrolling:touch;}
+    .layout{grid-template-columns:1fr;height:calc(100dvh - 44px - 172px);margin:0;gap:0;}
     .tools-sidebar{display:none;}
     .left-col{height:100%;}
     .panels-grid{height:100%;}
@@ -477,6 +477,15 @@
     .pos-close-btn{padding:9px 14px;font-size:.8rem;}
     .pos-edit-btn{padding:9px 14px;font-size:.8rem;margin-right:6px;}
     .positions-card{margin:0;padding:12px;}
+    /* Quotes panel mobile touch targets */
+    .q-row{padding:14px 16px;}
+    .q-btn{padding:8px 20px;font-size:.78rem;min-height:36px;}
+    .q-sym{font-size:.88rem;}
+    #quotesSearch{padding:14px 16px;font-size:.88rem;}
+    /* Bottom nav safe-area */
+    .bottom-nav{padding-bottom:max(8px,env(safe-area-inset-bottom));}
+    /* execToast: above trade bar on mobile */
+    #execToast{bottom:auto;top:calc(44px + 8px);}
   }
   @media(min-width:981px){
     .toptrade{display:none;}
@@ -788,25 +797,25 @@
   <nav class="bottom-nav" aria-label="bottom">
     <div class="tabs">
       <button class="tabbtn" data-tab="cotizaciones">
-        <span class="tb-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="6" y1="5" x2="6" y2="11"/><line x1="18" y1="13" x2="18" y2="19"/><line x1="3" y1="8" x2="9" y2="8"/><line x1="15" y1="16" x2="21" y2="16"/></svg></span>
-        <span class="tb-lbl">Cotizaciones</span>
+        <span class="tb-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></span>
+        <span class="tb-lbl">Watch</span>
       </button>
       <button class="tabbtn active" data-tab="chart">
         <span class="tb-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></span>
         <span class="tb-lbl">Gráfico</span>
       </button>
       <button class="tabbtn" data-tab="trading">
-        <span class="tb-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="6" height="13"/><rect x="9" y="4" width="6" height="16"/><rect x="16" y="10" width="6" height="10"/></svg></span>
-        <span class="tb-lbl">Trading</span>
+        <span class="tb-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg></span>
+        <span class="tb-lbl">Posiciones</span>
         <span id="posBadge" class="tab-badge">0</span>
       </button>
       <button class="tabbtn" data-tab="historial">
-        <span class="tb-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/><polyline points="3 3 7 7"/></svg></span>
+        <span class="tb-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span>
         <span class="tb-lbl">Historial</span>
       </button>
       <button class="tabbtn" data-tab="ajustes">
-        <span class="tb-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
-        <span class="tb-lbl">Ajustes</span>
+        <span class="tb-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
+        <span class="tb-lbl">Cuenta</span>
       </button>
     </div>
   </nav>
@@ -1162,7 +1171,6 @@ class TradingPanel {
               </button>
               <div class="mfp-mid">
                 <div class="mfp-lot">
-                  <span class="mfp-lot-lbl">LOT</span>
                   <button class="p-mob-lot-dec">−</button>
                   <input class="mfp-lot-val p-mob-lot-val" type="number" inputmode="decimal" value="0.01" min="0.01" max="100" step="0.01">
                   <button class="p-mob-lot-inc">+</button>
@@ -1192,8 +1200,8 @@ class TradingPanel {
     this.mobileLot=0.01;
     this.wrapper.querySelector('.p-mtb-sell').addEventListener('click',()=>this._sendOverlayOrder('sell'));
     this.wrapper.querySelector('.p-mtb-buy').addEventListener('click',()=>this._sendOverlayOrder('buy'));
-    this.wrapper.querySelector('.p-mob-lot-inc').addEventListener('click',e=>{e.stopPropagation();this._syncLotFromInput();this.mobileLot=Math.min(100,+(this.mobileLot+0.01).toFixed(2));if(this.oLotV)this.oLotV.value=this.mobileLot.toFixed(2);});
-    this.wrapper.querySelector('.p-mob-lot-dec').addEventListener('click',e=>{e.stopPropagation();this._syncLotFromInput();this.mobileLot=Math.max(0.01,+(this.mobileLot-0.01).toFixed(2));if(this.oLotV)this.oLotV.value=this.mobileLot.toFixed(2);});
+    this.wrapper.querySelector('.p-mob-lot-inc').addEventListener('click',e=>{e.stopPropagation();try{navigator.vibrate&&navigator.vibrate(15);}catch(_){}this._syncLotFromInput();this.mobileLot=Math.min(100,+(this.mobileLot+0.01).toFixed(2));if(this.oLotV)this.oLotV.value=this.mobileLot.toFixed(2);});
+    this.wrapper.querySelector('.p-mob-lot-dec').addEventListener('click',e=>{e.stopPropagation();try{navigator.vibrate&&navigator.vibrate(15);}catch(_){}this._syncLotFromInput();this.mobileLot=Math.max(0.01,+(this.mobileLot-0.01).toFixed(2));if(this.oLotV)this.oLotV.value=this.mobileLot.toFixed(2);});
     if(this.oLotV)this.oLotV.addEventListener('change',()=>this._syncLotFromInput());
     this._fPanel=this.wrapper.querySelector('.p-mob-panel');
   }
@@ -2012,7 +2020,9 @@ document.addEventListener('click',e=>{
 });
 
 /* ── Mobile tabs ── */
+let _currentTab='chart';
 function showTab(tab){
+  _currentTab=tab;
   const layoutDiv=document.querySelector('.layout');
   const tt=document.getElementById('topTradeBar');
   const quotes=document.getElementById('quotesPanel');
@@ -2028,7 +2038,14 @@ function showTab(tab){
   const onHistorial=tab==='historial'||tab==='history';
   const onSettings=tab==='ajustes'||tab==='settings'||tab==='cuenta';
   if(tt)tt.style.display='none';
-  if(!onChart){allPanels.forEach(p=>{if(p._fPanel)p._fPanel.style.display='none';});const _tb=document.getElementById('mhdrTradeBtn');if(_tb)_tb.classList.remove('open');}
+  if(onChart&&mob){
+    // Auto-show trade bar when returning to chart
+    allPanels.forEach(p=>{if(p._fPanel)p._fPanel.style.display='flex';});
+    document.getElementById('mhdrTradeBtn')?.classList.add('open');
+  } else {
+    allPanels.forEach(p=>{if(p._fPanel)p._fPanel.style.display='none';});
+    document.getElementById('mhdrTradeBtn')?.classList.remove('open');
+  }
   const mhdr=document.getElementById('mobileHeader');
   if(mob){
     if(mhdr)mhdr.style.display=onChart?'flex':'none';
@@ -2050,7 +2067,7 @@ function showTab(tab){
   if(onHistorial)_syncHistorialPanel();
   allPanels.forEach(p=>setTimeout(()=>{p._fixChartHeight();if(p.stayLive)p.chart?.timeScale().scrollToRealTime();},80));
 }
-document.querySelectorAll('.tabbtn').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('.tabbtn').forEach(x=>x.classList.remove('active'));b.classList.add('active');showTab(b.dataset.tab);}));
+document.querySelectorAll('.tabbtn').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('.tabbtn').forEach(x=>x.classList.remove('active'));b.classList.add('active');showTab(b.dataset.tab);try{navigator.vibrate&&navigator.vibrate(12);}catch(_){}}));
 
 /* ── Mobile panel management ── */
 let mobilePanelIdx=0;
@@ -2475,12 +2492,58 @@ document.getElementById('trdAddBtn')?.addEventListener('click',()=>{
   showTab('chart');
 });
 
+/* ── Mobile swipe between tabs ── */
+(()=>{
+  const _TAB_ORDER=['cotizaciones','chart','trading','historial','ajustes'];
+  let _sX=null,_sY=null;
+  function _doSwipe(dx,dy){
+    if(Math.abs(dx)<55||Math.abs(dx)<Math.abs(dy)*1.3)return;
+    const idx=_TAB_ORDER.indexOf(_currentTab);
+    if(idx<0)return;
+    const next=dx<0?Math.min(idx+1,_TAB_ORDER.length-1):Math.max(idx-1,0);
+    if(next===idx)return;
+    const name=_TAB_ORDER[next];
+    document.querySelectorAll('.tabbtn').forEach(x=>x.classList.remove('active'));
+    document.querySelector(`.tabbtn[data-tab="${name}"]`)?.classList.add('active');
+    showTab(name);
+    try{navigator.vibrate&&navigator.vibrate(12);}catch(_){}
+  }
+  // Only swipe on non-chart content panels to avoid chart pan conflicts
+  ['tradingPanel','historialPanel','settingsPanel','quotesPanel'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(!el)return;
+    el.addEventListener('touchstart',e=>{_sX=e.touches[0].clientX;_sY=e.touches[0].clientY;},{passive:true});
+    el.addEventListener('touchend',e=>{
+      if(_sX===null)return;
+      const dx=e.changedTouches[0].clientX-_sX,dy=e.changedTouches[0].clientY-_sY;
+      _sX=_sY=null;
+      _doSwipe(dx,dy);
+    },{passive:true});
+  });
+  // Also allow swipe on the bottom nav itself
+  const nav=document.querySelector('.bottom-nav');
+  if(nav){
+    nav.addEventListener('touchstart',e=>{_sX=e.touches[0].clientX;_sY=e.touches[0].clientY;},{passive:true});
+    nav.addEventListener('touchend',e=>{
+      if(_sX===null)return;
+      const dx=e.changedTouches[0].clientX-_sX,dy=e.changedTouches[0].clientY-_sY;
+      _sX=_sY=null;
+      _doSwipe(dx,dy);
+    },{passive:true});
+  }
+})();
+
 /* ── Bootstrap ── */
 (async function init(){
   await setLayout(1);
   if(isMobile()){
     mobileShowPanel(0);
     updatePanelTabs();
+    // Auto-show trade bar on initial load
+    setTimeout(()=>{
+      allPanels.forEach(p=>{if(p._fPanel)p._fPanel.style.display='flex';});
+      document.getElementById('mhdrTradeBtn')?.classList.add('open');
+    },250);
   }
   showTab('chart');
   renderQuotes('');
