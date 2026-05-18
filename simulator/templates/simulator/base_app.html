@@ -6,7 +6,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#05050a" />
-  <title>{% block title %}Money Brokers{% endblock %}</title>
+  <title>{% block title %}TRX Simulator{% endblock %}</title>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -20,17 +20,17 @@
       --sb-w: 240px;
       --sb-w-col: 64px;
       --topbar-h: 60px;
-      --bg-app: #05050a;
-      --bg-sidebar: #07070f;
-      --bg-card: #0d0d1a;
-      --bg-card-2: #0a0a14;
-      --border: rgba(255,215,0,.08);
+      --bg-app: #020209;
+      --bg-sidebar: #030413;
+      --bg-card: #07091c;
+      --bg-card-2: #050618;
+      --border: rgba(0,180,216,.11);
       --border-dim: rgba(255,255,255,.04);
-      --gold: #FFD700;
-      --amber: #FFA500;
+      --gold: #00b4d8;
+      --amber: #0099cc;
       --text: #d1d4dc;
-      --muted: #5d6175;
-      --muted-2: #787b86;
+      --muted: #4a5270;
+      --muted-2: #6272a4;
       --bull: #26a69a;
       --bear: #ef5350;
       --tr: .22s cubic-bezier(.4,0,.2,1);
@@ -86,33 +86,46 @@
     .sb-logo { display: flex; align-items: center; gap: 10px; flex: 1; overflow: hidden; }
     .sb-logo-mark {
       width: 32px; height: 32px; min-width: 32px;
-      background: linear-gradient(135deg, #FFD700, #FFA500);
+      background: linear-gradient(135deg, #00b4d8, #0066cc);
       border-radius: 8px;
       display: flex; align-items: center; justify-content: center;
       font-family: 'Orbitron', sans-serif;
-      font-size: .6rem; font-weight: 900; color: #000; letter-spacing: .01em;
+      font-size: .55rem; font-weight: 900; color: #fff; letter-spacing: .04em;
       flex-shrink: 0;
+      box-shadow: 0 0 12px rgba(0,180,216,.25);
     }
-    .sb-logo-text {
-      font-family: 'Orbitron', sans-serif;
-      font-size: .62rem; font-weight: 700;
-      color: var(--gold); letter-spacing: .08em; line-height: 1.3;
-      white-space: nowrap;
-      opacity: 1; overflow: hidden;
-      transition: opacity var(--tr), width var(--tr), max-width var(--tr);
+    .sb-logo-names {
+      display: flex; flex-direction: column; gap: 2px;
+      overflow: hidden;
+      opacity: 1;
+      transition: opacity var(--tr), max-width var(--tr);
       max-width: 160px;
     }
-    .sb-collapsed .sb-logo-text { opacity: 0; max-width: 0; }
+    .sb-collapsed .sb-logo-names { opacity: 0; max-width: 0; }
+    .sb-logo-text {
+      font-family: 'Orbitron', sans-serif;
+      font-size: .6rem; font-weight: 700;
+      color: var(--gold); letter-spacing: .07em; line-height: 1.2;
+      white-space: nowrap; overflow: hidden;
+    }
+    .sb-logo-tagline {
+      font-size: .46rem; font-weight: 600;
+      color: rgba(0,180,216,.45); letter-spacing: .1em;
+      text-transform: uppercase; white-space: nowrap; overflow: hidden;
+      line-height: 1;
+    }
+    /* keep old .sb-logo-text collapse rule for compat */
+    .sb-collapsed .sb-logo-text { opacity: 0; }
 
     .sb-collapse-btn {
       width: 28px; height: 28px; min-width: 28px;
-      background: rgba(255,215,0,.05); border: 1px solid var(--border);
+      background: rgba(0,180,216,.05); border: 1px solid var(--border);
       border-radius: 6px; color: var(--muted);
       cursor: pointer; display: flex; align-items: center; justify-content: center;
       font-size: .7rem; flex-shrink: 0;
       transition: background .15s, color .15s;
     }
-    .sb-collapse-btn:hover { background: rgba(255,215,0,.12); color: var(--gold); }
+    .sb-collapse-btn:hover { background: rgba(0,180,216,.12); color: var(--gold); }
     .sb-collapse-btn .fa { transition: transform var(--tr); }
     .sb-collapsed .sb-collapse-btn .fa { transform: rotate(180deg); }
 
@@ -139,7 +152,7 @@
     .sb-link:hover { color: var(--text); background: rgba(255,255,255,.025); }
     .sb-link.active {
       color: var(--gold);
-      background: rgba(255,215,0,.06);
+      background: rgba(0,180,216,.06);
       border-left-color: var(--gold);
     }
 
@@ -227,8 +240,8 @@
     .sb-avatar {
       width: 32px; height: 32px; min-width: 32px;
       border-radius: 50%;
-      background: linear-gradient(135deg, rgba(255,215,0,.25), rgba(255,165,0,.15));
-      border: 1px solid rgba(255,215,0,.3);
+      background: linear-gradient(135deg, rgba(0,180,216,.25), rgba(0,153,204,.15));
+      border: 1px solid rgba(0,180,216,.3);
       display: flex; align-items: center; justify-content: center;
       font-family: 'Orbitron', sans-serif; font-size: .65rem; font-weight: 700;
       color: var(--gold); flex-shrink: 0;
@@ -322,11 +335,11 @@
       border-radius: 20px; cursor: pointer;
       transition: border-color .15s;
     }
-    .tb-user-chip:hover { border-color: rgba(255,215,0,.2); }
+    .tb-user-chip:hover { border-color: rgba(0,180,216,.2); }
     .tb-chip-avatar {
       width: 28px; height: 28px; border-radius: 50%;
-      background: linear-gradient(135deg, rgba(255,215,0,.25), rgba(255,165,0,.15));
-      border: 1px solid rgba(255,215,0,.25);
+      background: linear-gradient(135deg, rgba(0,180,216,.25), rgba(0,153,204,.15));
+      border: 1px solid rgba(0,180,216,.25);
       display: flex; align-items: center; justify-content: center;
       font-family: 'Orbitron', sans-serif; font-size: .6rem; font-weight: 700;
       color: var(--gold);
@@ -387,8 +400,11 @@
     <!-- Header / Logo -->
     <div class="sb-header">
       <div class="sb-logo">
-        <div class="sb-logo-mark">MB</div>
-        <div class="sb-logo-text">MONEY<br>BROKERS</div>
+        <div class="sb-logo-mark">TRX</div>
+        <div class="sb-logo-names">
+          <div class="sb-logo-text">TRX SIMULATOR</div>
+          <div class="sb-logo-tagline">TRADE · PRACTICE · MASTER</div>
+        </div>
       </div>
       <button class="sb-collapse-btn" id="sidebarToggle" title="Colapsar menú">
         <i class="fa fa-chevron-left"></i>
@@ -543,7 +559,7 @@
           <i class="fa-solid fa-bars"></i>
         </button>
         <div class="tb-breadcrumb">
-          <span>Money Brokers</span>
+          <span>TRX Simulator</span>
           <span class="tb-breadcrumb-sep">/</span>
           <span class="tb-page-title">{% block page_title %}Dashboard{% endblock %}</span>
         </div>
