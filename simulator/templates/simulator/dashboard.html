@@ -495,6 +495,33 @@
     .mob-float-wrap{display:none!important;}
   }
 
+  /* ── Mobile safe-area fixes (iPhone X / notch devices) ── */
+  @media(max-width:980px){
+    /* BUG-FIX: Bottom nav was 56px fixed — on iPhone X (safe-area=34px)
+       content area = 56-6-34 = 16px. Tabs were crushed.
+       Fix: extend height to include safe area; .tabs stays 50px. */
+    .bottom-nav{
+      height:calc(56px + env(safe-area-inset-bottom,0px));
+      padding-top:6px;
+      padding-bottom:calc(6px + env(safe-area-inset-bottom,0px));
+    }
+    .bottom-nav .tabs{height:50px;}
+
+    /* All elements that sit "above the nav" must rise with it */
+    #panelTabsBar{bottom:calc(56px + env(safe-area-inset-bottom,0px));}
+    /* quickbar now above mob-float-wrap (BUG-FIX: was at 56px, under trade bar z:10) */
+    .quickbar{bottom:calc(172px + env(safe-area-inset-bottom,0px));}
+    .mob-float-wrap{bottom:calc(96px + env(safe-area-inset-bottom,0px));}
+
+    /* Wrap padding + layout height updated to match extended nav */
+    .wrap{padding-bottom:calc(172px + env(safe-area-inset-bottom,0px));}
+    .layout{height:calc(100dvh - 44px - 172px - env(safe-area-inset-bottom,0px));}
+
+    /* BUG-FIX: mob-float-panel is NOT at viewport bottom — env() padding was wrong.
+       On iPhone X this was adding 34px of phantom space, shrinking chart area. */
+    .mob-float-panel{padding:10px 14px;}
+  }
+
   /* ── Exec toast ── */
   #execToast{
     position:fixed;bottom:calc(var(--nav-h)+14px);left:50%;transform:translateX(-50%);
@@ -1108,9 +1135,15 @@ function showQB(panel,posId){
       qbInfo.textContent=`${side} ${sym} ${qty}`;
     }else{qbInfo.textContent='Modificar posición';}
   }
+  // On mobile: hide trade bar so quickbar isn't obscured by it
+  if(isMobile()){allPanels.forEach(p=>{if(p._fPanel)p._fPanel.style.display='none';});}
   quickbar.style.display='flex';
 }
-function hideQB(){qbPanel=null;qbPosId=null;quickbar.style.display='none';}
+function hideQB(){
+  qbPanel=null;qbPosId=null;quickbar.style.display='none';
+  // On mobile: restore trade bar when quickbar is dismissed
+  if(isMobile()&&_currentTab==='chart'){allPanels.forEach(p=>{if(p._fPanel)p._fPanel.style.display='flex';});}
+}
 function refreshQB(){if(!qbPanel)return;const id=qbPanel.lastSelectedId||(qbPanel.selectedPosIds.size?Array.from(qbPanel.selectedPosIds).at(-1):null);if(id)showQB(qbPanel,id);else hideQB();}
 
 /* ══════════════════════════════════════════════
