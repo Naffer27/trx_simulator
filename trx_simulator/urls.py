@@ -2,6 +2,8 @@
 from django.contrib import admin
 from django.urls import path, include
 from django.views.generic import RedirectView
+from django.conf import settings
+from django.conf.urls.static import static
 
 urlpatterns = [
     # Admin
@@ -12,4 +14,4 @@ urlpatterns = [
 
     # Alias opcional: si alguien entra por /simulator/ lo mandamos a la raíz
     path('simulator/', RedirectView.as_view(url='/', permanent=False)),
-]
+] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

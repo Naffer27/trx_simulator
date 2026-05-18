@@ -555,5 +555,100 @@
   </div>
   {% endif %}
 
+  <!-- ╔══════════════════ BROKER ECOSYSTEM ══════════════════╗ -->
+  <div style="margin-top:28px;margin-bottom:4px;font-family:'Orbitron',sans-serif;font-size:.7rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">Ecosistema broker</div>
+
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin-top:12px">
+
+    <!-- Calendario -->
+    <a href="{% url 'simulator:calendar' %}" style="text-decoration:none">
+    <div style="background:var(--bg-card-2);border:1px solid var(--border);border-radius:12px;padding:16px 18px;display:flex;gap:14px;align-items:center;transition:border-color .2s,transform .12s" onmouseover="this.style.borderColor='rgba(255,215,0,.25)';this.style.transform='translateY(-1px)'" onmouseout="this.style.borderColor='';this.style.transform=''">
+      <div style="width:38px;height:38px;border-radius:9px;background:rgba(255,215,0,.08);border:1px solid rgba(255,215,0,.14);display:flex;align-items:center;justify-content:center;font-size:.95rem;color:var(--gold);flex-shrink:0">
+        <i class="fa-solid fa-calendar-days"></i>
+      </div>
+      <div>
+        <div style="font-size:.78rem;font-weight:700;color:#fff;margin-bottom:3px">Calendario</div>
+        {% if upcoming_events %}
+        <div style="font-size:.7rem;color:var(--muted-2)">{{ upcoming_events|length }} evento{{ upcoming_events|length|pluralize }} próximo{{ upcoming_events|length|pluralize }}</div>
+        <div style="font-size:.68rem;color:var(--muted);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px">{{ upcoming_events.0.title|truncatechars:28 }}</div>
+        {% else %}
+        <div style="font-size:.7rem;color:var(--muted)">Sin eventos próximos</div>
+        {% endif %}
+      </div>
+    </div>
+    </a>
+
+    <!-- Asociados -->
+    <a href="{% url 'simulator:associates' %}" style="text-decoration:none">
+    <div style="background:var(--bg-card-2);border:1px solid var(--border);border-radius:12px;padding:16px 18px;display:flex;gap:14px;align-items:center;transition:border-color .2s,transform .12s" onmouseover="this.style.borderColor='rgba(255,215,0,.25)';this.style.transform='translateY(-1px)'" onmouseout="this.style.borderColor='';this.style.transform=''">
+      <div style="width:38px;height:38px;border-radius:9px;background:rgba(255,215,0,.08);border:1px solid rgba(255,215,0,.14);display:flex;align-items:center;justify-content:center;font-size:.95rem;color:var(--gold);flex-shrink:0">
+        <i class="fa-solid fa-handshake"></i>
+      </div>
+      <div>
+        <div style="font-size:.78rem;font-weight:700;color:#fff;margin-bottom:3px">Asociados</div>
+        {% if referral %}
+        <div style="font-size:.7rem;color:var(--muted-2)">{{ referral.clicks }} click{{ referral.clicks|pluralize }} · {{ referral.registrations }} registro{{ referral.registrations|pluralize }}</div>
+        <div style="font-size:.68rem;color:var(--muted);margin-top:3px">Comisión: ${{ referral.estimated_commission|floatformat:2 }}</div>
+        {% else %}
+        <div style="font-size:.7rem;color:var(--muted)">Activa tu programa IB</div>
+        {% endif %}
+      </div>
+    </div>
+    </a>
+
+    <!-- Bonos -->
+    <a href="{% url 'simulator:bonuses' %}" style="text-decoration:none">
+    <div style="background:var(--bg-card-2);border:1px solid var(--border);border-radius:12px;padding:16px 18px;display:flex;gap:14px;align-items:center;transition:border-color .2s,transform .12s" onmouseover="this.style.borderColor='rgba(255,215,0,.25)';this.style.transform='translateY(-1px)'" onmouseout="this.style.borderColor='';this.style.transform=''">
+      <div style="width:38px;height:38px;border-radius:9px;background:rgba(255,215,0,.08);border:1px solid rgba(255,215,0,.14);display:flex;align-items:center;justify-content:center;font-size:.95rem;color:var(--gold);flex-shrink:0">
+        <i class="fa-solid fa-gift"></i>
+      </div>
+      <div>
+        <div style="font-size:.78rem;font-weight:700;color:#fff;margin-bottom:3px">Bonos</div>
+        {% if active_bonuses_ct %}
+        <div style="font-size:.7rem;color:#26a69a;font-weight:600">{{ active_bonuses_ct }} bono{{ active_bonuses_ct|pluralize }} activo{{ active_bonuses_ct|pluralize }}</div>
+        {% else %}
+        <div style="font-size:.7rem;color:var(--muted)">Sin bonos activos</div>
+        {% endif %}
+      </div>
+    </div>
+    </a>
+
+    <!-- Archivos -->
+    <a href="{% url 'simulator:documents' %}" style="text-decoration:none">
+    <div style="background:var(--bg-card-2);border:1px solid var(--border);border-radius:12px;padding:16px 18px;display:flex;gap:14px;align-items:center;transition:border-color .2s,transform .12s" onmouseover="this.style.borderColor='rgba(255,215,0,.25)';this.style.transform='translateY(-1px)'" onmouseout="this.style.borderColor='';this.style.transform=''">
+      <div style="width:38px;height:38px;border-radius:9px;background:rgba(255,215,0,.08);border:1px solid rgba(255,215,0,.14);display:flex;align-items:center;justify-content:center;font-size:.95rem;color:var(--gold);flex-shrink:0">
+        <i class="fa-solid fa-folder-open"></i>
+      </div>
+      <div>
+        <div style="font-size:.78rem;font-weight:700;color:#fff;margin-bottom:3px">Archivos</div>
+        {% if recent_docs %}
+        <div style="font-size:.7rem;color:var(--muted-2)">{{ recent_docs|length }} archivo{{ recent_docs|length|pluralize }} reciente{{ recent_docs|length|pluralize }}</div>
+        {% else %}
+        <div style="font-size:.7rem;color:var(--muted)">Sin archivos publicados</div>
+        {% endif %}
+      </div>
+    </div>
+    </a>
+
+    <!-- Expertos -->
+    <a href="{% url 'simulator:experts' %}" style="text-decoration:none">
+    <div style="background:var(--bg-card-2);border:1px solid var(--border);border-radius:12px;padding:16px 18px;display:flex;gap:14px;align-items:center;transition:border-color .2s,transform .12s" onmouseover="this.style.borderColor='rgba(255,215,0,.25)';this.style.transform='translateY(-1px)'" onmouseout="this.style.borderColor='';this.style.transform=''">
+      <div style="width:38px;height:38px;border-radius:9px;background:rgba(255,215,0,.08);border:1px solid rgba(255,215,0,.14);display:flex;align-items:center;justify-content:center;font-size:.95rem;color:var(--gold);flex-shrink:0">
+        <i class="fa-solid fa-robot"></i>
+      </div>
+      <div>
+        <div style="font-size:.78rem;font-weight:700;color:#fff;margin-bottom:3px">Expertos (EAs)</div>
+        {% if ea_count %}
+        <div style="font-size:.7rem;color:var(--muted-2)">{{ ea_count }} EA{{ ea_count|pluralize }} disponible{{ ea_count|pluralize }}</div>
+        {% else %}
+        <div style="font-size:.7rem;color:var(--muted)">Sin EAs publicados</div>
+        {% endif %}
+      </div>
+    </div>
+    </a>
+
+  </div>
+  <!-- /BROKER ECOSYSTEM -->
+
 </div>
 {% endblock %}

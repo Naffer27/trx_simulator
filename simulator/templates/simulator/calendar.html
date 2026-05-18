@@ -1,0 +1,155 @@
+{% extends "simulator/base_app.html" %}
+{% block title %}Calendario Económico — Money Brokers{% endblock %}
+{% block page_title %}Calendario Económico{% endblock %}
+
+{% block extra_styles %}
+.cal-section-title {
+  font-family: 'Orbitron', sans-serif;
+  font-size: .72rem; font-weight: 700;
+  letter-spacing: .1em; text-transform: uppercase;
+  color: var(--muted); margin: 24px 0 12px;
+}
+.cal-table {
+  width: 100%; border-collapse: collapse;
+  background: var(--bg-card-2); border: 1px solid var(--border);
+  border-radius: 12px; overflow: hidden;
+}
+.cal-table thead th {
+  padding: 10px 16px; font-size: .68rem; font-weight: 700;
+  letter-spacing: .06em; text-transform: uppercase;
+  color: var(--muted); background: var(--bg-app);
+  border-bottom: 1px solid var(--border); text-align: left;
+}
+.cal-table tbody tr {
+  border-bottom: 1px solid rgba(255,255,255,.04);
+  transition: background .12s;
+}
+.cal-table tbody tr:last-child { border-bottom: none; }
+.cal-table tbody tr:hover { background: rgba(255,255,255,.018); }
+.cal-table td { padding: 11px 16px; font-size: .8rem; color: var(--text); vertical-align: middle; }
+
+.imp-dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  margin-right: 6px; flex-shrink: 0;
+}
+.imp-HIGH   .imp-dot { background: #ef5350; }
+.imp-MEDIUM .imp-dot { background: #ff9800; }
+.imp-LOW    .imp-dot { background: #26a69a; }
+
+.imp-badge {
+  display: inline-flex; align-items: center;
+  padding: 2px 8px; border-radius: 4px;
+  font-size: .65rem; font-weight: 700; letter-spacing: .04em;
+}
+.imp-HIGH   { background: rgba(239,83,80,.12);  color: #ef5350; border: 1px solid rgba(239,83,80,.25); }
+.imp-MEDIUM { background: rgba(255,152,0,.10);  color: #ff9800; border: 1px solid rgba(255,152,0,.25); }
+.imp-LOW    { background: rgba(38,166,154,.10); color: #26a69a; border: 1px solid rgba(38,166,154,.25); }
+
+.cal-currency {
+  font-family: 'Orbitron', sans-serif;
+  font-size: .68rem; font-weight: 700; color: var(--gold);
+  letter-spacing: .06em;
+}
+.cal-actual   { color: #26a69a; font-weight: 700; }
+.cal-forecast { color: var(--muted-2); }
+.cal-previous { color: var(--muted); }
+.cal-date-cell { white-space: nowrap; color: var(--muted-2); font-size: .75rem; }
+
+.empty-state {
+  text-align: center; padding: 60px 24px;
+  background: var(--bg-card-2); border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.empty-icon { font-size: 2.2rem; color: rgba(255,215,0,.2); margin-bottom: 12px; }
+.empty-msg  { font-size: .88rem; color: var(--muted); }
+{% endblock %}
+
+{% block content %}
+<div>
+  <p style="color:var(--muted-2);font-size:.85rem;margin-bottom:20px;">
+    Eventos macroeconómicos relevantes para los mercados. Administra desde el panel de administración.
+  </p>
+
+  <!-- Próximos eventos -->
+  <div class="cal-section-title">Próximos eventos</div>
+
+  {% if upcoming %}
+  <table class="cal-table">
+    <thead>
+      <tr>
+        <th>Fecha / Hora</th>
+        <th>Evento</th>
+        <th>Divisa</th>
+        <th>Impacto</th>
+        <th>Anterior</th>
+        <th>Pronóstico</th>
+        <th>Actual</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for ev in upcoming %}
+      <tr>
+        <td class="cal-date-cell">{{ ev.event_date|date:"d/m/Y" }}<br><span style="font-size:.7rem;color:var(--muted)">{{ ev.event_date|date:"H:i" }} UTC</span></td>
+        <td>
+          <div style="font-weight:600">{{ ev.title }}</div>
+          {% if ev.country %}<div style="font-size:.72rem;color:var(--muted)">{{ ev.country }}</div>{% endif %}
+        </td>
+        <td><span class="cal-currency">{{ ev.currency }}</span></td>
+        <td>
+          <span class="imp-badge imp-{{ ev.impact }}">
+            <span class="imp-dot"></span>{{ ev.impact }}
+          </span>
+        </td>
+        <td class="cal-previous">{{ ev.previous|default:"—" }}</td>
+        <td class="cal-forecast">{{ ev.forecast|default:"—" }}</td>
+        <td class="cal-actual">{% if ev.actual %}{{ ev.actual }}{% else %}<span style="color:var(--muted)">Pendiente</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty-state">
+    <div class="empty-icon"><i class="fa-solid fa-calendar-days"></i></div>
+    <div class="empty-msg">No hay eventos económicos próximos programados.</div>
+  </div>
+  {% endif %}
+
+  <!-- Eventos pasados -->
+  {% if past %}
+  <div class="cal-section-title" style="margin-top:32px">Eventos recientes</div>
+  <table class="cal-table" style="opacity:.75">
+    <thead>
+      <tr>
+        <th>Fecha / Hora</th>
+        <th>Evento</th>
+        <th>Divisa</th>
+        <th>Impacto</th>
+        <th>Anterior</th>
+        <th>Pronóstico</th>
+        <th>Actual</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for ev in past %}
+      <tr>
+        <td class="cal-date-cell">{{ ev.event_date|date:"d/m/Y" }}<br><span style="font-size:.7rem;color:var(--muted)">{{ ev.event_date|date:"H:i" }} UTC</span></td>
+        <td>
+          <div style="font-weight:600">{{ ev.title }}</div>
+          {% if ev.country %}<div style="font-size:.72rem;color:var(--muted)">{{ ev.country }}</div>{% endif %}
+        </td>
+        <td><span class="cal-currency">{{ ev.currency }}</span></td>
+        <td>
+          <span class="imp-badge imp-{{ ev.impact }}">
+            <span class="imp-dot"></span>{{ ev.impact }}
+          </span>
+        </td>
+        <td class="cal-previous">{{ ev.previous|default:"—" }}</td>
+        <td class="cal-forecast">{{ ev.forecast|default:"—" }}</td>
+        <td class="cal-actual">{{ ev.actual|default:"—" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+{% endblock %}

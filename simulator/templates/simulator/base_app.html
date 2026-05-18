@@ -463,58 +463,50 @@
       <!-- ══ HIDDEN ITEMS — code preserved, visually disabled ══ -->
       <!-- To re-enable: remove class="sb-hidden" and data-sb-future attribute -->
 
-      <!-- Calendario — sb-hidden: feature not ready -->
-      <a href="#" class="sb-link sb-hidden" data-sb-future="calendario">
+      <!-- Calendario -->
+      <a href="{% url 'simulator:calendar' %}"
+         class="sb-link {% if active_section == 'calendar' %}active{% endif %}">
         <span class="sb-icon"><i class="fa-solid fa-calendar-days"></i></span>
         <span class="sb-text">Calendario</span>
-        <span class="sb-badge sb-badge-soon">Pronto</span>
       </a>
 
-      <div class="sb-divider sb-hidden" data-sb-future="divider-after-analysis"></div>
+      <div class="sb-divider"></div>
 
-      <!-- Asociados — sb-hidden: feature not ready -->
-      <div class="sb-group sb-hidden {% if active_section == 'asociados' %}open{% endif %}"
-           data-group="asociados" data-sb-future="asociados">
-        <div class="sb-link sb-group-hd">
-          <span class="sb-icon"><i class="fa-solid fa-handshake"></i></span>
-          <span class="sb-text">Asociados</span>
-          <span class="sb-chevron"><i class="fa-solid fa-chevron-right"></i></span>
-        </div>
-        <div class="sb-children">
-          <a href="#" class="sb-child"><span class="sb-cdot"></span>Cuentas de clientes</a>
-          <a href="#" class="sb-child"><span class="sb-cdot"></span>Programa de afiliados</a>
-          <a href="#" class="sb-child"><span class="sb-cdot"></span>Reportes</a>
-          <a href="#" class="sb-child"><span class="sb-cdot"></span>Materiales</a>
-        </div>
-      </div>
+      <!-- Asociados -->
+      <a href="{% url 'simulator:associates' %}"
+         class="sb-link {% if active_section == 'associates' %}active{% endif %}">
+        <span class="sb-icon"><i class="fa-solid fa-handshake"></i></span>
+        <span class="sb-text">Asociados</span>
+      </a>
 
-      <!-- Bonos — sb-hidden: feature not ready -->
-      <a href="#" class="sb-link sb-hidden" data-sb-future="bonos">
+      <!-- Bonos -->
+      <a href="{% url 'simulator:bonuses' %}"
+         class="sb-link {% if active_section == 'bonuses' %}active{% endif %}">
         <span class="sb-icon"><i class="fa-solid fa-gift"></i></span>
         <span class="sb-text">Bonos</span>
         <span class="sb-badge sb-badge-new">New</span>
       </a>
 
-      <!-- PAMM — sb-hidden: feature not ready -->
+      <!-- PAMM — código preservado, próximamente -->
       <a href="#" class="sb-link sb-hidden" data-sb-future="pamm">
         <span class="sb-icon"><i class="fa-solid fa-people-group"></i></span>
         <span class="sb-text">PAMM</span>
         <span class="sb-badge sb-badge-soon">Pronto</span>
       </a>
 
-      <!-- Archivos — sb-hidden: feature not ready -->
-      <a href="#" class="sb-link sb-hidden" data-sb-future="archivos">
+      <!-- Archivos -->
+      <a href="{% url 'simulator:documents' %}"
+         class="sb-link {% if active_section == 'documents' %}active{% endif %}">
         <span class="sb-icon"><i class="fa-solid fa-folder-open"></i></span>
         <span class="sb-text">Archivos</span>
       </a>
 
-      <!-- Expertos (EAs) — sb-hidden: feature not ready -->
-      <a href="#" class="sb-link sb-hidden" data-sb-future="expertos-eas">
+      <!-- Expertos (EAs) -->
+      <a href="{% url 'simulator:experts' %}"
+         class="sb-link {% if active_section == 'experts' %}active{% endif %}">
         <span class="sb-icon"><i class="fa-solid fa-robot"></i></span>
         <span class="sb-text">Expertos (EAs)</span>
-        <span class="sb-badge sb-badge-soon">Pronto</span>
       </a>
-      <!-- ══ /HIDDEN ITEMS ══ -->
 
     </nav>
 

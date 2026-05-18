@@ -960,3 +960,141 @@ class AuditLog(models.Model):
 
     def __str__(self):
         return f"AuditLog[{self.event_type}] user={self.user_id} {self.created_at:%Y-%m-%d %H:%M:%S}"
+
+
+# ─────────────────────────────────────────────
+# Broker Ecosystem Modules
+# ─────────────────────────────────────────────
+
+class CalendarEvent(models.Model):
+    IMPACT_CHOICES = [
+        ('LOW',    'Low'),
+        ('MEDIUM', 'Medium'),
+        ('HIGH',   'High'),
+    ]
+    title      = models.CharField(max_length=200)
+    currency   = models.CharField(max_length=8)
+    country    = models.CharField(max_length=60, blank=True)
+    event_date = models.DateTimeField()
+    impact     = models.CharField(max_length=10, choices=IMPACT_CHOICES, default='MEDIUM')
+    actual     = models.CharField(max_length=40, blank=True)
+    forecast   = models.CharField(max_length=40, blank=True)
+    previous   = models.CharField(max_length=40, blank=True)
+    published  = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['event_date']
+        indexes  = [models.Index(fields=['event_date', 'published'], name='calendar_date_pub_idx')]
+        verbose_name        = 'Calendar Event'
+        verbose_name_plural = 'Calendar Events'
+
+    def __str__(self):
+        return f"[{self.impact}] {self.title} {self.event_date:%Y-%m-%d %H:%M}"
+
+    @property
+    def is_past(self):
+        return timezone.now() > self.event_date
+
+
+class Referral(models.Model):
+    user                 = models.OneToOneField(User, on_delete=models.CASCADE, related_name='referral')
+    code                 = models.CharField(max_length=20, unique=True)
+    clicks               = models.PositiveIntegerField(default=0)
+    registrations        = models.PositiveIntegerField(default=0)
+    estimated_commission = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
+    created_at           = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Referral / IB Link'
+
+    def __str__(self):
+        return f"Referral({self.user_id}) code={self.code}"
+
+
+class Bonus(models.Model):
+    BONUS_TYPES = [
+        ('CREDIT',     'Bono de crédito'),
+        ('PERCENTAGE', 'Porcentaje sobre depósito'),
+        ('REBATE',     'Rebate / cashback'),
+    ]
+    title       = models.CharField(max_length=120)
+    description = models.TextField(blank=True)
+    bonus_type  = models.CharField(max_length=20, choices=BONUS_TYPES, default='CREDIT')
+    value       = models.DecimalField(max_digits=12, decimal_places=2)
+    active      = models.BooleanField(default=True)
+    expires_at  = models.DateTimeField(null=True, blank=True)
+    created_at  = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering            = ['-created_at']
+        verbose_name        = 'Bonus'
+        verbose_name_plural = 'Bonuses'
+
+    def __str__(self):
+        status = 'ON' if self.active else 'OFF'
+        return f"[{status}] {self.title}"
+
+    @property
+    def is_expired(self):
+        return bool(self.expires_at and timezone.now() > self.expires_at)
+
+
+class BrokerDocument(models.Model):
+    CATEGORIES = [
+        ('CONTRACT',    'Contratos'),
+        ('GUIDE',       'Guías'),
+        ('CERTIFICATE', 'Certificados'),
+        ('REPORT',      'Reportes'),
+    ]
+    title       = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    file        = models.FileField(upload_to='broker_documents/')
+    category    = models.CharField(max_length=20, choices=CATEGORIES, default='GUIDE')
+    public      = models.BooleanField(default=True, help_text="Visible to all logged-in users")
+    created_at  = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering            = ['category', 'title']
+        verbose_name        = 'Broker Document'
+        verbose_name_plural = 'Broker Documents'
+
+    def __str__(self):
+        return f"[{self.category}] {self.title}"
+
+    @property
+    def filename(self):
+        import os
+        return os.path.basename(self.file.name) if self.file else ''
+
+    @property
+    def extension(self):
+        name = self.filename
+        return name.rsplit('.', 1)[-1].upper() if '.' in name else ''
+
+
+class ExpertAdvisor(models.Model):
+    EA_CATEGORIES = [
+        ('TREND',      'Tendencia'),
+        ('SCALPING',   'Scalping'),
+        ('GRID',       'Grid'),
+        ('HEDGING',    'Cobertura'),
+        ('CUSTOM',     'Personalizado'),
+    ]
+    name         = models.CharField(max_length=120)
+    description  = models.TextField(blank=True)
+    category     = models.CharField(max_length=20, choices=EA_CATEGORIES, default='TREND')
+    version      = models.CharField(max_length=20, blank=True)
+    download_url = models.URLField(blank=True, help_text="External link or leave blank for future upload")
+    active       = models.BooleanField(default=True)
+    coming_soon  = models.BooleanField(default=False)
+    created_at   = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering            = ['category', 'name']
+        verbose_name        = 'Expert Advisor'
+        verbose_name_plural = 'Expert Advisors'
+
+    def __str__(self):
+        v = f" v{self.version}" if self.version else ""
+        return f"{self.name}{v} [{self.category}]"

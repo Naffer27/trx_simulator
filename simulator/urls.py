@@ -38,6 +38,13 @@ from .views import (
     totp_setup_view,
     totp_verify_view,
     totp_disable_view,
+    # Broker ecosystem modules
+    calendar_view,
+    associates_view,
+    referral_click_view,
+    bonuses_view,
+    documents_view,
+    experts_view,
 )
 
 app_name = 'simulator'
@@ -100,4 +107,12 @@ urlpatterns = [
     path("account/2fa/setup/",   totp_setup_view,   name="totp_setup"),
     path("account/2fa/verify/",  totp_verify_view,  name="totp_verify"),
     path("account/2fa/disable/", totp_disable_view, name="totp_disable"),
+
+    # ── Broker Ecosystem Modules ─────────────────────────────────────────────
+    path("calendar/",             calendar_view,       name="calendar"),
+    path("associates/",           associates_view,     name="associates"),
+    path("ref/<str:code>/",       referral_click_view, name="referral_click"),
+    path("bonuses/",              bonuses_view,        name="bonuses"),
+    path("documents/",            documents_view,      name="documents"),
+    path("experts/",              experts_view,        name="experts"),
 ]

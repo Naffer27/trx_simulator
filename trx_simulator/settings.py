@@ -146,6 +146,10 @@ STORAGES = {
 WHITENOISE_AUTOREFRESH = DEBUG
 WHITENOISE_MAX_AGE = 0 if DEBUG else 60 * 60 * 24 * 30  # 30 días
 
+# Media files (user uploads: broker documents, EA images)
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
+
 # Primary key
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

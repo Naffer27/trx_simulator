@@ -1,0 +1,137 @@
+{% extends "simulator/base_app.html" %}
+{% block title %}Expertos (EAs) — Money Brokers{% endblock %}
+{% block page_title %}Expertos (EAs){% endblock %}
+
+{% block extra_styles %}
+.ea-section-title {
+  font-family: 'Orbitron', sans-serif;
+  font-size: .7rem; font-weight: 700; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--muted); margin: 24px 0 12px;
+}
+.ea-section-title:first-of-type { margin-top: 0; }
+
+.ea-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+  gap: 14px; margin-bottom: 8px;
+}
+.ea-card {
+  background: var(--bg-card-2); border: 1px solid var(--border);
+  border-radius: 14px; overflow: hidden;
+  display: flex; flex-direction: column;
+  transition: border-color .2s, transform .15s;
+}
+.ea-card:hover { border-color: rgba(255,215,0,.2); transform: translateY(-2px); }
+
+.ea-card-head {
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid rgba(255,255,255,.04);
+  display: flex; align-items: center; gap: 14px;
+}
+.ea-icon {
+  width: 44px; height: 44px; border-radius: 10px; flex-shrink: 0;
+  background: rgba(255,215,0,.08); border: 1px solid rgba(255,215,0,.14);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.1rem; color: var(--gold);
+}
+.ea-name { font-weight: 700; color: #fff; font-size: .9rem; margin-bottom: 4px; }
+.ea-meta-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.ea-cat-badge {
+  display: inline-block; padding: 2px 8px; border-radius: 4px;
+  font-size: .62rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  background: rgba(78,142,247,.1); color: #4e8ef7; border: 1px solid rgba(78,142,247,.2);
+}
+.ea-ver-badge {
+  font-size: .65rem; color: var(--muted); font-family: 'Orbitron', sans-serif;
+}
+.ea-soon-badge {
+  display: inline-block; padding: 2px 8px; border-radius: 4px;
+  font-size: .62rem; font-weight: 700; letter-spacing: .04em;
+  background: rgba(255,152,0,.12); color: #ff9800; border: 1px solid rgba(255,152,0,.25);
+}
+
+.ea-card-body { padding: 14px 20px; flex: 1; }
+.ea-desc { font-size: .8rem; color: var(--muted-2); line-height: 1.55; }
+
+.ea-card-footer {
+  padding: 12px 20px;
+  border-top: 1px solid rgba(255,255,255,.04);
+  display: flex; align-items: center; justify-content: flex-end;
+}
+.ea-download-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 16px; border-radius: 7px;
+  background: rgba(255,215,0,.1); border: 1px solid rgba(255,215,0,.25);
+  color: var(--gold); font-size: .76rem; font-weight: 700;
+  text-decoration: none; transition: background .15s;
+  letter-spacing: .03em;
+}
+.ea-download-btn:hover { background: rgba(255,215,0,.18); color: var(--gold); }
+.ea-coming-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 16px; border-radius: 7px;
+  background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08);
+  color: var(--muted); font-size: .76rem; font-weight: 600; cursor: default;
+}
+
+.empty-state {
+  text-align: center; padding: 60px 24px;
+  background: var(--bg-card-2); border: 1px solid var(--border); border-radius: 12px;
+}
+.empty-icon { font-size: 2.2rem; color: rgba(255,215,0,.2); margin-bottom: 12px; }
+.empty-msg  { font-size: .88rem; color: var(--muted); }
+{% endblock %}
+
+{% block content %}
+<div>
+  <p style="color:var(--muted-2);font-size:.85rem;margin-bottom:24px;">
+    Robots de trading y asesores expertos (EAs) disponibles para Money Brokers.
+    {% if total %}<span style="color:var(--muted);margin-left:8px">{{ total }} EA{{ total|pluralize }} disponible{{ total|pluralize }}</span>{% endif %}
+    Gestionado desde el panel de administración.
+  </p>
+
+  {% if by_category %}
+    {% for cat_label, eas in by_category.items %}
+    <div class="ea-section-title">{{ cat_label }}</div>
+    <div class="ea-grid">
+      {% for ea in eas %}
+      <div class="ea-card">
+        <div class="ea-card-head">
+          <div class="ea-icon"><i class="fa-solid fa-robot"></i></div>
+          <div>
+            <div class="ea-name">{{ ea.name }}</div>
+            <div class="ea-meta-row">
+              <span class="ea-cat-badge">{{ ea.get_category_display }}</span>
+              {% if ea.version %}<span class="ea-ver-badge">v{{ ea.version }}</span>{% endif %}
+              {% if ea.coming_soon %}<span class="ea-soon-badge">Pronto</span>{% endif %}
+            </div>
+          </div>
+        </div>
+        {% if ea.description %}
+        <div class="ea-card-body">
+          <div class="ea-desc">{{ ea.description }}</div>
+        </div>
+        {% endif %}
+        <div class="ea-card-footer">
+          {% if ea.coming_soon %}
+          <span class="ea-coming-btn"><i class="fa-solid fa-lock"></i> Próximamente</span>
+          {% elif ea.download_url %}
+          <a href="{{ ea.download_url }}" class="ea-download-btn" target="_blank" rel="noopener">
+            <i class="fa-solid fa-download"></i> Descargar
+          </a>
+          {% else %}
+          <span class="ea-coming-btn"><i class="fa-solid fa-clock"></i> Disponible pronto</span>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endfor %}
+  {% else %}
+  <div class="empty-state">
+    <div class="empty-icon"><i class="fa-solid fa-robot"></i></div>
+    <div class="empty-msg">No hay expertos disponibles en este momento.</div>
+    <div style="font-size:.75rem;color:var(--muted);margin-top:6px">Los EAs serán publicados próximamente por el equipo de Money Brokers.</div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

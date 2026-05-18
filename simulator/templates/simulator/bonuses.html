@@ -1,0 +1,170 @@
+{% extends "simulator/base_app.html" %}
+{% block title %}Bonos y Promociones — Money Brokers{% endblock %}
+{% block page_title %}Bonos y Promociones{% endblock %}
+
+{% block extra_styles %}
+.bonus-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px; margin-bottom: 32px;
+}
+.bonus-card {
+  background: var(--bg-card-2); border: 1px solid var(--border);
+  border-radius: 14px; overflow: hidden;
+  transition: border-color .2s, transform .15s;
+  display: flex; flex-direction: column;
+}
+.bonus-card:hover { border-color: rgba(255,215,0,.25); transform: translateY(-2px); }
+
+.bonus-card-top {
+  padding: 18px 20px;
+  border-bottom: 1px solid rgba(255,255,255,.05);
+  display: flex; align-items: flex-start; gap: 14px;
+}
+.bonus-icon {
+  width: 42px; height: 42px; border-radius: 10px; flex-shrink: 0;
+  background: rgba(255,215,0,.1); border: 1px solid rgba(255,215,0,.18);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1rem; color: var(--gold);
+}
+.bonus-title { font-weight: 700; color: #fff; font-size: .9rem; margin-bottom: 4px; }
+.bonus-type-badge {
+  display: inline-block; padding: 2px 8px; border-radius: 4px;
+  font-size: .62rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  background: rgba(255,215,0,.08); color: var(--gold);
+  border: 1px solid rgba(255,215,0,.18);
+}
+
+.bonus-card-body { padding: 16px 20px; flex: 1; }
+.bonus-desc { font-size: .8rem; color: var(--muted-2); line-height: 1.55; margin-bottom: 14px; }
+
+.bonus-value-row {
+  display: flex; align-items: baseline; gap: 6px; margin-bottom: 10px;
+}
+.bonus-amount {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 1.4rem; font-weight: 700; color: var(--gold);
+}
+.bonus-amount-label { font-size: .72rem; color: var(--muted-2); }
+
+.bonus-expiry {
+  font-size: .72rem; color: var(--muted);
+  display: flex; align-items: center; gap: 5px;
+}
+.bonus-expiry.soon { color: #ff9800; }
+
+.bonus-card-footer {
+  padding: 12px 20px;
+  border-top: 1px solid rgba(255,255,255,.04);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.bonus-status-active {
+  display: flex; align-items: center; gap: 5px;
+  font-size: .7rem; font-weight: 700; color: #26a69a; letter-spacing: .04em;
+}
+.bonus-status-dot { width: 6px; height: 6px; border-radius: 50%; background: #26a69a; animation: blink 1.4s ease-in-out infinite; }
+@keyframes blink { 0%,100%{opacity:1}50%{opacity:.25} }
+
+.bonus-cta {
+  font-size: .75rem; font-weight: 700; color: var(--gold);
+  text-decoration: none; letter-spacing: .04em;
+  transition: opacity .15s;
+}
+.bonus-cta:hover { opacity: .75; color: var(--gold); }
+
+.section-label {
+  font-family: 'Orbitron', sans-serif;
+  font-size: .7rem; font-weight: 700; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--muted); margin-bottom: 14px;
+}
+
+.empty-state {
+  text-align: center; padding: 60px 24px;
+  background: var(--bg-card-2); border: 1px solid var(--border); border-radius: 12px;
+}
+.empty-icon { font-size: 2.2rem; color: rgba(255,215,0,.2); margin-bottom: 12px; }
+.empty-msg  { font-size: .88rem; color: var(--muted); }
+
+.bonus-type-icons {
+  CREDIT: 'fa-gift', PERCENTAGE: 'fa-percent', REBATE: 'fa-rotate-left'
+}
+{% endblock %}
+
+{% block content %}
+<div>
+  <p style="color:var(--muted-2);font-size:.85rem;margin-bottom:22px;">
+    Promociones y bonos activos disponibles para tu cuenta. Gestionados desde el panel de administración.
+  </p>
+
+  <!-- Activos -->
+  <div class="section-label">Bonos activos</div>
+
+  {% if bonuses %}
+  <div class="bonus-grid">
+    {% for bonus in bonuses %}
+    <div class="bonus-card">
+      <div class="bonus-card-top">
+        <div class="bonus-icon">
+          {% if bonus.bonus_type == 'CREDIT' %}<i class="fa-solid fa-gift"></i>
+          {% elif bonus.bonus_type == 'PERCENTAGE' %}<i class="fa-solid fa-percent"></i>
+          {% else %}<i class="fa-solid fa-rotate-left"></i>{% endif %}
+        </div>
+        <div>
+          <div class="bonus-title">{{ bonus.title }}</div>
+          <span class="bonus-type-badge">{{ bonus.get_bonus_type_display }}</span>
+        </div>
+      </div>
+      <div class="bonus-card-body">
+        {% if bonus.description %}
+        <div class="bonus-desc">{{ bonus.description }}</div>
+        {% endif %}
+        <div class="bonus-value-row">
+          <div class="bonus-amount">
+            {% if bonus.bonus_type == 'PERCENTAGE' %}{{ bonus.value|floatformat:1 }}%
+            {% else %}${{ bonus.value|floatformat:2 }}{% endif %}
+          </div>
+          <div class="bonus-amount-label">
+            {% if bonus.bonus_type == 'CREDIT' %}en crédito
+            {% elif bonus.bonus_type == 'PERCENTAGE' %}sobre depósito
+            {% else %}cashback{% endif %}
+          </div>
+        </div>
+        {% if bonus.expires_at %}
+        <div class="bonus-expiry">
+          <i class="fa-regular fa-clock"></i>
+          Vence: {{ bonus.expires_at|date:"d/m/Y H:i" }} UTC
+        </div>
+        {% else %}
+        <div class="bonus-expiry"><i class="fa-solid fa-infinity"></i> Sin fecha de vencimiento</div>
+        {% endif %}
+      </div>
+      <div class="bonus-card-footer">
+        <div class="bonus-status-active">
+          <span class="bonus-status-dot"></span> ACTIVO
+        </div>
+        <a href="#" class="bonus-cta">Consultar →</a>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <div class="empty-icon"><i class="fa-solid fa-gift"></i></div>
+    <div class="empty-msg">No hay bonos activos en este momento.</div>
+    <div style="font-size:.75rem;color:var(--muted);margin-top:6px">Próximamente nuevas promociones.</div>
+  </div>
+  {% endif %}
+
+  <!-- Inactivos/expirados -->
+  {% if expired %}
+  <div class="section-label" style="margin-top:32px;opacity:.6">Promociones anteriores</div>
+  <div style="display:flex;flex-direction:column;gap:8px;opacity:.55">
+    {% for bonus in expired %}
+    <div style="background:var(--bg-card-2);border:1px solid rgba(255,255,255,.05);border-radius:10px;padding:12px 16px;display:flex;align-items:center;gap:12px;">
+      <div style="font-size:.85rem;color:var(--muted-2);">{{ bonus.title }}</div>
+      <div style="margin-left:auto;font-size:.7rem;color:var(--muted)">INACTIVO</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

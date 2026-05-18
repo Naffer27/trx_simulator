@@ -13,6 +13,7 @@ from .models import (
     RiskRule, DrawdownSnapshot, TradingViolation, TraderScore,
     BrokerSnapshot, SymbolExposure, TraderClassExposure,
     AuditLog,
+    CalendarEvent, Referral, Bonus, BrokerDocument, ExpertAdvisor,
 )
 
 
@@ -1542,6 +1543,72 @@ class AuditLogAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return request.user.is_superuser  # superuser can purge stale rows if needed
+
+
+# ─────────────────────────────────────────────
+# Broker Ecosystem Modules
+# ─────────────────────────────────────────────
+
+@admin.register(CalendarEvent)
+class CalendarEventAdmin(admin.ModelAdmin):
+    list_display  = ('title', 'currency', 'country', 'event_date', 'impact_badge', 'actual', 'forecast', 'published')
+    list_filter   = ('impact', 'currency', 'published')
+    search_fields = ('title', 'currency', 'country')
+    ordering      = ('event_date',)
+    list_editable = ('published',)
+    date_hierarchy = 'event_date'
+    fieldsets = (
+        (None, {'fields': ('title', 'currency', 'country', 'event_date', 'impact', 'published')}),
+        ('Datos', {'fields': ('actual', 'forecast', 'previous')}),
+    )
+
+    @admin.display(description='Impact')
+    def impact_badge(self, obj):
+        colors = {'HIGH': ('#4a0000', '#ef5350'), 'MEDIUM': ('#2a1a00', '#ff9800'), 'LOW': ('#0a2a1a', '#26a69a')}
+        bg, fg = colors.get(obj.impact, ('#222', '#aaa'))
+        return _badge(obj.impact, bg, fg)
+
+
+@admin.register(Referral)
+class ReferralAdmin(admin.ModelAdmin):
+    list_display  = ('user', 'code', 'clicks', 'registrations', 'estimated_commission', 'created_at')
+    search_fields = ('user__username', 'code')
+    readonly_fields = ('code', 'clicks', 'registrations', 'created_at')
+    ordering      = ('-created_at',)
+
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(Bonus)
+class BonusAdmin(admin.ModelAdmin):
+    list_display  = ('title', 'bonus_type', 'value', 'active', 'expires_at', 'created_at')
+    list_filter   = ('active', 'bonus_type')
+    list_editable = ('active',)
+    search_fields = ('title', 'description')
+    ordering      = ('-created_at',)
+    fieldsets = (
+        (None, {'fields': ('title', 'description', 'bonus_type', 'value', 'active')}),
+        ('Expiración (opcional)', {'fields': ('expires_at',)}),
+    )
+
+
+@admin.register(BrokerDocument)
+class BrokerDocumentAdmin(admin.ModelAdmin):
+    list_display  = ('title', 'category', 'public', 'created_at')
+    list_filter   = ('category', 'public')
+    list_editable = ('public',)
+    search_fields = ('title', 'description')
+    ordering      = ('category', 'title')
+
+
+@admin.register(ExpertAdvisor)
+class ExpertAdvisorAdmin(admin.ModelAdmin):
+    list_display  = ('name', 'category', 'version', 'active', 'coming_soon', 'download_url', 'created_at')
+    list_filter   = ('category', 'active', 'coming_soon')
+    list_editable = ('active', 'coming_soon')
+    search_fields = ('name', 'description')
+    ordering      = ('category', 'name')
 
 
 # ─────────────────────────────────────────────

@@ -12,11 +12,12 @@ from django.conf import settings
 from django.db.models import Sum, Count, Max, Min, Q
 from django.db import transaction
 from django.urls import reverse
-import json, random, logging, time
+import json, random, logging, time, secrets as _secrets
 
 from .models import (
     Purchase, TradingAccount, Trade, Position, LedgerEntry, Deposit,
     WalletTransaction, WithdrawalRequest, MARGIN_ENGINE_TYPES,
+    CalendarEvent, Referral, Bonus, BrokerDocument, ExpertAdvisor,
 )
 from .forms import LoginForm, RegisterForm, DepositForm, WithdrawForm, CreateAccountForm, FundAccountForm, WithdrawAccountForm
 from .wallet_ledger import credit_wallet, debit_wallet, transfer_to_account, transfer_to_wallet, get_or_create_wallet, InsufficientFunds
@@ -589,6 +590,18 @@ def home_view(request):
     recent_moves = LedgerEntry.objects.filter(account=account).order_by('-created_at')[:8]
     recent_trades = Trade.objects.filter(account=account).order_by('-opened_at')[:5]
 
+    now = timezone.now()
+
+    # Broker ecosystem widgets
+    upcoming_events   = CalendarEvent.objects.filter(published=True, event_date__gte=now).order_by('event_date')[:3]
+    active_bonuses_ct = Bonus.objects.filter(active=True).count()
+    referral, _       = Referral.objects.get_or_create(
+        user=request.user,
+        defaults={'code': _secrets.token_urlsafe(8)},
+    )
+    recent_docs       = BrokerDocument.objects.filter(public=True).order_by('-created_at')[:3]
+    ea_count          = ExpertAdvisor.objects.filter(active=True).count()
+
     return render(request, 'simulator/home.html', {
         'account': account,
         'all_accounts': all_accounts,
@@ -599,6 +612,12 @@ def home_view(request):
         'total_trades': total_trades,
         'recent_moves': recent_moves,
         'recent_trades': recent_trades,
+        # Ecosystem widgets
+        'upcoming_events': upcoming_events,
+        'active_bonuses_ct': active_bonuses_ct,
+        'referral': referral,
+        'recent_docs': recent_docs,
+        'ea_count': ea_count,
         'active_section': 'dashboard',
     })
 
@@ -1927,4 +1946,88 @@ def totp_disable_view(request):
     return render(request, "simulator/totp_setup.html", {
         "existing": device,
         "error": "Código incorrecto — 2FA no desactivado.",
+    })
+
+
+# ─────────────────────────────────────────────
+# Broker Ecosystem Modules
+# ─────────────────────────────────────────────
+
+@login_required
+def calendar_view(request):
+    now     = timezone.now()
+    upcoming = CalendarEvent.objects.filter(published=True, event_date__gte=now).order_by('event_date')
+    past     = CalendarEvent.objects.filter(published=True, event_date__lt=now).order_by('-event_date')[:30]
+    return render(request, 'simulator/calendar.html', {
+        'upcoming': upcoming,
+        'past':     past,
+        'active_section': 'calendar',
+    })
+
+
+@login_required
+def associates_view(request):
+    ref, _ = Referral.objects.get_or_create(
+        user=request.user,
+        defaults={'code': _secrets.token_urlsafe(8)},
+    )
+    referral_url = request.build_absolute_uri(
+        reverse('simulator:referral_click', args=[ref.code])
+    )
+    return render(request, 'simulator/associates.html', {
+        'referral':     ref,
+        'referral_url': referral_url,
+        'active_section': 'associates',
+    })
+
+
+def referral_click_view(request, code):
+    from django.db.models import F
+    try:
+        Referral.objects.filter(code=code).update(clicks=F('clicks') + 1)
+    except Exception:
+        pass
+    return redirect('simulator:register')
+
+
+@login_required
+def bonuses_view(request):
+    now     = timezone.now()
+    bonuses = Bonus.objects.filter(active=True).order_by('-created_at')
+    live    = [b for b in bonuses if not b.is_expired]
+    expired = Bonus.objects.filter(active=False).order_by('-created_at')[:6]
+    return render(request, 'simulator/bonuses.html', {
+        'bonuses':  live,
+        'expired':  expired,
+        'active_section': 'bonuses',
+    })
+
+
+@login_required
+def documents_view(request):
+    docs = BrokerDocument.objects.filter(public=True)
+    by_category = {}
+    for cat_key, cat_label in BrokerDocument.CATEGORIES:
+        cat_docs = [d for d in docs if d.category == cat_key]
+        if cat_docs:
+            by_category[cat_label] = cat_docs
+    return render(request, 'simulator/documents.html', {
+        'by_category': by_category,
+        'total':       docs.count(),
+        'active_section': 'documents',
+    })
+
+
+@login_required
+def experts_view(request):
+    eas = ExpertAdvisor.objects.filter(active=True).order_by('category', 'name')
+    by_category = {}
+    for cat_key, cat_label in ExpertAdvisor.EA_CATEGORIES:
+        cat_eas = [e for e in eas if e.category == cat_key]
+        if cat_eas:
+            by_category[cat_label] = cat_eas
+    return render(request, 'simulator/experts.html', {
+        'by_category': by_category,
+        'total':       eas.count(),
+        'active_section': 'experts',
     })
