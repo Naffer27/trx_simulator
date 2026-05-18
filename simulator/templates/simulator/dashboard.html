@@ -485,6 +485,54 @@
     #panelTabsBar{display:none!important;}
     .mob-float-wrap{display:none!important;}
   }
+
+  /* ── Exec toast ── */
+  #execToast{
+    position:fixed;bottom:calc(var(--nav-h)+14px);left:50%;transform:translateX(-50%);
+    display:flex;align-items:center;gap:10px;
+    padding:10px 22px;border-radius:12px;font-size:.82rem;font-weight:700;
+    z-index:90;pointer-events:none;opacity:0;
+    transition:opacity .18s,transform .18s;transform:translateX(-50%) translateY(6px);
+    white-space:nowrap;backdrop-filter:saturate(160%) blur(14px);
+    font-family:'Inter',sans-serif;letter-spacing:.02em;
+  }
+  #execToast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+  #execToast.et-buy  {background:rgba(38,166,154,.18);border:1px solid rgba(38,166,154,.5);color:#26a69a;}
+  #execToast.et-sell {background:rgba(239,83,80,.18); border:1px solid rgba(239,83,80,.5); color:#ef5350;}
+  #execToast.et-close{background:rgba(255,215,0,.12); border:1px solid rgba(255,215,0,.35);color:#FFD700;}
+  #execToast.et-send {background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);color:#d1d4dc;}
+  .et-icon{font-size:1rem;line-height:1;}
+  .et-sub{opacity:.65;font-weight:500;font-size:.75rem;margin-left:2px;}
+  @media(min-width:981px){#execToast{bottom:20px;}}
+
+  /* ── WS status pill (desktop, metric bar) ── */
+  #wsStatusPill{
+    display:flex;align-items:center;gap:5px;
+    padding:4px 10px;border-radius:6px;
+    font-size:.61rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+    border:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,.03);
+    cursor:default;user-select:none;
+    transition:border-color .25s,color .25s;
+  }
+  #wsStatusPill.wss-live        {border-color:rgba(38,166,154,.35);color:#26a69a;}
+  #wsStatusPill.wss-reconnecting{border-color:rgba(255,152,0,.4);  color:#ff9800;}
+  #wsStatusPill.wss-disconnected{border-color:rgba(239,83,80,.3);  color:#ef5350;}
+  #wsStatusPill .wss-dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0;}
+  @keyframes wss-pulse{0%,100%{opacity:1}50%{opacity:.3}}
+  #wsStatusPill.wss-reconnecting .wss-dot{animation:wss-pulse .85s ease-in-out infinite;}
+
+  /* ── WS dot (mobile header) ── */
+  #wsStatusMob{
+    width:8px;height:8px;min-width:8px;border-radius:50%;
+    background:#444;flex-shrink:0;
+    transition:background .3s;
+  }
+  #wsStatusMob.wss-live        {background:#26a69a;}
+  #wsStatusMob.wss-reconnecting{background:#ff9800;animation:wss-pulse .85s ease-in-out infinite;}
+  #wsStatusMob.wss-disconnected{background:#ef5350;}
+
+  /* ── Sending state on order buttons ── */
+  .btn-sending{opacity:.5!important;pointer-events:none!important;transition:opacity .15s;}
 </style>
 {% endblock %}
 
@@ -536,6 +584,7 @@
     <span class="mhdr-label">Balance</span>
     <span class="mhdr-bal" id="mhdrBal">—</span>
   </div>
+  <div id="wsStatusMob" class="wss-disconnected" title="WebSocket status"></div>
 </div>
 
 <div class="wrap" id="app">
@@ -572,6 +621,10 @@
     <div class="mb-item">
       <div class="mb-label">Margin Level</div>
       <div class="mb-value" id="mbMarginLevel">—</div>
+    </div>
+    <div id="wsStatusPill" class="wss-disconnected" style="margin-left:auto;flex-shrink:0;">
+      <span class="wss-dot"></span>
+      <span class="wss-label">OFFLINE</span>
     </div>
   </div>
 
@@ -984,6 +1037,8 @@
   </div>
 </div>
 
+<div id="execToast"></div>
+
 {% endblock %}
 
 {% block extra_scripts %}
@@ -1009,7 +1064,7 @@ const tfToSec=tf=>({'1s':1,'1m':60,'5m':300,'15m':900,'1h':3600,'1d':86400}[Stri
 const roundToTick=(price,sym)=>{const {minMove,precision}=priceFormatFor(sym);return Number((Math.round(price/minMove)*minMove).toFixed(precision));};
 const debounce=(fn,ms)=>{let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms);};};
 const normTime=secOrMs=>{const t=Number(secOrMs||0);if(!t)return null;return(t>1e12)?Math.floor(t/1000):t;};
-const volPointForBar=b=>{const span=Math.max((b.high??b.close)-(b.low??b.close),Math.abs((b.close??0)-(b.open??0)));const val=Math.max(1,Math.floor(span*1e6));const up=(b.close??0)>=(b.open??0);return{time:b.time,value:val,color:up?'rgba(38,166,154,.35)':'rgba(239,83,80,.35)'};};
+const volPointForBar=b=>{const span=Math.max((b.high??b.close)-(b.low??b.close),Math.abs((b.close??0)-(b.open??0)));const val=Math.max(1,Math.floor(span*1e6));const up=(b.close??0)>=(b.open??0);return{time:b.time,value:val,color:up?'rgba(38,166,154,.45)':'rgba(239,83,80,.45)'};};
 const isMobile=()=>matchMedia('(max-width:980px)').matches;
 const usd=v=>v==null?'—':('$'+Number(v).toLocaleString(undefined,{maximumFractionDigits:2}));
 
@@ -1183,6 +1238,7 @@ class TradingPanel {
   setStatus(t){
     if(this.statusEl){this.statusEl.textContent=t;this.statusEl.className='panel-status p-status '+(t.includes('✅')||t.includes('connected')?'ok':t.includes('❌')||t.includes('error')?'err':'');}
     if(this===activePanel&&statusEl){statusEl.textContent=t;statusEl.className='status '+(t.includes('✅')?'ok':t.includes('❌')?'err':'');}
+    if(this===activePanel)updateGlobalWSStatus(t);
   }
 
   setPrice(px,prev){
@@ -1316,8 +1372,17 @@ class TradingPanel {
       }
       renderGlobalPositions();return;
     }
-    if(msg.type==='order_ack')return;
+    if(msg.type==='order_ack'){
+      const side=(msg.side||'').toLowerCase();
+      const px=msg.price??msg.fill_price??this.lastClose;
+      const fmt=px!=null?Number(px).toFixed(priceFormatFor(this.currentSymbol).precision):null;
+      execToast(side==='sell'?'sell':'buy',side==='sell'?'SELL ejecutado':'BUY ejecutado',fmt?`@ ${fmt}`:'');
+      return;
+    }
     if(msg.type==='order_close'){
+      const pnlClose=msg.realized_pnl??msg.pnl??msg.profit??msg.result??null;
+      const pnlStr=pnlClose!=null?(pnlClose>=0?'+':'')+Number(pnlClose).toFixed(2)+' USD':'cerrado';
+      execToast('close','Posición cerrada',pnlStr);
       // Track for Historial tab
       if(msg.id!=null){
         const pnlV=msg.realized_pnl??msg.pnl??msg.profit??msg.result??null;
@@ -1463,12 +1528,14 @@ class TradingPanel {
         horzLine:{width:1,color:'rgba(255,215,0,.35)',style:LightweightCharts.LineStyle.Solid,labelBackgroundColor:'#1a1a0f'}
       },
       timeScale:{borderColor:'rgba(255,215,0,.10)'},
-      rightPriceScale:{borderColor:'rgba(255,215,0,.10)',scaleMargins:{top:0.08,bottom:0.02}}
+      rightPriceScale:{borderColor:'rgba(255,215,0,.10)',scaleMargins:{top:0.08,bottom:0.02}},
+      handleScale:{mouseWheel:true,pinch:true,axisPressedMouseMove:{time:true,price:true}},
+      handleScroll:{mouseWheel:true,pressedMouseMove:true,horzTouchDrag:true,vertTouchDrag:false}
     });
     this.candleSeries=this.chart.addCandlestickSeries({upColor:'#26a69a',downColor:'#ef5350',wickUpColor:'#26a69a',wickDownColor:'#ef5350',borderUpColor:'#26a69a',borderDownColor:'#ef5350',priceFormat:priceFormatFor(this.currentSymbol)});
     const VS=`vol-${this.id}`;
     this.volumeSeries=this.chart.addHistogramSeries({priceScaleId:VS,priceFormat:{type:'volume'},priceLineVisible:false,lastValueVisible:false,color:'rgba(255,255,255,0.10)'});
-    this.chart.priceScale(VS).applyOptions({scaleMargins:{top:0.88,bottom:0},visible:false,borderVisible:false});
+    this.chart.priceScale(VS).applyOptions({scaleMargins:{top:0.82,bottom:0},visible:false,borderVisible:false});
     this.priceLine=this.candleSeries.createPriceLine({price:0,color:'#FFD700',lineWidth:1,lineStyle:2,axisLabelVisible:true,title:this.currentSymbol.replace('/','')});
     this.chart.timeScale().fitContent();
     this.chart.timeScale().subscribeVisibleLogicalRangeChange(()=>{this.stayLive=this.chart.timeScale().scrollPosition()<1.2;});
@@ -1536,6 +1603,12 @@ class TradingPanel {
     const type=document.getElementById('ordType').value;
     const payload={action:'order:new',symbol:this.currentSymbol,side,type,qty,price:this.lastClose,sl:slV,tp:tpV};
     if(riskConfirmed)payload.risk_confirmed=true;
+    // Haptic + sending state
+    try{navigator.vibrate&&navigator.vibrate(50);}catch(_){}
+    const btns=[document.getElementById('btnSell'),document.getElementById('btnBuy'),document.getElementById('btnTopSell'),document.getElementById('btnTopBuy')];
+    btns.forEach(b=>b&&b.classList.add('btn-sending'));
+    setTimeout(()=>btns.forEach(b=>b&&b.classList.remove('btn-sending')),800);
+    execToast('send',side==='sell'?'Enviando SELL…':'Enviando BUY…','');
     this.ws.send(JSON.stringify(payload));
     const tmpId=`tmp-${Date.now()}`;
     this._drawLines(tmpId,{id:tmpId,symbol:this.currentSymbol,side,avg:this.lastClose,sl:slV,tp:tpV});
@@ -1553,6 +1626,7 @@ function setActive(panel){
   panel.wrapper.classList.add('p-active');
   const t=panel.statusEl?.textContent||'';
   if(statusEl){statusEl.textContent=t;statusEl.className='status '+(t.includes('✅')?'ok':t.includes('❌')?'err':'');}
+  updateGlobalWSStatus(t);
   panel._updateBidAsk();
   if(panel.lastClose!=null)panel.setPrice(panel.lastClose,panel.prevClose);
   const mhdrSymSel=document.getElementById('mhdrSymSel');
@@ -2196,6 +2270,31 @@ function showToast(msg){
   if(!el){el=document.createElement('div');el.id='tfToast';document.body.appendChild(el);}
   el.textContent=msg;el.style.opacity='1';
   clearTimeout(_toastTimer);_toastTimer=setTimeout(()=>el.style.opacity='0',1100);
+}
+
+/* ── Exec toast ── */
+let _execToastTimer=null;
+const _ET_ICONS={buy:'▲',sell:'▼',close:'■',send:'⟳'};
+function execToast(type,text,sub){
+  const el=document.getElementById('execToast');
+  if(!el)return;
+  clearTimeout(_execToastTimer);
+  el.className='et-'+type;
+  el.innerHTML=`<span class="et-icon">${_ET_ICONS[type]||'●'}</span><span>${text}</span>${sub?`<span class="et-sub">${sub}</span>`:''}`;
+  requestAnimationFrame(()=>el.classList.add('show'));
+  _execToastTimer=setTimeout(()=>el.classList.remove('show'),type==='send'?1800:2600);
+}
+
+/* ── WS global status pill + mobile dot ── */
+function updateGlobalWSStatus(statusText){
+  const t=statusText||'';
+  let cls='wss-disconnected',label='OFFLINE';
+  if(t.includes('✅')||t.includes('connected')){cls='wss-live';label='LIVE';}
+  else if(t.includes('reconnect')||t.includes('connecting')){cls='wss-reconnecting';label='RECONECTANDO';}
+  const pill=document.getElementById('wsStatusPill');
+  if(pill){pill.className=cls;const lb=pill.querySelector('.wss-label');if(lb)lb.textContent=label;}
+  const mob=document.getElementById('wsStatusMob');
+  if(mob)mob.className=cls;
 }
 let _riskAlertTimer=null;
 function showRiskAlert(msg,persist){
