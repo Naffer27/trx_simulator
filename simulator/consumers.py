@@ -8,7 +8,8 @@ from channels.db import database_sync_to_async
 from django.db import transaction
 
 from market_data.feeds import get_feed_manager
-from .models import TradingAccount, Position, Trade, LedgerEntry
+from market_data.symbol_specs import get_spec, allowed_symbols, kline_symbols
+from .models import TradingAccount, Position, Trade, LedgerEntry, BrokerLedger
 from .observability import security_log
 
 log = logging.getLogger("simulator.ws")
@@ -16,13 +17,9 @@ log = logging.getLogger("simulator.ws")
 FINNHUB_API_KEY = (os.getenv("FINNHUB_API_KEY", "") or "").strip()
 DEFAULT_TICK_INTERVAL = float(os.getenv("PRICE_TICK_INTERVAL", "1.0"))
 
-# Symbols that receive canonical OHLCV from the exchange kline stream.
-# Server-side aggregation is bypassed for these — candle_kline() handles chart updates.
-_KLINE_SYMBOLS = frozenset({"BTCUSD", "ETHUSD"})
-
-# Whitelist of symbols accepted from the client — rejects arbitrary strings that
-# would start spurious feed tasks or pollute FeedManager state.
-_ALLOWED_SYMBOLS = frozenset({"EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "BTCUSD", "ETHUSD"})
+# Derived from symbol registry — no manual maintenance needed.
+_KLINE_SYMBOLS   = kline_symbols()   # symbols with exchange kline stream (Binance/Kraken)
+_ALLOWED_SYMBOLS = allowed_symbols() # whitelist: rejects unknown symbols at the WS boundary
 
 # ---------------- TF helpers ----------------
 def tf_seconds(tf: str) -> int:
@@ -43,33 +40,20 @@ def normalize_tf(tf: str) -> str:
     return rev.get(tf_seconds(tf), "1s")
 
 # ---------------- Símbolos / formatos ----------------
-def step_decimals_for(symbol: str):
-    if symbol in ("BTCUSD","ETHUSD"): return (0.01, 2)
-    if symbol.endswith("/JPY"):        return (0.001, 3)
-    if "/" in symbol:                  return (0.00001, 5)
-    return (0.00001, 5)
+# Thin wrappers — all instrument parameters come from the symbol registry.
 
-def spread_for(symbol: str):
-    if symbol == "BTCUSD": return 0.3  # ~30 ticks de 0.01
-    if symbol == "ETHUSD": return 0.1
-    if symbol.endswith("/JPY"): return 0.004
-    if "/" in symbol: return 0.00002
-    return 0.00002
+def step_decimals_for(symbol: str) -> tuple[float, int]:
+    sp = get_spec(symbol)
+    return (sp.tick_size, sp.price_decimals)
 
-def drift_for(symbol: str):
-    if symbol == "BTCUSD": return 12.0
-    if symbol == "ETHUSD": return 2.0
-    return 0.0008
+def spread_for(symbol: str) -> float:
+    return get_spec(symbol).spread
 
-def base_price_for(symbol: str):
-    return {
-        "EUR/USD": 1.17000,
-        "GBP/USD": 1.30000,
-        "USD/JPY": 155.000,
-        "AUD/USD": 0.68000,
-        "BTCUSD": 82000.0,
-        "ETHUSD": 3400.0,
-    }.get(symbol, 1.17000)
+def drift_for(symbol: str) -> float:
+    return get_spec(symbol).sim_drift
+
+def base_price_for(symbol: str) -> float:
+    return get_spec(symbol).base_price
 
 
 # ======================================================
@@ -575,25 +559,31 @@ class TradingConsumer(AsyncWebsocketConsumer):
         dec = step_decimals_for(sym)[1]
         px_exec = round(self.exec_price(sym, side), dec)
 
-        commission = self.commission_for(sym, px_exec*qty)
-        self.account["balance"] -= commission
+        commission  = self.commission_for(sym, qty, px_exec)
+        new_balance = self.account["balance"] - commission
 
-        order_id = self._order_seq; self._order_seq += 1
-
-        if bool(self.account.get("netting_mode", False)):
-            self._open_or_update_position(sym, side, qty, px_exec, sl, tp, position_id=order_id)
-        else:
-            self._create_position(sym, side, qty, px_exec, sl, tp, position_id=order_id)
-
-        # DB write is best-effort — never let it abort the WS response
         try:
-            await self._db_mirror_open_or_update(order_id, sym, side.upper(), qty, px_exec, sl, tp,
-                                                 commission, bool(self.account.get("netting_mode", False)))
+            result = await self._db_open_position_atomic(
+                sym, side, qty, px_exec, sl, tp, commission, new_balance
+            )
         except Exception as exc:
-            log.error("[order_new] DB mirror failed for %s %s: %s", side, sym, exc, exc_info=True)
+            log.error("[order_new] DB open failed for %s %s: %s", side, sym, exc, exc_info=True)
+            await self.send_json({"type": "error", "code": "execution_failed",
+                                  "message": "no_se_pudo_abrir_posicion"})
+            return
 
-        await self.send_json({"type":"order_ack","order_id":order_id,"symbol":sym,"side":side,"qty":qty,"status":"accepted"})
-        await self.send_json({"type":"order_fill","order_id":order_id,"symbol":sym,"side":side,"qty":qty,"price":px_exec,
+        # DB committed — safe to mutate memory now
+        self.account["balance"] = new_balance
+        db_pos_id = result["position_id"] or self._order_seq
+        self._order_seq += 1
+
+        if self.account.get("netting_mode"):
+            self._open_or_update_position(sym, side, qty, px_exec, sl, tp, position_id=db_pos_id)
+        else:
+            self._create_position(sym, side, qty, px_exec, sl, tp, position_id=db_pos_id)
+
+        await self.send_json({"type":"order_ack","order_id":db_pos_id,"symbol":sym,"side":side,"qty":qty,"status":"accepted"})
+        await self.send_json({"type":"order_fill","order_id":db_pos_id,"symbol":sym,"side":side,"qty":qty,"price":px_exec,
                               "commission":commission,"ts":int(time.time())})
 
         await self._recalc_account_and_push()
@@ -617,18 +607,8 @@ class TradingConsumer(AsyncWebsocketConsumer):
                     await self._db_mirror_update_sl_tp(pid, sym, p.get("sl"), p.get("tp"))
                     break
 
-        # permite ids temporales "tmp-xxxx"
-        if not found and (pid is None or str(pid).startswith("tmp-")):
-            last_idx = None
-            for i in range(len(self._positions)-1, -1, -1):
-                if self._positions[i]["symbol"]==sym:
-                    last_idx = i; break
-            if last_idx is not None:
-                if sl is not None: self._positions[last_idx]["sl"] = float(sl)
-                if tp is not None: self._positions[last_idx]["tp"] = float(tp)
-                await self._db_mirror_update_sl_tp(self._positions[last_idx]["id"], sym,
-                                                   self._positions[last_idx].get("sl"), self._positions[last_idx].get("tp"))
-                found = True
+        if not found:
+            log.warning("[order_update] no position matched pid=%r sym=%r — SL/TP update ignored", pid, sym)
 
         if found:
             await self.send_json({"type":"positions","items":self._positions_snapshot()})
@@ -636,57 +616,70 @@ class TradingConsumer(AsyncWebsocketConsumer):
             await self.send_json({"type":"warn","message":"order_update_not_found"})
 
     async def _order_close(self, data: dict):
-        pid = data.get("id")                          # may arrive as str or int
-        sym_hint = data.get("symbol", None)           # optional — client may omit it
+        pid      = data.get("id")          # may arrive as str or int
+        sym_hint = data.get("symbol", None)
 
         log.info("[close] received pid=%r sym_hint=%r positions_in_memory=%d ids=%s",
                  pid, sym_hint, len(self._positions),
                  [(p.get("id"), p.get("symbol"), p.get("side")) for p in self._positions])
 
-        remaining, closed = [], None
-
+        # Step A — find position in memory (read-only, no mutation yet)
+        found_pos = None
         for p in self._positions:
-            # Normalise both sides to str so "5" == 5 works
             id_match  = (pid is not None) and (str(p.get("id")) == str(pid))
             sym_match = (sym_hint is None) or (p.get("symbol") == sym_hint)
-
             log.debug("[close] checking pos id=%r sym=%r → id_match=%s sym_match=%s",
                       p.get("id"), p.get("symbol"), id_match, sym_match)
+            if id_match and sym_match and found_pos is None:
+                found_pos = p
 
-            if id_match and sym_match and not closed:
-                sym  = p["symbol"]                    # always use the position's own symbol
-                dec  = step_decimals_for(sym)[1]
-                last = round(self.close_price(sym, p["side"]), dec)
-
-                realized = self._realized_pnl_for(p, last)
-                self.account["balance"] += realized
-                self._track_daily_pnl(realized)
-                closed = {
-                    "id": p["id"], "symbol": sym, "side": p["side"],
-                    "qty": p["qty"], "avg": p["avg"],
-                    "close_px": last, "reason": "manual",
-                    "realized_pnl": realized, "ts": int(time.time()),
-                }
-                log.info("[close] MATCH found pos id=%r sym=%r side=%r close_px=%s realized=%.4f",
-                         p["id"], sym, p["side"], last, realized)
-                try:
-                    await self._db_mirror_close_position(p, close_px=last, reason="manual", realized_pnl=realized)
-                    log.info("[close] _db_mirror_close_position completed OK for pos id=%r", p["id"])
-                except Exception as exc:
-                    log.error("[close] _db_mirror_close_position FAILED for pos id=%r: %s", p["id"], exc, exc_info=True)
-            else:
-                remaining.append(p)
-
-        self._positions = remaining
-        await self._recalc_account_and_push()
-
-        if closed:
-            log.info("[close] order closed OK. remaining positions=%d", len(self._positions))
-            await self.send_json({"type":"order_close", **closed})
-            await self.send_json({"type":"positions","items":self._positions_snapshot()})
-        else:
+        if found_pos is None:
             log.warning("[close] NO MATCH for pid=%r sym_hint=%r — sending order_close_not_found", pid, sym_hint)
-            await self.send_json({"type":"warn","message":"order_close_not_found"})
+            await self.send_json({"type": "warn", "message": "order_close_not_found"})
+            return
+
+        # Step B — compute close values BEFORE any memory mutation
+        sym      = found_pos["symbol"]
+        dec      = step_decimals_for(sym)[1]
+        close_px = round(self.close_price(sym, found_pos["side"]), dec)
+        realized = self._realized_pnl_for(found_pos, close_px)
+        new_balance = self.account["balance"] + realized
+        remaining_floating = (
+            self._unrealized_pnl_total()
+            - self._unrealized_pnl_for(found_pos, close_px)
+        )
+        new_equity = round(new_balance + remaining_floating, 2)
+
+        log.info("[close] MATCH pos id=%r sym=%r side=%r close_px=%s realized=%.4f",
+                 found_pos["id"], sym, found_pos["side"], close_px, realized)
+
+        # Step C — DB transaction FIRST (Phase 1B: DB-first close)
+        try:
+            result = await self._db_close_position_atomic(
+                found_pos, close_px, "manual", realized, new_balance, new_equity
+            )
+        except Exception as exc:
+            log.error("[close] DB close failed for pos id=%r: %s", found_pos["id"], exc, exc_info=True)
+            await self.send_json({"type": "error", "code": "close_failed",
+                                  "message": "no_se_pudo_cerrar_posicion"})
+            return  # memory untouched — position still open
+
+        # Step D — DB committed: safe to mutate memory now
+        self._positions      = [p for p in self._positions if str(p.get("id")) != str(found_pos["id"])]
+        self.account["balance"]      = result["new_balance"]
+        self.account["peak_balance"] = result["new_peak"]
+        self.account["status"]       = result["new_status"]
+        self._track_daily_pnl(realized)
+
+        # Step E — respond to client (same payloads as before)
+        await self._recalc_account_and_push()
+        log.info("[close] order closed OK. remaining positions=%d", len(self._positions))
+        await self.send_json({"type": "order_close",
+                              "id": found_pos["id"], "symbol": sym, "side": found_pos["side"],
+                              "qty": found_pos["qty"], "avg": found_pos["avg"],
+                              "close_px": close_px, "reason": "manual",
+                              "realized_pnl": realized, "ts": int(time.time())})
+        await self.send_json({"type": "positions", "items": self._positions_snapshot()})
 
     # ---------------- Risk Preview ----------------
     async def _handle_risk_preview(self, data: dict):
@@ -712,14 +705,24 @@ class TradingConsumer(AsyncWebsocketConsumer):
         return evaluate_position_risk(account, symbol, lot_size, equity, margin_used, leverage)
 
     # ---------------- Cuenta / PnL ----------------
-    def commission_for(self, symbol, notional): return max(0.0, notional*0.0002)
-    def min_qty_for(self, symbol): return 0.001 if symbol in ("BTCUSD","ETHUSD") else 0.01
+    def commission_for(self, symbol: str, qty: float, price: float) -> float:
+        spec = get_spec(symbol)
+        notional = qty * price * spec.contract_size
+        return max(0.0, notional * spec.commission_pct)
+
+    def min_qty_for(self, symbol: str) -> float:
+        return get_spec(symbol).min_lot
 
     def _pretrade_check(self, symbol, side, qty):
-        if qty < self.min_qty_for(symbol): return False, "min_qty_violation"
-        lev = max(1, int(self.account.get("leverage", 1)))
+        spec = get_spec(symbol)
+        if qty < spec.min_lot:
+            return False, "min_qty_violation"
+        if qty % spec.lot_step > spec.lot_step * 0.001:
+            return False, "lot_step_violation"
+        account_lev = max(1, int(self.account.get("leverage", 50)))
+        lev = max(1, min(account_lev, spec.max_leverage))
         entry_px = self.exec_price(symbol, side)
-        est_margin = abs(entry_px * qty) / lev
+        est_margin = abs(entry_px * qty * spec.contract_size) / lev
         equity = self.account["balance"] + self._unrealized_pnl_total()
         if est_margin > (equity - self._margin_used_total()):
             return False, "insufficient_margin"
@@ -755,9 +758,10 @@ class TradingConsumer(AsyncWebsocketConsumer):
         return total
 
     def _unrealized_pnl_for(self, pos, close_px):
+        spec = get_spec(pos["symbol"])
         if pos["side"] == "buy":
-            return (close_px - pos["avg"]) * pos["qty"]
-        return (pos["avg"] - close_px) * pos["qty"]
+            return (close_px - pos["avg"]) * pos["qty"] * spec.contract_size
+        return (pos["avg"] - close_px) * pos["qty"] * spec.contract_size
 
     def _realized_pnl_for(self, pos, close_price): return self._unrealized_pnl_for(pos, close_price)
 
@@ -770,10 +774,12 @@ class TradingConsumer(AsyncWebsocketConsumer):
         self._daily_realized_pnl += amount
 
     def _margin_used_total(self):
-        lev = max(1, int(self.account.get("leverage", 1)))
+        account_lev = max(1, int(self.account.get("leverage", 50)))
         total = 0.0
         for p in self._positions:
-            notional = abs(self.exec_price(p["symbol"], p["side"]) * p["qty"])
+            spec = get_spec(p["symbol"])
+            lev = max(1, min(account_lev, spec.max_leverage))
+            notional = abs(p["avg"] * p["qty"] * spec.contract_size)
             total += notional / lev
         return total
 
@@ -859,41 +865,52 @@ class TradingConsumer(AsyncWebsocketConsumer):
         """Close ALL open positions at current bid/ask and suspend the account."""
         log.warning("[stopout] equity=%.2f triggered for account #%s",
                     self.account["equity"], self._db_account_id)
-        self.account["status"] = "Suspendido"
         closed_items = []
+        failed_positions = []
         now_ts = int(time.time())
+        running_balance = self.account["balance"]
+        total_floating_snapshot = self._unrealized_pnl_total()
+        accum_floating_closed = 0.0
 
         for p in list(self._positions):
             sym  = p["symbol"]
             dec  = step_decimals_for(sym)[1]
             cpx  = round(self.close_price(sym, p["side"]), dec)
             realized = self._realized_pnl_for(p, cpx)
-            self.account["balance"] += realized
-            self._track_daily_pnl(realized)
-            closed_items.append({
-                "id": p["id"], "symbol": sym, "side": p["side"],
-                "qty": p["qty"], "avg": p["avg"],
-                "close_px": cpx, "reason": "stopout",
-                "realized_pnl": realized, "ts": now_ts,
-            })
+            new_balance = running_balance + realized
+            fp_p = self._unrealized_pnl_for(p, cpx)
+            remaining_floating = total_floating_snapshot - accum_floating_closed - fp_p
+            new_equity = round(new_balance + remaining_floating, 2)
             try:
-                await self._db_mirror_close_position(
-                    p, close_px=cpx, reason="stopout", realized_pnl=realized
+                result = await self._db_close_position_atomic(
+                    p, cpx, "stopout", realized, new_balance, new_equity
                 )
+                running_balance = result["new_balance"]
+                accum_floating_closed += fp_p
+                self._track_daily_pnl(realized)
+                closed_items.append({
+                    "id": p["id"], "symbol": sym, "side": p["side"],
+                    "qty": p["qty"], "avg": p["avg"],
+                    "close_px": cpx, "reason": "stopout",
+                    "realized_pnl": realized, "ts": now_ts,
+                })
             except Exception as exc:
-                log.error("[stopout] DB mirror failed pos %s: %s", p["id"], exc)
+                log.error("[stopout] DB close failed pos %s: %s", p["id"], exc)
+                failed_positions.append(p)
 
-        self._positions = []
+        # DB commits done — update memory, then persist suspension
+        self.account["balance"] = running_balance
+        self.account["equity"]  = round(running_balance, 2)
+        self._positions = failed_positions
 
-        # Persist suspension to DB
         try:
             await self._db_suspend_account("stopout")
         except Exception as exc:
             log.error("[stopout] DB suspend failed: %s", exc)
 
+        self.account["status"]      = "Suspendido"
         self.account["pnl_unreal"]  = 0.0
         self.account["margin_used"] = 0.0
-        self.account["equity"]      = round(self.account["balance"], 2)
 
         # Notify client
         for c in closed_items:
@@ -942,29 +959,41 @@ class TradingConsumer(AsyncWebsocketConsumer):
                     self.account["equity"], self.account.get("margin_used", 0.0),
                     self._db_account_id)
         closed_items = []
+        failed_positions = []
         now_ts = int(time.time())
+        running_balance = self.account["balance"]
+        total_floating_snapshot = self._unrealized_pnl_total()
+        accum_floating_closed = 0.0
 
         for p in list(self._positions):
             sym  = p["symbol"]
             dec  = step_decimals_for(sym)[1]
             cpx  = round(self.close_price(sym, p["side"]), dec)
             realized = self._realized_pnl_for(p, cpx)
-            self.account["balance"] += realized
-            self._track_daily_pnl(realized)
-            closed_items.append({
-                "id": p["id"], "symbol": sym, "side": p["side"],
-                "qty": p["qty"], "avg": p["avg"],
-                "close_px": cpx, "reason": "margin_call",
-                "realized_pnl": realized, "ts": now_ts,
-            })
+            new_balance = running_balance + realized
+            fp_p = self._unrealized_pnl_for(p, cpx)
+            remaining_floating = total_floating_snapshot - accum_floating_closed - fp_p
+            new_equity = round(new_balance + remaining_floating, 2)
             try:
-                await self._db_mirror_close_position(
-                    p, close_px=cpx, reason="margin_call", realized_pnl=realized
+                result = await self._db_close_position_atomic(
+                    p, cpx, "margin_call", realized, new_balance, new_equity
                 )
+                running_balance = result["new_balance"]
+                accum_floating_closed += fp_p
+                self._track_daily_pnl(realized)
+                closed_items.append({
+                    "id": p["id"], "symbol": sym, "side": p["side"],
+                    "qty": p["qty"], "avg": p["avg"],
+                    "close_px": cpx, "reason": "margin_call",
+                    "realized_pnl": realized, "ts": now_ts,
+                })
             except Exception as exc:
-                log.error("[margin_call] DB mirror failed pos %s: %s", p["id"], exc)
+                log.error("[margin_call] DB close failed pos %s: %s", p["id"], exc)
+                failed_positions.append(p)
 
-        self._positions = []
+        # DB commits done — update memory
+        self.account["balance"] = running_balance
+        self._positions = failed_positions
         self.account["pnl_unreal"]  = 0.0
         self.account["margin_used"] = 0.0
         self.account["equity"]      = round(self.account["balance"], 2)
@@ -1005,6 +1034,9 @@ class TradingConsumer(AsyncWebsocketConsumer):
         dec = step_decimals_for(symbol)[1]
         remaining, closed = [], []
         now = int(time.time())
+        running_balance = self.account["balance"]
+        total_floating_snapshot = self._unrealized_pnl_total()
+        accum_floating_closed = 0.0
 
         for p in self._positions:
             if p["symbol"] != symbol:
@@ -1031,23 +1063,31 @@ class TradingConsumer(AsyncWebsocketConsumer):
             tp_hit = tp is not None and ((side=="buy" and trigger_px>=tp) or (side=="sell" and trigger_px<=tp))
 
             if sl_hit or tp_hit:
-                close_px = round(fill_px, dec)
-                realized = self._realized_pnl_for(p, close_px)
-                self.account["balance"] += realized
-                self._track_daily_pnl(realized)
+                close_px    = round(fill_px, dec)
+                realized    = self._realized_pnl_for(p, close_px)
+                new_balance = running_balance + realized
+                fp_p        = self._unrealized_pnl_for(p, close_px)
+                remaining_floating = total_floating_snapshot - accum_floating_closed - fp_p
+                new_equity  = round(new_balance + remaining_floating, 2)
                 reason = "tp" if tp_hit else "sl"
-                closed.append({"id":p["id"],"symbol":symbol,"side":side,"qty":p["qty"],"avg":p["avg"],
-                               "close_px":close_px,"reason":reason,
-                               "realized_pnl":realized,"ts":now})
                 try:
-                    await self._db_mirror_close_position(p, close_px=close_px, reason=reason,
-                                                         realized_pnl=realized)
+                    result = await self._db_close_position_atomic(
+                        p, close_px, reason, realized, new_balance, new_equity
+                    )
+                    running_balance = result["new_balance"]
+                    accum_floating_closed += fp_p
+                    closed.append({"id":p["id"],"symbol":symbol,"side":side,"qty":p["qty"],"avg":p["avg"],
+                                   "close_px":close_px,"reason":reason,
+                                   "realized_pnl":realized,"ts":now})
                 except Exception as exc:
                     log.error("[tp_sl] db close FAILED pos id=%r: %s", p["id"], exc, exc_info=True)
+                    remaining.append(p)
             else:
                 remaining.append(p)
 
         if closed:
+            self.account["balance"] = running_balance
+            self._track_daily_pnl(sum(c["realized_pnl"] for c in closed))
             self._positions = remaining
             await self._recalc_account_and_push()
             for c in closed: await self.send_json({"type":"order_close", **c})
@@ -1105,8 +1145,19 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 "sl":it.get("sl"), "tp":it.get("tp"),
                 "opened_at":it.get("opened_ts", int(time.time())),
             })
-        log.info("[hydrate] loaded %d open position(s): %s",
-                 len(self._positions), [(p["id"], p["symbol"], p["side"]) for p in self._positions])
+        if self._positions:
+            self._order_seq = max(int(p["id"]) for p in self._positions) + 1
+        else:
+            self._order_seq = 1
+        log.info("[hydrate] loaded %d open position(s): %s — _order_seq set to %d",
+                 len(self._positions), [(p["id"], p["symbol"], p["side"]) for p in self._positions],
+                 self._order_seq)
+
+        daily_pnl = await self._db_fetch_daily_pnl()
+        self._daily_realized_pnl = daily_pnl
+        from datetime import date as _date
+        self._daily_pnl_date = _date.today()
+        log.info("[hydrate] daily_realized_pnl=%.2f for %s", self._daily_realized_pnl, self._daily_pnl_date)
 
     @database_sync_to_async
     def _db_suspend_account(self, reason: str) -> None:
@@ -1209,6 +1260,24 @@ class TradingConsumer(AsyncWebsocketConsumer):
         return out
 
     @database_sync_to_async
+    def _db_fetch_daily_pnl(self) -> float:
+        if not self._db_account_id:
+            return 0.0
+        from django.utils import timezone
+        from django.db.models import Sum
+        today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        result = (
+            LedgerEntry.objects
+            .filter(
+                account_id=self._db_account_id,
+                event_type=LedgerEntry.EV_REALIZED,
+                created_at__gte=today_start,
+            )
+            .aggregate(total=Sum("amount"))["total"]
+        )
+        return float(result or 0)
+
+    @database_sync_to_async
     def _db_sync_account_balances(self):
         if not self._db_account_id: return
         TradingAccount.objects.filter(id=self._db_account_id).update(
@@ -1216,7 +1285,8 @@ class TradingConsumer(AsyncWebsocketConsumer):
         )
 
     @database_sync_to_async
-    def _db_mirror_open_or_update(self, order_id, symbol, side, qty, price, sl, tp, commission, netting_mode):
+    def _db_mirror_open_or_update(self, order_id, symbol, side, qty, price, sl, tp, commission):
+        # Deprecated — superseded by _db_open_position_atomic (Phase 1A). No longer called.
         if not self._db_account_id: return
         from decimal import Decimal
         with transaction.atomic():
@@ -1226,33 +1296,216 @@ class TradingConsumer(AsyncWebsocketConsumer):
                     amount=Decimal(-abs(commission)), balance_after=Decimal(self.account["balance"]),
                     meta={"symbol":symbol,"side":side,"client_pos_id":order_id},
                 )
-            if netting_mode:
-                pos = Position.objects.select_for_update().filter(
-                    account_id=self._db_account_id, symbol=symbol, side=side).first()
-                if pos:
-                    old_qty = Decimal(pos.qty); old_avg = Decimal(pos.avg_price)
-                    new_qty = old_qty + Decimal(qty)
-                    new_avg = (old_avg*old_qty + Decimal(price)*Decimal(qty)) / (new_qty if new_qty!=0 else Decimal(1))
-                    pos.qty=new_qty; pos.avg_price=new_avg
-                    if sl is not None: pos.sl=Decimal(sl)
-                    if tp is not None: pos.tp=Decimal(tp)
-                    pos.save()
-                else:
-                    Position.objects.create(
-                        account_id=self._db_account_id, symbol=symbol, side=side,
-                        qty=Decimal(qty), avg_price=Decimal(price),
-                        **({"sl":Decimal(sl)} if sl is not None else {}),
-                        **({"tp":Decimal(tp)} if tp is not None else {}),
-                        external_id=str(order_id),
+            Position.objects.create(
+                account_id=self._db_account_id, symbol=symbol, side=side,
+                qty=Decimal(qty), avg_price=Decimal(price),
+                **({"sl":Decimal(sl)} if sl is not None else {}),
+                **({"tp":Decimal(tp)} if tp is not None else {}),
+                external_id=str(order_id),
+            )
+
+    @database_sync_to_async
+    def _db_open_position_atomic(self, symbol: str, side: str, qty: float, price: float,
+                                  sl, tp, commission: float, new_balance: float) -> dict:
+        """DB-first order open (Phase 1A).
+
+        Atomically: create/merge Position, record commission LedgerEntry, update
+        TradingAccount.balance — all in one transaction before any memory mutation.
+
+        Returns {"position_id": int, "merged": bool}.
+        If _db_account_id is None (demo session) returns {"position_id": None, "merged": False}
+        so the caller falls back to _order_seq as a local id.
+        """
+        if not self._db_account_id:
+            return {"position_id": None, "merged": False}
+        from decimal import Decimal
+        with transaction.atomic():
+            # Netting: look for an existing position on same symbol+side and lock it.
+            existing = None
+            if self.account.get("netting_mode"):
+                existing = (
+                    Position.objects
+                    .select_for_update()
+                    .filter(
+                        account_id=self._db_account_id,
+                        symbol=symbol,
+                        side=side.upper(),
                     )
-            else:
-                Position.objects.create(
-                    account_id=self._db_account_id, symbol=symbol, side=side,
-                    qty=Decimal(qty), avg_price=Decimal(price),
-                    **({"sl":Decimal(sl)} if sl is not None else {}),
-                    **({"tp":Decimal(tp)} if tp is not None else {}),
-                    external_id=str(order_id),
+                    .first()
                 )
+
+            if existing:
+                # Merge into the existing row — weighted average price.
+                new_qty = existing.qty + Decimal(str(qty))
+                new_avg = (
+                    existing.avg_price * existing.qty
+                    + Decimal(str(price)) * Decimal(str(qty))
+                ) / new_qty
+                existing.avg_price = new_avg.quantize(Decimal("0.000001"))
+                existing.qty = new_qty
+                if sl is not None:
+                    existing.sl = Decimal(str(sl))
+                if tp is not None:
+                    existing.tp = Decimal(str(tp))
+                existing.save(update_fields=["qty", "avg_price", "sl", "tp"])
+                position_id = existing.id
+                merged = True
+            else:
+                pos = Position.objects.create(
+                    account_id=self._db_account_id,
+                    symbol=symbol,
+                    side=side.upper(),
+                    qty=Decimal(str(qty)),
+                    avg_price=Decimal(str(price)),
+                    sl=Decimal(str(sl)) if sl is not None else None,
+                    tp=Decimal(str(tp)) if tp is not None else None,
+                )
+                position_id = pos.id
+                merged = False
+
+            if commission and commission > 0:
+                trader_ledger = LedgerEntry.objects.create(
+                    account_id=self._db_account_id,
+                    event_type=LedgerEntry.EV_COMMISSION,
+                    amount=Decimal(str(-abs(commission))),
+                    balance_after=Decimal(str(new_balance)),
+                    meta={"symbol": symbol, "side": side, "db_pos_id": position_id},
+                )
+                try:
+                    BrokerLedger.objects.create(
+                        revenue_type=BrokerLedger.REV_COMMISSION,
+                        amount=Decimal(str(abs(commission))),
+                        source_account_id=self._db_account_id,
+                        source_ledger=trader_ledger,
+                        symbol=symbol,
+                        meta={"side": side, "db_pos_id": position_id},
+                    )
+                except Exception as _bl_exc:
+                    log.warning("[broker_ledger] commission insert failed pos=%s: %s", position_id, _bl_exc)
+
+            TradingAccount.objects.filter(id=self._db_account_id).update(
+                balance=Decimal(str(new_balance))
+            )
+
+        log.info("[db_open] pos_id=%s symbol=%s side=%s qty=%s merged=%s balance=%.2f",
+                 position_id, symbol, side, qty, merged, new_balance)
+        return {"position_id": position_id, "merged": merged}
+
+    @database_sync_to_async
+    def _db_close_position_atomic(self, pos_mem: dict, close_px: float, reason: str,
+                                   realized_pnl: float, new_balance: float,
+                                   new_equity: float) -> dict:
+        """DB-first order close (Phase 1B).
+
+        Atomically: find+lock Position, create Trade, record LedgerEntry EV_REALIZED,
+        delete Position, update TradingAccount balance/equity, run risk+intelligence engines.
+        All committed before any memory mutation in the caller.
+
+        Returns final DB state dict. Raises on failure — caller leaves memory untouched.
+        """
+        if not self._db_account_id:
+            # Demo/anonymous session — skip DB, return current values for memory mutation.
+            return {
+                "new_balance": new_balance,
+                "new_equity":  new_equity,
+                "new_status":  self.account.get("status", "Activo"),
+                "new_peak":    self.account.get("peak_balance", new_balance),
+                "violations":  [],
+                "trade_id":    None,
+            }
+        from decimal import Decimal
+        with transaction.atomic():
+            # 1. Find and lock the Position row (prevents concurrent duplicate closes).
+            pos = (
+                Position.objects
+                .select_for_update()
+                .filter(id=pos_mem["id"], account_id=self._db_account_id)
+                .first()
+            )
+            if pos is None:
+                log.info("[db_close] pos %r already closed by concurrent close — skipping", pos_mem["id"])
+                return {
+                    "new_balance":    new_balance,
+                    "new_equity":     new_equity,
+                    "new_status":     self.account.get("status", "Activo"),
+                    "new_peak":       self.account.get("peak_balance", new_balance),
+                    "violations":     [],
+                    "trade_id":       None,
+                    "already_closed": True,
+                }
+
+            # 2. Create Trade record.
+            trade_type = str(pos_mem.get("side", "")).upper()
+            if trade_type not in ("BUY", "SELL"):
+                trade_type = "BUY"
+            trade = Trade.objects.create(
+                account_id=self._db_account_id,
+                symbol=pos_mem["symbol"],
+                trade_type=trade_type,
+                lot_size=Decimal(str(pos_mem["qty"])),
+                entry_price=Decimal(str(pos_mem["avg"])),
+                exit_price=Decimal(str(close_px)),
+                stop_loss=Decimal(str(pos_mem["sl"])) if pos_mem.get("sl") is not None else None,
+                take_profit=Decimal(str(pos_mem["tp"])) if pos_mem.get("tp") is not None else None,
+                profit_loss=Decimal(str(realized_pnl)),
+                opened_at=datetime.utcfromtimestamp(int(pos_mem.get("opened_at", time.time()))),
+                closed_at=datetime.utcnow(),
+            )
+
+            # 3. Record LedgerEntry EV_REALIZED (balance_after = post-close balance).
+            LedgerEntry.objects.create(
+                account_id=self._db_account_id,
+                event_type=LedgerEntry.EV_REALIZED,
+                amount=Decimal(str(realized_pnl)),
+                balance_after=Decimal(str(new_balance)),
+                meta={"symbol": pos_mem["symbol"], "side": pos_mem["side"],
+                      "reason": reason, "trade_id": trade.id},
+            )
+
+            # 4. Delete Position if it existed in DB.
+            if pos:
+                pos.delete()
+
+            # 5. Update TradingAccount balance + equity (with lock for consistency).
+            account = (
+                TradingAccount.objects
+                .select_for_update()
+                .filter(id=self._db_account_id)
+                .first()
+            )
+            if account:
+                account.balance = Decimal(str(new_balance))
+                account.equity  = Decimal(str(new_equity))
+                account.save(update_fields=["balance", "equity"])
+
+                # 6. Risk engine — challenge/funded compliance checks.
+                from .risk_engine import check_and_enforce_risk
+                violations = check_and_enforce_risk(account)
+                if violations:
+                    log.warning("[db_close] risk violations account #%s: %s",
+                                self._db_account_id, [v.violation_type for v in violations])
+
+                # 7. Intelligence engine — behavioral classification.
+                from .intelligence_engine import update_intelligence
+                update_intelligence(account)
+
+                final_status = account.status
+                final_peak   = float(account.peak_balance)
+            else:
+                violations   = []
+                final_status = self.account.get("status", "Activo")
+                final_peak   = self.account.get("peak_balance", new_balance)
+
+        log.info("[db_close] OK pos_id=%r trade_id=%r realized=%.4f balance=%.2f status=%s",
+                 pos_mem["id"], trade.id, realized_pnl, new_balance, final_status)
+        return {
+            "new_balance": float(new_balance),
+            "new_equity":  float(new_equity),
+            "new_status":  final_status,
+            "new_peak":    final_peak,
+            "violations":  [v.violation_type for v in violations],
+            "trade_id":    trade.id,
+        }
 
     @database_sync_to_async
     def _db_mirror_update_sl_tp(self, pos_id, symbol, sl, tp):
@@ -1260,8 +1513,8 @@ class TradingConsumer(AsyncWebsocketConsumer):
         try:
             pos = Position.objects.get(id=pos_id, account_id=self._db_account_id)
         except Position.DoesNotExist:
-            pos = Position.objects.filter(account_id=self._db_account_id, symbol=symbol).order_by("-id").first()
-        if not pos: return
+            log.warning("[db_update_sl_tp] no DB Position for id=%r sym=%r — SL/TP DB update skipped", pos_id, symbol)
+            return
         changed=False
         from decimal import Decimal
         if sl is not None: pos.sl = Decimal(sl); changed=True
@@ -1270,6 +1523,8 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def _db_mirror_close_position(self, pos_mem, close_px, reason, realized_pnl):
+        # Deprecated for manual close — superseded by _db_close_position_atomic (Phase 1B).
+        # Still called by _check_tp_sl, _do_stopout, _do_retail_liquidation (best-effort paths).
         if not self._db_account_id:
             log.warning("[db_close] SKIPPED — db_account_id is None")
             return
@@ -1283,15 +1538,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
             if pos:
                 log.info("[db_close] found Position by id=%r", pos_mem["id"])
             else:
-                pos = Position.objects.filter(
-                    account_id=self._db_account_id,
-                    symbol=pos_mem["symbol"],
-                    side__iexact=pos_mem["side"],
-                ).order_by("-id").first()
-                if pos:
-                    log.info("[db_close] found Position by symbol+side fallback id=%r", pos.id)
-                else:
-                    log.warning("[db_close] no matching DB Position found — Trade will still be created")
+                log.warning("[db_close] no DB Position for id=%r — Trade will still be created", pos_mem["id"])
 
             # Normalise side to uppercase for trade_type field
             raw_side = str(pos_mem.get("side", "")).upper()

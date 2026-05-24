@@ -91,7 +91,7 @@ class TradingAccount(models.Model):
     currency = models.CharField(max_length=6, default='USD')  # presente hasta 0007
     leverage = models.PositiveIntegerField(default=50)
     netting_mode = models.BooleanField(
-        default=True,
+        default=False,
         help_text='True=Netting (consolidar por símbolo); False=Hedging (varias posiciones).'
     )
 
@@ -326,6 +326,48 @@ class Trade(models.Model):
 
     def __str__(self):
         return f"{self.trade_type} {self.symbol} — {self.lot_size} lotes"
+
+
+class BrokerLedger(models.Model):
+    """Broker-side revenue ledger. Additive only — records are never modified or deleted."""
+
+    REV_COMMISSION   = 'COMMISSION'
+    REV_SPREAD       = 'SPREAD'
+    REV_CHALLENGE_FEE = 'CHALLENGE_FEE'
+    REV_WITHDRAW_FEE = 'WITHDRAW_FEE'
+    REV_ADJUSTMENT   = 'ADJUSTMENT'
+
+    REVENUE_CHOICES = [
+        (REV_COMMISSION,    'Commission'),
+        (REV_SPREAD,        'Spread'),
+        (REV_CHALLENGE_FEE, 'Challenge Fee'),
+        (REV_WITHDRAW_FEE,  'Withdrawal Fee'),
+        (REV_ADJUSTMENT,    'Adjustment'),
+    ]
+
+    revenue_type   = models.CharField(max_length=16, choices=REVENUE_CHOICES, db_index=True)
+    amount         = models.DecimalField(max_digits=18, decimal_places=2)
+    source_account = models.ForeignKey(
+        TradingAccount, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='broker_ledger',
+    )
+    source_trade   = models.ForeignKey(
+        'Trade', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='broker_ledger',
+    )
+    source_ledger  = models.ForeignKey(
+        LedgerEntry, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='broker_ledger',
+    )
+    symbol         = models.CharField(max_length=12, null=True, blank=True)
+    meta           = models.JSONField(default=dict, blank=True)
+    created_at     = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-created_at', '-id']
+
+    def __str__(self):
+        return f"[{self.created_at:%Y-%m-%d %H:%M:%S}] {self.revenue_type} {self.amount}"
 
 
 class Deposit(models.Model):

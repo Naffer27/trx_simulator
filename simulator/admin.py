@@ -14,6 +14,7 @@ from .models import (
     BrokerSnapshot, SymbolExposure, TraderClassExposure,
     AuditLog,
     CalendarEvent, Referral, Bonus, BrokerDocument, ExpertAdvisor,
+    BrokerLedger,
 )
 
 
@@ -1609,6 +1610,31 @@ class ExpertAdvisorAdmin(admin.ModelAdmin):
     list_editable = ('active', 'coming_soon')
     search_fields = ('name', 'description')
     ordering      = ('category', 'name')
+
+
+# ─────────────────────────────────────────────
+# Broker Revenue Ledger
+# ─────────────────────────────────────────────
+
+@admin.register(BrokerLedger)
+class BrokerLedgerAdmin(admin.ModelAdmin):
+    list_display   = ('id', 'revenue_type', 'amount', 'source_account', 'symbol', 'created_at')
+    list_filter    = ('revenue_type',)
+    search_fields  = ('symbol', 'source_account__id')
+    readonly_fields = (
+        'id', 'revenue_type', 'amount', 'source_account', 'source_trade',
+        'source_ledger', 'symbol', 'meta', 'created_at',
+    )
+    ordering       = ('-created_at',)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 # ─────────────────────────────────────────────
