@@ -207,6 +207,126 @@ def take_snapshots_task(self) -> dict:
 
 
 @shared_task(
+    name="simulator.take_revenue_snapshot",
+    bind=True,
+    max_retries=1,
+    default_retry_delay=30,
+    acks_late=True,
+    soft_time_limit=50,
+    time_limit=80,
+    ignore_result=False,
+)
+def take_revenue_snapshot_task(self) -> dict:
+    """
+    Capture a point-in-time broker revenue snapshot every 5 minutes.
+
+    Computation is incremental: reads only BrokerLedger rows written SINCE
+    the previous snapshot, then adds the delta to the previous cumulative
+    totals. This keeps the per-run cost O(new entries in last 5 min) rather
+    than O(all-time entries).
+
+    No financial mutations — INSERT into BrokerRevenueSnapshot only.
+    Operational state (active_accounts, open_positions) uses indexed COUNT.
+    Exposure fields are copied from the latest BrokerEquitySnapshot (already
+    computed by the 1-min take_snapshots task) to avoid re-running the full
+    live-analytics engine here.
+
+    Failure recovery: if this task is missed for any period, the next run
+    computes the incremental delta from the last successfully-written snapshot,
+    producing an accurate cumulative total with a gap in the time-series only.
+    """
+    import time as _t
+    from decimal import Decimal
+    from django.db.models import Sum, Q
+    from .models import (
+        BrokerLedger, BrokerEquitySnapshot, TradingAccount, Position,
+        BrokerRevenueSnapshot,
+    )
+
+    t0 = _t.monotonic()
+
+    def _d(v) -> Decimal:
+        return Decimal(str(v or 0))
+
+    # ── 1. Previous snapshot as running-total base ────────────────────
+    prev = BrokerRevenueSnapshot.objects.order_by("-taken_at").first()
+    since = prev.taken_at if prev else None
+
+    # ── 2. Incremental BrokerLedger delta since last snapshot ─────────
+    inc_qs = (
+        BrokerLedger.objects.filter(created_at__gt=since)
+        if since else BrokerLedger.objects.all()
+    )
+    inc = inc_qs.aggregate(
+        revenue    = Sum("amount"),
+        commission = Sum("amount", filter=Q(revenue_type=BrokerLedger.REV_COMMISSION)),
+        spread     = Sum("amount", filter=Q(revenue_type=BrokerLedger.REV_SPREAD)),
+        challenge  = Sum("amount", filter=Q(revenue_type=BrokerLedger.REV_CHALLENGE_FEE)),
+        withdraw   = Sum("amount", filter=Q(revenue_type=BrokerLedger.REV_WITHDRAW_FEE)),
+        adjustment = Sum("amount", filter=Q(revenue_type=BrokerLedger.REV_ADJUSTMENT)),
+    )
+
+    # ── 3. New cumulative totals ──────────────────────────────────────
+    prev_total      = _d(prev.total_revenue    if prev else 0)
+    prev_commission = _d(prev.total_commission if prev else 0)
+    prev_spread     = _d(prev.total_spread     if prev else 0)
+    prev_challenge  = _d(prev.total_challenge  if prev else 0)
+    prev_withdraw   = _d(prev.total_withdraw   if prev else 0)
+    prev_adjustment = _d(prev.total_adjustment if prev else 0)
+
+    d_revenue    = _d(inc["revenue"])
+    d_commission = _d(inc["commission"])
+    d_spread     = _d(inc["spread"])
+    d_challenge  = _d(inc["challenge"])
+    d_withdraw   = _d(inc["withdraw"])
+    d_adjustment = _d(inc["adjustment"])
+
+    # ── 4. Operational state — two indexed COUNT queries ─────────────
+    active_accounts = TradingAccount.objects.filter(status="Activo").count()
+    open_positions  = Position.objects.count()
+
+    # ── 5. Exposure from latest equity snapshot (0 DB round-trips if cached) ─
+    eq_snap = BrokerEquitySnapshot.objects.order_by("-taken_at").first()
+    net_exposure = _d(eq_snap.net_exposure_usd if eq_snap else 0)
+    gross_long   = _d(eq_snap.gross_long_usd   if eq_snap else 0)
+    gross_short  = _d(eq_snap.gross_short_usd  if eq_snap else 0)
+
+    # ── 6. Write snapshot row ─────────────────────────────────────────
+    snap = BrokerRevenueSnapshot.objects.create(
+        total_revenue    = prev_total      + d_revenue,
+        total_commission = prev_commission + d_commission,
+        total_spread     = prev_spread     + d_spread,
+        total_challenge  = prev_challenge  + d_challenge,
+        total_withdraw   = prev_withdraw   + d_withdraw,
+        total_adjustment = prev_adjustment + d_adjustment,
+        period_revenue    = d_revenue,
+        period_commission = d_commission,
+        period_spread     = d_spread,
+        active_accounts  = active_accounts,
+        open_positions   = open_positions,
+        net_exposure_usd = net_exposure,
+        gross_long_usd   = gross_long,
+        gross_short_usd  = gross_short,
+    )
+
+    duration_ms = round((_t.monotonic() - t0) * 1000, 1)
+    logger.info(
+        "[revenue_snapshot] id=%d total=%.2f period=%.2f accounts=%d positions=%d duration_ms=%.1f",
+        snap.pk, float(snap.total_revenue), float(snap.period_revenue),
+        active_accounts, open_positions, duration_ms,
+    )
+    return {
+        "snapshot_id":    snap.pk,
+        "taken_at":       snap.taken_at.isoformat(),
+        "total_revenue":  float(snap.total_revenue),
+        "period_revenue": float(snap.period_revenue),
+        "active_accounts": active_accounts,
+        "open_positions":  open_positions,
+        "duration_ms":     duration_ms,
+    }
+
+
+@shared_task(
     name="simulator.cleanup_audit_log",
     bind=True,
     max_retries=1,

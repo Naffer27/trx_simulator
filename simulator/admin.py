@@ -14,7 +14,7 @@ from .models import (
     BrokerSnapshot, SymbolExposure, TraderClassExposure,
     AuditLog,
     CalendarEvent, Referral, Bonus, BrokerDocument, ExpertAdvisor,
-    BrokerLedger, BrokerSpreadConfig,
+    BrokerLedger, BrokerSpreadConfig, BrokerRevenueSnapshot,
 )
 
 
@@ -1629,13 +1629,14 @@ class BrokerSpreadConfigAdmin(admin.ModelAdmin):
 @admin.register(BrokerLedger)
 class BrokerLedgerAdmin(admin.ModelAdmin):
     list_display   = ('id', 'revenue_type', 'amount', 'source_account', 'symbol', 'created_at')
-    list_filter    = ('revenue_type',)
+    list_filter    = ('revenue_type', 'created_at')
     search_fields  = ('symbol', 'source_account__id')
     readonly_fields = (
         'id', 'revenue_type', 'amount', 'source_account', 'source_trade',
         'source_ledger', 'symbol', 'meta', 'created_at',
     )
     ordering       = ('-created_at',)
+    date_hierarchy = 'created_at'
 
     def has_add_permission(self, request):
         return False
@@ -1645,6 +1646,455 @@ class BrokerLedgerAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+    def changelist_view(self, request, extra_context=None):
+        extra_context = extra_context or {}
+        extra_context["dashboard_url"] = reverse("admin:brokerledger_revenue_dashboard")
+        return super().changelist_view(request, extra_context)
+
+    def get_urls(self):
+        urls = super().get_urls()
+        return [
+            path(
+                "dashboard/",
+                self.admin_site.admin_view(self.revenue_dashboard_view),
+                name="brokerledger_revenue_dashboard",
+            ),
+        ] + urls
+
+    def revenue_dashboard_view(self, request):
+        import datetime
+        from django.db.models.functions import TruncDay
+        from django.utils import timezone
+
+        # ── GET filters ───────────────────────────────────────────────
+        f_type   = request.GET.get("revenue_type", "").strip()
+        f_symbol = request.GET.get("symbol", "").strip()
+        f_from   = request.GET.get("date_from", "").strip()
+        f_to     = request.GET.get("date_to", "").strip()
+
+        qs = BrokerLedger.objects.all()
+        if f_type:
+            qs = qs.filter(revenue_type=f_type)
+        if f_symbol:
+            qs = qs.filter(symbol=f_symbol)
+        if f_from:
+            try:
+                qs = qs.filter(created_at__date__gte=f_from)
+            except Exception:
+                f_from = ""
+        if f_to:
+            try:
+                qs = qs.filter(created_at__date__lte=f_to)
+            except Exception:
+                f_to = ""
+
+        def _f(v):
+            return float(v or 0)
+
+        # ── Aggregate summary (filtered) ───────────────────────────────
+        totals = qs.aggregate(
+            grand_total   = Sum("amount"),
+            commission    = Sum("amount", filter=Q(revenue_type=BrokerLedger.REV_COMMISSION)),
+            spread        = Sum("amount", filter=Q(revenue_type=BrokerLedger.REV_SPREAD)),
+            challenge_fee = Sum("amount", filter=Q(revenue_type=BrokerLedger.REV_CHALLENGE_FEE)),
+            withdraw_fee  = Sum("amount", filter=Q(revenue_type=BrokerLedger.REV_WITHDRAW_FEE)),
+            adjustment    = Sum("amount", filter=Q(revenue_type=BrokerLedger.REV_ADJUSTMENT)),
+            row_count     = Count("id"),
+        )
+
+        # ── Period snapshots (always global — unaffected by user filters) ─
+        now_dt    = timezone.now()
+        today_s   = now_dt.date().isoformat()
+        week_ago  = (now_dt - datetime.timedelta(days=7)).date().isoformat()
+        month_ago = (now_dt - datetime.timedelta(days=30)).date().isoformat()
+        _base     = BrokerLedger.objects.all()
+        period    = {
+            "today": _f(_base.filter(created_at__date=today_s).aggregate(t=Sum("amount"))["t"]),
+            "week":  _f(_base.filter(created_at__date__gte=week_ago).aggregate(t=Sum("amount"))["t"]),
+            "month": _f(_base.filter(created_at__date__gte=month_ago).aggregate(t=Sum("amount"))["t"]),
+        }
+
+        # ── By revenue type ────────────────────────────────────────────
+        _label_map = dict(BrokerLedger.REVENUE_CHOICES)
+        by_type = [
+            {
+                "key":   r["revenue_type"],
+                "label": _label_map.get(r["revenue_type"], r["revenue_type"]),
+                "total": _f(r["total"]),
+                "count": r["count"],
+            }
+            for r in qs.values("revenue_type")
+                       .annotate(total=Sum("amount"), count=Count("id"))
+                       .order_by("-total")
+        ]
+
+        # ── By symbol (top 15) ─────────────────────────────────────────
+        by_symbol = [
+            {"symbol": r["symbol"], "total": _f(r["total"]), "count": r["count"]}
+            for r in qs.exclude(symbol__isnull=True).exclude(symbol="")
+                       .values("symbol")
+                       .annotate(total=Sum("amount"), count=Count("id"))
+                       .order_by("-total")[:15]
+        ]
+
+        # ── By account (top 15) ────────────────────────────────────────
+        by_account = [
+            {
+                "account_id": r["source_account_id"],
+                "username":   r["source_account__user__username"] or f"#{r['source_account_id']}",
+                "total":      _f(r["total"]),
+                "count":      r["count"],
+            }
+            for r in qs.exclude(source_account__isnull=True)
+                       .values("source_account_id", "source_account__user__username")
+                       .annotate(total=Sum("amount"), count=Count("id"))
+                       .order_by("-total")[:15]
+        ]
+
+        # ── Daily trend (last 30 days, filtered) ───────────────────────
+        daily = [
+            {
+                "day":   r["day"].strftime("%Y-%m-%d"),
+                "total": _f(r["total"]),
+                "count": r["count"],
+            }
+            for r in qs.filter(created_at__date__gte=month_ago)
+                       .annotate(day=TruncDay("created_at"))
+                       .values("day")
+                       .annotate(total=Sum("amount"), count=Count("id"))
+                       .order_by("day")
+        ]
+
+        # ── Dropdown helpers ────────────────────────────────────────────
+        all_symbols = list(
+            BrokerLedger.objects.exclude(symbol__isnull=True).exclude(symbol="")
+                                .values_list("symbol", flat=True)
+                                .distinct().order_by("symbol")
+        )
+
+        context = dict(
+            self.admin_site.each_context(request),
+            title           = "Broker Revenue Dashboard",
+            grand_total     = _f(totals["grand_total"]),
+            t_commission    = _f(totals["commission"]),
+            t_spread        = _f(totals["spread"]),
+            t_challenge     = _f(totals["challenge_fee"]),
+            t_withdraw      = _f(totals["withdraw_fee"]),
+            t_adjustment    = _f(totals["adjustment"]),
+            row_count       = totals["row_count"] or 0,
+            period          = period,
+            by_type         = by_type,
+            by_symbol       = by_symbol,
+            by_account      = by_account,
+            daily           = daily,
+            all_symbols     = all_symbols,
+            revenue_choices = BrokerLedger.REVENUE_CHOICES,
+            f_type          = f_type,
+            f_symbol        = f_symbol,
+            f_from          = f_from,
+            f_to            = f_to,
+            changelist_url  = reverse("admin:simulator_brokerledger_changelist"),
+        )
+        return render(request, "admin/broker_revenue_dashboard.html", context)
+
+
+# ─────────────────────────────────────────────
+# Broker Analytics Engine
+# ─────────────────────────────────────────────
+
+def _build_equity_svg(snapshots: list, width: int = 800, height: int = 120) -> str:
+    """
+    Generate an inline SVG polyline from a list of BrokerRevenueSnapshot objects.
+    x-axis = time-proportional, y-axis = total_revenue normalized to [10, 110] px.
+    Returns empty string if fewer than 2 points.
+    """
+    if len(snapshots) < 2:
+        return ""
+    values = [float(s.total_revenue) for s in snapshots]
+    min_v, max_v = min(values), max(values)
+    v_range = max_v - min_v
+    pad_top, pad_bot = 10, 10
+    draw_h = height - pad_top - pad_bot
+    n = len(snapshots)
+
+    pts = []
+    for i, v in enumerate(values):
+        x = round(i / (n - 1) * width, 2)
+        y = round(
+            pad_top + (1.0 - (v - min_v) / v_range) * draw_h
+            if v_range > 0 else height / 2,
+            2,
+        )
+        pts.append((x, y))
+
+    poly   = " ".join(f"{x},{y}" for x, y in pts)
+    fill_p = f"0,{height} {poly} {width},{height}"
+
+    return (
+        f'<svg viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg" '
+        f'preserveAspectRatio="none" style="width:100%;height:{height}px;display:block;">'
+        f'<defs>'
+        f'<linearGradient id="rg" x1="0" y1="0" x2="0" y2="1">'
+        f'<stop offset="0%" stop-color="#e8c84a" stop-opacity="0.22"/>'
+        f'<stop offset="100%" stop-color="#e8c84a" stop-opacity="0.02"/>'
+        f'</linearGradient>'
+        f'</defs>'
+        f'<polygon points="{fill_p}" fill="url(#rg)"/>'
+        f'<polyline points="{poly}" fill="none" stroke="#e8c84a" stroke-width="1.8" '
+        f'stroke-linejoin="round" stroke-linecap="round"/>'
+        f'</svg>'
+    )
+
+
+def _downsample(rows: list, max_pts: int = 300) -> list:
+    """Thin a list to at most max_pts evenly-spaced entries."""
+    if len(rows) <= max_pts:
+        return rows
+    step = len(rows) / max_pts
+    return [rows[int(i * step)] for i in range(max_pts)]
+
+
+@admin.register(BrokerRevenueSnapshot)
+class BrokerRevenueSnapshotAdmin(admin.ModelAdmin):
+
+    @admin.display(description="Total Revenue")
+    def total_col(self, obj):
+        return format_html(
+            '<span style="color:#e8c84a;font-weight:700">${}</span>',
+            f"{float(obj.total_revenue):,.2f}",
+        )
+
+    @admin.display(description="Period Revenue")
+    def period_col(self, obj):
+        v = float(obj.period_revenue)
+        color = "#27ae60" if v > 0 else "#888"
+        return format_html(
+            '<span style="color:{};font-weight:700">{}</span>',
+            color, f"+${v:,.4f}",
+        )
+
+    @admin.display(description="Net Exposure")
+    def exposure_col(self, obj):
+        v = float(obj.net_exposure_usd)
+        color = "#ef5350" if abs(v) > 10000 else "#e67e22" if abs(v) > 5000 else "#27ae60"
+        return format_html(
+            '<span style="color:{};font-weight:700">{}</span>',
+            color, f"${v:+,.2f}",
+        )
+
+    list_display    = ("taken_at", "total_col", "period_col",
+                       "active_accounts", "open_positions", "exposure_col")
+    list_filter     = ("taken_at",)
+    date_hierarchy  = "taken_at"
+    ordering        = ("-taken_at",)
+    readonly_fields = (
+        "taken_at",
+        "total_revenue", "total_commission", "total_spread",
+        "total_challenge", "total_withdraw", "total_adjustment",
+        "period_revenue", "period_commission", "period_spread",
+        "active_accounts", "open_positions",
+        "net_exposure_usd", "gross_long_usd", "gross_short_usd",
+    )
+
+    def has_add_permission(self, request):        return False
+    def has_change_permission(self, request, obj=None): return False
+    def has_delete_permission(self, request, obj=None): return False
+
+    def changelist_view(self, request, extra_context=None):
+        extra_context = extra_context or {}
+        extra_context["analytics_url"] = reverse("admin:brokerrevsnap_analytics")
+        return super().changelist_view(request, extra_context)
+
+    def get_urls(self):
+        return [
+            path(
+                "analytics/",
+                self.admin_site.admin_view(self.analytics_view),
+                name="brokerrevsnap_analytics",
+            ),
+        ] + super().get_urls()
+
+    def analytics_view(self, request):
+        import datetime
+        from django.db.models import Sum, Count, Q
+        from django.db.models.functions import TruncDay
+        from django.utils import timezone
+        from django.utils.html import mark_safe
+
+        now_dt    = timezone.now()
+        today     = now_dt.date()
+        yesterday = today - datetime.timedelta(days=1)
+        week_ago  = today - datetime.timedelta(days=7)
+        month_ago = today - datetime.timedelta(days=30)
+
+        def _f(v): return float(v or 0)
+
+        # ── Window toggle ─────────────────────────────────────────────
+        window = request.GET.get("window", "24h")
+        if window not in ("24h", "7d", "30d"):
+            window = "24h"
+        _window_delta = {"24h": datetime.timedelta(hours=24),
+                          "7d": datetime.timedelta(days=7),
+                          "30d": datetime.timedelta(days=30)}
+        curve_since = now_dt - _window_delta[window]
+        curve_qs = list(
+            BrokerRevenueSnapshot.objects
+            .filter(taken_at__gte=curve_since)
+            .order_by("taken_at")
+        )
+        curve_pts    = _downsample(curve_qs)
+        equity_svg   = mark_safe(_build_equity_svg(curve_pts))
+        curve_first  = curve_pts[0].taken_at.strftime("%Y-%m-%d %H:%M") if curve_pts else "—"
+        curve_last   = curve_pts[-1].taken_at.strftime("%Y-%m-%d %H:%M") if curve_pts else "—"
+        curve_start_val = float(curve_pts[0].total_revenue)  if curve_pts else 0.0
+        curve_end_val   = float(curve_pts[-1].total_revenue) if curve_pts else 0.0
+        curve_delta     = curve_end_val - curve_start_val
+
+        # ── KPI cards ─────────────────────────────────────────────────
+        bl = BrokerLedger.objects
+        t_today     = _f(bl.filter(created_at__date=today).aggregate(t=Sum("amount"))["t"])
+        t_yesterday = _f(bl.filter(created_at__date=yesterday).aggregate(t=Sum("amount"))["t"])
+        t_week      = _f(bl.filter(created_at__date__gte=week_ago).aggregate(t=Sum("amount"))["t"])
+        t_month     = _f(bl.filter(created_at__date__gte=month_ago).aggregate(t=Sum("amount"))["t"])
+        latest_snap = BrokerRevenueSnapshot.objects.order_by("-taken_at").first()
+        t_lifetime  = float(latest_snap.total_revenue) if latest_snap else 0.0
+        growth_pct  = (
+            round((t_today - t_yesterday) / t_yesterday * 100, 1)
+            if t_yesterday > 0 else None
+        )
+
+        # ── Revenue by type (all time) ────────────────────────────────
+        _label = dict(BrokerLedger.REVENUE_CHOICES)
+        by_type = [
+            {
+                "key":   r["revenue_type"],
+                "label": _label.get(r["revenue_type"], r["revenue_type"]),
+                "total": _f(r["total"]),
+                "count": r["count"],
+            }
+            for r in bl.values("revenue_type")
+                       .annotate(total=Sum("amount"), count=Count("id"))
+                       .order_by("-total")
+        ]
+        t_spread_all     = next((r["total"] for r in by_type if r["key"] == "SPREAD"),     0.0)
+        t_commission_all = next((r["total"] for r in by_type if r["key"] == "COMMISSION"), 0.0)
+        sc_sum           = t_spread_all + t_commission_all
+        spread_pct       = round(t_spread_all     / sc_sum * 100, 1) if sc_sum > 0 else 0.0
+        commission_pct   = round(t_commission_all / sc_sum * 100, 1) if sc_sum > 0 else 0.0
+
+        # ── Top 10 symbols (30d) ──────────────────────────────────────
+        top_symbols = [
+            {"symbol": r["symbol"], "total": _f(r["total"]), "count": r["count"]}
+            for r in bl.filter(created_at__date__gte=month_ago)
+                       .exclude(symbol__isnull=True).exclude(symbol="")
+                       .values("symbol")
+                       .annotate(total=Sum("amount"), count=Count("id"))
+                       .order_by("-total")[:10]
+        ]
+
+        # ── Top 10 accounts (30d) ─────────────────────────────────────
+        top_accounts = [
+            {
+                "account_id": r["source_account_id"],
+                "username":   r["source_account__user__username"] or f"#{r['source_account_id']}",
+                "total":      _f(r["total"]),
+                "count":      r["count"],
+            }
+            for r in bl.exclude(source_account__isnull=True)
+                       .filter(created_at__date__gte=month_ago)
+                       .values("source_account_id", "source_account__user__username")
+                       .annotate(total=Sum("amount"), count=Count("id"))
+                       .order_by("-total")[:10]
+        ]
+
+        # ── Daily revenue bars (last 30 days) ─────────────────────────
+        daily = [
+            {"day": r["day"].strftime("%Y-%m-%d"), "total": _f(r["total"]), "count": r["count"]}
+            for r in bl.filter(created_at__date__gte=month_ago)
+                       .annotate(day=TruncDay("created_at"))
+                       .values("day")
+                       .annotate(total=Sum("amount"), count=Count("id"))
+                       .order_by("day")
+        ]
+        daily_max = max((d["total"] for d in daily), default=1.0) or 1.0
+
+        # ── Exposure × Revenue merge ───────────────────────────────────
+        rev_by_sym = {
+            r["symbol"]: _f(r["total"])
+            for r in bl.filter(created_at__date__gte=month_ago)
+                       .exclude(symbol__isnull=True).exclude(symbol="")
+                       .values("symbol")
+                       .annotate(total=Sum("amount"))
+        }
+        latest_bsnap = BrokerSnapshot.objects.order_by("-created_at").first()
+        exp_by_sym   = {}
+        if latest_bsnap:
+            for e in SymbolExposure.objects.filter(snapshot=latest_bsnap).select_related():
+                exp_by_sym[e.symbol] = e
+
+        exp_rev = []
+        for sym in sorted(set(rev_by_sym) | set(exp_by_sym)):
+            e = exp_by_sym.get(sym)
+            exp_rev.append({
+                "symbol":           sym,
+                "revenue_30d":      rev_by_sym.get(sym, 0.0),
+                "net_usd":          float(e.net_usd)           if e else 0.0,
+                "concentration_pct": float(e.concentration_pct) if e else 0.0,
+                "unrealized_pnl":   float(e.unrealized_pnl)    if e else 0.0,
+                "is_high_risk":     e.is_high_risk              if e else False,
+            })
+        exp_rev.sort(key=lambda r: (-r["revenue_30d"], -abs(r["net_usd"])))
+
+        # ── Operational state from latest revenue snapshot ─────────────
+        ops = {
+            "active_accounts": latest_snap.active_accounts  if latest_snap else "—",
+            "open_positions":  latest_snap.open_positions    if latest_snap else "—",
+            "net_exposure":    float(latest_snap.net_exposure_usd) if latest_snap else 0.0,
+            "gross_long":      float(latest_snap.gross_long_usd)   if latest_snap else 0.0,
+            "gross_short":     float(latest_snap.gross_short_usd)  if latest_snap else 0.0,
+        }
+
+        context = dict(
+            self.admin_site.each_context(request),
+            title          = "Broker Analytics",
+            # KPI
+            t_today        = t_today,
+            t_yesterday    = t_yesterday,
+            t_week         = t_week,
+            t_month        = t_month,
+            t_lifetime     = t_lifetime,
+            growth_pct     = growth_pct,
+            # Revenue breakdown
+            by_type        = by_type,
+            spread_pct     = spread_pct,
+            commission_pct = commission_pct,
+            t_spread_all   = t_spread_all,
+            t_commission_all = t_commission_all,
+            # Rankings
+            top_symbols    = top_symbols,
+            top_accounts   = top_accounts,
+            sym_max        = top_symbols[0]["total"] if top_symbols else 1.0,
+            acc_max        = top_accounts[0]["total"] if top_accounts else 1.0,
+            # Trend
+            daily          = daily,
+            daily_max      = daily_max,
+            # Equity curve
+            equity_svg     = equity_svg,
+            window         = window,
+            curve_first    = curve_first,
+            curve_last     = curve_last,
+            curve_delta    = curve_delta,
+            curve_pts_count = len(curve_pts),
+            # Exposure × Revenue
+            exp_rev        = exp_rev,
+            # Ops
+            ops            = ops,
+            changelist_url = reverse("admin:simulator_brokerrevenuesnapshot_changelist"),
+            revenue_url    = reverse("admin:brokerledger_revenue_dashboard"),
+            exposure_url   = reverse("admin:broker_live_analytics"),
+        )
+        return render(request, "admin/broker_analytics_dashboard.html", context)
 
 
 # ─────────────────────────────────────────────

@@ -1,0 +1,461 @@
+{% extends "admin/base_site.html" %}
+{% block extrahead %}{{ block.super }}
+<style>
+:root{
+  --bg:#07070f;--panel:#0f0f1c;--panel2:#13131f;--border:#1e1e30;
+  --gold:#e8c84a;--bull:#27ae60;--bear:#e74c3c;--warn:#e67e22;--info:#3498db;
+  --cyan:#26a69a;--purple:#7986cb;
+  --text:#c8ccd8;--muted:#55556a;--r:8px;
+}
+#content{background:var(--bg)!important;color:var(--text);}
+#content h1{color:var(--gold);font-size:1.05rem;letter-spacing:.06em;margin:0;}
+
+/* nav */
+.ba-nav{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;
+  background:var(--panel);border:1px solid var(--border);border-radius:var(--r);padding:12px 16px;margin-bottom:14px;}
+.ba-nav-links{display:flex;gap:8px;flex-wrap:wrap;}
+.ba-btn{display:inline-block;padding:5px 13px;border-radius:5px;font-size:.72rem;font-weight:700;
+  cursor:pointer;border:none;text-decoration:none;letter-spacing:.04em;transition:opacity .15s;}
+.ba-btn:hover{opacity:.82;}
+.ba-btn-gold{background:rgba(232,200,74,.15);color:var(--gold);border:1px solid rgba(232,200,74,.3);}
+.ba-btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--border);}
+
+/* window toggle */
+.win-tabs{display:flex;gap:4px;}
+.win-tab{display:inline-block;padding:4px 12px;border-radius:4px;font-size:.7rem;font-weight:700;
+  text-decoration:none;border:1px solid var(--border);color:var(--muted);transition:all .15s;}
+.win-tab:hover{color:var(--gold);border-color:rgba(232,200,74,.4);}
+.win-tab.active{background:rgba(232,200,74,.15);color:var(--gold);border-color:rgba(232,200,74,.5);}
+
+/* kpi row */
+.ba-kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:14px;}
+.ba-kpi{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+  padding:12px 14px;position:relative;overflow:hidden;}
+.ba-kpi::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;}
+.ba-kpi.c-gold::before{background:var(--gold);}
+.ba-kpi.c-bull::before{background:var(--bull);}
+.ba-kpi.c-cyan::before{background:var(--cyan);}
+.ba-kpi.c-info::before{background:var(--info);}
+.ba-kpi.c-warn::before{background:var(--warn);}
+.ba-kpi.c-muted::before{background:var(--border);}
+.kpi-label{font-size:.58rem;color:var(--muted);text-transform:uppercase;letter-spacing:.09em;margin-bottom:5px;}
+.kpi-val{font-size:1.2rem;font-weight:800;color:var(--text);line-height:1;}
+.kpi-sub{font-size:.6rem;color:var(--muted);margin-top:3px;}
+.kpi-val.gold{color:var(--gold);}
+.kpi-val.bull{color:var(--bull);}
+.kpi-val.bear{color:var(--bear);}
+
+/* ops stripe */
+.ba-ops{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:14px;}
+.ba-op{background:var(--panel2);border:1px solid var(--border);border-radius:var(--r);
+  padding:10px 12px;text-align:center;}
+.ba-op .op-label{font-size:.58rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px;}
+.ba-op .op-val{font-size:.95rem;font-weight:800;color:var(--text);}
+
+/* section heading */
+.ba-section{font-size:.62rem;font-weight:700;color:var(--muted);text-transform:uppercase;
+  letter-spacing:.1em;margin:16px 0 8px;padding-bottom:4px;border-bottom:1px solid var(--border);}
+
+/* equity curve */
+.ba-curve{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+  padding:14px 16px;margin-bottom:14px;overflow:hidden;}
+.ba-curve-meta{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;}
+.ba-curve-title{font-size:.78rem;font-weight:700;color:var(--text);}
+.ba-curve-delta{font-size:.72rem;font-weight:700;}
+.ba-curve-svg{border-radius:4px;overflow:hidden;}
+.ba-curve-foot{display:flex;justify-content:space-between;margin-top:6px;}
+.ba-curve-foot span{font-size:.58rem;color:var(--muted);}
+
+/* ratio bar */
+.ba-ratio{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+  padding:12px 16px;margin-bottom:14px;}
+.ratio-row{display:flex;align-items:center;gap:12px;margin-top:8px;}
+.ratio-bar{flex:1;display:flex;height:16px;border-radius:6px;overflow:hidden;}
+.ratio-spread{background:var(--cyan);}
+.ratio-commission{background:var(--bull);}
+.ratio-labels{display:flex;gap:16px;margin-top:6px;}
+.ratio-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:5px;}
+
+/* two-column */
+.ba-2col{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;}
+@media(max-width:900px){.ba-2col{grid-template-columns:1fr;}}
+
+/* tables */
+.ba-table{width:100%;border-collapse:collapse;font-size:.76rem;}
+.ba-table th{padding:6px 10px;text-align:left;font-size:.6rem;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);}
+.ba-table td{padding:6px 10px;border-bottom:1px solid rgba(30,30,48,.6);color:var(--text);}
+.ba-table tr:last-child td{border-bottom:none;}
+.ba-table tr:hover td{background:rgba(255,255,255,.015);}
+.val{font-weight:700;color:var(--gold);}
+.cnt{color:var(--muted);font-size:.68rem;}
+.ba-panel{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;}
+
+/* inline bar */
+.ibar-wrap{display:flex;align-items:center;gap:6px;}
+.ibar-bg{background:rgba(255,255,255,.05);border-radius:3px;height:5px;flex:1;overflow:hidden;min-width:40px;}
+.ibar-fill{height:5px;border-radius:3px;}
+
+/* daily bars */
+.daily-outer{overflow-x:auto;padding-bottom:4px;}
+.daily-bars{display:flex;align-items:flex-end;gap:2px;height:70px;}
+.daily-col{display:flex;flex-direction:column;align-items:center;flex:1;min-width:12px;gap:1px;}
+.daily-bar{background:rgba(232,200,74,.55);border-radius:2px 2px 0 0;width:100%;transition:background .1s;}
+.daily-bar:hover{background:var(--gold);}
+.daily-lbl{font-size:.42rem;color:var(--muted);writing-mode:vertical-lr;transform:rotate(180deg);
+  white-space:nowrap;line-height:1;max-height:32px;overflow:hidden;}
+
+/* exposure table risk badges */
+.ba-badge{display:inline-block;padding:2px 7px;border-radius:4px;font-size:.62rem;font-weight:700;}
+.risk-hi{background:rgba(231,76,60,.18);color:#ef5350;border:1px solid rgba(231,76,60,.3);}
+.risk-ok{background:rgba(39,174,96,.12);color:#27ae60;border:1px solid rgba(39,174,96,.25);}
+</style>
+{% endblock %}
+
+{% block content %}
+{% load i18n %}
+
+<!-- Navigation header -->
+<div class="ba-nav">
+  <div>
+    <div style="font-size:.88rem;font-weight:800;color:var(--text);">Broker Analytics</div>
+    <div style="font-size:.65rem;color:var(--muted);margin-top:2px;">Revenue · Exposure · Rankings</div>
+  </div>
+  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+    <!-- Window toggle -->
+    <div class="win-tabs">
+      <a href="?window=24h" class="win-tab {% if window == '24h' %}active{% endif %}">24h</a>
+      <a href="?window=7d"  class="win-tab {% if window == '7d'  %}active{% endif %}">7d</a>
+      <a href="?window=30d" class="win-tab {% if window == '30d' %}active{% endif %}">30d</a>
+    </div>
+    <div class="ba-nav-links">
+      <a href="{{ revenue_url }}"    class="ba-btn ba-btn-ghost">Revenue Ledger</a>
+      <a href="{{ exposure_url }}"   class="ba-btn ba-btn-ghost">Exposure Desk</a>
+      <a href="{{ changelist_url }}" class="ba-btn ba-btn-ghost">← Snapshots</a>
+    </div>
+  </div>
+</div>
+
+<!-- KPI cards -->
+<div class="ba-kpis">
+  <div class="ba-kpi c-muted">
+    <div class="kpi-label">Revenue Today</div>
+    <div class="kpi-val {% if t_today > 0 %}bull{% endif %}">${{ t_today|floatformat:2 }}</div>
+    <div class="kpi-sub">vs yesterday ${{ t_yesterday|floatformat:2 }}</div>
+  </div>
+  <div class="ba-kpi c-bull">
+    <div class="kpi-label">Last 7 Days</div>
+    <div class="kpi-val bull">${{ t_week|floatformat:2 }}</div>
+    <div class="kpi-sub">&nbsp;</div>
+  </div>
+  <div class="ba-kpi c-cyan">
+    <div class="kpi-label">Last 30 Days</div>
+    <div class="kpi-val" style="color:var(--cyan);">${{ t_month|floatformat:2 }}</div>
+    <div class="kpi-sub">&nbsp;</div>
+  </div>
+  <div class="ba-kpi c-gold">
+    <div class="kpi-label">Lifetime Revenue</div>
+    <div class="kpi-val gold">${{ t_lifetime|floatformat:2 }}</div>
+    <div class="kpi-sub">all time</div>
+  </div>
+  <div class="ba-kpi {% if growth_pct is not None and growth_pct >= 0 %}c-bull{% else %}c-muted{% endif %}">
+    <div class="kpi-label">Daily Growth %</div>
+    {% if growth_pct is not None %}
+      <div class="kpi-val {% if growth_pct >= 0 %}bull{% else %}bear{% endif %}">
+        {{ growth_pct|floatformat:1 }}%
+      </div>
+      <div class="kpi-sub">today vs yesterday</div>
+    {% else %}
+      <div class="kpi-val" style="color:var(--muted);">—</div>
+      <div class="kpi-sub">no yesterday data</div>
+    {% endif %}
+  </div>
+  <div class="ba-kpi c-info">
+    <div class="kpi-label">Curve Window</div>
+    <div class="kpi-val" style="color:var(--info);">{{ window }}</div>
+    <div class="kpi-sub">{{ curve_pts_count }} points</div>
+  </div>
+</div>
+
+<!-- Operational state -->
+<div class="ba-ops">
+  <div class="ba-op">
+    <div class="op-label">Active Accounts</div>
+    <div class="op-val" style="color:var(--bull);">{{ ops.active_accounts }}</div>
+  </div>
+  <div class="ba-op">
+    <div class="op-label">Open Positions</div>
+    <div class="op-val" style="color:var(--info);">{{ ops.open_positions }}</div>
+  </div>
+  <div class="ba-op">
+    <div class="op-label">Net Exposure</div>
+    <div class="op-val" style="color:{% if ops.net_exposure > 5000 %}var(--bear){% elif ops.net_exposure > 2000 %}var(--warn){% else %}var(--bull){% endif %};">
+      ${{ ops.net_exposure|floatformat:0 }}
+    </div>
+  </div>
+  <div class="ba-op">
+    <div class="op-label">Gross Long</div>
+    <div class="op-val" style="color:var(--bull);">${{ ops.gross_long|floatformat:0 }}</div>
+  </div>
+  <div class="ba-op">
+    <div class="op-label">Gross Short</div>
+    <div class="op-val" style="color:var(--bear);">${{ ops.gross_short|floatformat:0 }}</div>
+  </div>
+</div>
+
+<!-- Equity curve (inline SVG, Python-generated, no JS) -->
+<div class="ba-section">Broker Revenue Equity Curve — {{ window }}</div>
+<div class="ba-curve">
+  <div class="ba-curve-meta">
+    <div class="ba-curve-title">
+      ${{ t_lifetime|floatformat:2 }} lifetime
+    </div>
+    <div class="ba-curve-delta"
+         style="color:{% if curve_delta >= 0 %}var(--bull){% else %}var(--bear){% endif %};">
+      {% if curve_delta >= 0 %}+{% endif %}${{ curve_delta|floatformat:2 }} in {{ window }}
+    </div>
+  </div>
+  {% if equity_svg %}
+    <div class="ba-curve-svg">{{ equity_svg }}</div>
+    <div class="ba-curve-foot">
+      <span>{{ curve_first }}</span>
+      <span>{{ curve_last }}</span>
+    </div>
+  {% else %}
+    <div style="text-align:center;padding:24px;color:var(--muted);font-size:.78rem;">
+      No snapshot data yet for this window. Run the revenue snapshot task first.
+    </div>
+  {% endif %}
+</div>
+
+<!-- Spread vs Commission ratio -->
+<div class="ba-section">Revenue Mix — Spread vs Commission</div>
+<div class="ba-ratio">
+  <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+    <span style="font-size:.72rem;color:var(--muted);">All-time breakdown</span>
+    <span style="font-size:.72rem;color:var(--text);">
+      Total: <strong style="color:var(--gold);">${{ t_spread_all|floatformat:2 }}</strong>
+      +
+      <strong style="color:var(--bull);">${{ t_commission_all|floatformat:2 }}</strong>
+    </span>
+  </div>
+  <div class="ratio-row">
+    <div class="ratio-bar">
+      <div class="ratio-spread" style="width:{{ spread_pct }}%;"></div>
+      <div class="ratio-commission" style="width:{{ commission_pct }}%;"></div>
+    </div>
+  </div>
+  <div class="ratio-labels">
+    <span>
+      <span class="ratio-dot" style="background:var(--cyan);"></span>
+      <span style="font-size:.68rem;color:var(--cyan);">Spread {{ spread_pct }}%</span>
+    </span>
+    <span>
+      <span class="ratio-dot" style="background:var(--bull);"></span>
+      <span style="font-size:.68rem;color:var(--bull);">Commission {{ commission_pct }}%</span>
+    </span>
+  </div>
+</div>
+
+<!-- Revenue by type + Daily trend -->
+<div class="ba-2col">
+  <div>
+    <div class="ba-section">Revenue by Type</div>
+    <div class="ba-panel">
+      {% if by_type %}
+      <table class="ba-table">
+        <thead><tr>
+          <th>Type</th><th style="text-align:right">Revenue</th>
+          <th style="text-align:right">Entries</th><th style="min-width:70px"></th>
+        </tr></thead>
+        <tbody>
+          {% for row in by_type %}
+          <tr>
+            <td>
+              {% if row.key == "SPREAD" %}
+                <span class="ba-badge" style="background:rgba(38,166,154,.15);color:#26a69a;border:1px solid rgba(38,166,154,.25);">{{ row.label }}</span>
+              {% elif row.key == "COMMISSION" %}
+                <span class="ba-badge" style="background:rgba(39,174,96,.15);color:#27ae60;border:1px solid rgba(39,174,96,.25);">{{ row.label }}</span>
+              {% elif row.key == "CHALLENGE_FEE" %}
+                <span class="ba-badge" style="background:rgba(230,126,34,.15);color:#e67e22;border:1px solid rgba(230,126,34,.25);">{{ row.label }}</span>
+              {% elif row.key == "WITHDRAW_FEE" %}
+                <span class="ba-badge" style="background:rgba(52,152,219,.15);color:#3498db;border:1px solid rgba(52,152,219,.25);">{{ row.label }}</span>
+              {% else %}
+                <span class="ba-badge" style="background:rgba(121,134,203,.15);color:#7986cb;border:1px solid rgba(121,134,203,.25);">{{ row.label }}</span>
+              {% endif %}
+            </td>
+            <td style="text-align:right" class="val">${{ row.total|floatformat:2 }}</td>
+            <td style="text-align:right" class="cnt">{{ row.count }}</td>
+            <td>
+              {% if t_lifetime > 0 %}
+              <div class="ibar-wrap">
+                <div class="ibar-bg">
+                  <div class="ibar-fill" style="width:{% widthratio row.total t_lifetime 100 %}%;background:var(--gold);"></div>
+                </div>
+                <span class="cnt">{% widthratio row.total t_lifetime 100 %}%</span>
+              </div>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div style="padding:20px;text-align:center;color:var(--muted);font-size:.76rem;">No revenue data yet.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div>
+    <div class="ba-section">Daily Revenue — Last 30 Days</div>
+    <div class="ba-panel" style="padding:14px 16px;">
+      {% if daily %}
+      <div class="daily-outer">
+        <div class="daily-bars">
+          {% for d in daily %}
+          <div class="daily-col" title="{{ d.day }}: ${{ d.total|floatformat:2 }}">
+            <div class="daily-bar"
+                 style="height:{% widthratio d.total daily_max 64 %}px;min-height:2px;"></div>
+            <div class="daily-lbl">{{ d.day|slice:"5:" }}</div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% else %}
+      <div style="text-align:center;padding:20px;color:var(--muted);font-size:.76rem;">No data in last 30 days.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Top symbols + Top accounts -->
+<div class="ba-2col">
+  <div>
+    <div class="ba-section">Top 10 Symbols by Revenue — 30d</div>
+    <div class="ba-panel">
+      {% if top_symbols %}
+      <table class="ba-table">
+        <thead><tr>
+          <th>#</th><th>Symbol</th>
+          <th style="text-align:right">Revenue</th><th style="text-align:right">Trades</th>
+          <th style="min-width:60px"></th>
+        </tr></thead>
+        <tbody>
+          {% for row in top_symbols %}
+          <tr>
+            <td class="cnt">{{ forloop.counter }}</td>
+            <td style="font-weight:700;font-size:.8rem;">{{ row.symbol }}</td>
+            <td style="text-align:right" class="val">${{ row.total|floatformat:2 }}</td>
+            <td style="text-align:right" class="cnt">{{ row.count }}</td>
+            <td>
+              {% if sym_max > 0 %}
+              <div class="ibar-bg">
+                <div class="ibar-fill" style="width:{% widthratio row.total sym_max 100 %}%;background:var(--cyan);height:5px;border-radius:3px;"></div>
+              </div>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div style="padding:20px;text-align:center;color:var(--muted);font-size:.76rem;">No symbol data in 30d.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div>
+    <div class="ba-section">Top 10 Traders by Revenue — 30d</div>
+    <div class="ba-panel">
+      {% if top_accounts %}
+      <table class="ba-table">
+        <thead><tr>
+          <th>#</th><th>Trader</th>
+          <th style="text-align:right">Revenue</th><th style="text-align:right">Trades</th>
+          <th style="min-width:60px"></th>
+        </tr></thead>
+        <tbody>
+          {% for row in top_accounts %}
+          <tr>
+            <td class="cnt">{{ forloop.counter }}</td>
+            <td>
+              <a href="{% url 'admin:simulator_tradingaccount_change' row.account_id %}"
+                 style="color:var(--info);text-decoration:none;font-weight:700;">{{ row.username }}</a>
+              <span class="cnt" style="margin-left:3px;">#{{ row.account_id }}</span>
+            </td>
+            <td style="text-align:right" class="val">${{ row.total|floatformat:2 }}</td>
+            <td style="text-align:right" class="cnt">{{ row.count }}</td>
+            <td>
+              {% if acc_max > 0 %}
+              <div class="ibar-bg">
+                <div class="ibar-fill" style="width:{% widthratio row.total acc_max 100 %}%;background:var(--warn);height:5px;border-radius:3px;"></div>
+              </div>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div style="padding:20px;text-align:center;color:var(--muted);font-size:.76rem;">No account data in 30d.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Exposure × Revenue -->
+{% if exp_rev %}
+<div class="ba-section" style="margin-top:4px;">Symbol Risk Matrix — Revenue (30d) × Live Exposure</div>
+<div class="ba-panel" style="margin-bottom:20px;overflow:hidden;">
+  <table class="ba-table">
+    <thead><tr>
+      <th>Symbol</th>
+      <th style="text-align:right">Revenue 30d</th>
+      <th style="text-align:right">Net Exposure</th>
+      <th style="text-align:right">Concentration</th>
+      <th style="text-align:right">UPnL</th>
+      <th style="text-align:center">Risk</th>
+    </tr></thead>
+    <tbody>
+      {% for row in exp_rev %}
+      <tr>
+        <td style="font-weight:700;">{{ row.symbol }}</td>
+        <td style="text-align:right" class="val">
+          {% if row.revenue_30d > 0 %}${{ row.revenue_30d|floatformat:2 }}{% else %}<span class="cnt">—</span>{% endif %}
+        </td>
+        <td style="text-align:right">
+          <span style="color:{% if row.net_usd < 0 %}var(--bear){% elif row.net_usd > 0 %}var(--bull){% else %}var(--muted){% endif %};font-weight:700;">
+            {% if row.net_usd != 0 %}${{ row.net_usd|floatformat:0 }}{% else %}—{% endif %}
+          </span>
+        </td>
+        <td style="text-align:right">
+          {% if row.concentration_pct > 0 %}
+          <span style="color:{% if row.concentration_pct > 50 %}var(--bear){% elif row.concentration_pct > 25 %}var(--warn){% else %}var(--muted){% endif %};">
+            {{ row.concentration_pct|floatformat:1 }}%
+          </span>
+          {% else %}<span class="cnt">—</span>{% endif %}
+        </td>
+        <td style="text-align:right">
+          {% if row.unrealized_pnl != 0 %}
+          <span style="color:{% if row.unrealized_pnl >= 0 %}var(--bull){% else %}var(--bear){% endif %};font-weight:700;">
+            ${{ row.unrealized_pnl|floatformat:0 }}
+          </span>
+          {% else %}<span class="cnt">—</span>{% endif %}
+        </td>
+        <td style="text-align:center;">
+          {% if row.is_high_risk %}
+            <span class="ba-badge risk-hi">HIGH</span>
+          {% elif row.net_usd != 0 or row.revenue_30d > 0 %}
+            <span class="ba-badge risk-ok">OK</span>
+          {% else %}
+            <span class="cnt">—</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% endblock %}

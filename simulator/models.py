@@ -967,6 +967,64 @@ class AccountEquitySnapshot(models.Model):
         return f"AccEquitySnap #{self.account_id} {self.taken_at:%Y-%m-%d %H:%M} eq={self.equity}"
 
 
+class BrokerRevenueSnapshot(models.Model):
+    """
+    Point-in-time snapshot of cumulative broker revenue + operational state.
+    Written every 5 minutes by simulator.take_revenue_snapshot task.
+    Source of truth for equity-curve rendering and trend analytics.
+
+    Design:
+    - `total_*` fields are monotonically increasing cumulative sums (equity curve points).
+    - `period_*` fields are the incremental delta since the PREVIOUS snapshot (trend rate).
+    - Exposure fields are copied from the latest BrokerEquitySnapshot to avoid
+      recomputing live analytics on every 5-min tick.
+    - No JSON blobs — top-N breakdowns are always queried live from BrokerLedger
+      (table stays small: ~1 row/trade).
+
+    Retention: REVENUE_SNAPSHOT_RETENTION_DAYS (default 90).
+    At 288 snapshots/day × 90 days = 25,920 rows max — trivial storage.
+
+    Future cold-storage path: export rows older than N days to a data warehouse
+    (S3 Parquet, BigQuery, Redshift) using the `taken_at` index as the cursor.
+    The table never needs to grow beyond the configured retention window.
+    """
+    taken_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    # ── Cumulative all-time totals ─────────────────────────────────────
+    # These form the broker's revenue equity curve. Each row is one point.
+    total_revenue    = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal("0"))
+    total_commission = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal("0"))
+    total_spread     = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal("0"))
+    total_challenge  = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal("0"))
+    total_withdraw   = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal("0"))
+    total_adjustment = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal("0"))
+
+    # ── Incremental delta since previous snapshot ─────────────────────
+    # Used for trend rate and sparklines without arithmetic in templates.
+    period_revenue    = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal("0"))
+    period_commission = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal("0"))
+    period_spread     = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal("0"))
+
+    # ── Operational state at snapshot time ────────────────────────────
+    active_accounts = models.PositiveIntegerField(default=0)
+    open_positions  = models.PositiveIntegerField(default=0)
+
+    # ── Lightweight exposure summary ──────────────────────────────────
+    # Copied from latest BrokerEquitySnapshot — no recomputation needed.
+    net_exposure_usd = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal("0"))
+    gross_long_usd   = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal("0"))
+    gross_short_usd  = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal("0"))
+
+    class Meta:
+        ordering = ["-taken_at"]
+        indexes  = [models.Index(fields=["taken_at"], name="brokerrevsnap_ts_idx")]
+        verbose_name = "Broker Revenue Snapshot"
+        verbose_name_plural = "Broker Revenue Snapshots"
+
+    def __str__(self):
+        return f"RevSnap {self.taken_at:%Y-%m-%d %H:%M} total=${self.total_revenue}"
+
+
 # ─────────────────────────────────────────────
 # Audit Trail
 # ─────────────────────────────────────────────
