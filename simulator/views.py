@@ -33,6 +33,7 @@ from .audit import (
     EV_ACCOUNT_FUNDED, EV_ACCOUNT_WITHDRAWN,
     EV_ADMIN_VIEW,
 )
+from market_data.symbol_specs import get_spec as _get_sym_spec, allowed_symbols as _allowed_symbols
 
 logger = logging.getLogger(__name__)
 
@@ -42,15 +43,10 @@ def landing_view(request):
 
 
 # ===== Configuración de mercado (simulada) =====
-# Prices match base_price_for() in consumers.py so HTTP-created positions
-# don't trigger SL/TP immediately when the WS loads them at live price.
+# Prices come from the symbol registry — single source of truth.
 SYMBOL_BASE_PRICES = {
-    "EUR/USD": Decimal("1.17000"),
-    "GBP/USD": Decimal("1.30000"),
-    "USD/JPY": Decimal("155.000"),
-    "AUD/USD": Decimal("0.68000"),
-    "BTCUSD":  Decimal("68000.0"),
-    "ETHUSD":  Decimal("3400.0"),
+    sym: Decimal(str(_get_sym_spec(sym).base_price))
+    for sym in _allowed_symbols()
 }
 _DEFAULT_BASE = Decimal("1.17000")
 

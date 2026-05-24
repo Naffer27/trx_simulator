@@ -1,0 +1,366 @@
+{% extends "admin/base_site.html" %}
+{% block extrahead %}{{ block.super }}
+<style>
+:root{
+  --bg:#07070f;--panel:#0f0f1c;--panel2:#13131f;--border:#1e1e30;
+  --gold:#e8c84a;--bull:#27ae60;--bear:#e74c3c;--warn:#e67e22;--info:#3498db;
+  --cyan:#26a69a;--purple:#7986cb;
+  --text:#c8ccd8;--muted:#55556a;--r:8px;
+}
+#content{background:var(--bg)!important;color:var(--text);}
+#content h1{color:var(--gold);font-size:1.05rem;letter-spacing:.06em;margin:0;}
+
+/* header */
+.rd-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;
+  background:var(--panel);border:1px solid var(--border);border-radius:var(--r);padding:12px 16px;margin-bottom:16px;}
+.rd-btn{display:inline-block;padding:5px 14px;border-radius:5px;font-size:.73rem;font-weight:700;
+  cursor:pointer;border:none;text-decoration:none;letter-spacing:.04em;transition:opacity .15s;}
+.rd-btn:hover{opacity:.82;}
+.rd-btn-gold{background:rgba(232,200,74,.15);color:var(--gold);border:1px solid rgba(232,200,74,.3);}
+.rd-btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--border);}
+
+/* period stripe */
+.rd-period{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px;}
+.rd-pcard{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;text-align:center;}
+.rd-pcard .plabel{font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px;}
+.rd-pcard .pval{font-size:1.1rem;font-weight:800;color:var(--gold);}
+
+/* summary cards */
+.rd-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-bottom:16px;}
+.rd-card{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+  padding:14px 16px;position:relative;overflow:hidden;}
+.rd-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;}
+.rd-card.c-gold::before{background:var(--gold);}
+.rd-card.c-green::before{background:var(--bull);}
+.rd-card.c-cyan::before{background:var(--cyan);}
+.rd-card.c-warn::before{background:var(--warn);}
+.rd-card.c-info::before{background:var(--info);}
+.rd-card.c-purple::before{background:var(--purple);}
+.rd-card .clabel{font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;}
+.rd-card .cval{font-size:1.3rem;font-weight:800;color:var(--text);}
+.rd-card .csub{font-size:.62rem;color:var(--muted);margin-top:3px;}
+
+/* filter bar */
+.rd-filters{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+  padding:12px 16px;margin-bottom:16px;display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;}
+.rd-filters label{display:flex;flex-direction:column;gap:4px;font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;}
+.rd-filters select,.rd-filters input[type=date]{
+  background:#13131f;border:1px solid var(--border);color:var(--text);
+  border-radius:4px;padding:5px 8px;font-size:.75rem;outline:none;}
+.rd-filters select:focus,.rd-filters input:focus{border-color:rgba(232,200,74,.4);}
+.rd-badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:.65rem;font-weight:700;}
+
+/* section heading */
+.rd-section{font-size:.65rem;font-weight:700;color:var(--muted);text-transform:uppercase;
+  letter-spacing:.1em;margin:18px 0 8px;padding-bottom:5px;border-bottom:1px solid var(--border);}
+
+/* tables */
+.rd-table{width:100%;border-collapse:collapse;font-size:.78rem;}
+.rd-table th{padding:7px 10px;text-align:left;font-size:.62rem;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);}
+.rd-table td{padding:7px 10px;border-bottom:1px solid rgba(30,30,48,.7);color:var(--text);}
+.rd-table tr:hover td{background:rgba(255,255,255,.02);}
+.rd-table .val{font-weight:700;color:var(--gold);}
+.rd-table .cnt{color:var(--muted);font-size:.7rem;}
+.rd-table .pct{font-size:.68rem;color:var(--muted);}
+
+/* inline bar */
+.ibar-wrap{display:flex;align-items:center;gap:8px;}
+.ibar-bg{background:rgba(255,255,255,.05);border-radius:3px;height:6px;flex:1;overflow:hidden;}
+.ibar-fill{height:6px;border-radius:3px;}
+
+/* two-column grid */
+.rd-2col{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+@media(max-width:900px){.rd-2col{grid-template-columns:1fr;}}
+
+/* daily bars */
+.daily-wrap{overflow-x:auto;}
+.daily-grid{display:flex;align-items:flex-end;gap:3px;height:80px;padding:0 2px;}
+.daily-bar-col{display:flex;flex-direction:column;align-items:center;gap:2px;flex:1;min-width:14px;}
+.daily-bar{background:rgba(232,200,74,.6);border-radius:2px 2px 0 0;width:100%;transition:background .15s;}
+.daily-bar:hover{background:var(--gold);}
+.daily-lbl{font-size:.48rem;color:var(--muted);transform:rotate(-45deg);transform-origin:top left;
+  margin-top:2px;white-space:nowrap;}
+</style>
+{% endblock %}
+
+{% block content %}
+{% load i18n %}
+
+<!-- Header -->
+<div class="rd-header">
+  <div>
+    <div style="font-size:.9rem;font-weight:700;color:var(--text);">Broker Revenue Dashboard</div>
+    <div style="font-size:.68rem;color:var(--muted);margin-top:2px;">
+      Aggregated revenue from spreads, commissions, and fees
+      {% if f_type or f_symbol or f_from or f_to %}
+      — <span style="color:var(--warn);">filtered view</span>
+      {% endif %}
+    </div>
+  </div>
+  <div style="display:flex;gap:8px;">
+    <a href="{{ changelist_url }}" class="rd-btn rd-btn-ghost">← Ledger List</a>
+    {% if f_type or f_symbol or f_from or f_to %}
+    <a href="?" class="rd-btn rd-btn-ghost" style="color:var(--bear);border-color:rgba(231,76,60,.3);">✕ Clear Filters</a>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Period snapshot (always global) -->
+<div class="rd-period">
+  <div class="rd-pcard">
+    <div class="plabel">Today</div>
+    <div class="pval">${{ period.today|floatformat:2 }}</div>
+  </div>
+  <div class="rd-pcard">
+    <div class="plabel">Last 7 days</div>
+    <div class="pval">${{ period.week|floatformat:2 }}</div>
+  </div>
+  <div class="rd-pcard">
+    <div class="plabel">Last 30 days</div>
+    <div class="pval">${{ period.month|floatformat:2 }}</div>
+  </div>
+</div>
+
+<!-- Summary cards -->
+<div class="rd-cards">
+  <div class="rd-card c-gold">
+    <div class="clabel">Total Revenue</div>
+    <div class="cval" style="color:var(--gold);">${{ grand_total|floatformat:2 }}</div>
+    <div class="csub">{{ row_count }} entries</div>
+  </div>
+  <div class="rd-card c-green">
+    <div class="clabel">Commission</div>
+    <div class="cval" style="color:var(--bull);">${{ t_commission|floatformat:2 }}</div>
+    <div class="csub">
+      {% if grand_total %}
+      {{ t_commission|floatformat:1 }}% of total
+      {% endif %}
+    </div>
+  </div>
+  <div class="rd-card c-cyan">
+    <div class="clabel">Spread</div>
+    <div class="cval" style="color:var(--cyan);">${{ t_spread|floatformat:2 }}</div>
+    <div class="csub">&nbsp;</div>
+  </div>
+  <div class="rd-card c-warn">
+    <div class="clabel">Challenge Fee</div>
+    <div class="cval" style="color:var(--warn);">${{ t_challenge|floatformat:2 }}</div>
+    <div class="csub">&nbsp;</div>
+  </div>
+  <div class="rd-card c-info">
+    <div class="clabel">Withdraw Fee</div>
+    <div class="cval" style="color:var(--info);">${{ t_withdraw|floatformat:2 }}</div>
+    <div class="csub">&nbsp;</div>
+  </div>
+  <div class="rd-card c-purple">
+    <div class="clabel">Adjustment</div>
+    <div class="cval" style="color:var(--purple);">${{ t_adjustment|floatformat:2 }}</div>
+    <div class="csub">&nbsp;</div>
+  </div>
+</div>
+
+<!-- Filters -->
+<form method="get" action="">
+  <div class="rd-filters">
+    <label>Revenue Type
+      <select name="revenue_type">
+        <option value="">All Types</option>
+        {% for val, label in revenue_choices %}
+          <option value="{{ val }}" {% if val == f_type %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Symbol
+      <select name="symbol">
+        <option value="">All Symbols</option>
+        {% for sym in all_symbols %}
+          <option value="{{ sym }}" {% if sym == f_symbol %}selected{% endif %}>{{ sym }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Date From
+      <input type="date" name="date_from" value="{{ f_from }}">
+    </label>
+    <label>Date To
+      <input type="date" name="date_to" value="{{ f_to }}">
+    </label>
+    <button type="submit" class="rd-btn rd-btn-gold" style="margin-bottom:1px;">Apply</button>
+  </div>
+</form>
+
+<!-- Daily trend (last 30 days) -->
+{% if daily %}
+<div class="rd-section">Daily Revenue — Last 30 Days</div>
+{% with max_daily=daily|last %}
+<div style="background:var(--panel);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;margin-bottom:16px;">
+  <div class="daily-wrap">
+    <div class="daily-grid">
+      {% for d in daily %}
+      {% with pct=d.total %}
+      <div class="daily-bar-col" title="{{ d.day }}: ${{ d.total|floatformat:2 }} ({{ d.count }} entries)">
+        <div class="daily-bar" style="height:{% if grand_total > 0 %}{% widthratio d.total grand_total 72 %}{% else %}2{% endif %}px;min-height:2px;"></div>
+        <div class="daily-lbl">{{ d.day|slice:"5:" }}</div>
+      </div>
+      {% endwith %}
+      {% endfor %}
+    </div>
+  </div>
+  <div style="display:flex;justify-content:space-between;margin-top:8px;">
+    <span style="font-size:.65rem;color:var(--muted);">{{ daily.0.day }}</span>
+    <span style="font-size:.65rem;color:var(--muted);">{{ daily|last|default_if_none:"" }}</span>
+  </div>
+</div>
+{% endwith %}
+{% else %}
+<div class="rd-section">Daily Revenue — Last 30 Days</div>
+<div style="background:var(--panel);border:1px solid var(--border);border-radius:var(--r);padding:24px;text-align:center;color:var(--muted);font-size:.78rem;margin-bottom:16px;">No revenue entries in the last 30 days.</div>
+{% endif %}
+
+<!-- Two-column: By Type + By Symbol -->
+<div class="rd-2col">
+  <!-- By Revenue Type -->
+  <div>
+    <div class="rd-section">Revenue by Type</div>
+    <div style="background:var(--panel);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;">
+      {% if by_type %}
+      <table class="rd-table">
+        <thead>
+          <tr>
+            <th>Type</th>
+            <th style="text-align:right">Revenue</th>
+            <th style="text-align:right">Count</th>
+            <th style="min-width:80px"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in by_type %}
+          <tr>
+            <td>
+              {% if row.key == "COMMISSION" %}
+              <span class="rd-badge" style="background:rgba(39,174,96,.15);color:#27ae60;border:1px solid rgba(39,174,96,.25);">{{ row.label }}</span>
+              {% elif row.key == "SPREAD" %}
+              <span class="rd-badge" style="background:rgba(38,166,154,.15);color:#26a69a;border:1px solid rgba(38,166,154,.25);">{{ row.label }}</span>
+              {% elif row.key == "CHALLENGE_FEE" %}
+              <span class="rd-badge" style="background:rgba(230,126,34,.15);color:#e67e22;border:1px solid rgba(230,126,34,.25);">{{ row.label }}</span>
+              {% elif row.key == "WITHDRAW_FEE" %}
+              <span class="rd-badge" style="background:rgba(52,152,219,.15);color:#3498db;border:1px solid rgba(52,152,219,.25);">{{ row.label }}</span>
+              {% else %}
+              <span class="rd-badge" style="background:rgba(121,134,203,.15);color:#7986cb;border:1px solid rgba(121,134,203,.25);">{{ row.label }}</span>
+              {% endif %}
+            </td>
+            <td style="text-align:right" class="val">${{ row.total|floatformat:2 }}</td>
+            <td style="text-align:right" class="cnt">{{ row.count }}</td>
+            <td>
+              {% if grand_total > 0 %}
+              <div class="ibar-wrap">
+                <div class="ibar-bg">
+                  <div class="ibar-fill" style="width:{% widthratio row.total grand_total 100 %}%;background:var(--gold);"></div>
+                </div>
+                <span class="pct">{% widthratio row.total grand_total 100 %}%</span>
+              </div>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div style="padding:20px;text-align:center;color:var(--muted);font-size:.78rem;">No data</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- By Symbol -->
+  <div>
+    <div class="rd-section">Revenue by Symbol (top 15)</div>
+    <div style="background:var(--panel);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;">
+      {% if by_symbol %}
+      <table class="rd-table">
+        <thead>
+          <tr>
+            <th>Symbol</th>
+            <th style="text-align:right">Revenue</th>
+            <th style="text-align:right">Count</th>
+            <th style="min-width:80px"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% with sym_max=by_symbol.0.total %}
+          {% for row in by_symbol %}
+          <tr>
+            <td style="font-weight:700;color:var(--text);font-size:.8rem;">{{ row.symbol }}</td>
+            <td style="text-align:right" class="val">${{ row.total|floatformat:2 }}</td>
+            <td style="text-align:right" class="cnt">{{ row.count }}</td>
+            <td>
+              {% if sym_max > 0 %}
+              <div class="ibar-wrap">
+                <div class="ibar-bg">
+                  <div class="ibar-fill" style="width:{% widthratio row.total sym_max 100 %}%;background:var(--cyan);"></div>
+                </div>
+              </div>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+          {% endwith %}
+        </tbody>
+      </table>
+      {% else %}
+      <div style="padding:20px;text-align:center;color:var(--muted);font-size:.78rem;">No symbol data</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- By Account (top 15) -->
+<div class="rd-section" style="margin-top:20px;">Revenue by Account (top 15)</div>
+<div style="background:var(--panel);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:20px;">
+  {% if by_account %}
+  <table class="rd-table">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Account</th>
+        <th style="text-align:right">Revenue</th>
+        <th style="text-align:right">Entries</th>
+        <th style="min-width:120px">Share</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% with acc_max=by_account.0.total %}
+      {% for row in by_account %}
+      <tr>
+        <td class="cnt">{{ forloop.counter }}</td>
+        <td>
+          <a href="{% url 'admin:simulator_tradingaccount_change' row.account_id %}"
+             style="color:var(--info);text-decoration:none;font-weight:700;">
+            {{ row.username }}
+          </a>
+          <span class="cnt" style="margin-left:4px;">#{{ row.account_id }}</span>
+        </td>
+        <td style="text-align:right" class="val">${{ row.total|floatformat:2 }}</td>
+        <td style="text-align:right" class="cnt">{{ row.count }}</td>
+        <td>
+          {% if acc_max > 0 %}
+          <div class="ibar-wrap">
+            <div class="ibar-bg">
+              <div class="ibar-fill" style="width:{% widthratio row.total acc_max 100 %}%;background:var(--warn);"></div>
+            </div>
+            {% if grand_total > 0 %}
+            <span class="pct">{% widthratio row.total grand_total 100 %}%</span>
+            {% endif %}
+          </div>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      {% endwith %}
+    </tbody>
+  </table>
+  {% else %}
+  <div style="padding:20px;text-align:center;color:var(--muted);font-size:.78rem;">No account data</div>
+  {% endif %}
+</div>
+
+{% endblock %}

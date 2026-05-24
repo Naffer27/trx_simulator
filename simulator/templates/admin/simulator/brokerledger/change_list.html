@@ -1,0 +1,9 @@
+{% extends "admin/change_list.html" %}
+{% block object-tools-items %}
+  <li>
+    <a href="{{ dashboard_url }}" class="historylink" style="background:rgba(232,200,74,.15);color:#e8c84a;border:1px solid rgba(232,200,74,.3);border-radius:4px;padding:5px 14px;font-size:.75rem;font-weight:700;text-decoration:none;letter-spacing:.04em;">
+      Revenue Dashboard →
+    </a>
+  </li>
+  {{ block.super }}
+{% endblock %}

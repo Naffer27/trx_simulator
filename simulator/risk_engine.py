@@ -21,6 +21,7 @@ from django.db import IntegrityError
 from django.db.models import Sum
 from django.utils import timezone
 
+from market_data.symbol_specs import get_spec as _get_sym_spec
 from .models import MARGIN_ENGINE_TYPES, DD_ENGINE_TYPES
 
 # ─────────────────────────────────────────────
@@ -49,23 +50,29 @@ def _pct(numerator, denominator) -> Decimal:
 # ─────────────────────────────────────────────
 
 _TIER_DEFAULTS = {
-    "10K":  {"max_daily_loss_pct": Decimal("5.00"),  "max_drawdown_pct": Decimal("10.00"), "max_lot_size": Decimal("5.00"),  "max_open_positions": 10},
-    "50K":  {"max_daily_loss_pct": Decimal("4.00"),  "max_drawdown_pct": Decimal("8.00"),  "max_lot_size": Decimal("20.00"), "max_open_positions": 15},
-    "100K": {"max_daily_loss_pct": Decimal("3.00"),  "max_drawdown_pct": Decimal("6.00"),  "max_lot_size": Decimal("40.00"), "max_open_positions": 20},
+    "10K":  {"max_daily_loss_pct": Decimal("5.00"),  "max_drawdown_pct": Decimal("10.00"), "max_lot_size": Decimal("5.00"),  "max_open_positions": 30},
+    "50K":  {"max_daily_loss_pct": Decimal("4.00"),  "max_drawdown_pct": Decimal("8.00"),  "max_lot_size": Decimal("20.00"), "max_open_positions": 40},
+    "100K": {"max_daily_loss_pct": Decimal("3.00"),  "max_drawdown_pct": Decimal("6.00"),  "max_lot_size": Decimal("40.00"), "max_open_positions": 50},
 }
 
-# Crypto symbols trade 1 lot = 1 BTC/ETH (no multiplier), so $82K/BTC means
-# even 1 lot at leverage 50x gives $1/point PnL — max lots must be much smaller
-# than forex to give the DD limits meaningful room.
+# Per-instrument crypto max-lot caps for challenge/funded tiers.
+# Calibrated so a full adverse move on max exposure stays within the DD budget:
 #   10K account, 0.25 BTC max → DD blown by $4,000 BTC move (4.9%) — fair challenge
 #   50K account, 1.00 BTC max → DD blown by $4,000 BTC move (2.0%)
 #   100K account, 2.00 BTC max → DD blown by $3,000 BTC move (1.2%)
-_CRYPTO_SYMS = {"BTCUSD", "ETHUSD"}
 _CRYPTO_MAX_LOT = {
     "10K":  Decimal("0.25"),
     "50K":  Decimal("1.00"),
     "100K": Decimal("2.00"),
 }
+
+
+def _is_crypto(symbol: str) -> bool:
+    """True for crypto-class symbols. Falls back to name heuristic if spec unavailable."""
+    try:
+        return _get_sym_spec(symbol).asset_class == "crypto"
+    except KeyError:
+        return False
 
 # Exposure thresholds (notional / equity).
 # Calibrated for 10K/BTC@82K: 0.01→LOW 0.05→MEDIUM 0.10→HIGH 0.25→EXTREME
@@ -87,7 +94,7 @@ def _retail_risk_defaults(balance: Decimal) -> dict:
         "max_daily_loss_pct":  Decimal("5.00"),
         "max_drawdown_pct":    Decimal("10.00"),
         "max_lot_size":        _clamp(b / Decimal("1000"), Decimal("0.01"),  Decimal("5.0")),
-        "max_open_positions":  int(_clamp(b / Decimal("500"),  Decimal("3"),    Decimal("20"))),
+        "max_open_positions":  20,  # flat cap — hedging/scalping viable at any balance
     }
 
 
@@ -155,12 +162,21 @@ def evaluate_position_risk(account, symbol: str, lot_size: float,
         from .exposure_engine import _get_current_price
         price = _get_current_price(symbol)
     except Exception:
-        price = {"BTCUSD": 82000.0, "ETHUSD": 3400.0}.get(symbol, 1.17)
-    if price <= 0:
-        price = 1.0
+        price = 1.17
+    try:
+        sym_spec = _get_sym_spec(symbol)
+        if price <= 0:
+            price = sym_spec.base_price
+    except KeyError:
+        sym_spec = None
+        if price <= 0:
+            price = 1.0
 
-    notional = lot_size * price
-    new_margin = notional / max(1, leverage)
+    contract_size = sym_spec.contract_size if sym_spec else 1.0
+    effective_leverage = max(1, min(leverage, sym_spec.max_leverage if sym_spec else leverage))
+
+    notional = lot_size * price * contract_size
+    new_margin = notional / effective_leverage
 
     balance = float(account.balance)
     peak = float(account.peak_balance) if float(account.peak_balance) > 0 else balance
@@ -177,7 +193,7 @@ def evaluate_position_risk(account, symbol: str, lot_size: float,
     margin_after_pct = ((current_margin_used + new_margin) / equity * 100.0) if equity > 0 else 100.0
 
     # Estimated loss on a typical adverse move (2% crypto, 0.5% forex)
-    adverse_move_pct = 2.0 if symbol in _CRYPTO_SYMS else 0.5
+    adverse_move_pct = 2.0 if _is_crypto(symbol) else 0.5
     est_adverse = notional * (adverse_move_pct / 100.0)
     dd_impact_pct = (est_adverse / peak * 100.0) if peak > 0 else 0.0
 
@@ -285,7 +301,7 @@ def validate_order_risk(account, lot_size: float, open_positions_count: int,
 
     # 2. Lot size check
     lot_dec = Decimal(str(lot_size))
-    if symbol in _CRYPTO_SYMS:
+    if _is_crypto(symbol):
         effective_max = _get_crypto_max_lot(account)
     else:
         effective_max = rule.max_lot_size

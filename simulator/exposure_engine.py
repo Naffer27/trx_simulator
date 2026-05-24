@@ -18,15 +18,22 @@ from decimal import Decimal
 from django.db.models import Sum
 from django.utils import timezone
 
-log = logging.getLogger("simulator.exposure")
+from market_data.symbol_specs import get_spec as _get_sym_spec
 
-# Symbols that use qty * price as notional (crypto, 1 lot = 1 coin)
-_CRYPTO_SYMS = {"BTCUSD", "ETHUSD"}
+log = logging.getLogger("simulator.exposure")
 
 # Concentration threshold: flag if one symbol > X% of total gross exposure
 CONCENTRATION_RISK_PCT = 50.0
 # One-sided threshold: flag if one direction is > X% of total side
 ONE_SIDED_THRESHOLD = 0.90
+
+
+def _contract_size(symbol: str) -> float:
+    """Return contract_size for *symbol*, defaulting to 1.0 for unknown instruments."""
+    try:
+        return _get_sym_spec(symbol).contract_size
+    except KeyError:
+        return 1.0
 
 
 # ─────────────────────────────────────────────
@@ -61,13 +68,10 @@ def _get_current_price(symbol: str) -> float:
         _price_cache[symbol] = px
         return px
 
-    # Hardcoded last-resort
-    fallback = {
-        "BTCUSD": 82000.0, "ETHUSD": 3400.0,
-        "EUR/USD": 1.13,   "GBP/USD": 1.33,
-        "USD/JPY": 145.0,  "AUD/USD": 0.65,
-    }
-    px = fallback.get(symbol, 1.0)
+    try:
+        px = _get_sym_spec(symbol).base_price
+    except KeyError:
+        px = 1.0
     _price_cache[symbol] = px
     return px
 
@@ -79,8 +83,10 @@ def _fetch_price_rest(symbol: str) -> float | None:
             return json.loads(r.read())
 
     # Binance (may be geo-blocked)
-    _binance_map = {"BTCUSD": "BTCUSDT", "ETHUSD": "ETHUSDT"}
-    bn = _binance_map.get(symbol)
+    try:
+        bn = _get_sym_spec(symbol).exchange_symbol
+    except KeyError:
+        bn = None
     if bn:
         try:
             d = _get(f"https://api.binance.com/api/v3/ticker/price?symbol={bn}")
@@ -88,8 +94,8 @@ def _fetch_price_rest(symbol: str) -> float | None:
         except Exception:
             pass
 
-    # CoinGecko (free, global)
-    _cg_map = {"BTCUSD": "bitcoin", "ETHUSD": "ethereum"}
+    # CoinGecko (free, global) — only for crypto assets
+    _cg_map = {"BTCUSD": "bitcoin", "ETHUSD": "ethereum", "SOLUSD": "solana"}
     cg = _cg_map.get(symbol)
     if cg:
         try:
@@ -99,8 +105,10 @@ def _fetch_price_rest(symbol: str) -> float | None:
             pass
 
     # Kraken (free, global)
-    _kr_map = {"BTCUSD": "XBTUSD", "ETHUSD": "XETHZUSD"}
-    kr = _kr_map.get(symbol)
+    try:
+        kr = _get_sym_spec(symbol).kraken_symbol
+    except KeyError:
+        kr = None
     if kr:
         try:
             d = _get(f"https://api.kraken.com/0/public/Ticker?pair={kr}")
@@ -146,8 +154,8 @@ def compute_live_analytics() -> dict:
     prices  = {sym: _get_current_price(sym) for sym in symbols}
 
     # ── 3. Per-position notional + UPnL ──
-    # Notional = qty * price (consistent across all symbols in this system)
-    # UPnL     = direction * (current - entry) * qty
+    # Notional = qty * price * contract_size (correct for all instrument classes)
+    # UPnL     = direction * (current - entry) * qty * contract_size
 
     sym_buckets: dict[str, dict]   = {}
     cls_buckets: dict[str, dict]   = {}
@@ -161,8 +169,9 @@ def compute_live_analytics() -> dict:
         qty       = float(pos.qty)
         entry     = float(pos.avg_price)
         direction = 1 if pos.side == "BUY" else -1
-        notional  = qty * price
-        upnl      = direction * (price - entry) * qty
+        cs        = _contract_size(sym)
+        notional  = qty * price * cs
+        upnl      = direction * (price - entry) * qty * cs
 
         # Trader intelligence
         score   = getattr(pos.account, "trader_score", None)

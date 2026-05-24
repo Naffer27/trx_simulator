@@ -18,6 +18,7 @@ from django.utils import timezone
 from .models import (
     TradingAccount, Position,
     BrokerEquitySnapshot, AccountEquitySnapshot,
+    BrokerRevenueSnapshot,
 )
 
 log = logging.getLogger("simulator.snapshots")
@@ -183,22 +184,40 @@ def cleanup_old_snapshots(retention_days: int | None = None) -> dict:
     Delete BrokerEquitySnapshot + AccountEquitySnapshot rows older than
     retention_days. Financial data (TradingAccount, LedgerEntry, etc.) is
     never touched.
+
+    BrokerRevenueSnapshot uses a separate, longer retention controlled by
+    REVENUE_SNAPSHOT_RETENTION_DAYS (default 90 days). This keeps the broker
+    equity-curve history intact long after intraday equity snapshots expire.
+
+    Future path: before deletion, rows older than retention can be exported to
+    cold storage (S3/BigQuery) using the taken_at index as a cursor. The delete
+    step then becomes a "trim after export" operation with zero data loss.
     """
+    from django.conf import settings as _cfg
+
     days   = retention_days if retention_days is not None else _retention_days()
     cutoff = timezone.now() - timedelta(days=days)
 
     broker_del, _  = BrokerEquitySnapshot.objects.filter(taken_at__lt=cutoff).delete()
     account_del, _ = AccountEquitySnapshot.objects.filter(taken_at__lt=cutoff).delete()
 
+    # Revenue snapshots: separate retention (default 90d, never shorter than equity retention)
+    rev_days   = max(days, int(getattr(_cfg, "REVENUE_SNAPSHOT_RETENTION_DAYS", 90)))
+    rev_cutoff = timezone.now() - timedelta(days=rev_days)
+    rev_del, _ = BrokerRevenueSnapshot.objects.filter(taken_at__lt=rev_cutoff).delete()
+
     log.info(
-        "[snapshot.cleanup] retention=%dd cutoff=%s broker_deleted=%d account_deleted=%d",
-        days, cutoff.isoformat(), broker_del, account_del,
+        "[snapshot.cleanup] equity_retention=%dd broker_del=%d account_del=%d "
+        "revenue_retention=%dd revenue_del=%d",
+        days, broker_del, account_del, rev_days, rev_del,
     )
     return {
-        "retention_days":           days,
-        "cutoff":                   cutoff.isoformat(),
-        "broker_snapshots_deleted": broker_del,
-        "account_snapshots_deleted": account_del,
+        "retention_days":             days,
+        "cutoff":                     cutoff.isoformat(),
+        "broker_snapshots_deleted":   broker_del,
+        "account_snapshots_deleted":  account_del,
+        "revenue_retention_days":     rev_days,
+        "revenue_snapshots_deleted":  rev_del,
     }
 
 

@@ -198,7 +198,7 @@ REDBEAT_LOCK_TIMEOUT             = 60 * 5          # 5 min — beat must renew l
 CELERY_BEAT_MAX_LOOP_INTERVAL    = 5               # seconds between schedule checks
 
 # ── Scheduled tasks (READ-ONLY audit only) ──────────────────────
-from celery.schedules import crontab  # noqa: E402
+from celery.schedules import crontab, timedelta as celery_td  # noqa: E402
 
 CELERY_BEAT_SCHEDULE = {
     # Audit unconfirmed deposits every 15 min
@@ -242,7 +242,23 @@ CELERY_BEAT_SCHEDULE = {
         "args":     (),                # uses SNAPSHOT_RETENTION_DAYS from settings
         "options":  {"expires": 55 * 60},
     },
+    # Offline SL/TP + stopout + margin-call daemon every 30 s
+    "scan-positions-30s": {
+        "task":     "simulator.scan_positions",
+        "schedule": celery_td(seconds=30),
+        "options":  {"expires": 28},   # drop if not picked up before next firing
+    },
+    # Broker revenue snapshot every 5 min — equity curve + trend analytics
+    "take-revenue-snapshot-5m": {
+        "task":     "simulator.take_revenue_snapshot",
+        "schedule": crontab(minute="*/5"),
+        "options":  {"expires": 4 * 60},  # drop if not picked up within 4 min
+    },
 }
+
+# Revenue snapshot retention (separate from equity snapshots — longer window for trend history).
+# Future path: set to 0 or export-before-delete for cold-storage/warehouse integration.
+REVENUE_SNAPSHOT_RETENTION_DAYS = int(os.getenv("REVENUE_SNAPSHOT_RETENTION_DAYS", "90"))
 
 # ── Equity snapshot retention ─────────────────────────────────────────────────
 SNAPSHOT_RETENTION_DAYS = int(os.getenv("SNAPSHOT_RETENTION_DAYS", "7"))
