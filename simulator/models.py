@@ -389,6 +389,11 @@ class BrokerSpreadConfig(models.Model):
     class Meta:
         ordering = ["symbol"]
 
+    def save(self, *args, **kwargs):
+        from market_data.symbol_specs import normalize_symbol
+        self.symbol = normalize_symbol(self.symbol)
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"{self.symbol} spread={self.spread_pips}pip enabled={self.enabled}"
 

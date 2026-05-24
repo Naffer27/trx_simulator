@@ -265,3 +265,21 @@ def allowed_symbols() -> frozenset[str]:
 def kline_symbols() -> frozenset[str]:
     """Symbols that stream canonical OHLCV from an exchange (kline_source set and enabled)."""
     return frozenset(s for s, sp in _REGISTRY.items() if sp.kline_source and sp.enabled)
+
+
+# Built once from the registry: strip-form → canonical.
+# e.g.  'EURUSD' → 'EUR/USD',  'BTCUSD' → 'BTCUSD',  'EUR/USD' → 'EUR/USD'
+_NORM_MAP: dict[str, str] = {
+    s.replace("/", "").upper(): s for s in _REGISTRY
+}
+
+
+def normalize_symbol(symbol: str) -> str:
+    """Return the canonical registry symbol for any format variant.
+
+    'EURUSD'  → 'EUR/USD'
+    'EUR/USD' → 'EUR/USD'   (passthrough)
+    'BTCUSD'  → 'BTCUSD'    (passthrough)
+    Unknown symbols are returned unchanged so callers can handle them.
+    """
+    return _NORM_MAP.get(symbol.replace("/", "").upper(), symbol)
