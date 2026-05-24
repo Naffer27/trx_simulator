@@ -1,0 +1,20 @@
+{% extends "admin/change_list.html" %}
+{% block object-tools-items %}
+  <li>
+    <a href="{{ control_center_url }}" class="historylink"
+       style="background:rgba(0,212,255,.1);color:#00d4ff;border:1px solid rgba(0,212,255,.3);
+              border-radius:4px;padding:5px 14px;font-size:.75rem;font-weight:700;
+              text-decoration:none;letter-spacing:.04em;">
+      Control Center ⬡
+    </a>
+  </li>
+  <li>
+    <a href="{{ analytics_url }}" class="historylink"
+       style="background:rgba(232,200,74,.15);color:#e8c84a;border:1px solid rgba(232,200,74,.3);
+              border-radius:4px;padding:5px 14px;font-size:.75rem;font-weight:700;
+              text-decoration:none;letter-spacing:.04em;">
+      Broker Analytics →
+    </a>
+  </li>
+  {{ block.super }}
+{% endblock %}

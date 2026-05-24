@@ -1,0 +1,508 @@
+{% extends "admin/base_site.html" %}
+{% block title %}Broker Control Center{% endblock %}
+{% block content %}
+<style>
+:root{
+  --bg:#0d0d0d;--panel:#141414;--border:#222;--gold:#e8c84a;
+  --bull:#27ae60;--bear:#ef5350;--cyan:#00d4ff;--info:#3498db;
+  --warn:#e67e22;--muted:#666;--text:#e8e8e8;--r:5px;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body,#content{background:var(--bg)!important;}
+#content{padding:14px 18px!important;}
+
+/* ── top nav ─────────────────────────────── */
+.cc-nav{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap;}
+.cc-title{font-size:1rem;font-weight:800;color:var(--gold);letter-spacing:.08em;
+          text-transform:uppercase;flex:1;}
+.cc-badge{font-size:.58rem;padding:3px 8px;border-radius:3px;font-weight:700;
+          letter-spacing:.06em;text-transform:uppercase;}
+.cc-badge.live{background:rgba(39,174,96,.15);color:var(--bull);border:1px solid rgba(39,174,96,.3);}
+.cc-badge.stale{background:rgba(239,83,80,.15);color:var(--bear);border:1px solid rgba(239,83,80,.3);}
+.cc-link{font-size:.7rem;padding:4px 12px;border-radius:3px;text-decoration:none;
+         font-weight:700;letter-spacing:.04em;color:var(--muted);
+         border:1px solid var(--border);background:var(--panel);}
+.cc-link:hover{color:var(--gold);border-color:rgba(232,200,74,.4);}
+.cc-ts{font-size:.6rem;color:var(--muted);margin-left:auto;}
+
+/* ── section label ───────────────────────── */
+.cc-section{font-size:.58rem;font-weight:700;color:var(--muted);text-transform:uppercase;
+            letter-spacing:.1em;margin:12px 0 6px;}
+
+/* ── KPI grid ────────────────────────────── */
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-bottom:12px;}
+.kpi{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+     padding:10px 12px;position:relative;overflow:hidden;}
+.kpi::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;}
+.kpi.c-gold::before{background:var(--gold);}
+.kpi.c-bull::before{background:var(--bull);}
+.kpi.c-bear::before{background:var(--bear);}
+.kpi.c-cyan::before{background:var(--cyan);}
+.kpi.c-info::before{background:var(--info);}
+.kpi.c-warn::before{background:var(--warn);}
+.kpi.c-muted::before{background:var(--border);}
+.kpi-lbl{font-size:.55rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:5px;}
+.kpi-val{font-size:1.15rem;font-weight:800;color:var(--text);line-height:1.1;}
+.kpi-sub{font-size:.58rem;color:var(--muted);margin-top:4px;}
+.kpi-val.gold{color:var(--gold);}
+.kpi-val.bull{color:var(--bull);}
+.kpi-val.bear{color:var(--bear);}
+.kpi-val.cyan{color:var(--cyan);}
+.kpi-val.info{color:var(--info);}
+.kpi-val.warn{color:var(--warn);}
+
+/* ── PnL stripe ──────────────────────────── */
+.pnl-stripe{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px;}
+.pnl-cell{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+          padding:10px 14px;text-align:center;}
+.pnl-label{font-size:.55rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px;}
+.pnl-value{font-size:1.3rem;font-weight:800;}
+
+/* ── 3-column middle ─────────────────────── */
+.mid-grid{display:grid;grid-template-columns:1fr 220px 1fr;gap:8px;margin-bottom:12px;}
+@media(max-width:900px){.mid-grid{grid-template-columns:1fr;}}
+
+/* ── ratio ring ──────────────────────────── */
+.ratio-panel{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+             padding:12px;display:flex;flex-direction:column;align-items:center;gap:8px;}
+.ratio-bar-wrap{width:100%;background:#1a1a1a;border-radius:4px;overflow:hidden;height:14px;}
+.ratio-bar-spread{height:100%;background:var(--gold);transition:width .4s;}
+.ratio-legend{display:flex;gap:14px;font-size:.62rem;}
+.ratio-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px;vertical-align:middle;}
+
+/* ── tables ──────────────────────────────── */
+.cc-table{width:100%;border-collapse:collapse;font-size:.72rem;}
+.cc-table th{color:var(--muted);font-size:.56rem;text-transform:uppercase;letter-spacing:.07em;
+             padding:4px 8px;border-bottom:1px solid var(--border);text-align:left;font-weight:600;}
+.cc-table td{padding:5px 8px;border-bottom:1px solid rgba(255,255,255,.04);color:var(--text);}
+.cc-table tr:last-child td{border-bottom:none;}
+.cc-table td.right{text-align:right;}
+.cc-table td.gold{color:var(--gold);font-weight:700;}
+.cc-table td.bull{color:var(--bull);}
+.cc-table td.bear{color:var(--bear);}
+.cc-table td.warn{color:var(--warn);}
+.bar-cell{position:relative;}
+.bar-fill{position:absolute;left:0;top:2px;bottom:2px;border-radius:2px;
+          background:rgba(232,200,74,.18);transition:width .4s;}
+.bar-text{position:relative;z-index:1;}
+
+/* ── table panel ─────────────────────────── */
+.tpanel{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);padding:10px 12px;}
+
+/* ── exposure table ──────────────────────── */
+.exp-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;}
+@media(max-width:900px){.exp-grid{grid-template-columns:1fr;}}
+
+/* ── daily counter ───────────────────────── */
+.dc-strip{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+          padding:12px 16px;display:flex;align-items:center;gap:24px;flex-wrap:wrap;}
+.dc-item{display:flex;flex-direction:column;gap:3px;}
+.dc-label{font-size:.54rem;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;}
+.dc-val{font-size:1.1rem;font-weight:800;color:var(--gold);}
+.dc-pace-bar{flex:1;min-width:180px;}
+.pace-track{background:#1a1a1a;border-radius:4px;overflow:hidden;height:10px;width:100%;}
+.pace-fill{height:100%;background:linear-gradient(90deg,var(--bull),var(--gold));
+           border-radius:4px;transition:width .6s;}
+
+/* ── spinner / error ─────────────────────── */
+.cc-error{color:var(--bear);font-size:.68rem;padding:4px 8px;
+          border:1px solid rgba(239,83,80,.3);border-radius:3px;display:none;}
+</style>
+
+<!-- ── Navigation ─────────────────────────────────────────── -->
+<div class="cc-nav">
+  <span class="cc-title">⬡ Broker Control Center</span>
+  <span class="cc-badge live" id="cc-status">● LIVE</span>
+  <span class="cc-error" id="cc-error">Feed error</span>
+  <a href="{{ analytics_url }}"  class="cc-link">Analytics →</a>
+  <a href="{{ revenue_url }}"    class="cc-link">Revenue →</a>
+  <a href="{{ exposure_url }}"   class="cc-link">Exposure →</a>
+  <a href="{{ changelist_url }}" class="cc-link">Snapshots</a>
+  <span class="cc-ts" id="cc-ts">Connecting…</span>
+</div>
+
+<!-- ── KPI Row 1: Revenue ─────────────────────────────────── -->
+<div class="cc-section">Revenue</div>
+<div class="kpi-grid">
+  <div class="kpi c-gold">
+    <div class="kpi-lbl">Today</div>
+    <div class="kpi-val gold" data-live="revenue.today" data-fmt="money">$—</div>
+    <div class="kpi-sub">vs <span data-live="revenue.yesterday" data-fmt="money">—</span> yesterday</div>
+  </div>
+  <div class="kpi c-bull">
+    <div class="kpi-lbl">7 Days</div>
+    <div class="kpi-val bull" data-live="revenue.week" data-fmt="money">$—</div>
+    <div class="kpi-sub">&nbsp;</div>
+  </div>
+  <div class="kpi c-cyan">
+    <div class="kpi-lbl">30 Days</div>
+    <div class="kpi-val cyan" data-live="revenue.month" data-fmt="money">$—</div>
+    <div class="kpi-sub">&nbsp;</div>
+  </div>
+  <div class="kpi c-gold">
+    <div class="kpi-lbl">Lifetime</div>
+    <div class="kpi-val gold" data-live="revenue.lifetime" data-fmt="money">$—</div>
+    <div class="kpi-sub">&nbsp;</div>
+  </div>
+  <div class="kpi c-muted">
+    <div class="kpi-lbl">Spread Rev</div>
+    <div class="kpi-val" data-live="revenue.spread" data-fmt="money">$—</div>
+    <div class="kpi-sub">&nbsp;</div>
+  </div>
+  <div class="kpi c-info">
+    <div class="kpi-lbl">Commission</div>
+    <div class="kpi-val info" data-live="revenue.commission" data-fmt="money">$—</div>
+    <div class="kpi-sub">&nbsp;</div>
+  </div>
+  <div class="kpi c-bull">
+    <div class="kpi-lbl">Growth %</div>
+    <div class="kpi-val" id="kpi-growth">—</div>
+    <div class="kpi-sub">today vs yesterday</div>
+  </div>
+</div>
+
+<!-- ── KPI Row 2: Operations ──────────────────────────────── -->
+<div class="cc-section">Operations</div>
+<div class="kpi-grid">
+  <div class="kpi c-bull">
+    <div class="kpi-lbl">Active Traders</div>
+    <div class="kpi-val bull" data-live="ops.active_accounts" data-fmt="count">—</div>
+    <div class="kpi-sub">&nbsp;</div>
+  </div>
+  <div class="kpi c-info">
+    <div class="kpi-lbl">Open Positions</div>
+    <div class="kpi-val info" data-live="ops.open_positions" data-fmt="count">—</div>
+    <div class="kpi-sub">&nbsp;</div>
+  </div>
+  <div class="kpi c-warn">
+    <div class="kpi-lbl">Net Exposure</div>
+    <div class="kpi-val" id="kpi-net-exp">$—</div>
+    <div class="kpi-sub">L <span id="kpi-gross-long">—</span> / S <span id="kpi-gross-short">—</span></div>
+  </div>
+  <div class="kpi c-bear">
+    <div class="kpi-lbl">Unrealized Risk</div>
+    <div class="kpi-val" id="kpi-unrealized">$—</div>
+    <div class="kpi-sub">broker counter-party</div>
+  </div>
+  <div class="kpi c-gold">
+    <div class="kpi-lbl">Net Broker PnL</div>
+    <div class="kpi-val gold" id="kpi-net-pnl">$—</div>
+    <div class="kpi-sub">realized + unrealized</div>
+  </div>
+  <div class="kpi c-muted">
+    <div class="kpi-lbl">Snap Age</div>
+    <div class="kpi-val" id="kpi-snap-age">—</div>
+    <div class="kpi-sub">seconds since snapshot</div>
+  </div>
+</div>
+
+<!-- ── Broker PnL Stripe ──────────────────────────────────── -->
+<div class="cc-section">Broker PnL Decomposition</div>
+<div class="pnl-stripe">
+  <div class="pnl-cell">
+    <div class="pnl-label">Realized Revenue</div>
+    <div class="pnl-value" id="pnl-realized" style="color:var(--bull);">$—</div>
+  </div>
+  <div class="pnl-cell">
+    <div class="pnl-label">Unrealized Exposure Risk</div>
+    <div class="pnl-value" id="pnl-unrealized-risk" style="color:var(--bear);">$—</div>
+  </div>
+  <div class="pnl-cell">
+    <div class="pnl-label">Net Broker PnL</div>
+    <div class="pnl-value" id="pnl-net" style="color:var(--gold);">$—</div>
+  </div>
+</div>
+
+<!-- ── Middle Row: Top Symbols / Ratio / Top Accounts ─────── -->
+<div class="mid-grid">
+
+  <!-- Top Symbols -->
+  <div class="tpanel">
+    <div class="cc-section" style="margin-top:0;">Top Symbols — 24h</div>
+    <table class="cc-table" id="tbl-symbols">
+      <thead><tr><th>#</th><th>Symbol</th><th class="right">Revenue</th></tr></thead>
+      <tbody id="sym-body">
+        <tr><td colspan="3" style="color:var(--muted);text-align:center;padding:12px;">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Spread vs Commission Ratio -->
+  <div class="ratio-panel">
+    <div class="cc-section" style="margin-top:0;text-align:center;">Revenue Mix</div>
+    <div style="font-size:.65rem;color:var(--muted);text-align:center;">Spread vs Commission</div>
+    <div class="ratio-bar-wrap">
+      <div class="ratio-bar-spread" id="ratio-bar" style="width:0%"></div>
+    </div>
+    <div class="ratio-legend">
+      <span><span class="ratio-dot" style="background:var(--gold);"></span>
+        Spread <strong id="ratio-spread-pct" style="color:var(--gold);">—</strong>%</span>
+      <span><span class="ratio-dot" style="background:var(--info);"></span>
+        Comm <strong id="ratio-comm-pct" style="color:var(--info);">—</strong>%</span>
+    </div>
+    <div style="font-size:.58rem;color:var(--muted);text-align:center;">
+      Spread: $<span id="ratio-spread-abs" data-live="revenue.spread" data-fmt="money2">—</span><br>
+      Commission: $<span id="ratio-comm-abs" data-live="revenue.commission" data-fmt="money2">—</span>
+    </div>
+  </div>
+
+  <!-- Top Accounts -->
+  <div class="tpanel">
+    <div class="cc-section" style="margin-top:0;">Top Traders — 24h</div>
+    <table class="cc-table" id="tbl-accounts">
+      <thead><tr><th>#</th><th>Account</th><th class="right">Revenue</th></tr></thead>
+      <tbody id="acc-body">
+        <tr><td colspan="3" style="color:var(--muted);text-align:center;padding:12px;">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
+<!-- ── Bottom Row: Exposure + Daily Counter ───────────────── -->
+<div class="exp-grid">
+
+  <!-- Dangerous Exposure -->
+  <div class="tpanel">
+    <div class="cc-section" style="margin-top:0;">Dangerous Exposure</div>
+    <table class="cc-table">
+      <thead>
+        <tr><th>Symbol</th><th class="right">Net USD</th><th class="right">Unreal PnL</th><th class="right">Conc%</th><th>Risk</th></tr>
+      </thead>
+      <tbody id="exp-body">
+        <tr><td colspan="5" style="color:var(--muted);text-align:center;padding:12px;">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Daily Counter -->
+  <div class="tpanel">
+    <div class="cc-section" style="margin-top:0;">Daily Revenue Counter</div>
+    <div class="dc-strip">
+      <div class="dc-item">
+        <div class="dc-label">Today</div>
+        <div class="dc-val" id="dc-today">$—</div>
+      </div>
+      <div class="dc-item">
+        <div class="dc-label">EOD Pace</div>
+        <div class="dc-val" id="dc-pace" style="color:var(--cyan);">$—</div>
+      </div>
+      <div class="dc-item">
+        <div class="dc-label">Yesterday</div>
+        <div class="dc-val" style="color:var(--muted);font-size:.9rem;" data-live="revenue.yesterday" data-fmt="money">$—</div>
+      </div>
+    </div>
+    <div style="margin-top:10px;">
+      <div class="dc-label" style="margin-bottom:6px;">Day Progress vs Pace</div>
+      <div class="pace-track"><div class="pace-fill" id="pace-bar" style="width:0%"></div></div>
+      <div style="display:flex;justify-content:space-between;font-size:.56rem;color:var(--muted);margin-top:3px;">
+        <span>$0</span><span id="pace-mid">—</span><span id="dc-pace-label">$—</span>
+      </div>
+    </div>
+
+    <div class="cc-section" style="margin-top:14px;">Challenge &amp; Withdraw Fees — Today</div>
+    <div style="display:flex;gap:20px;">
+      <div class="dc-item">
+        <div class="dc-label">Challenge Fees</div>
+        <div style="font-size:.95rem;font-weight:700;color:var(--warn);"
+             data-live="revenue.challenge" data-fmt="money">$—</div>
+      </div>
+      <div class="dc-item">
+        <div class="dc-label">Withdraw Fees</div>
+        <div style="font-size:.95rem;font-weight:700;color:var(--muted);"
+             data-live="revenue.withdraw" data-fmt="money">$—</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ── Live Polling JS ─────────────────────────────────────── -->
+<script>
+(function(){
+  const DATA_URL    = "{{ data_url }}";
+  const POLL_MS     = 10000;
+  const STALE_S     = 600;   // show stale badge if snap > 10 min old
+
+  // ── formatters ──────────────────────────────────────
+  function fmtMoney(v){
+    if(v==null||isNaN(v)) return "$—";
+    return "$"+Number(v).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+  }
+  function fmtMoney2(v){
+    if(v==null||isNaN(v)) return "—";
+    return Number(v).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+  }
+  function fmtCount(v){ return v==null?"—":Number(v).toLocaleString(); }
+  function fmtPct(v){ return v==null?"—":Number(v).toFixed(1)+"%"; }
+
+  function fmt(el, v){
+    const f = el.dataset.fmt;
+    if(f==="money")  return fmtMoney(v);
+    if(f==="money2") return fmtMoney2(v);
+    if(f==="count")  return fmtCount(v);
+    if(f==="pct")    return fmtPct(v);
+    return String(v);
+  }
+
+  // deep-get path like "revenue.today"
+  function dig(obj, path){
+    return path.split(".").reduce((o,k)=>o?.[k], obj);
+  }
+
+  // ── DOM update ──────────────────────────────────────
+  function updateUI(d){
+    // Simple data-live bindings
+    document.querySelectorAll("[data-live]").forEach(el=>{
+      const v = dig(d, el.dataset.live);
+      if(v !== undefined) el.textContent = fmt(el, v);
+    });
+
+    // Timestamp
+    const ts = new Date(d.ts);
+    document.getElementById("cc-ts").textContent =
+      "Updated " + ts.toLocaleTimeString();
+
+    // Stale badge
+    const statusEl = document.getElementById("cc-status");
+    if(d.snap_age_s >= 0 && d.snap_age_s > STALE_S){
+      statusEl.textContent = "⚠ STALE";
+      statusEl.className = "cc-badge stale";
+    } else {
+      statusEl.textContent = "● LIVE";
+      statusEl.className = "cc-badge live";
+    }
+
+    // Snap age
+    document.getElementById("kpi-snap-age").textContent =
+      d.snap_age_s >= 0 ? d.snap_age_s+"s" : "—";
+
+    // Growth %
+    const g = d.revenue.growth_pct;
+    const gEl = document.getElementById("kpi-growth");
+    gEl.textContent = g===0 ? "0.0%" : (g>0?"+":"")+g+"%";
+    gEl.className   = "kpi-val" + (g>0?" bull": g<0?" bear":"");
+
+    // Net exposure color
+    const exp = d.ops.net_exposure_usd;
+    const nExp = document.getElementById("kpi-net-exp");
+    nExp.textContent = fmtMoney(exp);
+    nExp.className = "kpi-val " + (exp>10000?"bear":exp>5000?"warn":"bull");
+    document.getElementById("kpi-gross-long").textContent  = fmtMoney(d.ops.gross_long);
+    document.getElementById("kpi-gross-short").textContent = fmtMoney(d.ops.gross_short);
+
+    // Unrealized risk
+    const ur = d.broker_pnl.unrealized_risk;
+    const urEl = document.getElementById("kpi-unrealized");
+    urEl.textContent = fmtMoney(ur);
+    urEl.className = "kpi-val " + (ur < 0 ? "bear" : ur > 0 ? "bull" : "");
+
+    // Net broker PnL
+    const net = d.broker_pnl.net;
+    const netEl = document.getElementById("kpi-net-pnl");
+    netEl.textContent = fmtMoney(net);
+    netEl.className = "kpi-val " + (net > 0 ? "gold" : net < 0 ? "bear" : "");
+
+    // PnL stripe
+    document.getElementById("pnl-realized").textContent        = fmtMoney(d.broker_pnl.realized);
+    document.getElementById("pnl-unrealized-risk").textContent = fmtMoney(d.broker_pnl.unrealized_risk);
+    document.getElementById("pnl-net").textContent             = fmtMoney(d.broker_pnl.net);
+
+    // Ratio bar
+    const sp = d.spread_commission_ratio.spread_pct;
+    const cp = d.spread_commission_ratio.commission_pct;
+    document.getElementById("ratio-bar").style.width = sp + "%";
+    document.getElementById("ratio-spread-pct").textContent = sp.toFixed(1);
+    document.getElementById("ratio-comm-pct").textContent   = cp.toFixed(1);
+
+    // Top symbols
+    const symBody = document.getElementById("sym-body");
+    if(!d.top_symbols.length){
+      symBody.innerHTML = '<tr><td colspan="3" style="color:var(--muted);text-align:center;padding:10px;">No data</td></tr>';
+    } else {
+      const maxRev = d.top_symbols[0].rev_24h || 1;
+      symBody.innerHTML = d.top_symbols.map((r,i)=>{
+        const pct = (r.rev_24h/maxRev*100).toFixed(1);
+        return `<tr>
+          <td style="color:var(--muted);width:20px">${i+1}</td>
+          <td class="bar-cell">
+            <div class="bar-fill" style="width:${pct}%"></div>
+            <span class="bar-text">${r.symbol}</span>
+          </td>
+          <td class="right gold">${fmtMoney(r.rev_24h)}</td>
+        </tr>`;
+      }).join("");
+    }
+
+    // Top accounts
+    const accBody = document.getElementById("acc-body");
+    if(!d.top_accounts.length){
+      accBody.innerHTML = '<tr><td colspan="3" style="color:var(--muted);text-align:center;padding:10px;">No data</td></tr>';
+    } else {
+      const maxAcc = d.top_accounts[0].rev_24h || 1;
+      accBody.innerHTML = d.top_accounts.map((r,i)=>{
+        const pct = (r.rev_24h/maxAcc*100).toFixed(1);
+        return `<tr>
+          <td style="color:var(--muted);width:20px">${i+1}</td>
+          <td class="bar-cell">
+            <div class="bar-fill" style="width:${pct}%"></div>
+            <span class="bar-text">${r.account_number}</span>
+          </td>
+          <td class="right gold">${fmtMoney(r.rev_24h)}</td>
+        </tr>`;
+      }).join("");
+    }
+
+    // Dangerous exposure
+    const expBody = document.getElementById("exp-body");
+    if(!d.dangerous_exposure.length){
+      expBody.innerHTML = '<tr><td colspan="5" style="color:var(--muted);text-align:center;padding:10px;">No exposure data</td></tr>';
+    } else {
+      expBody.innerHTML = d.dangerous_exposure.map(e=>{
+        const riskBadge = e.is_high_risk
+          ? '<span style="color:var(--bear);font-weight:700;font-size:.65rem;">HIGH</span>'
+          : '<span style="color:var(--muted);font-size:.65rem;">—</span>';
+        const pnlColor = e.unrealized_pnl < 0 ? "bear" : e.unrealized_pnl > 0 ? "bull" : "";
+        return `<tr>
+          <td><strong>${e.symbol}</strong></td>
+          <td class="right warn">${fmtMoney(e.net_usd)}</td>
+          <td class="right ${pnlColor}">${fmtMoney(e.unrealized_pnl)}</td>
+          <td class="right" style="color:var(--muted);">${Number(e.concentration_pct).toFixed(1)}%</td>
+          <td>${riskBadge}</td>
+        </tr>`;
+      }).join("");
+    }
+
+    // Daily counter
+    const today = d.daily_rev_today.amount;
+    const pace  = d.daily_rev_today.pace_eod;
+    document.getElementById("dc-today").textContent = fmtMoney(today);
+    document.getElementById("dc-pace").textContent  = fmtMoney(pace);
+    document.getElementById("dc-pace-label").textContent = fmtMoney(pace);
+    document.getElementById("pace-mid").textContent = fmtMoney(pace/2);
+    // pace bar: how far today is towards pace
+    const paceBarPct = pace > 0 ? Math.min(100, (today/pace*100)).toFixed(1) : 0;
+    document.getElementById("pace-bar").style.width = paceBarPct + "%";
+
+    // Hide error
+    document.getElementById("cc-error").style.display = "none";
+  }
+
+  // ── fetch ────────────────────────────────────────────
+  function refresh(){
+    fetch(DATA_URL, {credentials:"same-origin"})
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(d => { updateUI(d); })
+      .catch(()=>{
+        document.getElementById("cc-error").style.display = "inline-block";
+        document.getElementById("cc-status").textContent = "● ERR";
+        document.getElementById("cc-status").className = "cc-badge stale";
+      });
+  }
+
+  // Immediate load + interval
+  refresh();
+  setInterval(refresh, POLL_MS);
+})();
+</script>
+{% endblock %}

@@ -129,6 +129,11 @@
       <a href="?window=30d" class="win-tab {% if window == '30d' %}active{% endif %}">30d</a>
     </div>
     <div class="ba-nav-links">
+      <a href="{% url 'admin:brokerrevsnap_control' %}"
+         class="ba-btn"
+         style="background:rgba(0,212,255,.12);color:#00d4ff;border-color:rgba(0,212,255,.35);">
+        ⬡ Control Center
+      </a>
       <a href="{{ revenue_url }}"    class="ba-btn ba-btn-ghost">Revenue Ledger</a>
       <a href="{{ exposure_url }}"   class="ba-btn ba-btn-ghost">Exposure Desk</a>
       <a href="{{ changelist_url }}" class="ba-btn ba-btn-ghost">← Snapshots</a>

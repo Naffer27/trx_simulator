@@ -14,7 +14,8 @@ from .models import (
     BrokerSnapshot, SymbolExposure, TraderClassExposure,
     AuditLog,
     CalendarEvent, Referral, Bonus, BrokerDocument, ExpertAdvisor,
-    BrokerLedger, BrokerSpreadConfig, BrokerRevenueSnapshot,
+    BrokerLedger, BrokerSpreadConfig,
+    BrokerEquitySnapshot, BrokerRevenueSnapshot,
 )
 
 
@@ -1855,6 +1856,152 @@ def _downsample(rows: list, max_pts: int = 300) -> list:
     return [rows[int(i * step)] for i in range(max_pts)]
 
 
+def _compute_control_data() -> dict:
+    """
+    Build the live broker control center JSON payload.
+    Pure read — no writes to any financial table.
+    Called by broker_control_data() which wraps it with Redis caching.
+    """
+    import datetime
+    from django.db.models import Sum, Q
+    from django.utils import timezone
+
+    def _f(v): return float(v or 0)
+
+    now          = timezone.now()
+    today_start  = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    yest_start   = today_start - datetime.timedelta(days=1)
+    week_start   = now - datetime.timedelta(days=7)
+    month_start  = now - datetime.timedelta(days=30)
+    day_24h      = now - datetime.timedelta(hours=24)
+
+    # Q1 — O(1) via index: lifetime cumulative totals
+    rev_snap = BrokerRevenueSnapshot.objects.order_by("-taken_at").first()
+
+    # Q2 — O(1) via index: live operational state
+    eq_snap = BrokerEquitySnapshot.objects.order_by("-taken_at").first()
+
+    # Q3 — O(1) + ≤5 rows: per-symbol exposure from latest BrokerSnapshot
+    bk_snap   = BrokerSnapshot.objects.order_by("-created_at").first()
+    dangerous = []
+    if bk_snap:
+        for e in (
+            SymbolExposure.objects
+            .filter(snapshot=bk_snap)
+            .order_by("-net_usd")[:5]
+        ):
+            dangerous.append({
+                "symbol":            e.symbol,
+                "net_usd":           float(e.net_usd),
+                "is_high_risk":      e.is_high_risk,
+                "unrealized_pnl":    float(e.unrealized_pnl),
+                "concentration_pct": float(e.concentration_pct),
+            })
+
+    # Q4 — indexed range scans, 5 aggregates in one pass each
+    bl = BrokerLedger.objects
+    today_agg = bl.filter(created_at__gte=today_start).aggregate(
+        total     = Sum("amount"),
+        spread    = Sum("amount", filter=Q(revenue_type=BrokerLedger.REV_SPREAD)),
+        comm      = Sum("amount", filter=Q(revenue_type=BrokerLedger.REV_COMMISSION)),
+        challenge = Sum("amount", filter=Q(revenue_type=BrokerLedger.REV_CHALLENGE_FEE)),
+        withdraw  = Sum("amount", filter=Q(revenue_type=BrokerLedger.REV_WITHDRAW_FEE)),
+    )
+    t_yesterday = _f(bl.filter(created_at__gte=yest_start, created_at__lt=today_start)
+                       .aggregate(t=Sum("amount"))["t"])
+    t_week  = _f(bl.filter(created_at__gte=week_start).aggregate(t=Sum("amount"))["t"])
+    t_month = _f(bl.filter(created_at__gte=month_start).aggregate(t=Sum("amount"))["t"])
+
+    # Q5 — bounded by 24h range: top 5 symbols
+    top_symbols = list(
+        bl.filter(created_at__gte=day_24h, symbol__isnull=False)
+        .exclude(symbol="")
+        .values("symbol")
+        .annotate(rev=Sum("amount"))
+        .order_by("-rev")[:5]
+    )
+
+    # Q6 — bounded by 24h range: top 5 accounts
+    top_accounts = list(
+        bl.filter(created_at__gte=day_24h, source_account__isnull=False)
+        .values("source_account_id", "source_account__user__username")
+        .annotate(rev=Sum("amount"))
+        .order_by("-rev")[:5]
+    )
+
+    # Derived scalars
+    t_today     = _f(today_agg["total"])
+    t_lifetime  = float(rev_snap.total_revenue)    if rev_snap else 0.0
+    t_spread_all = float(rev_snap.total_spread)    if rev_snap else 0.0
+    t_comm_all   = float(rev_snap.total_commission) if rev_snap else 0.0
+
+    growth_pct = round((t_today - t_yesterday) / t_yesterday * 100, 1) if t_yesterday > 0 else 0.0
+
+    sc_sum     = t_spread_all + t_comm_all
+    spread_pct = round(t_spread_all / sc_sum * 100, 1) if sc_sum > 0 else 0.0
+    comm_pct   = round(t_comm_all   / sc_sum * 100, 1) if sc_sum > 0 else 0.0
+
+    # Broker PnL decomposition (B-book counter-party model)
+    unrealized_risk = float(bk_snap.broker_pnl_unrealized) if bk_snap else 0.0
+    net_broker_pnl  = t_lifetime + unrealized_risk
+
+    # Daily pace — extrapolate today's revenue to EOD
+    elapsed_s = max(1, (now - today_start).total_seconds())
+    pace_eod  = round(t_today * (86400 / elapsed_s), 2) if t_today > 0 else 0.0
+
+    snap_age_s = int((now - rev_snap.taken_at).total_seconds()) if rev_snap else -1
+
+    return {
+        "ts":         now.isoformat(),
+        "snap_age_s": snap_age_s,
+        "revenue": {
+            "today":      t_today,
+            "yesterday":  t_yesterday,
+            "week":       t_week,
+            "month":      t_month,
+            "lifetime":   t_lifetime,
+            "spread":     t_spread_all,
+            "commission": t_comm_all,
+            "challenge":  _f(today_agg["challenge"]),
+            "withdraw":   _f(today_agg["withdraw"]),
+            "growth_pct": growth_pct,
+        },
+        "ops": {
+            "active_accounts":  eq_snap.active_accounts   if eq_snap else 0,
+            "open_positions":   eq_snap.open_positions    if eq_snap else 0,
+            "net_exposure_usd": float(eq_snap.net_exposure_usd) if eq_snap else 0.0,
+            "gross_long":       float(eq_snap.gross_long_usd)   if eq_snap else 0.0,
+            "gross_short":      float(eq_snap.gross_short_usd)  if eq_snap else 0.0,
+        },
+        "broker_pnl": {
+            "realized":        t_lifetime,
+            "unrealized_risk": unrealized_risk,
+            "net":             net_broker_pnl,
+        },
+        "top_symbols": [
+            {"symbol": r["symbol"], "rev_24h": float(r["rev"])}
+            for r in top_symbols
+        ],
+        "top_accounts": [
+            {
+                "account_id":     r["source_account_id"],
+                "account_number": r["source_account__user__username"] or f"#{r['source_account_id']}",
+                "rev_24h":        float(r["rev"]),
+            }
+            for r in top_accounts
+        ],
+        "dangerous_exposure": dangerous,
+        "spread_commission_ratio": {
+            "spread_pct":     spread_pct,
+            "commission_pct": comm_pct,
+        },
+        "daily_rev_today": {
+            "amount":   t_today,
+            "pace_eod": pace_eod,
+        },
+    }
+
+
 @admin.register(BrokerRevenueSnapshot)
 class BrokerRevenueSnapshotAdmin(admin.ModelAdmin):
 
@@ -1903,7 +2050,8 @@ class BrokerRevenueSnapshotAdmin(admin.ModelAdmin):
 
     def changelist_view(self, request, extra_context=None):
         extra_context = extra_context or {}
-        extra_context["analytics_url"] = reverse("admin:brokerrevsnap_analytics")
+        extra_context["analytics_url"]      = reverse("admin:brokerrevsnap_analytics")
+        extra_context["control_center_url"] = reverse("admin:brokerrevsnap_control")
         return super().changelist_view(request, extra_context)
 
     def get_urls(self):
@@ -1913,7 +2061,65 @@ class BrokerRevenueSnapshotAdmin(admin.ModelAdmin):
                 self.admin_site.admin_view(self.analytics_view),
                 name="brokerrevsnap_analytics",
             ),
+            path(
+                "broker-control/",
+                self.admin_site.admin_view(self.broker_control_view),
+                name="brokerrevsnap_control",
+            ),
+            path(
+                "broker-control/data/",
+                self.admin_site.admin_view(self.broker_control_data),
+                name="brokerrevsnap_control_data",
+            ),
         ] + super().get_urls()
+
+    # ── Broker Control Center ─────────────────────────────────────────────────
+
+    def broker_control_data(self, request):
+        """JSON live-data endpoint. Redis-cached for 30 s; falls back to DB if Redis is down."""
+        import json
+        from django.http import JsonResponse
+        from django.conf import settings as _s
+
+        _KEY = "trx:broker:control"
+        _TTL = 30
+
+        def _redis():
+            import redis as _r
+            url = (getattr(_s, "REDIS_URL", "") or "").strip() or "redis://127.0.0.1:6379/0"
+            return _r.from_url(url, socket_connect_timeout=1, socket_timeout=1)
+
+        # 1. Cache hit?
+        try:
+            cached = _redis().get(_KEY)
+            if cached:
+                return JsonResponse(json.loads(cached))
+        except Exception:
+            pass
+
+        # 2. Compute from DB
+        payload = _compute_control_data()
+
+        # 3. Write cache (non-fatal if Redis is unavailable)
+        try:
+            _redis().setex(_KEY, _TTL, json.dumps(payload))
+        except Exception:
+            pass
+
+        return JsonResponse(payload)
+
+    def broker_control_view(self, request):
+        """HTML shell for the Broker Control Center. JS polls /data/ every 10 s."""
+        context = dict(
+            self.admin_site.each_context(request),
+            title             = "Broker Control Center",
+            data_url          = reverse("admin:brokerrevsnap_control_data"),
+            analytics_url     = reverse("admin:brokerrevsnap_analytics"),
+            changelist_url    = reverse("admin:simulator_brokerrevenuesnapshot_changelist"),
+            revenue_url       = reverse("admin:brokerledger_revenue_dashboard"),
+            exposure_url      = reverse("admin:broker_live_analytics"),
+        )
+        return render(request, "admin/broker_control_center.html", context)
 
     def analytics_view(self, request):
         import datetime
