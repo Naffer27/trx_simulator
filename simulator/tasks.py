@@ -1,16 +1,41 @@
 """
 simulator/tasks.py
-Celery tasks — infrastructure layer ONLY.
-Rules:
-  - NO direct writes to TradingAccount, Position, Trade, or LedgerEntry
-  - NO calls to trading engine, risk engine, or margin engine
-  - Safe to retry, idempotent where possible
+Celery tasks.
+
+Layers:
+  Infrastructure (ping, email, reconcile, snapshots, cleanup) — no financial writes.
+  Phase 2A price helpers (_read_cached_price, test_price_cache_read) — read-only Redis.
+  Phase 2A execution daemon (scan_positions) — added in Step 3, writes Trades/Ledger.
 """
 import logging
 from celery import shared_task
 from django.conf import settings
 
 logger = logging.getLogger("simulator.tasks")
+
+# ── Key prefix must match the writer in market_data/feeds.py ──────────────────
+_PRICE_CACHE_KEY_PREFIX = "trx:price"
+
+
+def _read_cached_price(symbol: str) -> tuple[float | None, float | None]:
+    """
+    Read bid/ask written by FeedManager from Redis.
+    Returns (bid, ask) as floats, or (None, None) if keys are missing or stale.
+    Must never raise — any failure is safe-returns (None, None).
+    """
+    try:
+        import redis as _redis
+        url = (getattr(settings, "REDIS_URL", "") or "").strip() or "redis://127.0.0.1:6379/0"
+        r = _redis.from_url(url, socket_connect_timeout=1, socket_timeout=1)
+        bid_raw = r.get(f"{_PRICE_CACHE_KEY_PREFIX}:bid:{symbol}")
+        ask_raw = r.get(f"{_PRICE_CACHE_KEY_PREFIX}:ask:{symbol}")
+        if bid_raw is None or ask_raw is None:
+            logger.debug("[price_cache] stale/missing keys for %s", symbol)
+            return (None, None)
+        return (float(bid_raw), float(ask_raw))
+    except Exception as exc:
+        logger.debug("[price_cache] read failed for %s: %r", symbol, exc)
+        return (None, None)
 
 
 # ──────────────────────────────────────────────────────
@@ -224,3 +249,622 @@ def cleanup_snapshots_task(self, retention_days: int | None = None) -> dict:
         result["account_snapshots_deleted"],
     )
     return result
+
+
+# ──────────────────────────────────────────────────────
+# PHASE 2A — Sync position close primitive
+# Called by scan_positions_task (Celery sync context).
+# Mirrors _db_close_position_atomic logic without @database_sync_to_async.
+# ──────────────────────────────────────────────────────
+
+def _close_position_sync(
+    pos_mem: dict,
+    account_id: int,
+    close_px: float,
+    reason: str,
+    realized_pnl: float,
+    new_balance: float,
+    new_equity: float,
+) -> dict:
+    """
+    Atomic DB-first position close for sync (Celery) callers.
+    Same guarantees as TradingConsumer._db_close_position_atomic:
+      - select_for_update prevents duplicate closes
+      - already_closed=True returned (no Trade/LedgerEntry) if position gone
+      - raises on unexpected DB error (caller logs and skips)
+    """
+    from decimal import Decimal
+    from datetime import datetime as _dt
+    import time as _time
+    from django.db import transaction as _tx
+    from .models import Position, Trade, LedgerEntry, TradingAccount
+
+    with _tx.atomic():
+        pos = (
+            Position.objects
+            .select_for_update()
+            .filter(id=pos_mem["id"], account_id=account_id)
+            .first()
+        )
+        if pos is None:
+            logger.info("[close_sync] pos %r already closed — skipping duplicate", pos_mem["id"])
+            return {
+                "already_closed": True,
+                "new_balance":    new_balance,
+                "new_equity":     new_equity,
+                "new_status":     None,
+                "new_peak":       None,
+                "violations":     [],
+                "trade_id":       None,
+            }
+
+        trade_type = str(pos_mem.get("side", "")).upper()
+        if trade_type not in ("BUY", "SELL"):
+            trade_type = "BUY"
+
+        trade = Trade.objects.create(
+            account_id    = account_id,
+            symbol        = pos_mem["symbol"],
+            trade_type    = trade_type,
+            lot_size      = Decimal(str(pos_mem["qty"])),
+            entry_price   = Decimal(str(pos_mem["avg"])),
+            exit_price    = Decimal(str(close_px)),
+            stop_loss     = Decimal(str(pos_mem["sl"]))   if pos_mem.get("sl") is not None else None,
+            take_profit   = Decimal(str(pos_mem["tp"]))   if pos_mem.get("tp") is not None else None,
+            profit_loss   = Decimal(str(realized_pnl)),
+            opened_at     = _dt.utcfromtimestamp(int(pos_mem.get("opened_at", _time.time()))),
+            closed_at     = _dt.utcnow(),
+        )
+
+        LedgerEntry.objects.create(
+            account_id  = account_id,
+            event_type  = LedgerEntry.EV_REALIZED,
+            amount      = Decimal(str(realized_pnl)),
+            balance_after = Decimal(str(new_balance)),
+            meta        = {"symbol": pos_mem["symbol"], "side": pos_mem["side"],
+                           "reason": reason, "trade_id": trade.id},
+        )
+
+        pos.delete()
+
+        account = (
+            TradingAccount.objects
+            .select_for_update()
+            .filter(id=account_id)
+            .first()
+        )
+        if account:
+            account.balance = Decimal(str(new_balance))
+            account.equity  = Decimal(str(new_equity))
+            account.save(update_fields=["balance", "equity"])
+
+            from .risk_engine import check_and_enforce_risk
+            violations = check_and_enforce_risk(account)
+            if violations:
+                logger.warning("[close_sync] risk violations account #%s: %s",
+                               account_id, [v.violation_type for v in violations])
+
+            from .intelligence_engine import update_intelligence
+            update_intelligence(account)
+
+            final_status = account.status
+            final_peak   = float(account.peak_balance)
+        else:
+            violations   = []
+            final_status = "Activo"
+            final_peak   = new_balance
+
+    logger.info("[close_sync] OK pos=%r trade=%r realized=%.4f balance=%.2f status=%s",
+                pos_mem["id"], trade.id, realized_pnl, new_balance, final_status)
+    return {
+        "already_closed": False,
+        "new_balance":    float(new_balance),
+        "new_equity":     float(new_equity),
+        "new_status":     final_status,
+        "new_peak":       final_peak,
+        "violations":     [v.violation_type for v in violations],
+        "trade_id":       trade.id,
+    }
+
+
+# ──────────────────────────────────────────────────────
+# PHASE 2A — Step 5 helpers (stopout / margin-call daemon)
+# ──────────────────────────────────────────────────────
+
+def _compute_offline_equity_margin(pos_list: list, prices: dict, account) -> tuple:
+    """
+    Pure offline calculator — no DB reads.
+    Requires all symbols in pos_list to exist in prices (caller must verify).
+
+    Returns (equity, margin_used, total_floating, pos_fp_map) where:
+      pos_fp_map: dict[pos.id -> floating PnL at current bid/ask]
+    """
+    from market_data.symbol_specs import get_spec
+
+    account_lev    = max(1, int(account.leverage))
+    total_floating = 0.0
+    margin_used    = 0.0
+    pos_fp_map: dict = {}
+
+    for pos in pos_list:
+        bid, ask = prices[pos.symbol]
+        spec     = get_spec(pos.symbol)
+        avg      = float(pos.avg_price)
+        qty      = float(pos.qty)
+        close_px = bid if pos.side == "BUY" else ask
+
+        fp = ((close_px - avg) * qty * spec.contract_size if pos.side == "BUY"
+              else (avg - close_px) * qty * spec.contract_size)
+
+        total_floating     += fp
+        pos_fp_map[pos.id]  = fp
+
+        lev      = max(1, min(account_lev, spec.max_leverage))
+        notional = abs(avg * qty * spec.contract_size)
+        margin_used += notional / lev
+
+    equity = float(account.balance) + total_floating
+    return equity, margin_used, total_floating, pos_fp_map
+
+
+def _db_suspend_account_sync(account_id: int, reason: str, balance: float) -> None:
+    """
+    Sync: set account status → Suspendido + write ADJUSTMENT LedgerEntry.
+    Idempotent — no-ops if already Suspendido.
+    """
+    from decimal import Decimal
+    from django.db import transaction as _tx
+    from .models import TradingAccount, LedgerEntry
+
+    with _tx.atomic():
+        account = (
+            TradingAccount.objects
+            .select_for_update()
+            .filter(id=account_id)
+            .first()
+        )
+        if account and account.status != "Suspendido":
+            account.status = "Suspendido"
+            account.save(update_fields=["status"])
+            LedgerEntry.objects.create(
+                account       = account,
+                event_type    = LedgerEntry.EV_ADJUST,
+                amount        = Decimal("0"),
+                balance_after = Decimal(str(balance)),
+                meta          = {"reason": reason},
+            )
+            logger.info("[daemon] account %s suspended (fallback): %s", account_id, reason)
+
+
+def _daemon_close_all(
+    pos_list: list,
+    account_id: int,
+    account,
+    prices: dict,
+    reason: str,
+    pos_fp_map: dict,
+    total_floating: float,
+) -> tuple:
+    """
+    DB-first close of ALL positions for one account (stopout or margin_call path).
+
+    Uses running_balance + floating-PnL accumulator for accurate new_equity per close.
+    already_closed guard silently skips positions closed by a concurrent consumer.
+
+    Returns (close_records, final_running_balance).
+    close_records: list of dicts with pos_id, symbol, side, qty, avg, close_px, realized, result.
+    """
+    import time as _time
+    from market_data.symbol_specs import get_spec
+
+    running_balance       = float(account.balance)
+    accum_floating_closed = 0.0
+    close_records: list   = []
+
+    for pos in pos_list:
+        spec       = get_spec(pos.symbol)
+        bid, ask   = prices[pos.symbol]
+        close_px   = bid if pos.side == "BUY" else ask
+        close_px_r = round(close_px, spec.price_decimals)
+        avg        = float(pos.avg_price)
+        qty        = float(pos.qty)
+
+        if pos.side == "BUY":
+            realized = (close_px_r - avg) * qty * spec.contract_size
+        else:
+            realized = (avg - close_px_r) * qty * spec.contract_size
+        realized = round(realized, 8)
+
+        new_balance = running_balance + realized
+        fp_p        = pos_fp_map[pos.id]
+        remaining_f = total_floating - accum_floating_closed - fp_p
+        new_equity  = round(new_balance + remaining_f, 2)
+
+        sl = float(pos.sl) if pos.sl is not None else None
+        tp = float(pos.tp) if pos.tp is not None else None
+        pos_mem = {
+            "id":        pos.id,
+            "symbol":    pos.symbol,
+            "side":      pos.side.lower(),
+            "qty":       qty,
+            "avg":       avg,
+            "sl":        sl,
+            "tp":        tp,
+            "opened_at": pos.opened_at.timestamp() if pos.opened_at else _time.time(),
+        }
+
+        try:
+            result = _close_position_sync(
+                pos_mem, account_id, close_px_r, reason, realized, new_balance, new_equity
+            )
+        except Exception as exc:
+            logger.error("[daemon/%s] close failed pos=%s: %s", reason, pos.id, exc, exc_info=True)
+            continue
+
+        if result.get("already_closed"):
+            logger.info("[daemon/%s] pos %s already closed (race), skipping", reason, pos.id)
+            continue
+
+        running_balance        = result["new_balance"]
+        accum_floating_closed += fp_p
+
+        close_records.append({
+            "pos_id":   pos.id,
+            "symbol":   pos.symbol,
+            "side":     pos.side.lower(),
+            "qty":      qty,
+            "avg":      avg,
+            "close_px": close_px_r,
+            "realized": realized,
+            "result":   result,
+        })
+        logger.info(
+            "[daemon/%s] closed pos=%s sym=%s side=%s px=%s realized=%.2f bal=%.2f",
+            reason, pos.id, pos.symbol, pos.side, close_px_r, realized, running_balance,
+        )
+
+    return close_records, running_balance
+
+
+# ──────────────────────────────────────────────────────
+# PHASE 2A — Offline SL/TP execution daemon (Step 3)
+# Closes positions whose SL/TP has been breached while
+# the trader's WebSocket was disconnected.
+# Beat schedule added in Step 4 (after WS notification).
+# ──────────────────────────────────────────────────────
+
+@shared_task(
+    name="simulator.scan_positions",
+    bind=True,
+    max_retries=0,
+    acks_late=True,
+    soft_time_limit=25,
+    time_limit=29,
+)
+def scan_positions_task(self) -> dict:
+    """
+    Offline execution daemon (Steps 3–5).
+    Per tick cycle:
+      1. Computes offline equity/margin for each account (Step 5).
+         If stopout (CHALLENGE/FUNDED) or margin-call (RETAIL) triggered:
+         closes ALL positions, suspends if appropriate, notifies via WS group.
+      2. For accounts not in stopout/liquidation: checks per-position SL/TP (Steps 3–4).
+    All closes are DB-first atomic via _close_position_sync (already_closed guard).
+    """
+    import time as _time
+    from collections import defaultdict
+    from market_data.symbol_specs import get_spec
+    from .models import Position, AuditLog
+
+    t0 = _time.monotonic()
+
+    positions = list(
+        Position.objects
+        .filter(account__status="Activo")
+        .select_related("account")
+        .only(
+            "id", "symbol", "side", "qty", "avg_price", "sl", "tp", "opened_at",
+            "account__id", "account__balance", "account__equity",
+            "account__peak_balance", "account__leverage", "account__tier",
+            "account__account_type", "account__netting_mode", "account__status",
+        )
+        .order_by("account_id", "id")
+    )
+
+    if not positions:
+        logger.debug("[daemon] no open positions on active accounts")
+        return {"scanned": 0, "closed": 0, "skipped_stale": 0, "elapsed_ms": 0}
+
+    by_account: dict = defaultdict(list)
+    for pos in positions:
+        by_account[pos.account_id].append(pos)
+
+    scanned      = len(positions)
+    closed       = 0
+    skipped_stale = 0
+
+    for account_id, pos_list in by_account.items():
+        # One Redis GET per unique symbol in this account (not per position)
+        symbols = {p.symbol for p in pos_list}
+        prices: dict = {}
+        for sym in symbols:
+            bid, ask = _read_cached_price(sym)
+            if bid is not None and ask is not None:
+                prices[sym] = (bid, ask)
+
+        account         = pos_list[0].account
+        running_balance = float(account.balance)
+
+        # ── Step 5: offline stopout / liquidation pre-check ─────────────
+        all_prices_available = all(sym in prices for sym in symbols)
+
+        if all_prices_available:
+            from .models import MARGIN_ENGINE_TYPES as _MARGIN_ENGINE_TYPES
+            equity, margin_used, total_floating, pos_fp_map = _compute_offline_equity_margin(
+                pos_list, prices, account
+            )
+            is_retail         = account.account_type in _MARGIN_ENGINE_TYPES
+            stopout_triggered = False
+            liq_triggered     = False
+
+            if is_retail:
+                if margin_used > 0 and (equity / margin_used * 100.0) < 50.0:
+                    liq_triggered = True
+            else:
+                from .risk_engine import check_equity_stopout as _ces
+                stopout_triggered = _ces(
+                    equity       = equity,
+                    peak_balance = float(account.peak_balance),
+                    tier         = getattr(account, "tier", "10K"),
+                    account_type = account.account_type,
+                    margin_used  = margin_used,
+                )
+
+            if stopout_triggered or liq_triggered:
+                reason_all = "daemon_stopout" if stopout_triggered else "daemon_margin_call"
+                logger.warning(
+                    "[daemon/%s] triggered: acc=%s equity=%.2f margin_used=%.2f type=%s",
+                    reason_all, account_id, equity, margin_used, account.account_type,
+                )
+                close_records, final_balance = _daemon_close_all(
+                    pos_list, account_id, account, prices,
+                    reason_all, pos_fp_map, total_floating,
+                )
+
+                # CHALLENGE/FUNDED: ensure suspension even if check_and_enforce_risk
+                # didn't trigger on the last close (edge: equity exactly at threshold)
+                effective_final_status = (
+                    close_records[-1]["result"]["new_status"] if close_records else "Activo"
+                )
+                if stopout_triggered and effective_final_status != "Suspendido":
+                    try:
+                        _db_suspend_account_sync(account_id, reason_all, final_balance)
+                        effective_final_status = "Suspendido"
+                    except Exception as _susp_exc:
+                        logger.error("[daemon/%s] suspend fallback failed acc=%s: %s",
+                                     reason_all, account_id, _susp_exc)
+
+                # WS notify + AuditLog per closed position
+                n = len(close_records)
+                for i, rec in enumerate(close_records):
+                    closed += 1
+                    # Last close carries the authoritative final status
+                    ws_status = effective_final_status if (i == n - 1) else rec["result"].get("new_status", "Activo")
+
+                    try:
+                        from asgiref.sync import async_to_sync as _a2s
+                        from channels.layers import get_channel_layer as _gcl
+                        _cl = _gcl()
+                        if _cl:
+                            _a2s(_cl.group_send)(
+                                f"account_{account_id}",
+                                {
+                                    "type":         "execution.close",
+                                    "position_id":  rec["pos_id"],
+                                    "symbol":       rec["symbol"],
+                                    "side":         rec["side"],
+                                    "qty":          rec["qty"],
+                                    "avg":          rec["avg"],
+                                    "close_px":     rec["close_px"],
+                                    "realized_pnl": rec["realized"],
+                                    "reason":       reason_all,
+                                    "trade_id":     rec["result"].get("trade_id"),
+                                    "new_balance":  rec["result"]["new_balance"],
+                                    "new_status":   ws_status,
+                                    "ts":           int(_time.time()),
+                                },
+                            )
+                    except Exception as _ws_exc:
+                        logger.warning("[daemon/%s] WS notify failed pos=%s: %s",
+                                       reason_all, rec["pos_id"], _ws_exc)
+
+                    try:
+                        AuditLog.objects.create(
+                            event_type = f"daemon.{reason_all}",
+                            action     = (
+                                f"Daemon {reason_all.upper()} close: "
+                                f"pos {rec['pos_id']} {rec['symbol']} {rec['side'].upper()}"
+                            ),
+                            account    = account,
+                            detail     = {
+                                "position_id":             rec["pos_id"],
+                                "symbol":                  rec["symbol"],
+                                "side":                    rec["side"],
+                                "close_px":                rec["close_px"],
+                                "realized_pnl":            rec["realized"],
+                                "reason":                  reason_all,
+                                "trade_id":                rec["result"].get("trade_id"),
+                                "equity_at_trigger":       round(equity, 2),
+                                "margin_used_at_trigger":  round(margin_used, 2),
+                            },
+                        )
+                    except Exception as _al_exc:
+                        logger.warning("[daemon/%s] AuditLog failed pos=%s: %s",
+                                       reason_all, rec["pos_id"], _al_exc)
+
+                continue  # skip the per-position SL/TP loop for this account
+
+        else:
+            missing = symbols - prices.keys()
+            logger.debug(
+                "[daemon] acc=%s skipping stopout/liq check — missing prices: %s",
+                account_id, missing,
+            )
+        # ────────────────────────────────────────────────────────────────
+
+        for pos in pos_list:
+            if pos.symbol not in prices:
+                skipped_stale += 1
+                continue
+
+            bid, ask   = prices[pos.symbol]
+            side       = pos.side          # 'BUY' or 'SELL' (DB uppercase)
+            trigger_px = bid if side == "BUY" else ask
+            close_px   = bid if side == "BUY" else ask
+
+            sl = float(pos.sl) if pos.sl is not None else None
+            tp = float(pos.tp) if pos.tp is not None else None
+
+            sl_hit = sl is not None and (
+                (side == "BUY"  and trigger_px <= sl) or
+                (side == "SELL" and trigger_px >= sl)
+            )
+            tp_hit = tp is not None and (
+                (side == "BUY"  and trigger_px >= tp) or
+                (side == "SELL" and trigger_px <= tp)
+            )
+
+            if not sl_hit and not tp_hit:
+                continue
+
+            reason = "daemon_tp" if tp_hit else "daemon_sl"
+            spec   = get_spec(pos.symbol)
+            dec    = spec.price_decimals
+            close_px_r = round(close_px, dec)
+
+            if side == "BUY":
+                realized = (close_px_r - float(pos.avg_price)) * float(pos.qty) * spec.contract_size
+            else:
+                realized = (float(pos.avg_price) - close_px_r) * float(pos.qty) * spec.contract_size
+            realized = round(realized, 8)
+
+            new_balance = running_balance + realized
+            new_equity  = new_balance  # simplified: remaining floating not computed in Step 3
+
+            pos_mem = {
+                "id":        pos.id,
+                "symbol":    pos.symbol,
+                "side":      pos.side.lower(),
+                "qty":       float(pos.qty),
+                "avg":       float(pos.avg_price),
+                "sl":        sl,
+                "tp":        tp,
+                "opened_at": pos.opened_at.timestamp() if pos.opened_at else _time.time(),
+            }
+
+            try:
+                result = _close_position_sync(
+                    pos_mem, account_id, close_px_r, reason, realized, new_balance, new_equity
+                )
+            except Exception as exc:
+                logger.error("[daemon] close failed pos=%s: %s", pos.id, exc, exc_info=True)
+                continue
+
+            if result.get("already_closed"):
+                logger.info("[daemon] pos %s already closed (race), skipping", pos.id)
+                continue
+
+            running_balance = result["new_balance"]
+            closed += 1
+
+            # Step 4 — push live WS notification to any connected consumer for this account
+            try:
+                from asgiref.sync import async_to_sync as _a2s
+                from channels.layers import get_channel_layer as _gcl
+                _cl = _gcl()
+                if _cl:
+                    _a2s(_cl.group_send)(
+                        f"account_{account_id}",
+                        {
+                            "type":         "execution.close",
+                            "position_id":  pos.id,
+                            "symbol":       pos.symbol,
+                            "side":         pos.side.lower(),
+                            "qty":          float(pos.qty),
+                            "avg":          float(pos.avg_price),
+                            "close_px":     close_px_r,
+                            "realized_pnl": realized,
+                            "reason":       reason,
+                            "trade_id":     result.get("trade_id"),
+                            "new_balance":  result["new_balance"],
+                            "new_status":   result.get("new_status", "Activo"),
+                            "ts":           int(_time.time()),
+                        },
+                    )
+                    logger.debug("[daemon] WS notify sent account_%s pos=%s", account_id, pos.id)
+            except Exception as _ws_exc:
+                logger.warning("[daemon] WS notify failed pos=%s: %s", pos.id, _ws_exc)
+
+            try:
+                AuditLog.objects.create(
+                    event_type = f"daemon.{reason}",
+                    action     = f"Daemon {reason.upper()} close: pos {pos.id} {pos.symbol} {pos.side}",
+                    account    = account,
+                    detail     = {
+                        "position_id":  pos.id,
+                        "symbol":       pos.symbol,
+                        "side":         pos.side,
+                        "close_px":     close_px_r,
+                        "realized_pnl": realized,
+                        "reason":       reason,
+                        "trade_id":     result.get("trade_id"),
+                    },
+                )
+            except Exception as exc:
+                logger.warning("[daemon] AuditLog failed pos=%s: %s", pos.id, exc)
+
+            logger.info(
+                "[daemon] pos=%s sym=%s side=%s close_px=%s realized=%.2f reason=%s bal=%.2f",
+                pos.id, pos.symbol, pos.side, close_px_r, realized, reason, running_balance,
+            )
+
+    elapsed_ms = round((_time.monotonic() - t0) * 1000)
+    logger.info(
+        "[daemon] scan done: scanned=%d closed=%d skipped_stale=%d elapsed=%dms worker=%s",
+        scanned, closed, skipped_stale, elapsed_ms, self.request.hostname,
+    )
+    return {
+        "scanned":        scanned,
+        "closed":         closed,
+        "skipped_stale":  skipped_stale,
+        "elapsed_ms":     elapsed_ms,
+    }
+
+
+# ──────────────────────────────────────────────────────
+# PHASE 2A — Cross-process price cache read validation
+# Read-only. No DB writes. No execution logic.
+# Remove or keep as smoke test after Phase 2A ships.
+# ──────────────────────────────────────────────────────
+@shared_task(
+    name="simulator.test_price_cache_read",
+    bind=True,
+    max_retries=0,
+)
+def test_price_cache_read(self, symbol: str = "EUR/USD") -> dict:
+    """
+    Validate that this Celery worker process can read FeedManager-written
+    prices from Redis. No DB access, no side effects.
+    """
+    bid, ask = _read_cached_price(symbol)
+    stale = bid is None or ask is None
+    logger.info(
+        "[test_price_cache_read] symbol=%s bid=%s ask=%s stale=%s worker=%s",
+        symbol, bid, ask, stale, self.request.hostname,
+    )
+    return {
+        "symbol": symbol,
+        "bid":    bid,
+        "ask":    ask,
+        "stale":  stale,
+    }

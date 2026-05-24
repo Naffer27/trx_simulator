@@ -14,7 +14,7 @@ from .models import (
     BrokerSnapshot, SymbolExposure, TraderClassExposure,
     AuditLog,
     CalendarEvent, Referral, Bonus, BrokerDocument, ExpertAdvisor,
-    BrokerLedger,
+    BrokerLedger, BrokerSpreadConfig,
 )
 
 
@@ -1615,6 +1615,16 @@ class ExpertAdvisorAdmin(admin.ModelAdmin):
 # ─────────────────────────────────────────────
 # Broker Revenue Ledger
 # ─────────────────────────────────────────────
+
+@admin.register(BrokerSpreadConfig)
+class BrokerSpreadConfigAdmin(admin.ModelAdmin):
+    list_display   = ('symbol', 'spread_pips', 'enabled', 'is_dynamic', 'min_spread', 'max_spread', 'created_at')
+    list_filter    = ('enabled', 'is_dynamic')
+    search_fields  = ('symbol',)
+    list_editable  = ('spread_pips', 'enabled')
+    readonly_fields = ('created_at',)
+    ordering       = ('symbol',)
+
 
 @admin.register(BrokerLedger)
 class BrokerLedgerAdmin(admin.ModelAdmin):

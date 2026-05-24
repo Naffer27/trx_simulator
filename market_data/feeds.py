@@ -20,6 +20,7 @@ import random
 import time
 import urllib.request
 import urllib.error
+from concurrent.futures import ThreadPoolExecutor
 
 try:
     import websockets
@@ -38,46 +39,75 @@ SIM_RESYNC_INTERVAL  = int(os.getenv("SIM_RESYNC_INTERVAL",  "30"))
 
 
 # ─── symbol helpers ────────────────────────────────────────────────────────────
+# Thin wrappers — all instrument parameters sourced from the symbol registry.
 
-def _step_dec(symbol: str):
-    if symbol in ("BTCUSD", "ETHUSD"): return (0.01, 2)
-    if symbol.endswith("/JPY"):         return (0.001, 3)
-    if "/" in symbol:                   return (0.00001, 5)
-    return (0.00001, 5)
+from market_data.symbol_specs import get_spec as _get_spec
+
+
+def _step_dec(symbol: str) -> tuple[float, int]:
+    sp = _get_spec(symbol)
+    return (sp.tick_size, sp.price_decimals)
 
 def _spread(symbol: str) -> float:
-    if symbol == "BTCUSD":          return 0.30
-    if symbol == "ETHUSD":          return 0.10
-    if symbol.endswith("/JPY"):      return 0.004
-    if "/" in symbol:                return 0.00002
-    return 0.00002
+    return _get_spec(symbol).spread
 
 def _drift(symbol: str) -> float:
-    if symbol == "BTCUSD": return 12.0
-    if symbol == "ETHUSD": return 2.0
-    return 0.0008
+    return _get_spec(symbol).sim_drift
 
 def _fallback_price(symbol: str) -> float:
-    """Last-resort hardcoded price — only used if REST resync also fails."""
-    return {
-        "EUR/USD": 1.13000, "GBP/USD": 1.33000, "USD/JPY": 145.000,
-        "AUD/USD": 0.65000, "BTCUSD": 82000.0,  "ETHUSD": 3400.0,
-    }.get(symbol, 1.0)
+    """Last-resort price — only used if live feed and REST resync both fail."""
+    return _get_spec(symbol).base_price
 
 def _binance_sym(symbol: str) -> str | None:
-    s = symbol.replace("/", "").upper()
-    return {"BTCUSD": "BTCUSDT", "ETHUSD": "ETHUSDT"}.get(s)
+    return _get_spec(symbol).exchange_symbol
 
 def _kraken_sym(symbol: str) -> str | None:
-    """Map internal symbol → Kraken WS pair name (returns None if unsupported)."""
-    return {"BTCUSD": "XBT/USD", "ETHUSD": "ETH/USD"}.get(symbol)
+    return _get_spec(symbol).kraken_symbol
 
 def _finnhub_sym(symbol: str) -> str:
+    """Finnhub symbol string — use spec value when available."""
+    sp = _get_spec(symbol)
+    if sp.finnhub_symbol:
+        return sp.finnhub_symbol
     s = symbol.upper()
     if "/" in s:
         a, b = s.split("/", 1)
         return f"FX:{a}{b}"
     return s
+
+
+# ─── Redis price cache (cross-process, for daemon/Celery access) ───────────────
+# Key schema: trx:price:bid:{symbol}, trx:price:ask:{symbol}
+# TTL: 60 s — if the feed stops, keys expire and the daemon skips those positions.
+# Failures are silent: a Redis outage must never bring down the feed loop.
+
+_PRICE_CACHE_TTL  = int(os.getenv("PRICE_CACHE_TTL", "60"))
+_PRICE_CACHE_KEY_PREFIX = "trx:price"
+
+# Shared thread pool for fire-and-forget Redis writes (1 thread is enough).
+_redis_write_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="price_cache")
+
+
+def _write_price_cache_sync(symbol: str, bid: float, ask: float) -> None:
+    """Write bid/ask to Redis. Called from a thread pool — must never raise."""
+    try:
+        from django.conf import settings as _s
+        import redis as _redis
+        url = getattr(_s, "REDIS_URL", "").strip() or "redis://127.0.0.1:6379/0"
+        r = _redis.from_url(url, socket_connect_timeout=1, socket_timeout=1)
+        pipe = r.pipeline(transaction=False)
+        pipe.setex(f"{_PRICE_CACHE_KEY_PREFIX}:bid:{symbol}", _PRICE_CACHE_TTL, str(bid))
+        pipe.setex(f"{_PRICE_CACHE_KEY_PREFIX}:ask:{symbol}", _PRICE_CACHE_TTL, str(ask))
+        pipe.execute()
+    except Exception as exc:
+        # Intentionally swallowed — Redis down must not crash the feed loop.
+        log.debug("[price_cache] write failed for %s: %r", symbol, exc)
+
+
+async def _write_price_cache(symbol: str, bid: float, ask: float) -> None:
+    """Non-blocking wrapper: dispatches the Redis write to the thread pool."""
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(_redis_write_pool, _write_price_cache_sync, symbol, bid, ask)
 
 
 # ─── singleton ─────────────────────────────────────────────────────────────────
@@ -217,9 +247,8 @@ class FeedManager:
             log.debug("[feed] Binance com klines unavailable for %s: %r", symbol, exc)
 
         # ── 3. Kraken OHLC fallback ──
-        _KR_PAIRS   = {"BTCUSD": "XBTUSD",   "ETHUSD": "XETHZUSD"}
         _KR_INTERVAL = {"1m": 1, "5m": 5, "15m": 15, "1h": 60, "1d": 1440}
-        kr_pair  = _KR_PAIRS.get(symbol)
+        kr_pair  = _kraken_sym(symbol)
         kr_intv  = _KR_INTERVAL.get(interval)
         if kr_pair and kr_intv:
             try:
@@ -254,6 +283,8 @@ class FeedManager:
         self._bids[symbol]   = bid
         self._asks[symbol]   = ask
         self._prices[symbol] = round((bid + ask) / 2, dec)
+        # Write to Redis so cross-process readers (Celery daemon) can access prices.
+        await _write_price_cache(symbol, bid, ask)
         await cl.group_send(
             self.group_for(symbol),
             {
@@ -431,8 +462,6 @@ class FeedManager:
         Candles are broadcast via _broadcast_kline so candle_kline() picks them up.
         """
         url = "wss://ws.kraken.com"
-        _, dec = _step_dec(symbol)
-        spr    = _spread(symbol)
         log.info("[feed] Kraken loop for %s (%s)", symbol, kr_pair)
         consecutive_failures = 0
         MAX_FAILURES = 3

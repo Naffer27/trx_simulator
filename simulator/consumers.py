@@ -10,6 +10,7 @@ from django.db import transaction
 from market_data.feeds import get_feed_manager
 from market_data.symbol_specs import get_spec, allowed_symbols, kline_symbols
 from .models import TradingAccount, Position, Trade, LedgerEntry, BrokerLedger
+from .spread_engine import broker_price, calculate_spread_revenue, _get_config as _get_spread_config
 from .observability import security_log
 
 log = logging.getLogger("simulator.ws")
@@ -128,6 +129,10 @@ class TradingConsumer(AsyncWebsocketConsumer):
             log.warning("[connect] NO db_account_id resolved — all DB writes will be skipped")
 
         await self.accept()
+        if self._db_account_id and self.channel_layer:
+            await self.channel_layer.group_add(
+                f"account_{self._db_account_id}", self.channel_name
+            )
         await self._ws_counter(1)
 
         # --- Estado inicial (memoria) ---
@@ -180,6 +185,11 @@ class TradingConsumer(AsyncWebsocketConsumer):
         hb = getattr(self, "_heartbeat_task", None)
         if hb and not hb.done():
             hb.cancel()
+        # Leave daemon notification group
+        if getattr(self, "_db_account_id", None) and self.channel_layer:
+            await self.channel_layer.group_discard(
+                f"account_{self._db_account_id}", self.channel_name
+            )
         # Unsubscribe from shared feed
         feed = getattr(self, "_feed", None)
         if feed:
@@ -263,16 +273,71 @@ class TradingConsumer(AsyncWebsocketConsumer):
     # ---------------- Streams ----------------
     # ---------------- Shared feed handler ----------------
 
+    async def execution_close(self, event: dict):
+        """Daemon-initiated close pushed via account_{id} channel group.
+
+        Updates in-memory state atomically then pushes order_close + positions
+        so the live UI reflects the close without requiring a reconnect.
+        """
+        pos_id      = event.get("position_id")
+        new_balance = event.get("new_balance")
+        realized    = float(event.get("realized_pnl", 0.0))
+        new_status  = event.get("new_status")
+
+        # Remove from in-memory positions list
+        before = len(self._positions)
+        self._positions = [p for p in self._positions if p["id"] != pos_id]
+        if len(self._positions) == before:
+            log.warning("[execution_close] pos %s not found in memory (concurrent close?)", pos_id)
+
+        # Apply authoritative DB result
+        if new_balance is not None:
+            self.account["balance"] = float(new_balance)
+        if new_status:
+            self.account["status"] = new_status
+
+        self._track_daily_pnl(realized)
+        await self._recalc_account_and_push()
+
+        await self.send_json({
+            "type":         "order_close",
+            "id":           pos_id,
+            "symbol":       event.get("symbol"),
+            "side":         event.get("side"),
+            "qty":          event.get("qty"),
+            "avg":          event.get("avg"),
+            "close_px":     event.get("close_px"),
+            "reason":       event.get("reason"),
+            "realized_pnl": realized,
+            "ts":           event.get("ts", int(time.time())),
+        })
+        await self.send_json({"type": "positions", "items": self._positions_snapshot()})
+
+        # Stopout / margin-call UI notifications (additive — only for daemon-initiated paths)
+        if new_status == "Suspendido":
+            await self.send_json({
+                "type":   "account:suspended",
+                "status": "Suspendido",
+                "reason": event.get("reason"),
+            })
+        elif event.get("reason") == "daemon_margin_call" and not self._positions:
+            await self.send_json({
+                "type":    "account:margin_call",
+                "reason":  "margin_level_below_50pct",
+                "balance": float(new_balance) if new_balance is not None else 0.0,
+            })
+
     async def price_tick(self, event: dict):
         """Receives broadcast ticks from FeedManager via channel layer group."""
         symbol = event.get("symbol")
         if symbol != self.symbol:
             return
-        bid = event["bid"]
-        ask = event["ask"]
-        mid = event["mid"]
-        ts  = event["time"]
+        raw_bid = event["bid"]
+        raw_ask = event["ask"]
+        mid     = event["mid"]
+        ts      = event["time"]
 
+        bid, ask = broker_price(symbol, raw_bid, raw_ask)
         self.set_state(symbol, bid, ask, mid)
         await self.send_json({"type": "tick", "symbol": symbol, "bid": bid, "ask": ask, "time": ts})
         await self._on_tick(symbol, mid, volume=0.0, ts=ts)
@@ -405,8 +470,11 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 spr = spread_for(symbol)
                 _, dec = step_decimals_for(symbol)
                 self._price_state[symbol] = last_close
-                self._bid_state[symbol]   = round(last_close - spr / 2, dec)
-                self._ask_state[symbol]   = round(last_close + spr / 2, dec)
+                self._bid_state[symbol], self._ask_state[symbol] = broker_price(
+                    symbol,
+                    round(last_close - spr / 2, dec),
+                    round(last_close + spr / 2, dec),
+                )
                 return hist
             log.warning("[consumer] Binance REST history failed for %s — falling back to synthetic", symbol)
 
@@ -436,8 +504,9 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
     def _seed_price_state(self, symbol: str) -> None:
         """Seed bid/ask/mid from FeedManager on connect / symbol change."""
-        self._bid_state[symbol]   = self._feed.last_bid(symbol)
-        self._ask_state[symbol]   = self._feed.last_ask(symbol)
+        raw_bid = self._feed.last_bid(symbol)
+        raw_ask = self._feed.last_ask(symbol)
+        self._bid_state[symbol], self._ask_state[symbol] = broker_price(symbol, raw_bid, raw_ask)
         self._price_state[symbol] = self._feed.last_price(symbol)
 
     def set_state(self, symbol, bid: float, ask: float, mid: float):
@@ -1382,6 +1451,26 @@ class TradingConsumer(AsyncWebsocketConsumer):
                     )
                 except Exception as _bl_exc:
                     log.warning("[broker_ledger] commission insert failed pos=%s: %s", position_id, _bl_exc)
+
+            # BrokerLedger SPREAD — revenue earned at open (half-spread × qty × contract_size).
+            # Nested savepoint: spread revenue failure never rolls back the trader transaction.
+            _spread_cfg = _get_spread_config(symbol)
+            if _spread_cfg is not None and _spread_cfg.enabled:
+                try:
+                    with transaction.atomic():
+                        _spread_rev = calculate_spread_revenue(
+                            symbol, float(qty), float(_spread_cfg.spread_pips)
+                        )
+                        if _spread_rev > 0:
+                            BrokerLedger.objects.create(
+                                revenue_type=BrokerLedger.REV_SPREAD,
+                                amount=Decimal(str(_spread_rev)),
+                                source_account_id=self._db_account_id,
+                                symbol=symbol,
+                                meta={"side": side, "db_pos_id": position_id, "spread_pips": float(_spread_cfg.spread_pips)},
+                            )
+                except Exception as _sp_exc:
+                    log.warning("[broker_ledger] spread insert failed pos=%s: %s", position_id, _sp_exc)
 
             TradingAccount.objects.filter(id=self._db_account_id).update(
                 balance=Decimal(str(new_balance))

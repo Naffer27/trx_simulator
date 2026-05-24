@@ -370,6 +370,29 @@ class BrokerLedger(models.Model):
         return f"[{self.created_at:%Y-%m-%d %H:%M:%S}] {self.revenue_type} {self.amount}"
 
 
+class BrokerSpreadConfig(models.Model):
+    """Per-symbol broker spread configuration. Controls the price markup seen by clients."""
+    symbol      = models.CharField(max_length=12, unique=True, db_index=True)
+    spread_pips = models.DecimalField(
+        max_digits=8, decimal_places=2, default=Decimal("1.00"),
+        help_text="Additional markup per side in pips (1 pip = spec.pip_size for the symbol).",
+    )
+    is_dynamic  = models.BooleanField(
+        default=False,
+        help_text="Reserved for future dynamic/session spread logic.",
+    )
+    min_spread  = models.DecimalField(max_digits=8, decimal_places=2, default=Decimal("0.50"))
+    max_spread  = models.DecimalField(max_digits=8, decimal_places=2, default=Decimal("5.00"))
+    enabled     = models.BooleanField(default=True, db_index=True)
+    created_at  = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["symbol"]
+
+    def __str__(self):
+        return f"{self.symbol} spread={self.spread_pips}pip enabled={self.enabled}"
+
+
 class Deposit(models.Model):
     STATUS_PENDING = 'pending'
     STATUS_WAITING = 'waiting'
