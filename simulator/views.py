@@ -534,10 +534,10 @@ def _resolve_account(request):
     """
     Return the TradingAccount for this session, falling back to the user's
     most-recent active account.  Updates session if a fallback is used.
-    Returns None only when the user has no accounts at all.
+    Returns None only when the user has no active accounts at all.
     """
     acc_id = request.session.get("account_id")
-    account = TradingAccount.objects.filter(pk=acc_id, user=request.user).first()
+    account = TradingAccount.objects.filter(pk=acc_id, user=request.user, status='Activo').first()
     if not account:
         account = (
             TradingAccount.objects
@@ -554,7 +554,7 @@ def _resolve_account(request):
 def home_view(request):
     account = _resolve_account(request)
     if not account:
-        return redirect("simulator:login")
+        return redirect("simulator:accounts")
 
     all_accounts = (
         TradingAccount.objects
@@ -625,7 +625,7 @@ def history_view(request):
     acc_id = request.session.get("account_id")
     account = TradingAccount.objects.filter(pk=acc_id, user=request.user).first()
     if not account:
-        return redirect("simulator:login")
+        return redirect("simulator:accounts")
 
     trades = Trade.objects.filter(account=account).order_by('-opened_at')
     ledger = LedgerEntry.objects.filter(account=account).order_by('-created_at')[:50]
