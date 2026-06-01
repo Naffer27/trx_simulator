@@ -16,7 +16,9 @@ from .models import (
     CalendarEvent, Referral, Bonus, BrokerDocument, ExpertAdvisor,
     BrokerLedger, BrokerSpreadConfig,
     BrokerEquitySnapshot, BrokerRevenueSnapshot,
+    ChallengeProduct, ChallengeEnrollment, FundedConfig,
 )
+from . import challenge_engine
 
 
 # ─────────────────────────────────────────────
@@ -2301,6 +2303,157 @@ class BrokerRevenueSnapshotAdmin(admin.ModelAdmin):
             exposure_url   = reverse("admin:broker_live_analytics"),
         )
         return render(request, "admin/broker_analytics_dashboard.html", context)
+
+
+# ─────────────────────────────────────────────
+# Challenge Control Panel
+# ─────────────────────────────────────────────
+
+_ENROLLMENT_STATUS_COLORS = {
+    ChallengeEnrollment.ST_PHASE_1:   ("#0d2b45", "#29b6f6"),
+    ChallengeEnrollment.ST_PHASE_2:   ("#1a2b0d", "#66bb6a"),
+    ChallengeEnrollment.ST_FUNDED:    ("#1a2b0d", "#26a69a"),
+    ChallengeEnrollment.ST_FAILED:    ("#4a0000", "#ef5350"),
+    ChallengeEnrollment.ST_WITHDRAWN: ("#1a1a1a", "#888888"),
+}
+
+
+def _enroll_status_badge(status: str) -> str:
+    bg, fg = _ENROLLMENT_STATUS_COLORS.get(status, ("#1a1a1a", "#888888"))
+    return format_html(
+        '<span style="background:{};color:{};padding:2px 8px;border-radius:3px;'
+        'font-size:.7rem;font-weight:700;">{}</span>',
+        bg, fg, status,
+    )
+
+
+def _account_link(account) -> str:
+    if account is None:
+        return "—"
+    url = reverse("admin:simulator_tradingaccount_change", args=[account.pk])
+    return format_html('<a href="{}">#{}  {}</a>', url, account.pk, account.phase or account.account_type)
+
+
+@admin.action(description="Activate selected enrollments (create Phase 1 account)")
+def activate_enrollments(modeladmin, request, queryset):
+    ok = failed = 0
+    for enrollment in queryset.select_related("product", "phase1_account"):
+        try:
+            challenge_engine.activate_challenge_enrollment(enrollment)
+            ok += 1
+        except Exception as exc:
+            messages.error(request, f"Enrollment #{enrollment.pk}: {exc}")
+            failed += 1
+    if ok:
+        messages.success(request, f"{ok} enrollment(s) activated.")
+    if failed:
+        messages.warning(request, f"{failed} enrollment(s) failed — see errors above.")
+
+
+@admin.action(description="Evaluate selected enrollments now (auto-advance or fail)")
+def evaluate_enrollments_now(modeladmin, request, queryset):
+    counts = {challenge_engine.PASSED: 0, challenge_engine.FAILED: 0, challenge_engine.IN_PROGRESS: 0}
+    for enrollment in queryset:
+        try:
+            result = challenge_engine.evaluate_enrollment_now(enrollment.pk)
+            counts[result.status] += 1
+        except Exception as exc:
+            messages.error(request, f"Enrollment #{enrollment.pk}: {exc}")
+    if counts[challenge_engine.PASSED]:
+        messages.success(request, f"{counts[challenge_engine.PASSED]} enrollment(s) passed and advanced.")
+    if counts[challenge_engine.FAILED]:
+        messages.warning(request, f"{counts[challenge_engine.FAILED]} enrollment(s) failed.")
+    if counts[challenge_engine.IN_PROGRESS]:
+        messages.info(request, f"{counts[challenge_engine.IN_PROGRESS]} enrollment(s) still in progress.")
+
+
+@admin.register(ChallengeProduct)
+class ChallengeProductAdmin(admin.ModelAdmin):
+    list_display  = ("name", "tier", "price_usd", "account_size", "phases_summary", "profit_split_pct", "is_active", "created_at")
+    list_filter   = ("is_active", "tier")
+    search_fields = ("name",)
+    readonly_fields = ("created_at",)
+
+    fieldsets = (
+        (None, {
+            "fields": ("name", "tier", "price_usd", "account_size", "profit_split_pct",
+                       "max_lot_size", "max_open_positions", "is_active", "created_at"),
+        }),
+        ("Phase 1 Rules", {
+            "fields": ("p1_profit_target_pct", "p1_max_drawdown_pct", "p1_max_daily_loss_pct",
+                       "p1_min_trading_days", "p1_max_duration_days"),
+        }),
+        ("Phase 2 Rules", {
+            "fields": ("p2_profit_target_pct", "p2_max_drawdown_pct", "p2_max_daily_loss_pct",
+                       "p2_min_trading_days", "p2_max_duration_days"),
+        }),
+    )
+
+    @admin.display(description="Phases")
+    def phases_summary(self, obj):
+        return format_html(
+            "P1: {}% / P2: {}%",
+            obj.p1_profit_target_pct,
+            obj.p2_profit_target_pct,
+        )
+
+
+@admin.register(ChallengeEnrollment)
+class ChallengeEnrollmentAdmin(admin.ModelAdmin):
+    list_display  = ("__str__", "user", "product", "status_badge", "phase1_link",
+                     "phase2_link", "funded_link", "enrolled_at")
+    list_filter   = ("status", "product__tier")
+    search_fields = ("user__username", "user__email", "product__name")
+    readonly_fields = ("enrolled_at", "phase1_passed_at", "phase2_passed_at", "funded_at",
+                       "status", "failed_at_phase", "failure_reason")
+    actions = [activate_enrollments, evaluate_enrollments_now]
+
+    fieldsets = (
+        (None, {
+            "fields": ("user", "product", "deposit"),
+        }),
+        ("Accounts", {
+            "fields": ("phase1_account", "phase2_account", "funded_account"),
+        }),
+        ("Status", {
+            "fields": ("status", "failed_at_phase", "failure_reason"),
+        }),
+        ("Timeline", {
+            "fields": ("enrolled_at", "phase1_passed_at", "phase2_passed_at", "funded_at"),
+        }),
+    )
+
+    @admin.display(description="Status")
+    def status_badge(self, obj):
+        return _enroll_status_badge(obj.status)
+
+    @admin.display(description="Phase 1")
+    def phase1_link(self, obj):
+        return _account_link(obj.phase1_account)
+
+    @admin.display(description="Phase 2")
+    def phase2_link(self, obj):
+        return _account_link(obj.phase2_account)
+
+    @admin.display(description="Funded")
+    def funded_link(self, obj):
+        return _account_link(obj.funded_account)
+
+
+@admin.register(FundedConfig)
+class FundedConfigAdmin(admin.ModelAdmin):
+    list_display  = ("enrollment", "funded_account_link", "funded_type",
+                     "profit_split_pct", "min_payout_usd", "payout_cycle_days",
+                     "min_trading_days", "is_active", "created_at")
+    list_filter   = ("funded_type", "is_active")
+    readonly_fields = ("enrollment", "funded_type", "profit_split_pct", "min_payout_usd",
+                       "min_trading_days", "payout_cycle_days", "max_monthly_drawdown_pct",
+                       "is_active", "created_at")
+
+    @admin.display(description="Funded Account")
+    def funded_account_link(self, obj):
+        account = obj.enrollment.funded_account if obj.enrollment_id else None
+        return _account_link(account)
 
 
 # ─────────────────────────────────────────────
