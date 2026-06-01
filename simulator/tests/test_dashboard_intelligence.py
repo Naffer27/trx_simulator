@@ -358,7 +358,7 @@ class TestDashboardEquityCurveJson(TestCase):
             balance=Decimal("10000"), equity=Decimal("10100"),
         )
         AccountEquitySnapshot.objects.create(
-            account=account, taken_at=now.replace(hour=(now.hour+1) % 24),
+            account=account, taken_at=now + timezone.timedelta(hours=1),
             balance=Decimal("10000"), equity=Decimal("10200"),
         )
         raw = self._get(account).context["equity_curve_json"]

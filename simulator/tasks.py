@@ -988,3 +988,85 @@ def test_price_cache_read(self, symbol: str = "EUR/USD") -> dict:
         "ask":    ask,
         "stale":  stale,
     }
+
+
+# ──────────────────────────────────────────────────────
+# PHASE 4B.3 — Challenge periodic evaluator
+# Reads ChallengeEnrollment rows, delegates to challenge_engine.
+# No execution engine, no consumers, no risk_engine writes.
+# ──────────────────────────────────────────────────────
+@shared_task(
+    name="simulator.evaluate_all_challenges",
+    bind=True,
+    max_retries=0,
+    acks_late=True,
+    soft_time_limit=5 * 60,   # 5 min soft — warn before hard kill
+    time_limit=8 * 60,        # 8 min hard kill
+)
+def evaluate_all_challenges_task(self) -> dict:
+    """
+    Evaluate every active ChallengeEnrollment (PHASE_1 or PHASE_2).
+
+    Delegates entirely to challenge_engine.evaluate_enrollment_now(), which
+    handles atomic state transitions. This task only orchestrates the batch
+    and counts outcomes — it never mutates enrollment state directly.
+
+    One enrollment failure never aborts the rest of the batch.
+    """
+    import time as _t
+    from .models import ChallengeEnrollment
+    from . import challenge_engine
+
+    t0 = _t.monotonic()
+    active_statuses = (ChallengeEnrollment.ST_PHASE_1, ChallengeEnrollment.ST_PHASE_2)
+    enrollment_ids = list(
+        ChallengeEnrollment.objects
+        .filter(status__in=active_statuses)
+        .values_list("id", flat=True)
+    )
+
+    processed = advanced = failed = errors = 0
+    logger.info(
+        "[evaluate_challenges] starting batch count=%d worker=%s",
+        len(enrollment_ids), self.request.hostname,
+    )
+
+    for enrollment_id in enrollment_ids:
+        try:
+            result = challenge_engine.evaluate_enrollment_now(enrollment_id)
+            processed += 1
+            if result.status == challenge_engine.PASSED:
+                advanced += 1
+                logger.info(
+                    "[evaluate_challenges] enrollment=%d PASSED — advanced",
+                    enrollment_id,
+                )
+            elif result.status == challenge_engine.FAILED:
+                failed += 1
+                logger.info(
+                    "[evaluate_challenges] enrollment=%d FAILED reason=%r",
+                    enrollment_id, result.fail_reason,
+                )
+            else:
+                logger.debug(
+                    "[evaluate_challenges] enrollment=%d IN_PROGRESS metrics=%s",
+                    enrollment_id, result.metrics,
+                )
+        except Exception as exc:
+            errors += 1
+            logger.error(
+                "[evaluate_challenges] enrollment=%d unhandled error: %r",
+                enrollment_id, exc,
+                exc_info=True,
+            )
+
+    elapsed_ms = round((_t.monotonic() - t0) * 1000)
+    summary = {
+        "processed": processed,
+        "advanced":  advanced,
+        "failed":    failed,
+        "errors":    errors,
+        "elapsed_ms": elapsed_ms,
+    }
+    logger.info("[evaluate_challenges] done %s", summary)
+    return summary

@@ -254,6 +254,12 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(minute="*/5"),
         "options":  {"expires": 4 * 60},  # drop if not picked up within 4 min
     },
+    # Challenge evaluation every hour — advance or fail active enrollments
+    "evaluate-challenges-hourly": {
+        "task":     "simulator.evaluate_all_challenges",
+        "schedule": crontab(minute=0),     # top of every hour
+        "options":  {"expires": 55 * 60},  # drop if not picked up within 55 min
+    },
 }
 
 # Revenue snapshot retention (separate from equity snapshots — longer window for trend history).
