@@ -14,7 +14,9 @@ from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 
-from simulator.models import Position, TradingAccount, Wallet, WalletTransaction
+from simulator.models import (
+    BrokerLedger, LedgerEntry, Position, Trade, TradingAccount, Wallet, WalletTransaction,
+)
 from simulator.wallet_ledger import credit_wallet, get_or_create_wallet
 
 User = get_user_model()
@@ -108,6 +110,63 @@ def make_deposit(
         nowpayments_payment_id=payment_id,
         status=status,
         credited=credited,
+    )
+
+
+def make_trade(
+    account: TradingAccount,
+    symbol: str = "EUR/USD",
+    trade_type: str = "BUY",
+    lot_size: Decimal = Decimal("0.1"),
+    entry_price: Decimal = Decimal("1.10000"),
+    exit_price: Decimal | None = None,
+    profit_loss: Decimal | None = None,
+) -> Trade:
+    """Create a Trade (fill) on *account*."""
+    return Trade.objects.create(
+        account=account,
+        symbol=symbol,
+        trade_type=trade_type,
+        lot_size=Decimal(str(lot_size)),
+        entry_price=Decimal(str(entry_price)),
+        exit_price=Decimal(str(exit_price)) if exit_price is not None else None,
+        profit_loss=Decimal(str(profit_loss)) if profit_loss is not None else None,
+    )
+
+
+def make_ledger_entry(
+    account: TradingAccount,
+    event_type: str = LedgerEntry.EV_REALIZED,
+    amount: Decimal = Decimal("100.00"),
+    balance_after: Decimal = Decimal("10100.00"),
+) -> LedgerEntry:
+    """Create a LedgerEntry for *account*."""
+    return LedgerEntry.objects.create(
+        account=account,
+        event_type=event_type,
+        amount=Decimal(str(amount)),
+        balance_after=Decimal(str(balance_after)),
+    )
+
+
+def make_broker_ledger(
+    revenue_type: str = BrokerLedger.REV_SPREAD,
+    amount: Decimal = Decimal("1.00"),
+    source_account: TradingAccount | None = None,
+    source_trade: Trade | None = None,
+    source_ledger: LedgerEntry | None = None,
+    symbol: str | None = "EUR/USD",
+    meta: dict | None = None,
+) -> BrokerLedger:
+    """Create a BrokerLedger revenue entry."""
+    return BrokerLedger.objects.create(
+        revenue_type=revenue_type,
+        amount=Decimal(str(amount)),
+        source_account=source_account,
+        source_trade=source_trade,
+        source_ledger=source_ledger,
+        symbol=symbol,
+        meta=meta if meta is not None else {},
     )
 
 
