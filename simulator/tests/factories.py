@@ -72,6 +72,24 @@ def make_account(
     )
 
 
+def make_spread_config(
+    symbol: str = "EUR/USD",
+    spread_pips: Decimal = Decimal("2.00"),
+    enabled: bool = True,
+) -> "BrokerSpreadConfig":
+    """
+    Create a BrokerSpreadConfig. Symbol is auto-normalized by the model's save()
+    (e.g. 'EURUSD' → 'EUR/USD'), so tests can pass either form.
+    """
+    from simulator.models import BrokerSpreadConfig
+
+    return BrokerSpreadConfig.objects.create(
+        symbol=symbol,
+        spread_pips=spread_pips,
+        enabled=enabled,
+    )
+
+
 def make_deposit(
     user,
     amount_usd: Decimal = Decimal("100.00"),
