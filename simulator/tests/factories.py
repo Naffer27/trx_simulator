@@ -15,7 +15,8 @@ from decimal import Decimal
 from django.contrib.auth import get_user_model
 
 from simulator.models import (
-    BrokerLedger, LedgerEntry, Position, Trade, TradingAccount, Wallet, WalletTransaction,
+    AccountProduct, BrokerLedger, ChallengeEnrollment, ChallengeProduct, Deposit,
+    FundedConfig, LedgerEntry, Position, Trade, TradingAccount, Wallet, WalletTransaction,
 )
 from simulator.wallet_ledger import credit_wallet, get_or_create_wallet
 
@@ -190,4 +191,114 @@ def make_position(
         avg_price=Decimal(str(avg_price)),
         sl=Decimal(str(sl)) if sl is not None else None,
         tp=Decimal(str(tp)) if tp is not None else None,
+    )
+
+
+def make_account_product(
+    name: str | None = None,
+    product_type: str = AccountProduct.TYPE_RETAIL,
+    min_deposit: Decimal = Decimal("100.00"),
+    max_leverage: int = 50,
+    commission_pct: Decimal = Decimal("0.0000"),
+    spread_markup: Decimal = Decimal("0.0000"),
+    features: dict | None = None,
+    is_active: bool = True,
+) -> AccountProduct:
+    """Create an AccountProduct (non-challenge account catalog entry)."""
+    if name is None:
+        name = f"Product {product_type} {uuid.uuid4().hex[:4]}"
+    return AccountProduct.objects.create(
+        name=name,
+        product_type=product_type,
+        min_deposit=Decimal(str(min_deposit)),
+        max_leverage=max_leverage,
+        commission_pct=Decimal(str(commission_pct)),
+        spread_markup=Decimal(str(spread_markup)),
+        features=features if features is not None else {},
+        is_active=is_active,
+    )
+
+
+def make_challenge_product(
+    name: str | None = None,
+    tier: str = ChallengeProduct.TIER_10K,
+    price_usd: Decimal = Decimal("99.00"),
+    account_size: Decimal = Decimal("10000.00"),
+    p1_profit_target_pct: Decimal = Decimal("8.00"),
+    p1_max_drawdown_pct: Decimal = Decimal("10.00"),
+    p1_max_daily_loss_pct: Decimal = Decimal("5.00"),
+    p1_min_trading_days: int = 5,
+    p1_max_duration_days: int = 30,
+    p2_profit_target_pct: Decimal = Decimal("5.00"),
+    p2_max_drawdown_pct: Decimal = Decimal("10.00"),
+    p2_max_daily_loss_pct: Decimal = Decimal("5.00"),
+    p2_min_trading_days: int = 5,
+    p2_max_duration_days: int = 60,
+    profit_split_pct: Decimal = Decimal("80.00"),
+    is_active: bool = True,
+) -> ChallengeProduct:
+    """Create a ChallengeProduct with sensible defaults for the 10K tier."""
+    if name is None:
+        name = f"Challenge {tier} {uuid.uuid4().hex[:4]}"
+    return ChallengeProduct.objects.create(
+        name=name,
+        tier=tier,
+        price_usd=Decimal(str(price_usd)),
+        account_size=Decimal(str(account_size)),
+        p1_profit_target_pct=Decimal(str(p1_profit_target_pct)),
+        p1_max_drawdown_pct=Decimal(str(p1_max_drawdown_pct)),
+        p1_max_daily_loss_pct=Decimal(str(p1_max_daily_loss_pct)),
+        p1_min_trading_days=p1_min_trading_days,
+        p1_max_duration_days=p1_max_duration_days,
+        p2_profit_target_pct=Decimal(str(p2_profit_target_pct)),
+        p2_max_drawdown_pct=Decimal(str(p2_max_drawdown_pct)),
+        p2_max_daily_loss_pct=Decimal(str(p2_max_daily_loss_pct)),
+        p2_min_trading_days=p2_min_trading_days,
+        p2_max_duration_days=p2_max_duration_days,
+        profit_split_pct=Decimal(str(profit_split_pct)),
+        is_active=is_active,
+    )
+
+
+def make_challenge_enrollment(
+    user=None,
+    product: ChallengeProduct | None = None,
+    deposit: Deposit | None = None,
+    phase1_account: TradingAccount | None = None,
+    status: str = ChallengeEnrollment.ST_PHASE_1,
+) -> ChallengeEnrollment:
+    """Create a ChallengeEnrollment. Deposit=None is valid (admin-issued)."""
+    if user is None:
+        user = make_user()
+    if product is None:
+        product = make_challenge_product()
+    return ChallengeEnrollment.objects.create(
+        user=user,
+        product=product,
+        deposit=deposit,
+        phase1_account=phase1_account,
+        status=status,
+    )
+
+
+def make_funded_config(
+    enrollment: ChallengeEnrollment | None = None,
+    funded_type: str = FundedConfig.FUNDED_SIM,
+    profit_split_pct: Decimal = Decimal("80.00"),
+    min_payout_usd: Decimal = Decimal("50.00"),
+    min_trading_days: int = 5,
+    payout_cycle_days: int = 14,
+    max_monthly_drawdown_pct: Decimal = Decimal("5.00"),
+) -> FundedConfig:
+    """Create a FundedConfig for a given enrollment."""
+    if enrollment is None:
+        enrollment = make_challenge_enrollment()
+    return FundedConfig.objects.create(
+        enrollment=enrollment,
+        funded_type=funded_type,
+        profit_split_pct=Decimal(str(profit_split_pct)),
+        min_payout_usd=Decimal(str(min_payout_usd)),
+        min_trading_days=min_trading_days,
+        payout_cycle_days=payout_cycle_days,
+        max_monthly_drawdown_pct=Decimal(str(max_monthly_drawdown_pct)),
     )

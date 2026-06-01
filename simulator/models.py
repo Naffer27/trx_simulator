@@ -549,6 +549,242 @@ class Purchase(models.Model):
 
 
 # ─────────────────────────────────────────────
+# Product catalog (Phase 4B)
+# ─────────────────────────────────────────────
+
+class AccountProduct(models.Model):
+    """
+    Catalog entry for standard (non-challenge) trading accounts.
+    Completely separate from ChallengeProduct — challenges are NOT sold via this model.
+    Created by admin; referenced when opening DEMO/RETAIL/ECN/STANDARD/CRYPTO accounts.
+    """
+    TYPE_DEMO     = 'DEMO'
+    TYPE_RETAIL   = 'RETAIL'
+    TYPE_ECN      = 'ECN'
+    TYPE_STANDARD = 'STANDARD'
+    TYPE_CRYPTO   = 'CRYPTO'
+
+    PRODUCT_TYPES = [
+        (TYPE_DEMO,     'Demo'),
+        (TYPE_RETAIL,   'Retail / USDT'),
+        (TYPE_ECN,      'ECN'),
+        (TYPE_STANDARD, 'Standard'),
+        (TYPE_CRYPTO,   'Crypto'),
+    ]
+
+    name           = models.CharField(max_length=64)
+    product_type   = models.CharField(max_length=12, choices=PRODUCT_TYPES)
+    description    = models.TextField(blank=True)
+    min_deposit    = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('100.00'))
+    max_leverage   = models.PositiveIntegerField(default=50)
+    commission_pct = models.DecimalField(max_digits=5, decimal_places=4, default=Decimal('0.0000'))
+    spread_markup  = models.DecimalField(max_digits=5, decimal_places=4, default=Decimal('0.0000'))
+    features       = models.JSONField(default=dict)
+    is_active      = models.BooleanField(default=True)
+    created_at     = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['product_type', 'name']
+        verbose_name = "Account Product"
+
+    def __str__(self):
+        return f"{self.name} ({self.product_type})"
+
+
+class ChallengeProduct(models.Model):
+    """
+    Catalog entry for prop-firm challenge programs (2-phase evaluation).
+    Completely separate from AccountProduct — challenges have their own purchase flow.
+    Challenges are NOT created from the normal New Account modal.
+
+    Tiers here are independent of TradingAccount.ACCOUNT_TIERS so that 25K can exist
+    without migrating TradingAccount.
+    """
+    TIER_10K  = '10K'
+    TIER_25K  = '25K'
+    TIER_50K  = '50K'
+    TIER_100K = '100K'
+
+    TIERS = [
+        (TIER_10K,  '$10,000'),
+        (TIER_25K,  '$25,000'),
+        (TIER_50K,  '$50,000'),
+        (TIER_100K, '$100,000'),
+    ]
+
+    name         = models.CharField(max_length=64)
+    tier         = models.CharField(max_length=6, choices=TIERS)
+    price_usd    = models.DecimalField(max_digits=10, decimal_places=2)
+    account_size = models.DecimalField(max_digits=12, decimal_places=2)  # virtual capital assigned
+
+    # Phase 1 evaluation rules
+    p1_profit_target_pct  = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('8.00'))
+    p1_max_drawdown_pct   = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('10.00'))
+    p1_max_daily_loss_pct = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('5.00'))
+    p1_min_trading_days   = models.PositiveIntegerField(default=5)
+    p1_max_duration_days  = models.PositiveIntegerField(default=30)
+
+    # Phase 2 evaluation rules
+    p2_profit_target_pct  = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('5.00'))
+    p2_max_drawdown_pct   = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('10.00'))
+    p2_max_daily_loss_pct = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('5.00'))
+    p2_min_trading_days   = models.PositiveIntegerField(default=5)
+    p2_max_duration_days  = models.PositiveIntegerField(default=60)
+
+    # Funded account terms (copied to FundedConfig at promotion time)
+    profit_split_pct   = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('80.00'))
+    max_lot_size       = models.DecimalField(max_digits=8, decimal_places=2, default=Decimal('5.00'))
+    max_open_positions = models.PositiveIntegerField(default=30)
+
+    is_active  = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['tier', 'price_usd']
+        verbose_name = "Challenge Product"
+
+    def __str__(self):
+        return f"{self.name} ({self.tier}) — ${self.price_usd}"
+
+    def p1_profit_target_amount(self) -> Decimal:
+        """Absolute profit target in USD for Phase 1."""
+        return (self.account_size * self.p1_profit_target_pct / Decimal('100')).quantize(Decimal('0.01'))
+
+    def p2_profit_target_amount(self) -> Decimal:
+        """Absolute profit target in USD for Phase 2."""
+        return (self.account_size * self.p2_profit_target_pct / Decimal('100')).quantize(Decimal('0.01'))
+
+
+class ChallengeEnrollment(models.Model):
+    """
+    Connects a verified payment (Deposit) to the sequence of TradingAccounts
+    created across Phase 1 → Phase 2 → Funded.
+
+    One enrollment per paid challenge. Each phase creates a new TradingAccount
+    (account_type='CHALLENGE' for phases, 'FUNDED' for funded stage); the
+    previous phase account is marked Completado when the next phase starts.
+
+    deposit=None is allowed for admin-issued enrollments (no payment required).
+    The UniqueConstraint on deposit prevents double-enrollment from the same payment.
+    """
+    ST_PHASE_1   = 'PHASE_1'
+    ST_PHASE_2   = 'PHASE_2'
+    ST_FUNDED    = 'FUNDED'
+    ST_FAILED    = 'FAILED'
+    ST_WITHDRAWN = 'WITHDRAWN'
+
+    STATUS_CHOICES = [
+        (ST_PHASE_1,   'Phase 1 — Active'),
+        (ST_PHASE_2,   'Phase 2 — Active'),
+        (ST_FUNDED,    'Funded'),
+        (ST_FAILED,    'Failed'),
+        (ST_WITHDRAWN, 'Withdrawn'),
+    ]
+
+    FAILED_AT_PHASE_1 = 'PHASE_1'
+    FAILED_AT_PHASE_2 = 'PHASE_2'
+
+    user    = models.ForeignKey(User, on_delete=models.CASCADE, related_name='challenge_enrollments')
+    product = models.ForeignKey(ChallengeProduct, on_delete=models.PROTECT, related_name='enrollments')
+    deposit = models.ForeignKey(
+        'Deposit', on_delete=models.PROTECT,
+        null=True, blank=True, related_name='challenge_enrollments',
+    )
+
+    # One TradingAccount per phase — null until that phase is reached
+    phase1_account = models.OneToOneField(
+        TradingAccount, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='enrollment_phase1',
+    )
+    phase2_account = models.OneToOneField(
+        TradingAccount, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='enrollment_phase2',
+    )
+    funded_account = models.OneToOneField(
+        TradingAccount, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='enrollment_funded',
+    )
+
+    status          = models.CharField(max_length=12, choices=STATUS_CHOICES, default=ST_PHASE_1)
+    failed_at_phase = models.CharField(max_length=8, null=True, blank=True)
+    failure_reason  = models.CharField(max_length=256, null=True, blank=True)
+
+    enrolled_at      = models.DateTimeField(auto_now_add=True)
+    phase1_passed_at = models.DateTimeField(null=True, blank=True)
+    phase2_passed_at = models.DateTimeField(null=True, blank=True)
+    funded_at        = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-enrolled_at']
+        indexes = [
+            models.Index(fields=['user', 'status'], name='enrollment_user_status_idx'),
+        ]
+        constraints = [
+            # One enrollment per paid deposit; multiple admin-issued (deposit=None) are allowed.
+            models.UniqueConstraint(
+                fields=['deposit'],
+                condition=models.Q(deposit__isnull=False),
+                name='unique_enrollment_per_deposit',
+            ),
+        ]
+        verbose_name = "Challenge Enrollment"
+
+    def __str__(self):
+        return f"Enrollment #{self.pk} {self.user} {self.product.tier} [{self.status}]"
+
+    @property
+    def active_account(self):
+        """Returns the TradingAccount currently active in this enrollment."""
+        if self.status == self.ST_PHASE_1:
+            return self.phase1_account
+        if self.status == self.ST_PHASE_2:
+            return self.phase2_account
+        if self.status == self.ST_FUNDED:
+            return self.funded_account
+        return None
+
+
+class FundedConfig(models.Model):
+    """
+    Payout rules and classification for the funded account produced after passing Phase 2.
+
+    FUNDED_SIM:      virtual capital — simulated payouts, internal simulation only.
+    FUNDED_INTERNAL: firm allocates internal capital; real payout process begins.
+
+    All monetary terms are copied from ChallengeProduct at promotion time so that
+    future product changes never retroactively affect existing funded traders.
+    """
+    FUNDED_SIM      = 'FUNDED_SIM'
+    FUNDED_INTERNAL = 'FUNDED_INTERNAL'
+
+    FUNDED_TYPES = [
+        (FUNDED_SIM,      'Simulation Funded — virtual capital'),
+        (FUNDED_INTERNAL, 'Internal Funded — firm capital assigned'),
+    ]
+
+    enrollment  = models.OneToOneField(
+        ChallengeEnrollment, on_delete=models.CASCADE, related_name='funded_config',
+    )
+    funded_type = models.CharField(max_length=16, choices=FUNDED_TYPES, default=FUNDED_SIM)
+
+    # Snapshot of product terms at the moment of funding — immutable after creation
+    profit_split_pct         = models.DecimalField(max_digits=5,  decimal_places=2)
+    min_payout_usd           = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('50.00'))
+    min_trading_days         = models.PositiveIntegerField(default=5)
+    payout_cycle_days        = models.PositiveIntegerField(default=14)
+    max_monthly_drawdown_pct = models.DecimalField(max_digits=5,  decimal_places=2, default=Decimal('5.00'))
+
+    is_active  = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Funded Account Config"
+
+    def __str__(self):
+        return f"FundedConfig #{self.enrollment_id} {self.funded_type} split={self.profit_split_pct}%"
+
+
+# ─────────────────────────────────────────────
 # Wallet ledger models
 # ─────────────────────────────────────────────
 
