@@ -235,6 +235,8 @@ def make_challenge_product(
     p2_min_trading_days: int = 5,
     p2_max_duration_days: int = 60,
     profit_split_pct: Decimal = Decimal("80.00"),
+    max_lot_size: Decimal = Decimal("5.00"),
+    max_open_positions: int = 30,
     is_active: bool = True,
 ) -> ChallengeProduct:
     """Create a ChallengeProduct with sensible defaults for the 10K tier."""
@@ -256,6 +258,8 @@ def make_challenge_product(
         p2_min_trading_days=p2_min_trading_days,
         p2_max_duration_days=p2_max_duration_days,
         profit_split_pct=Decimal(str(profit_split_pct)),
+        max_lot_size=Decimal(str(max_lot_size)),
+        max_open_positions=max_open_positions,
         is_active=is_active,
     )
 
