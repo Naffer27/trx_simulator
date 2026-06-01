@@ -1,0 +1,93 @@
+"""
+simulator/tests/factories.py
+Helpers for creating test data. Each returns a fully-saved Django model instance.
+
+Rules:
+  - Every helper generates unique usernames via uuid so tests never collide.
+  - No global state. Callers compose exactly what they need per test.
+  - make_wallet() uses credit_wallet() to establish initial_balance so the
+    WalletTransaction ledger is consistent from the start (reconcile_wallet passes).
+  - Amounts are always Decimal, never float.
+"""
+import uuid
+from decimal import Decimal
+
+from django.contrib.auth import get_user_model
+
+from simulator.models import Position, TradingAccount, Wallet, WalletTransaction
+from simulator.wallet_ledger import credit_wallet, get_or_create_wallet
+
+User = get_user_model()
+
+
+def make_user(username: str | None = None, password: str = "testpass123", **kwargs) -> User:
+    """Create and return a unique User."""
+    if username is None:
+        username = f"user_{uuid.uuid4().hex[:8]}"
+    return User.objects.create_user(username=username, password=password, **kwargs)
+
+
+def make_wallet(user=None, initial_balance: Decimal = Decimal("0")) -> Wallet:
+    """
+    Return the Wallet for *user* (creates one if missing).
+    If initial_balance > 0, seeds it with a TX_DEPOSIT so the ledger is clean.
+    """
+    if user is None:
+        user = make_user()
+    wallet, _ = get_or_create_wallet(user)
+    if initial_balance > Decimal("0"):
+        credit_wallet(
+            wallet.id,
+            initial_balance,
+            WalletTransaction.TX_DEPOSIT,
+            note="test setup",
+        )
+        wallet.refresh_from_db()
+    return wallet
+
+
+def make_account(
+    user=None,
+    account_type: str = "CHALLENGE",
+    tier: str = "10K",
+    balance: Decimal = Decimal("10000"),
+    status: str = "Activo",
+    **kwargs,
+) -> TradingAccount:
+    """Create a TradingAccount with sensible defaults for tests."""
+    if user is None:
+        user = make_user()
+    balance = Decimal(str(balance))
+    return TradingAccount.objects.create(
+        user=user,
+        account_type=account_type,
+        tier=tier,
+        balance=balance,
+        equity=balance,
+        peak_balance=balance,
+        initial_balance=balance,
+        status=status,
+        leverage=50,
+        **kwargs,
+    )
+
+
+def make_position(
+    account: TradingAccount,
+    symbol: str = "EUR/USD",
+    side: str = "BUY",
+    qty: Decimal = Decimal("0.1"),
+    avg_price: Decimal = Decimal("1.1000"),
+    sl: Decimal | None = None,
+    tp: Decimal | None = None,
+) -> Position:
+    """Create an open Position on *account*."""
+    return Position.objects.create(
+        account=account,
+        symbol=symbol,
+        side=side,
+        qty=Decimal(str(qty)),
+        avg_price=Decimal(str(avg_price)),
+        sl=Decimal(str(sl)) if sl is not None else None,
+        tp=Decimal(str(tp)) if tp is not None else None,
+    )
