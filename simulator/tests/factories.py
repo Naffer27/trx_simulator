@@ -54,19 +54,21 @@ def make_account(
     tier: str = "10K",
     balance: Decimal = Decimal("10000"),
     status: str = "Activo",
+    peak_balance: Decimal | None = None,
     **kwargs,
 ) -> TradingAccount:
     """Create a TradingAccount with sensible defaults for tests."""
     if user is None:
         user = make_user()
     balance = Decimal(str(balance))
+    _peak = Decimal(str(peak_balance)) if peak_balance is not None else balance
     return TradingAccount.objects.create(
         user=user,
         account_type=account_type,
         tier=tier,
         balance=balance,
         equity=balance,
-        peak_balance=balance,
+        peak_balance=_peak,
         initial_balance=balance,
         status=status,
         leverage=50,
