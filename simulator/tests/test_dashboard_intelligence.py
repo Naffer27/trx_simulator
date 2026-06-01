@@ -1,17 +1,19 @@
 """
-simulator/tests/test_dashboard_intelligence.py — Phase 4A Paso 1
+simulator/tests/test_dashboard_intelligence.py — Phase 4A Pasos 1-3
 
 Verifies that trading_dashboard view injects intelligence context keys
 and that their values are correct for known account states.
 
 Does NOT test template rendering — only context dict completeness and values.
 """
+import json
 from decimal import Decimal
 
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 
-from simulator.models import LedgerEntry
+from simulator.models import AccountEquitySnapshot, LedgerEntry
 from simulator.tests.factories import make_account, make_ledger_entry, make_trade, make_user
 
 
@@ -295,3 +297,71 @@ class TestDashboardBarHelpers(TestCase):
         _TA.objects.filter(pk=account.pk).update(balance=Decimal("9400"))
         account.refresh_from_db()
         self.assertFalse(self._get(account).context["max_dd_safe"])
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. equity_curve_json (Paso 3)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestDashboardEquityCurveJson(TestCase):
+    """
+    equity_curve_json must be valid JSON, contain {e, b} dicts,
+    and be empty list when no snapshots exist.
+    """
+
+    def setUp(self):
+        self.user = make_user()
+        self.client.force_login(self.user)
+
+    def _get(self, account):
+        url = reverse("simulator:dashboard_account", args=[account.pk])
+        return self.client.get(url)
+
+    def test_equity_curve_json_key_present(self):
+        account = make_account(user=self.user)
+        self.assertIn("equity_curve_json", self._get(account).context)
+
+    def test_equity_curve_json_is_valid_json_string(self):
+        account = make_account(user=self.user)
+        raw = self._get(account).context["equity_curve_json"]
+        parsed = json.loads(raw)
+        self.assertIsInstance(parsed, list)
+
+    def test_equity_curve_json_empty_when_no_snapshots(self):
+        account = make_account(user=self.user)
+        raw = self._get(account).context["equity_curve_json"]
+        self.assertEqual(json.loads(raw), [])
+
+    def test_equity_curve_json_contains_e_and_b_keys(self):
+        """Each snapshot serializes to {e: equity, b: balance}."""
+        account = make_account(user=self.user, balance=Decimal("10000"))
+        AccountEquitySnapshot.objects.create(
+            account=account,
+            taken_at=timezone.now(),
+            balance=Decimal("10000"),
+            equity=Decimal("10050"),
+        )
+        raw = self._get(account).context["equity_curve_json"]
+        pts = json.loads(raw)
+        self.assertEqual(len(pts), 1)
+        self.assertIn("e", pts[0])
+        self.assertIn("b", pts[0])
+        self.assertAlmostEqual(pts[0]["e"], 10050.0, places=2)
+        self.assertAlmostEqual(pts[0]["b"], 10000.0, places=2)
+
+    def test_equity_curve_json_ordered_oldest_first(self):
+        """Oldest snapshot appears first in the JSON list."""
+        account = make_account(user=self.user, balance=Decimal("10000"))
+        now = timezone.now()
+        AccountEquitySnapshot.objects.create(
+            account=account, taken_at=now,
+            balance=Decimal("10000"), equity=Decimal("10100"),
+        )
+        AccountEquitySnapshot.objects.create(
+            account=account, taken_at=now.replace(hour=(now.hour+1) % 24),
+            balance=Decimal("10000"), equity=Decimal("10200"),
+        )
+        raw = self._get(account).context["equity_curve_json"]
+        pts = json.loads(raw)
+        self.assertEqual(len(pts), 2)
+        self.assertLessEqual(pts[0]["e"], pts[1]["e"])

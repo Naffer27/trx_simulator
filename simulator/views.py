@@ -468,6 +468,9 @@ def trading_dashboard(request, account_id=None):
         .values("taken_at", "equity", "balance")
     )
     equity_curve.reverse()
+    equity_curve_json = json.dumps(
+        [{"e": float(p["equity"]), "b": float(p["balance"])} for p in equity_curve]
+    )
 
     try:
         trader_score = account.trader_score
@@ -517,6 +520,7 @@ def trading_dashboard(request, account_id=None):
         'intel_max_dd_pct':      intel_max_dd_pct,
         'intel_max_daily_pct':   intel_max_daily_pct,
         'equity_curve':          equity_curve,
+        'equity_curve_json':     equity_curve_json,
         'trader_score':          trader_score,
         'recent_violations':     recent_violations,
         'win_rate_pct':          win_rate_pct,
