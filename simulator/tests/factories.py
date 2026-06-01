@@ -72,6 +72,27 @@ def make_account(
     )
 
 
+def make_deposit(
+    user,
+    amount_usd: Decimal = Decimal("100.00"),
+    crypto_currency: str = "btc",
+    payment_id: str | None = "pay_test_001",
+    status: str = "pending",
+    credited: bool = False,
+) -> "Deposit":
+    """Create a Deposit record. Does NOT touch the wallet — tests control that."""
+    from simulator.models import Deposit
+
+    return Deposit.objects.create(
+        user=user,
+        amount_usd=amount_usd,
+        crypto_currency=crypto_currency,
+        nowpayments_payment_id=payment_id,
+        status=status,
+        credited=credited,
+    )
+
+
 def make_position(
     account: TradingAccount,
     symbol: str = "EUR/USD",
