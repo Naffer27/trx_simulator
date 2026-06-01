@@ -190,6 +190,13 @@
   .chal-bar-profit{background:linear-gradient(90deg,#26a69a,#00e5bb);}
   .chal-bar-dd{background:linear-gradient(90deg,#ef5350,#ff7043);}
   .chal-bar-dd.safe{background:linear-gradient(90deg,#26a69a,#66bb6a);}
+  .chal-eval-passed{color:#26a69a;}
+  .chal-eval-failed{color:#ef5350;}
+  .chal-eval-in_progress{color:#b0bec5;}
+  .chal-fail-reason{font-size:.62rem;color:#ef5350;margin:2px 0 4px;line-height:1.3;}
+  .fd-status-badge{margin-top:6px;padding:4px 8px;border-radius:4px;font-size:.63rem;font-weight:700;letter-spacing:.04em;text-align:center;}
+  .fd-eligible{background:rgba(38,166,154,.15);color:#26a69a;border:1px solid rgba(38,166,154,.3);}
+  .fd-pending{background:rgba(255,255,255,.05);color:rgba(255,255,255,.4);border:1px solid rgba(255,255,255,.08);}
 
   /* ── Analytics panel ── */
   .an-class-row{display:flex;align-items:center;gap:7px;margin-bottom:10px;padding-bottom:9px;border-bottom:1px solid rgba(255,255,255,.05);}
@@ -1050,6 +1057,50 @@
       <div class="rc-section" id="challengeCard">
         <div class="rc-section-lbl">Challenge Progress</div>
 
+        {% if challenge_enrollment %}
+        <!-- Lifecycle: phase, eval status, days -->
+        <div id="chalLifecycle">
+          <div class="chal-row">
+            <span class="chal-k">Phase</span>
+            <span class="chal-v" id="chalPhaseLabel">{{ challenge_phase_label }}</span>
+          </div>
+
+          {% if challenge_eval_status %}
+          <div class="chal-row">
+            <span class="chal-k">Status</span>
+            <span class="chal-v chal-eval-{{ challenge_eval_status|lower }}" id="chalEvalStatus">
+              {% if challenge_eval_status == "PASSED" %}✓ Passed
+              {% elif challenge_eval_status == "FAILED" %}✗ Failed
+              {% else %}In Progress{% endif %}
+            </span>
+          </div>
+          {% if challenge_eval_status == "FAILED" and challenge_eval_fail_reason %}
+          <div class="chal-fail-reason" id="chalFailReason">{{ challenge_eval_fail_reason }}</div>
+          {% endif %}
+          <div class="chal-row">
+            <span class="chal-k">Trading Days</span>
+            <span class="chal-v" id="chalTradingDays">{{ challenge_trading_days }} / {{ challenge_min_trading_days }} min</span>
+          </div>
+          <div class="chal-row">
+            <span class="chal-k">Days Remaining</span>
+            <span class="chal-v" id="chalDaysRemaining">{{ challenge_days_remaining }}d</span>
+          </div>
+          {% endif %}
+
+          {% if challenge_funded_config %}
+          <div class="chal-row">
+            <span class="chal-k">Profit Split</span>
+            <span class="chal-v" id="chalProfitSplit">{{ challenge_funded_config.profit_split_pct }}%</span>
+          </div>
+          <div class="chal-row">
+            <span class="chal-k">Funded Type</span>
+            <span class="chal-v">{{ challenge_funded_config.funded_type }}</span>
+          </div>
+          {% endif %}
+        </div>
+        <div style="border-top:1px solid rgba(255,255,255,.06);margin:5px 0 4px;"></div>
+        {% endif %}
+
         <!-- Profit Target -->
         <div class="chal-row">
           <span class="chal-k">Profit Target</span>
@@ -1083,6 +1134,50 @@
                style="width:{{ max_dd_bar_pct|floatformat:1 }}%"></div>
         </div>
       </div>
+
+      <!-- Funded Account Payout Section -->
+      {% if funded_section %}
+      <div class="rc-section" id="fundedCard">
+        <div class="rc-section-lbl">Funded — Payout Status</div>
+
+        <div class="chal-row">
+          <span class="chal-k">Profit Split</span>
+          <span class="chal-v">{{ challenge_funded_config.profit_split_pct }}% yours</span>
+        </div>
+        <div class="chal-row">
+          <span class="chal-k">Cycle Profit</span>
+          <span class="chal-v" id="fdCycleProfit">${{ funded_cycle_profit|floatformat:2 }}</span>
+        </div>
+        <div class="chal-row">
+          <span class="chal-k">Your Cut</span>
+          <span class="chal-v" id="fdTraderCut">${{ funded_trader_cut|floatformat:2 }}</span>
+        </div>
+        <div class="chal-row">
+          <span class="chal-k">Broker Cut</span>
+          <span class="chal-v" id="fdBrokerCut">${{ funded_broker_cut|floatformat:2 }}</span>
+        </div>
+        <div class="chal-row">
+          <span class="chal-k">Min Payout</span>
+          <span class="chal-v">${{ challenge_funded_config.min_payout_usd|floatformat:0 }}</span>
+        </div>
+        <div class="chal-row">
+          <span class="chal-k">Trading Days</span>
+          <span class="chal-v" id="fdTradingDays">{{ funded_trading_days }} / {{ funded_min_trading_days }} min</span>
+        </div>
+        {% if funded_next_payout_date %}
+        <div class="chal-row">
+          <span class="chal-k">Next Window</span>
+          <span class="chal-v">{{ funded_next_payout_date|date:"M j, Y" }}
+            {% if funded_days_until_payout == 0 %}(today)
+            {% else %}({{ funded_days_until_payout }}d){% endif %}
+          </span>
+        </div>
+        {% endif %}
+        <div class="fd-status-badge {% if funded_payout_eligible %}fd-eligible{% else %}fd-pending{% endif %}" id="fdPayoutLabel">
+          {{ funded_payout_label }}
+        </div>
+      </div>
+      {% endif %}
 
       <!-- Analytics Card — hidden by default, shown when data-ops=analytics -->
       <div class="rc-section" id="analyticsCard" style="display:none">

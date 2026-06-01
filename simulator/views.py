@@ -19,6 +19,13 @@ from .models import (
     WalletTransaction, WithdrawalRequest, MARGIN_ENGINE_TYPES,
     CalendarEvent, Referral, Bonus, BrokerDocument, ExpertAdvisor,
     TradingViolation, TraderScore, AccountEquitySnapshot,
+    ChallengeEnrollment,
+)
+from .challenge_engine import (
+    evaluate_phase as _ce_evaluate_phase,
+    IN_PROGRESS as _CE_IN_PROGRESS,
+    PASSED as _CE_PASSED,
+    FAILED as _CE_FAILED,
 )
 from .forms import LoginForm, RegisterForm, DepositForm, WithdrawForm, CreateAccountForm, FundAccountForm, WithdrawAccountForm
 from .wallet_ledger import credit_wallet, debit_wallet, transfer_to_account, transfer_to_wallet, get_or_create_wallet, InsufficientFunds
@@ -505,6 +512,126 @@ def trading_dashboard(request, account_id=None):
     max_dd_safe   = realized_dd_pct       < (intel_max_dd_pct   * 0.5)
     # ─────────────────────────────────────────────────────────────────────
 
+    # ── Phase 4C.1: Challenge Lifecycle ──────────────────────────────────
+    challenge_enrollment = None
+    for _rel in ("enrollment_phase1", "enrollment_phase2", "enrollment_funded"):
+        try:
+            challenge_enrollment = getattr(account, _rel)
+            break
+        except ChallengeEnrollment.DoesNotExist:
+            pass
+
+    challenge_phase_label      = None
+    challenge_eval_status      = None
+    challenge_eval_fail_reason = None
+    challenge_trading_days     = None
+    challenge_min_trading_days = None
+    challenge_days_remaining   = None
+    challenge_max_duration_days = None
+    challenge_funded_config    = None
+
+    if challenge_enrollment:
+        _enroll_product = challenge_enrollment.product
+        _enroll_status  = challenge_enrollment.status
+
+        if _enroll_status == ChallengeEnrollment.ST_PHASE_1:
+            challenge_phase_label       = "Phase 1"
+            challenge_min_trading_days  = _enroll_product.p1_min_trading_days
+            challenge_max_duration_days = _enroll_product.p1_max_duration_days
+        elif _enroll_status == ChallengeEnrollment.ST_PHASE_2:
+            challenge_phase_label       = "Phase 2"
+            challenge_min_trading_days  = _enroll_product.p2_min_trading_days
+            challenge_max_duration_days = _enroll_product.p2_max_duration_days
+        elif _enroll_status == ChallengeEnrollment.ST_FUNDED:
+            challenge_phase_label = "Funded"
+        elif _enroll_status == ChallengeEnrollment.ST_FAILED:
+            challenge_phase_label = "Failed"
+        else:
+            challenge_phase_label = _enroll_status
+
+        if _enroll_status in (ChallengeEnrollment.ST_PHASE_1, ChallengeEnrollment.ST_PHASE_2):
+            _eval = _ce_evaluate_phase(challenge_enrollment)
+            challenge_eval_status      = _eval.status
+            challenge_eval_fail_reason = _eval.fail_reason
+            _metrics = _eval.metrics
+            challenge_trading_days  = _metrics.get("trading_days", 0)
+            _days_elapsed           = _metrics.get("days_elapsed", 0)
+            challenge_days_remaining = max(0, challenge_max_duration_days - _days_elapsed)
+
+        if _enroll_status == ChallengeEnrollment.ST_FUNDED:
+            try:
+                challenge_funded_config = challenge_enrollment.funded_config
+            except Exception:
+                challenge_funded_config = None
+    # ─────────────────────────────────────────────────────────────────────
+
+    # ── Phase 4C.2: Funded Dashboard Section ─────────────────────────────
+    funded_section           = False
+    funded_cycle_profit      = None
+    funded_trader_cut        = None
+    funded_broker_cut        = None
+    funded_payout_eligible   = None
+    funded_payout_label      = None
+    funded_trading_days      = None
+    funded_min_trading_days  = None
+    funded_next_payout_date  = None
+    funded_days_until_payout = None
+
+    _fc = challenge_funded_config
+    if _fc is not None and account.account_type == "FUNDED":
+        funded_section = True
+        _ZERO_D = Decimal("0")
+        _PENNY_D = Decimal("0.01")
+        _HUNDRED_D = Decimal("100")
+
+        # Cycle profit: realized gain above initial balance (floored to 0)
+        _funded_bal  = Decimal(str(account.balance))
+        _funded_init = Decimal(str(account.initial_balance or account.balance))
+        _cycle_profit = max(_ZERO_D, _funded_bal - _funded_init)
+        funded_cycle_profit = _cycle_profit
+
+        # Split
+        _split_pct = Decimal(str(_fc.profit_split_pct))
+        funded_trader_cut = (_cycle_profit * _split_pct / _HUNDRED_D).quantize(_PENNY_D)
+        funded_broker_cut = (_cycle_profit - funded_trader_cut).quantize(_PENNY_D)
+
+        # Trading days in current cycle (since funded_at, fallback: all time)
+        _funded_at_dt = (
+            challenge_enrollment.funded_at if challenge_enrollment else None
+        )
+        _trade_qs = Trade.objects.filter(account=account, closed_at__isnull=False)
+        if _funded_at_dt:
+            _trade_qs = _trade_qs.filter(closed_at__gte=_funded_at_dt)
+        funded_trading_days     = _trade_qs.dates("closed_at", "day").count()
+        funded_min_trading_days = _fc.min_trading_days
+
+        # Payout eligibility
+        _profit_ok  = _cycle_profit >= Decimal(str(_fc.min_payout_usd))
+        _days_ok    = funded_trading_days >= _fc.min_trading_days
+        _account_ok = account.status == TradingAccount.STATUS_ACTIVE
+        funded_payout_eligible = _profit_ok and _days_ok and _account_ok
+
+        if not _account_ok:
+            funded_payout_label = "Account suspended — payout blocked"
+        elif funded_payout_eligible:
+            funded_payout_label = "Eligible for payout"
+        elif not _profit_ok:
+            funded_payout_label = f"Minimum ${_fc.min_payout_usd} profit required"
+        else:
+            funded_payout_label = f"Minimum {_fc.min_trading_days} trading days required"
+
+        # Next payout date
+        _today_date = timezone.now().date()
+        if _funded_at_dt:
+            _funded_date  = _funded_at_dt.date()
+            _cycle_days   = _fc.payout_cycle_days
+            _days_since   = (_today_date - _funded_date).days
+            _cycles_ahead = max(1, (_days_since // _cycle_days) + 1)
+            _next_date    = _funded_date + timezone.timedelta(days=_cycles_ahead * _cycle_days)
+            funded_next_payout_date  = _next_date
+            funded_days_until_payout = max(0, (_next_date - _today_date).days)
+    # ─────────────────────────────────────────────────────────────────────
+
     context = {
         'account': account,
         'account_id': account.id,
@@ -530,6 +657,27 @@ def trading_dashboard(request, account_id=None):
         'max_dd_bar_pct':        max_dd_bar_pct,
         'daily_dd_safe':         daily_dd_safe,
         'max_dd_safe':           max_dd_safe,
+        # Phase 4C.1 — Challenge lifecycle
+        'challenge_enrollment':        challenge_enrollment,
+        'challenge_phase_label':       challenge_phase_label,
+        'challenge_eval_status':       challenge_eval_status,
+        'challenge_eval_fail_reason':  challenge_eval_fail_reason,
+        'challenge_trading_days':      challenge_trading_days,
+        'challenge_min_trading_days':  challenge_min_trading_days,
+        'challenge_days_remaining':    challenge_days_remaining,
+        'challenge_max_duration_days': challenge_max_duration_days,
+        'challenge_funded_config':     challenge_funded_config,
+        # Phase 4C.2 — Funded section
+        'funded_section':            funded_section,
+        'funded_cycle_profit':       funded_cycle_profit,
+        'funded_trader_cut':         funded_trader_cut,
+        'funded_broker_cut':         funded_broker_cut,
+        'funded_payout_eligible':    funded_payout_eligible,
+        'funded_payout_label':       funded_payout_label,
+        'funded_trading_days':       funded_trading_days,
+        'funded_min_trading_days':   funded_min_trading_days,
+        'funded_next_payout_date':   funded_next_payout_date,
+        'funded_days_until_payout':  funded_days_until_payout,
     }
     return render(request, 'simulator/dashboard.html', context)
 
