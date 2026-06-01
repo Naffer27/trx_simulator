@@ -190,6 +190,25 @@
   .chal-bar-profit{background:linear-gradient(90deg,#26a69a,#00e5bb);}
   .chal-bar-dd{background:linear-gradient(90deg,#ef5350,#ff7043);}
   .chal-bar-dd.safe{background:linear-gradient(90deg,#26a69a,#66bb6a);}
+
+  /* ── Analytics panel ── */
+  .an-class-row{display:flex;align-items:center;gap:7px;margin-bottom:10px;padding-bottom:9px;border-bottom:1px solid rgba(255,255,255,.05);}
+  .an-class-badge{font-family:'Orbitron',sans-serif;font-size:.57rem;font-weight:800;letter-spacing:.08em;padding:3px 10px;border-radius:10px;background:rgba(0,180,216,.14);color:var(--gold);border:1px solid rgba(0,180,216,.22);}
+  .an-routing{font-size:.61rem;color:var(--muted);}
+  .an-no-score{font-size:.62rem;color:var(--muted);text-align:center;padding:6px 0 10px;margin-bottom:4px;border-bottom:1px solid rgba(255,255,255,.04);}
+  .an-kpi-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:10px;}
+  .an-kpi{background:rgba(255,255,255,.04);border-radius:7px;padding:7px 9px;border:1px solid rgba(255,255,255,.05);}
+  .an-kpi-lbl{font-size:.58rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px;}
+  .an-kpi-val{font-size:.84rem;font-weight:700;color:var(--text);}
+  .an-kpi-val.bull{color:var(--bull);}
+  .an-kpi-val.bear{color:var(--bear);}
+  .an-subsec{font-family:'Orbitron',sans-serif;font-size:.52rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(0,180,216,.5);margin:8px 0 5px;}
+  .an-eq-wrap{height:90px;background:rgba(255,255,255,.025);border-radius:8px;overflow:hidden;position:relative;border:1px solid rgba(255,255,255,.04);}
+  .an-eq-empty{display:none;text-align:center;line-height:90px;font-size:.63rem;color:var(--muted);}
+  .an-viol-row{display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:.64rem;}
+  .an-viol-type{color:var(--bear);font-weight:700;letter-spacing:.03em;}
+  .an-viol-time{color:var(--muted);}
+
   /* Bid/Ask row */
   .acct-bid-row .acct-v{font-size:.71rem;letter-spacing:.02em;}
 
@@ -1067,54 +1086,54 @@
 
       <!-- Analytics Card — hidden by default, shown when data-ops=analytics -->
       <div class="rc-section" id="analyticsCard" style="display:none">
-        <div class="rc-section-lbl">Analytics</div>
+        <div class="rc-section-lbl">Trader Analytics</div>
 
         <!-- Trader classification -->
         {% if trader_score %}
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
-          <span style="font-family:'Orbitron',sans-serif;font-size:.58rem;font-weight:800;letter-spacing:.08em;padding:2px 9px;border-radius:12px;background:rgba(0,180,216,.15);color:var(--gold);">{{ trader_score.trader_class }}</span>
-          <span style="font-size:.63rem;color:var(--muted);">{{ trader_score.routing_profile }}</span>
+        <div class="an-class-row">
+          <span class="an-class-badge">{{ trader_score.trader_class }}</span>
+          <span class="an-routing">{{ trader_score.routing_profile }}</span>
         </div>
         {% else %}
-        <div style="font-size:.62rem;color:var(--muted);text-align:center;padding:4px 0 8px;">No trader score yet</div>
+        <div class="an-no-score">No trader score yet</div>
         {% endif %}
 
-        <!-- Performance metrics grid -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 8px;margin-bottom:8px;">
-          <div>
-            <div style="font-size:.61rem;color:var(--muted);">Win Rate</div>
-            <div style="font-size:.76rem;font-weight:700;">{% if win_rate_pct %}{{ win_rate_pct|floatformat:1 }}%{% else %}—{% endif %}</div>
+        <!-- Performance KPIs -->
+        <div class="an-kpi-grid">
+          <div class="an-kpi">
+            <div class="an-kpi-lbl">Win Rate</div>
+            <div class="an-kpi-val">{% if win_rate_pct %}{{ win_rate_pct|floatformat:1 }}%{% else %}—{% endif %}</div>
           </div>
-          <div>
-            <div style="font-size:.61rem;color:var(--muted);">Total P&amp;L</div>
-            <div style="font-size:.76rem;font-weight:700;{% if total_realized_pnl >= 0 %}color:#26a69a{% else %}color:#ef5350{% endif %};">{% if total_realized_pnl >= 0 %}+{% endif %}${{ total_realized_pnl|floatformat:2 }}</div>
+          <div class="an-kpi">
+            <div class="an-kpi-lbl">Total P&amp;L</div>
+            <div class="an-kpi-val {% if total_realized_pnl >= 0 %}bull{% else %}bear{% endif %}">{% if total_realized_pnl >= 0 %}+{% endif %}${{ total_realized_pnl|floatformat:2 }}</div>
           </div>
-          <div>
-            <div style="font-size:.61rem;color:var(--muted);">Today P&amp;L</div>
-            <div style="font-size:.76rem;font-weight:700;{% if today_realized_pnl >= 0 %}color:#26a69a{% else %}color:#ef5350{% endif %};">{% if today_realized_pnl >= 0 %}+{% endif %}${{ today_realized_pnl|floatformat:2 }}</div>
+          <div class="an-kpi">
+            <div class="an-kpi-lbl">Today P&amp;L</div>
+            <div class="an-kpi-val {% if today_realized_pnl >= 0 %}bull{% else %}bear{% endif %}">{% if today_realized_pnl >= 0 %}+{% endif %}${{ today_realized_pnl|floatformat:2 }}</div>
           </div>
           {% if trader_score %}
-          <div>
-            <div style="font-size:.61rem;color:var(--muted);">Profit Factor</div>
-            <div style="font-size:.76rem;font-weight:700;">{{ trader_score.profit_factor|floatformat:2 }}</div>
+          <div class="an-kpi">
+            <div class="an-kpi-lbl">Profit Factor</div>
+            <div class="an-kpi-val">{{ trader_score.profit_factor|floatformat:2 }}</div>
           </div>
           {% endif %}
         </div>
 
         <!-- Equity sparkline -->
-        <div class="rc-section-lbl" style="margin-top:2px;">Equity Curve</div>
-        <div style="height:52px;margin-bottom:6px;background:rgba(255,255,255,.03);border-radius:6px;overflow:hidden;position:relative;">
+        <div class="an-subsec">Equity Curve</div>
+        <div class="an-eq-wrap">
           <svg id="equitySVG" width="100%" height="100%" preserveAspectRatio="none" style="display:block;"></svg>
-          <div id="equityEmpty" style="display:none;text-align:center;line-height:52px;font-size:.62rem;color:var(--muted);">No equity data yet</div>
+          <div id="equityEmpty" class="an-eq-empty">No equity data yet</div>
         </div>
 
         <!-- Recent violations -->
         {% if recent_violations %}
-        <div class="rc-section-lbl" style="margin-top:2px;">Recent Violations</div>
+        <div class="an-subsec" style="margin-top:10px;">Recent Violations</div>
         {% for v in recent_violations %}
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:.64rem;">
-          <span style="color:#ef5350;font-weight:700;letter-spacing:.03em;">{{ v.violation_type }}</span>
-          <span style="color:var(--muted);">{{ v.created_at|date:"M d H:i" }}</span>
+        <div class="an-viol-row">
+          <span class="an-viol-type">{{ v.violation_type }}</span>
+          <span class="an-viol-time">{{ v.created_at|date:"M d H:i" }}</span>
         </div>
         {% endfor %}
         {% endif %}
@@ -3352,7 +3371,7 @@ document.getElementById('trdAddBtn')?.addEventListener('click',()=>{
   }
   const vals=eqData.map(d=>d.e);
   const mn=Math.min(...vals),mx=Math.max(...vals),range=mx-mn||1;
-  const W=220,H=52,pad=3;
+  const W=220,H=90,pad=4;
   const pts=vals.map((v,i)=>{
     const x=pad+(vals.length>1?i/(vals.length-1)*(W-2*pad):W/2);
     const y=(H-pad)-(v-mn)/range*(H-2*pad);
