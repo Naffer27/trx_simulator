@@ -18,6 +18,7 @@ from .models import (
     Purchase, TradingAccount, Trade, Position, LedgerEntry, Deposit,
     WalletTransaction, WithdrawalRequest, MARGIN_ENGINE_TYPES,
     CalendarEvent, Referral, Bonus, BrokerDocument, ExpertAdvisor,
+    TradingViolation, TraderScore, AccountEquitySnapshot,
 )
 from .forms import LoginForm, RegisterForm, DepositForm, WithdrawForm, CreateAccountForm, FundAccountForm, WithdrawAccountForm
 from .wallet_ledger import credit_wallet, debit_wallet, transfer_to_account, transfer_to_wallet, get_or_create_wallet, InsufficientFunds
@@ -425,12 +426,106 @@ def trading_dashboard(request, account_id=None):
             'exit_price' : float(t['exit_price']) if t['exit_price'] else None,
         })
 
+    # ── Phase 4A: Trader Intelligence ────────────────────────────────────
+    _tier_limits = {
+        "10K":  {"max_dd": 10.0, "max_daily": 5.0},
+        "50K":  {"max_dd":  8.0, "max_daily": 4.0},
+        "100K": {"max_dd":  6.0, "max_daily": 3.0},
+    }
+    _tl = _tier_limits.get(account.tier, _tier_limits["10K"])
+    intel_max_dd_pct    = _tl["max_dd"]
+    intel_max_daily_pct = _tl["max_daily"]
+
+    _peak = float(account.peak_balance or account.balance or 1)
+    _bal  = float(account.balance or 0)
+    realized_dd_pct = max(0.0, (_peak - _bal) / _peak * 100) if _peak > 0 else 0.0
+
+    _today = timezone.now().date()
+    _today_pnl_raw = LedgerEntry.objects.filter(
+        account=account,
+        event_type=LedgerEntry.EV_REALIZED,
+        created_at__date=_today,
+    ).aggregate(t=Sum("amount"))["t"]
+    today_realized_pnl    = float(_today_pnl_raw or 0)
+    daily_realized_dd_pct = (
+        abs(today_realized_pnl) / _peak * 100
+        if (_peak > 0 and today_realized_pnl < 0) else 0.0
+    )
+
+    _initial       = float(account.initial_balance or _peak)
+    _profit_gained = _bal - _initial
+    has_profit_target = (
+        account.profit_target is not None and account.profit_target > 0
+    )
+    profit_pct = (
+        max(0.0, min(100.0, _profit_gained / float(account.profit_target) * 100))
+        if has_profit_target else None
+    )
+
+    equity_curve = list(
+        AccountEquitySnapshot.objects.filter(account=account)
+        .order_by("-taken_at")[:24]
+        .values("taken_at", "equity", "balance")
+    )
+    equity_curve.reverse()
+
+    try:
+        trader_score = account.trader_score
+    except Exception:
+        trader_score = None
+
+    recent_violations = list(
+        TradingViolation.objects.filter(account=account).order_by("-created_at")[:5]
+    )
+
+    _trade_agg = Trade.objects.filter(
+        account=account, profit_loss__isnull=False
+    ).aggregate(
+        total_trades=Count("id"),
+        wins=Count("id", filter=Q(profit_loss__gt=0)),
+        total_pnl=Sum("profit_loss"),
+    )
+    _total_trades      = _trade_agg["total_trades"] or 0
+    win_rate_pct       = (_trade_agg["wins"] / _total_trades * 100) if _total_trades > 0 else None
+    total_realized_pnl = float(_trade_agg["total_pnl"] or 0)
+
+    # Bar fill percentages (capped 0-100) and safe flags for template
+    daily_dd_bar_pct = (
+        min(100.0, daily_realized_dd_pct / intel_max_daily_pct * 100)
+        if intel_max_daily_pct > 0 else 0.0
+    )
+    max_dd_bar_pct = (
+        min(100.0, realized_dd_pct / intel_max_dd_pct * 100)
+        if intel_max_dd_pct > 0 else 0.0
+    )
+    daily_dd_safe = daily_realized_dd_pct < (intel_max_daily_pct * 0.5)
+    max_dd_safe   = realized_dd_pct       < (intel_max_dd_pct   * 0.5)
+    # ─────────────────────────────────────────────────────────────────────
+
     context = {
         'account': account,
         'account_id': account.id,
         'trades': trades,
         'open_trades_json': json.dumps(formatted_trades, cls=DjangoJSONEncoder),
         'active_section': 'trading',
+        # Phase 4A intelligence
+        'realized_dd_pct':       realized_dd_pct,
+        'daily_realized_dd_pct': daily_realized_dd_pct,
+        'today_realized_pnl':    today_realized_pnl,
+        'profit_pct':            profit_pct,
+        'has_profit_target':     has_profit_target,
+        'intel_max_dd_pct':      intel_max_dd_pct,
+        'intel_max_daily_pct':   intel_max_daily_pct,
+        'equity_curve':          equity_curve,
+        'trader_score':          trader_score,
+        'recent_violations':     recent_violations,
+        'win_rate_pct':          win_rate_pct,
+        'total_realized_pnl':    total_realized_pnl,
+        # Bar helpers (Paso 2)
+        'daily_dd_bar_pct':      daily_dd_bar_pct,
+        'max_dd_bar_pct':        max_dd_bar_pct,
+        'daily_dd_safe':         daily_dd_safe,
+        'max_dd_safe':           max_dd_safe,
     }
     return render(request, 'simulator/dashboard.html', context)
 

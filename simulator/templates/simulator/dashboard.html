@@ -1030,12 +1030,39 @@
       <!-- Challenge Progress (compact) -->
       <div class="rc-section" id="challengeCard">
         <div class="rc-section-lbl">Challenge Progress</div>
-        <div class="chal-row"><span class="chal-k">Profit</span><span class="chal-v" id="chalProfitPct">0%</span></div>
-        <div class="chal-bar-wrap"><div class="chal-bar chal-bar-profit" id="chalProfitBar" style="width:0%"></div></div>
-        <div class="chal-row"><span class="chal-k">Daily DD</span><span class="chal-v" id="chalDailyDDPct">0%</span></div>
-        <div class="chal-bar-wrap"><div class="chal-bar chal-bar-dd" id="chalDailyDDBar" style="width:0%"></div></div>
-        <div class="chal-row"><span class="chal-k">Max DD</span><span class="chal-v" id="chalMaxDDPct">0%</span></div>
-        <div class="chal-bar-wrap"><div class="chal-bar chal-bar-dd" id="chalMaxDDBar" style="width:0%"></div></div>
+
+        <!-- Profit Target -->
+        <div class="chal-row">
+          <span class="chal-k">Profit Target</span>
+          <span class="chal-v" id="chalProfitPct">{% if has_profit_target %}{{ profit_pct|floatformat:1 }}%{% else %}—{% endif %}</span>
+        </div>
+        <div class="chal-bar-wrap">
+          <div class="chal-bar chal-bar-profit" id="chalProfitBar"
+               style="width:{% if has_profit_target %}{{ profit_pct|floatformat:1 }}{% else %}0{% endif %}%"></div>
+        </div>
+        {% if not has_profit_target %}
+        <div style="font-size:.62rem;color:var(--muted);margin-bottom:3px;">No target configured</div>
+        {% endif %}
+
+        <!-- Daily Realized DD -->
+        <div class="chal-row">
+          <span class="chal-k">Daily Realized DD</span>
+          <span class="chal-v" id="chalDailyDDPct">{{ daily_realized_dd_pct|floatformat:2 }}% / {{ intel_max_daily_pct|floatformat:0 }}%</span>
+        </div>
+        <div class="chal-bar-wrap">
+          <div class="chal-bar chal-bar-dd{% if daily_dd_safe %} safe{% endif %}" id="chalDailyDDBar"
+               style="width:{{ daily_dd_bar_pct|floatformat:1 }}%"></div>
+        </div>
+
+        <!-- Max Realized DD -->
+        <div class="chal-row">
+          <span class="chal-k">Max Realized DD</span>
+          <span class="chal-v" id="chalMaxDDPct">{{ realized_dd_pct|floatformat:2 }}% / {{ intel_max_dd_pct|floatformat:0 }}%</span>
+        </div>
+        <div class="chal-bar-wrap">
+          <div class="chal-bar chal-bar-dd{% if max_dd_safe %} safe{% endif %}" id="chalMaxDDBar"
+               style="width:{{ max_dd_bar_pct|floatformat:1 }}%"></div>
+        </div>
       </div>
 
       <!-- New Order -->
