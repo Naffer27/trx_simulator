@@ -448,6 +448,16 @@ class Deposit(models.Model):
     credited_at           = models.DateTimeField(null=True, blank=True)
     confirmed_amount_usd  = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
 
+    # Set when the Deposit is for purchasing a ChallengeProduct (not a wallet top-up).
+    # Null = regular wallet deposit; non-null = challenge purchase.
+    # The callback bifurcates on this field: wallet credit vs enrollment creation.
+    challenge_product = models.ForeignKey(
+        'ChallengeProduct',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='deposits',
+    )
+
     class Meta:
         ordering = ['-created_at']
 

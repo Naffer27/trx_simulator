@@ -1,0 +1,14 @@
+{% extends "simulator/base_app.html" %}
+{% block content %}
+<div class="container">
+  <h2>Challenge Programs</h2>
+  {% for p in products %}
+  <div>
+    <strong>{{ p.name }}</strong> — {{ p.tier }} — ${{ p.price_usd }}
+    <a href="{% url 'simulator:challenge_purchase' p.pk %}">Buy</a>
+  </div>
+  {% empty %}
+  <p>No challenge programs available.</p>
+  {% endfor %}
+</div>
+{% endblock %}

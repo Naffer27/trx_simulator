@@ -19,13 +19,14 @@ from .models import (
     WalletTransaction, WithdrawalRequest, MARGIN_ENGINE_TYPES,
     CalendarEvent, Referral, Bonus, BrokerDocument, ExpertAdvisor,
     TradingViolation, TraderScore, AccountEquitySnapshot,
-    ChallengeEnrollment,
+    ChallengeEnrollment, ChallengeProduct,
 )
 from .challenge_engine import (
     evaluate_phase as _ce_evaluate_phase,
     IN_PROGRESS as _CE_IN_PROGRESS,
     PASSED as _CE_PASSED,
     FAILED as _CE_FAILED,
+    activate_challenge_enrollment as _ce_activate,
 )
 from .forms import LoginForm, RegisterForm, DepositForm, WithdrawForm, CreateAccountForm, FundAccountForm, WithdrawAccountForm
 from .wallet_ledger import credit_wallet, debit_wallet, transfer_to_account, transfer_to_wallet, get_or_create_wallet, InsufficientFunds
@@ -1105,6 +1106,123 @@ from . import nowpayments as _np
 
 
 # ===================================================
+# CHALLENGE PURCHASE
+# ===================================================
+
+def _fulfill_challenge_purchase(deposit):
+    """
+    Called inside the deposit_callback atomic block when a challenge payment is confirmed.
+
+    Creates ChallengeEnrollment and activates Phase 1.
+    Idempotency: guarded by UniqueConstraint(deposit) on ChallengeEnrollment — a second
+    call for the same deposit raises IntegrityError which the caller catches and logs.
+
+    Must be called while still inside transaction.atomic() so that any exception here
+    rolls back the entire callback transaction, leaving deposit.credited=False for retry.
+    """
+    from .tasks import send_email_async
+    product = deposit.challenge_product
+    enrollment = ChallengeEnrollment.objects.create(
+        user=deposit.user,
+        product=product,
+        deposit=deposit,
+        status=ChallengeEnrollment.ST_PHASE_1,
+    )
+    _ce_activate(enrollment)
+    logger.info(
+        "[challenge_purchase] enrollment=%d product=%d user=%s phase1 activated",
+        enrollment.pk, product.pk, deposit.user_id,
+    )
+    email = deposit.user.email
+    if email:
+        send_email_async.delay(
+            subject=f"Tu Challenge {product.name} está activo",
+            message=(
+                f"Hola {deposit.user.username},\n\n"
+                f"Tu pago fue confirmado y tu Challenge {product.name} ({product.tier}) "
+                f"ha sido activado.\n\n"
+                f"Accede al simulador para ver tu cuenta Fase 1.\n\n"
+                f"Buena suerte.\n— TRX Simulator"
+            ),
+            recipient_list=[email],
+        )
+
+
+@login_required
+def challenge_catalog_view(request):
+    """List active ChallengeProducts the user can purchase."""
+    products = ChallengeProduct.objects.filter(is_active=True).order_by("tier", "price_usd")
+    return render(request, "simulator/challenge_catalog.html", {
+        "products": products,
+        "active_section": "challenges",
+    })
+
+
+@login_required
+def challenge_purchase_view(request, product_id):
+    """
+    GET  — show product detail + crypto selector.
+    POST — create a NowPayments Deposit tagged with challenge_product, redirect to status page.
+    """
+    product = ChallengeProduct.objects.filter(pk=product_id, is_active=True).first()
+    if not product:
+        return redirect("simulator:challenge_catalog")
+
+    error = None
+    if request.method == "POST":
+        crypto_currency = request.POST.get("crypto_currency", "").strip()
+        try:
+            _np.to_np_code(crypto_currency)   # validates the currency exists
+        except (ValueError, AttributeError):
+            error = f"Moneda no soportada: {crypto_currency}"
+        else:
+            deposit = Deposit.objects.create(
+                user=request.user,
+                amount_usd=product.price_usd,
+                crypto_currency=crypto_currency,
+                status=Deposit.STATUS_PENDING,
+                challenge_product=product,
+            )
+            logger.info(
+                "[challenge_purchase] deposit=%d product=%d user=%s amount=%.2f",
+                deposit.pk, product.pk, request.user.username, float(product.price_usd),
+            )
+            try:
+                callback_url = request.build_absolute_uri(
+                    reverse("simulator:deposit_callback")
+                )
+                data = _np.create_payment(
+                    product.price_usd, crypto_currency, deposit.id, callback_url
+                )
+                from django.utils.dateparse import parse_datetime
+                exp_raw = data.get("expiration_estimate_date")
+                Deposit.objects.filter(pk=deposit.pk).update(
+                    nowpayments_payment_id  = str(data.get("payment_id", "")),
+                    nowpayments_invoice_url = data.get("invoice_url", "") or "",
+                    pay_address             = data.get("pay_address", "") or "",
+                    pay_amount              = data.get("pay_amount"),
+                    expires_at              = parse_datetime(exp_raw) if exp_raw else None,
+                    status                  = data.get("payment_status", Deposit.STATUS_WAITING),
+                )
+                return redirect("simulator:deposit_status", deposit_id=deposit.pk)
+            except Exception as exc:
+                logger.error(
+                    "[challenge_purchase] NP failed deposit=%d %s: %s",
+                    deposit.pk, type(exc).__name__, exc, exc_info=True,
+                )
+                Deposit.objects.filter(pk=deposit.pk).update(status=Deposit.STATUS_FAILED)
+                error = "No se pudo crear el pago. Por favor intenta más tarde."
+
+    from .currencies import CRYPTO_CHOICES
+    return render(request, "simulator/challenge_purchase.html", {
+        "product":         product,
+        "crypto_choices":  CRYPTO_CHOICES,
+        "error":           error,
+        "active_section":  "challenges",
+    })
+
+
+# ===================================================
 # DEPÓSITOS
 # ===================================================
 
@@ -1269,45 +1387,54 @@ def deposit_callback(request):
             update_fields["confirmed_amount_usd"] = Decimal(str(actually_paid))
 
         if payment_status in Deposit.CREDITED_STATUSES:
-            wallet, _ = get_or_create_wallet(deposit.user)
-            credit_wallet(
-                wallet.id,
-                deposit.amount_usd,
-                WalletTransaction.TX_DEPOSIT,
-                deposit=deposit,
-                note=f"NowPayments #{payment_id} {deposit.crypto_currency.upper()}",
-            )
+            if deposit.challenge_product_id:
+                # ── Challenge purchase: create enrollment, activate Phase 1 ──────
+                _fulfill_challenge_purchase(deposit)
+                logger.info(
+                    "[callback] CHALLENGE ACTIVATED deposit_id=%d product_id=%d user=%s",
+                    deposit.id, deposit.challenge_product_id, deposit.user_id,
+                )
+            else:
+                # ── Regular wallet top-up ─────────────────────────────────────────
+                wallet, _ = get_or_create_wallet(deposit.user)
+                credit_wallet(
+                    wallet.id,
+                    deposit.amount_usd,
+                    WalletTransaction.TX_DEPOSIT,
+                    deposit=deposit,
+                    note=f"NowPayments #{payment_id} {deposit.crypto_currency.upper()}",
+                )
 
-            # Drain pending_balance if it was incremented during confirming
-            if deposit.status == Deposit.STATUS_CONFIRMING:
-                from django.db.models import F
-                from .models import Wallet as WalletModel
-                WalletModel.objects.filter(pk=wallet.pk).update(
-                    pending_balance=F("pending_balance") - deposit.amount_usd
+                # Drain pending_balance if it was incremented during confirming
+                if deposit.status == Deposit.STATUS_CONFIRMING:
+                    from django.db.models import F
+                    from .models import Wallet as WalletModel
+                    WalletModel.objects.filter(pk=wallet.pk).update(
+                        pending_balance=F("pending_balance") - deposit.amount_usd
+                    )
+
+                logger.info(
+                    "[callback] WALLET CREDITED deposit_id=%d payment_id=%s "
+                    "amount_usd=%s currency=%s wallet_id=%d",
+                    deposit.id, payment_id,
+                    deposit.amount_usd, deposit.crypto_currency.upper(), wallet.id,
+                )
+                log_audit(
+                    request, EV_DEPOSIT_CREDITED,
+                    f"Deposit #{deposit.id} credited ${deposit.amount_usd}",
+                    detail={
+                        "deposit_id":   deposit.id,
+                        "payment_id":   payment_id,
+                        "amount_usd":   str(deposit.amount_usd),
+                        "currency":     deposit.crypto_currency,
+                        "wallet_id":    wallet.id,
+                        "payment_status": payment_status,
+                    },
                 )
 
             update_fields["credited"]     = True
             update_fields["credited_at"]  = timezone.now()
             update_fields["confirmed_at"] = timezone.now()
-
-            logger.info(
-                "[callback] WALLET CREDITED deposit_id=%d payment_id=%s "
-                "amount_usd=%s currency=%s wallet_id=%d",
-                deposit.id, payment_id,
-                deposit.amount_usd, deposit.crypto_currency.upper(), wallet.id,
-            )
-            log_audit(
-                request, EV_DEPOSIT_CREDITED,
-                f"Deposit #{deposit.id} credited ${deposit.amount_usd}",
-                detail={
-                    "deposit_id":   deposit.id,
-                    "payment_id":   payment_id,
-                    "amount_usd":   str(deposit.amount_usd),
-                    "currency":     deposit.crypto_currency,
-                    "wallet_id":    wallet.id,
-                    "payment_status": payment_status,
-                },
-            )
 
         elif payment_status == Deposit.STATUS_CONFIRMING:
             # Funds on-chain but not yet final — show as pending in wallet

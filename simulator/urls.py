@@ -45,6 +45,9 @@ from .views import (
     bonuses_view,
     documents_view,
     experts_view,
+    # Challenge purchase
+    challenge_catalog_view,
+    challenge_purchase_view,
 )
 
 app_name = 'simulator'
@@ -115,4 +118,8 @@ urlpatterns = [
     path("bonuses/",              bonuses_view,        name="bonuses"),
     path("documents/",            documents_view,      name="documents"),
     path("experts/",              experts_view,        name="experts"),
+
+    # ── Challenge Purchase ────────────────────────────────────────────────────
+    path("challenges/",                       challenge_catalog_view,  name="challenge_catalog"),
+    path("challenges/<int:product_id>/buy/",  challenge_purchase_view, name="challenge_purchase"),
 ]
