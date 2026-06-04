@@ -622,7 +622,10 @@ class ChallengeProduct(models.Model):
         (TIER_100K, '$100,000'),
     ]
 
-    name         = models.CharField(max_length=64)
+    name          = models.CharField(max_length=64)
+    # Stable slug used by external sales platforms to reference this product.
+    # e.g. "challenge_100k", "challenge_10k_v2". Null = not sold externally.
+    external_code = models.CharField(max_length=64, unique=True, null=True, blank=True, db_index=True)
     tier         = models.CharField(max_length=6, choices=TIERS)
     price_usd    = models.DecimalField(max_digits=10, decimal_places=2)
     account_size = models.DecimalField(max_digits=12, decimal_places=2)  # virtual capital assigned
@@ -718,6 +721,12 @@ class ChallengeEnrollment(models.Model):
     status          = models.CharField(max_length=12, choices=STATUS_CHOICES, default=ST_PHASE_1)
     failed_at_phase = models.CharField(max_length=8, null=True, blank=True)
     failure_reason  = models.CharField(max_length=256, null=True, blank=True)
+
+    # External webhook idempotency — set when enrollment originates from an external platform.
+    # event_id: unique per webhook delivery (use for strict dedup).
+    # external_payment_id: payment reference from the external platform.
+    external_event_id   = models.CharField(max_length=128, unique=True, null=True, blank=True, db_index=True)
+    external_payment_id = models.CharField(max_length=128, null=True, blank=True, db_index=True)
 
     enrolled_at      = models.DateTimeField(auto_now_add=True)
     phase1_passed_at = models.DateTimeField(null=True, blank=True)

@@ -238,6 +238,7 @@ def make_challenge_product(
     max_lot_size: Decimal = Decimal("5.00"),
     max_open_positions: int = 30,
     is_active: bool = True,
+    external_code: str | None = None,
 ) -> ChallengeProduct:
     """Create a ChallengeProduct with sensible defaults for the 10K tier."""
     if name is None:
@@ -261,6 +262,7 @@ def make_challenge_product(
         max_lot_size=Decimal(str(max_lot_size)),
         max_open_positions=max_open_positions,
         is_active=is_active,
+        external_code=external_code,
     )
 
 

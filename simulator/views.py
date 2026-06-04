@@ -1106,6 +1106,224 @@ from . import nowpayments as _np
 
 
 # ===================================================
+# EXTERNAL CHALLENGE ACTIVATION WEBHOOK
+# ===================================================
+
+import hashlib as _hashlib
+import hmac as _hmac_mod
+
+
+def _verify_challenge_webhook_sig(body: bytes, signature: str) -> bool:
+    """
+    Verify HMAC-SHA256 signature from an external sales platform.
+
+    The external platform signs: JSON body with keys sorted alphabetically,
+    compact encoding — same convention as NowPayments IPN.
+
+    Rejects immediately if CHALLENGE_WEBHOOK_SECRET is not configured.
+    """
+    secret = getattr(settings, "CHALLENGE_WEBHOOK_SECRET", "").strip()
+    if not secret:
+        logger.error("[ext_challenge] CHALLENGE_WEBHOOK_SECRET not configured — rejecting")
+        return False
+    if not signature:
+        return False
+    try:
+        payload   = json.loads(body)
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        computed  = _hmac_mod.new(
+            secret.encode("utf-8"),
+            canonical.encode("utf-8"),
+            _hashlib.sha256,
+        ).hexdigest()
+        return _hmac_mod.compare_digest(computed, signature.lower())
+    except Exception:
+        return False
+
+
+def _find_or_create_external_user(email: str, full_name: str):
+    """
+    Return (user, created, temp_password).
+
+    Finds existing user by email (first match). If none found, creates one
+    with an auto-derived username and a random password. temp_password is
+    non-empty only when the user is newly created.
+    """
+    from django.contrib.auth import get_user_model as _gum
+    User = _gum()
+
+    existing = User.objects.filter(email__iexact=email).first()
+    if existing:
+        return existing, False, ""
+
+    # Derive a unique username from the email prefix
+    base = email.split("@")[0][:28].replace("+", "_").replace(".", "_")
+    username = base
+    suffix = 1
+    while User.objects.filter(username=username).exists():
+        username = f"{base}_{suffix}"
+        suffix += 1
+
+    parts = full_name.strip().split(None, 1) if full_name.strip() else ["", ""]
+    first = parts[0]
+    last  = parts[1] if len(parts) > 1 else ""
+
+    import secrets as _sec
+    temp_password = _sec.token_urlsafe(10)
+    user = User.objects.create_user(
+        username=username,
+        email=email,
+        password=temp_password,
+        first_name=first,
+        last_name=last,
+    )
+    return user, True, temp_password
+
+
+@csrf_exempt
+def external_challenge_activate(request):
+    """
+    POST /api/internal/challenge/activate/
+
+    Called by an external sales platform after a challenge purchase is confirmed.
+    Creates the user (if new), ChallengeEnrollment, and Phase 1 account.
+
+    Security: HMAC-SHA256 via X-MoneyBroker-Signature header.
+    Idempotency: checked via external_event_id (strict) and external_payment_id (secondary).
+    """
+    if request.method != "POST":
+        return JsonResponse({"error": "method not allowed"}, status=405)
+
+    body = request.body
+    sig  = request.headers.get("X-MoneyBroker-Signature", "")
+
+    if not _verify_challenge_webhook_sig(body, sig):
+        logger.warning("[ext_challenge] rejected — invalid signature sig=%s…", sig[:16])
+        return JsonResponse({"error": "invalid signature"}, status=401)
+
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "invalid JSON"}, status=400)
+
+    # ── Validate required fields ──────────────────────────────────────────────
+    event_id     = (data.get("event_id") or "").strip()
+    email        = (data.get("email") or "").strip().lower()
+    full_name    = (data.get("full_name") or "").strip()
+    product_code = (data.get("challenge_product_code") or "").strip()
+    payment_id   = (data.get("payment_id") or "").strip()
+    amount_raw   = data.get("amount_paid")
+
+    missing = [f for f, v in [("event_id", event_id), ("email", email),
+                               ("challenge_product_code", product_code)] if not v]
+    if missing:
+        return JsonResponse({"error": f"missing required fields: {missing}"}, status=400)
+
+    # ── Idempotency: event_id (strict) ────────────────────────────────────────
+    existing = ChallengeEnrollment.objects.filter(external_event_id=event_id).first()
+    if existing:
+        logger.info("[ext_challenge] duplicate event_id=%s enrollment=%d", event_id, existing.pk)
+        return JsonResponse({
+            "ok": True, "idempotent": True,
+            "enrollment_id": existing.pk,
+            "account_id": existing.phase1_account_id,
+        })
+
+    # ── Idempotency: payment_id (secondary) ───────────────────────────────────
+    if payment_id:
+        existing = ChallengeEnrollment.objects.filter(external_payment_id=payment_id).first()
+        if existing:
+            logger.info("[ext_challenge] duplicate payment_id=%s enrollment=%d", payment_id, existing.pk)
+            return JsonResponse({
+                "ok": True, "idempotent": True,
+                "enrollment_id": existing.pk,
+                "account_id": existing.phase1_account_id,
+            })
+
+    # ── Resolve product ───────────────────────────────────────────────────────
+    product = ChallengeProduct.objects.filter(external_code=product_code, is_active=True).first()
+    if not product:
+        logger.warning("[ext_challenge] product not found code=%r", product_code)
+        return JsonResponse({"error": f"product '{product_code}' not found or inactive"}, status=400)
+
+    # ── Validate amount ───────────────────────────────────────────────────────
+    if amount_raw is not None:
+        try:
+            amount_paid = Decimal(str(amount_raw))
+        except Exception:
+            return JsonResponse({"error": "invalid amount_paid"}, status=400)
+        if amount_paid < product.price_usd:
+            return JsonResponse({
+                "error": f"amount_paid {amount_paid} is less than product price {product.price_usd}"
+            }, status=400)
+
+    # ── Find or create user ───────────────────────────────────────────────────
+    user, user_created, temp_password = _find_or_create_external_user(email, full_name)
+
+    # ── Atomic: create enrollment + activate ──────────────────────────────────
+    from .tasks import send_email_async as _send_email
+
+    with transaction.atomic():
+        enrollment = ChallengeEnrollment.objects.create(
+            user=user,
+            product=product,
+            deposit=None,
+            status=ChallengeEnrollment.ST_PHASE_1,
+            external_event_id=event_id or None,
+            external_payment_id=payment_id or None,
+        )
+        _ce_activate(enrollment)
+
+    logger.info(
+        "[ext_challenge] activated enrollment=%d product=%d user=%d user_created=%s",
+        enrollment.pk, product.pk, user.pk, user_created,
+    )
+
+    # ── Email ─────────────────────────────────────────────────────────────────
+    login_url = request.build_absolute_uri(reverse("simulator:login"))
+    enrollment.refresh_from_db()
+    account_id = enrollment.phase1_account_id
+
+    if user_created:
+        subject = f"Tu Challenge {product.name} está listo — acceso a Money Broker"
+        message = (
+            f"Hola {user.first_name or user.username},\n\n"
+            f"Tu Challenge {product.name} ({product.tier}) ha sido activado.\n\n"
+            f"Credenciales de acceso a Money Broker:\n"
+            f"  Usuario:    {user.username}\n"
+            f"  Contraseña: {temp_password}\n\n"
+            f"Accede aquí: {login_url}\n\n"
+            f"Por seguridad, cambia tu contraseña después de tu primer inicio de sesión.\n\n"
+            f"— TRX Simulator"
+        )
+    else:
+        subject = f"Nuevo Challenge {product.name} activado en Money Broker"
+        message = (
+            f"Hola {user.first_name or user.username},\n\n"
+            f"Tu Challenge {product.name} ({product.tier}) ha sido activado "
+            f"y añadido a tu cuenta.\n\n"
+            f"Accede aquí: {login_url}\n\n"
+            f"— TRX Simulator"
+        )
+
+    if user.email:
+        _send_email.delay(
+            subject=subject,
+            message=message,
+            recipient_list=[user.email],
+        )
+
+    return JsonResponse({
+        "ok": True,
+        "idempotent": False,
+        "enrollment_id": enrollment.pk,
+        "account_id": account_id,
+        "user_created": user_created,
+        "login_url": login_url,
+    })
+
+
+# ===================================================
 # CHALLENGE PURCHASE
 # ===================================================
 

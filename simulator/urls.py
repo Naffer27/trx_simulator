@@ -48,6 +48,8 @@ from .views import (
     # Challenge purchase
     challenge_catalog_view,
     challenge_purchase_view,
+    # External webhook
+    external_challenge_activate,
 )
 
 app_name = 'simulator'
@@ -122,4 +124,7 @@ urlpatterns = [
     # ── Challenge Purchase ────────────────────────────────────────────────────
     path("challenges/",                       challenge_catalog_view,  name="challenge_catalog"),
     path("challenges/<int:product_id>/buy/",  challenge_purchase_view, name="challenge_purchase"),
+
+    # ── External Challenge Activation Webhook ────────────────────────────────
+    path("api/internal/challenge/activate/",  external_challenge_activate, name="external_challenge_activate"),
 ]

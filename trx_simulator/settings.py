@@ -328,6 +328,15 @@ TOTP_STAFF_REQUIRED = os.getenv("TOTP_STAFF_REQUIRED", "False").strip().lower() 
 
 # Load-test bypass — disables HTTP rate limiting for load testing scenarios.
 # MUST be False (default) in production. Only set True in .env.staging during tests.
+# ===============================
+# External Challenge Webhook
+# ===============================
+# Shared secret for verifying POST requests from external sales platforms.
+# Generate with: python -c "import secrets; print(secrets.token_hex(32))"
+# Must match the secret configured on the external platform.
+# If empty, ALL external webhook requests are rejected.
+CHALLENGE_WEBHOOK_SECRET = os.getenv("CHALLENGE_WEBHOOK_SECRET", "").strip()
+
 LOAD_TEST_MODE = os.getenv("LOAD_TEST_MODE", "False").strip().lower() in {"1", "true", "yes"}
 if LOAD_TEST_MODE:
     import logging as _logging
