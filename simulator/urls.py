@@ -48,8 +48,9 @@ from .views import (
     # Challenge purchase
     challenge_catalog_view,
     challenge_purchase_view,
-    # External webhook
+    # External webhook + status API
     external_challenge_activate,
+    challenge_status_view,
 )
 
 app_name = 'simulator'
@@ -127,4 +128,7 @@ urlpatterns = [
 
     # ── External Challenge Activation Webhook ────────────────────────────────
     path("api/internal/challenge/activate/",  external_challenge_activate, name="external_challenge_activate"),
+
+    # ── Internal Challenge Status API (Phase 5G) ──────────────────────────────
+    path("api/internal/challenge/status/<str:external_event_id>/", challenge_status_view, name="challenge_status"),
 ]

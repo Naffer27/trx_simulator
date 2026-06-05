@@ -2619,3 +2619,163 @@ def experts_view(request):
         'total':       eas.count(),
         'active_section': 'experts',
     })
+
+
+# ===================================================
+# INTERNAL CHALLENGE STATUS API  (Phase 5G)
+# ===================================================
+
+def _check_status_token(request) -> bool:
+    """Return True if the request carries a valid CHALLENGE_STATUS_API_TOKEN."""
+    configured = getattr(settings, "CHALLENGE_STATUS_API_TOKEN", "").strip()
+    if not configured:
+        return False
+    auth = request.META.get("HTTP_AUTHORIZATION", "")
+    if not auth.startswith("Bearer "):
+        return False
+    provided = auth[len("Bearer "):].strip()
+    import hmac as _hmac_tok
+    return _hmac_tok.compare_digest(configured, provided)
+
+
+def _enrollment_snapshot(enrollment) -> dict:
+    """
+    Build the read-only status payload for *enrollment*.
+
+    Uses challenge_engine internal helpers (pure DB reads, no side effects).
+    The active account depends on enrollment status:
+      PHASE_1  → phase1_account
+      PHASE_2  → phase2_account
+      FUNDED   → funded_account
+      FAILED   → last non-null account in phase order
+    """
+    from simulator.challenge_engine import (
+        _trading_days,
+        _realized_dd_pct,
+        _daily_realized_dd_pct,
+        _days_elapsed,
+        _profit_pct,
+        _phase_rules,
+    )
+
+    st       = enrollment.status
+    product  = enrollment.product
+    CE       = ChallengeEnrollment
+
+    # --- resolve active account ------------------------------------------------
+    if st == CE.ST_PHASE_1:
+        account = enrollment.phase1_account
+    elif st == CE.ST_PHASE_2:
+        account = enrollment.phase2_account
+    elif st == CE.ST_FUNDED:
+        account = enrollment.funded_account
+    else:  # FAILED / WITHDRAWN — use last known account
+        account = (
+            enrollment.phase2_account
+            or enrollment.phase1_account
+        )
+
+    # --- is_passing / fail_reason ----------------------------------------------
+    if st == CE.ST_FUNDED:
+        is_passing  = True
+        fail_reason = None
+    elif st == CE.ST_FAILED:
+        is_passing  = False
+        fail_reason = enrollment.failure_reason
+    else:
+        is_passing  = True   # still active — optimistic until rules say otherwise
+        fail_reason = None
+
+    # --- evaluation_status (mirrors engine constants without calling evaluator) -
+    if st in (CE.ST_PHASE_1, CE.ST_PHASE_2):
+        evaluation_status = "IN_PROGRESS"
+    elif st == CE.ST_FUNDED:
+        evaluation_status = "PASSED"
+    else:
+        evaluation_status = "FAILED"
+
+    # --- account-level metrics (all None-safe) ---------------------------------
+    if account:
+        rules              = _phase_rules(enrollment)
+        balance            = float(account.balance)
+        equity             = float(account.equity)
+        account_size       = float(account.initial_balance or account.balance)
+        profit_prog_pct    = float(_profit_pct(account))
+        daily_dd_pct       = float(_daily_realized_dd_pct(account))
+        max_dd_pct         = float(_realized_dd_pct(account))
+        trading_days_done  = _trading_days(account)
+        days_elapsed       = _days_elapsed(account)
+
+        profit_target_pct_val  = float(rules.get("profit_target_pct", 0))
+        max_drawdown_limit_pct = float(rules.get("max_drawdown_pct", 0))
+        daily_loss_limit_pct   = float(rules.get("max_daily_loss_pct", 0))
+        min_trading_days_req   = int(rules.get("min_trading_days", 0))
+        max_duration_days      = int(rules.get("max_duration_days", 0))
+        days_remaining         = max(0, max_duration_days - days_elapsed)
+    else:
+        balance = equity = account_size = profit_prog_pct = None
+        daily_dd_pct = max_dd_pct = None
+        trading_days_done = days_elapsed = 0
+        profit_target_pct_val = max_drawdown_limit_pct = daily_loss_limit_pct = None
+        min_trading_days_req = max_duration_days = days_remaining = None
+
+    # --- URLs ------------------------------------------------------------------
+    account_id = account.pk if account else None
+    login_url   = "/login/"
+    trading_url = f"/dashboard/{account_id}/" if account_id else "/dashboard/"
+
+    return {
+        "ok":                          True,
+        "external_event_id":           enrollment.external_event_id,
+        "product_external_code":       product.external_code,
+        "product_name":                product.name,
+        "enrollment_id":               enrollment.pk,
+        "account_id":                  account_id,
+        "account_type":                account.account_type if account else None,
+        "phase":                       account.phase if account else None,
+        "status":                      st,
+        "balance":                     balance,
+        "equity":                      equity,
+        "account_size":                account_size,
+        "profit_target_pct":           profit_target_pct_val,
+        "profit_target_progress_pct":  profit_prog_pct,
+        "daily_drawdown_pct":          daily_dd_pct,
+        "max_drawdown_limit_pct":      max_drawdown_limit_pct,
+        "max_drawdown_pct":            max_dd_pct,
+        "daily_loss_limit_pct":        daily_loss_limit_pct,
+        "min_trading_days_current":    trading_days_done,
+        "min_trading_days_required":   min_trading_days_req,
+        "days_remaining":              days_remaining,
+        "evaluation_status":           evaluation_status,
+        "is_passing":                  is_passing,
+        "fail_reason":                 fail_reason,
+        "failed_at_phase":             enrollment.failed_at_phase,
+        "login_url":                   login_url,
+        "trading_url":                 trading_url,
+    }
+
+
+@csrf_exempt
+def challenge_status_view(request, external_event_id: str):
+    """
+    GET /api/internal/challenge/status/<external_event_id>/
+
+    Read-only endpoint consumed by Vital Trader to display challenge progress.
+    Requires: Authorization: Bearer <CHALLENGE_STATUS_API_TOKEN>
+    """
+    if request.method != "GET":
+        return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    if not _check_status_token(request):
+        return JsonResponse({"error": "Unauthorized"}, status=401)
+
+    enrollment = (
+        ChallengeEnrollment.objects
+        .select_related("product", "user", "phase1_account", "phase2_account", "funded_account")
+        .filter(external_event_id=external_event_id)
+        .first()
+    )
+    if enrollment is None:
+        return JsonResponse({"error": "Enrollment not found"}, status=404)
+
+    return JsonResponse(_enrollment_snapshot(enrollment))

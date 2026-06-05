@@ -337,6 +337,11 @@ TOTP_STAFF_REQUIRED = os.getenv("TOTP_STAFF_REQUIRED", "False").strip().lower() 
 # If empty, ALL external webhook requests are rejected.
 CHALLENGE_WEBHOOK_SECRET = os.getenv("CHALLENGE_WEBHOOK_SECRET", "").strip()
 
+# Bearer token used by Vital Trader to authenticate read-only challenge status requests.
+# Generate with: python -c "import secrets; print(secrets.token_hex(32))"
+# If empty, ALL status requests are rejected with 401.
+CHALLENGE_STATUS_API_TOKEN = os.getenv("CHALLENGE_STATUS_API_TOKEN", "").strip()
+
 LOAD_TEST_MODE = os.getenv("LOAD_TEST_MODE", "False").strip().lower() in {"1", "true", "yes"}
 if LOAD_TEST_MODE:
     import logging as _logging
