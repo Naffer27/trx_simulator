@@ -567,6 +567,10 @@ class AccountProduct(models.Model):
     Catalog entry for standard (non-challenge) trading accounts.
     Completely separate from ChallengeProduct — challenges are NOT sold via this model.
     Created by admin; referenced when opening DEMO/RETAIL/ECN/STANDARD/CRYPTO accounts.
+
+    family:       user-facing grouping — DEMO or REAL.
+    product_type: internal TradingAccount.account_type to create (DEMO/RETAIL/ECN/STANDARD/CRYPTO).
+    code:         unique slug used by the creation flow and seed command.
     """
     TYPE_DEMO     = 'DEMO'
     TYPE_RETAIL   = 'RETAIL'
@@ -582,19 +586,39 @@ class AccountProduct(models.Model):
         (TYPE_CRYPTO,   'Crypto'),
     ]
 
+    FAMILY_DEMO = 'DEMO'
+    FAMILY_REAL = 'REAL'
+    FAMILY_CHOICES = [
+        (FAMILY_DEMO, 'Demo'),
+        (FAMILY_REAL, 'Real'),
+    ]
+
+    # ── Identity ───────────────────────────────────────────────────────────────
     name           = models.CharField(max_length=64)
+    code           = models.CharField(max_length=32, unique=True, null=True, blank=True, db_index=True)
     product_type   = models.CharField(max_length=12, choices=PRODUCT_TYPES)
+    family         = models.CharField(max_length=4, choices=FAMILY_CHOICES, default=FAMILY_REAL)
+    platform_label = models.CharField(max_length=64, default='Money Broker')
     description    = models.TextField(blank=True)
-    min_deposit    = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('100.00'))
-    max_leverage   = models.PositiveIntegerField(default=50)
-    commission_pct = models.DecimalField(max_digits=5, decimal_places=4, default=Decimal('0.0000'))
-    spread_markup  = models.DecimalField(max_digits=5, decimal_places=4, default=Decimal('0.0000'))
-    features       = models.JSONField(default=dict)
-    is_active      = models.BooleanField(default=True)
-    created_at     = models.DateTimeField(auto_now_add=True)
+
+    # ── Economics ──────────────────────────────────────────────────────────────
+    min_deposit          = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('100.00'))
+    default_balance      = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    max_leverage         = models.PositiveIntegerField(default=100)
+    typical_spread_pips  = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal('0.00'))
+    commission_per_lot   = models.DecimalField(max_digits=8, decimal_places=2, default=Decimal('0.00'))
+    commission_pct       = models.DecimalField(max_digits=5, decimal_places=4, default=Decimal('0.0000'))
+    spread_markup        = models.DecimalField(max_digits=5, decimal_places=4, default=Decimal('0.0000'))
+
+    # ── Display ────────────────────────────────────────────────────────────────
+    features    = models.JSONField(default=dict)
+    is_popular  = models.BooleanField(default=False)
+    sort_order  = models.PositiveIntegerField(default=0)
+    is_active   = models.BooleanField(default=True)
+    created_at  = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ['product_type', 'name']
+        ordering = ['family', 'sort_order', 'name']
         verbose_name = "Account Product"
 
     def __str__(self):

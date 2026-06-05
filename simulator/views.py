@@ -19,7 +19,7 @@ from .models import (
     WalletTransaction, WithdrawalRequest, MARGIN_ENGINE_TYPES,
     CalendarEvent, Referral, Bonus, BrokerDocument, ExpertAdvisor,
     TradingViolation, TraderScore, AccountEquitySnapshot,
-    ChallengeEnrollment, ChallengeProduct,
+    ChallengeEnrollment, ChallengeProduct, AccountProduct,
 )
 from .challenge_engine import (
     evaluate_phase as _ce_evaluate_phase,
@@ -921,8 +921,7 @@ def clean_dashboard(request):
 
 @login_required
 def accounts_view(request):
-    """My Accounts page — wallet summary + all trading accounts."""
-    # Pop flash messages so they're consumed and won't re-display on refresh
+    """My Accounts page — wallet summary + all trading accounts + product catalog."""
     acct_success = request.session.pop("acct_success", None)
     acct_error   = request.session.pop("acct_error",   None)
 
@@ -938,81 +937,150 @@ def accounts_view(request):
         pos_count = Position.objects.filter(account=acc).count()
         accounts_data.append({"account": acc, "open_positions": pos_count})
 
+    catalog = (
+        AccountProduct.objects
+        .filter(is_active=True)
+        .order_by("family", "sort_order", "name")
+    )
+    demo_products = [p for p in catalog if p.family == AccountProduct.FAMILY_DEMO]
+    real_products = [p for p in catalog if p.family == AccountProduct.FAMILY_REAL]
+
     return render(request, "simulator/accounts.html", {
-        "wallet":        wallet,
-        "accounts_data": accounts_data,
-        "create_form":   CreateAccountForm(),
+        "wallet":         wallet,
+        "accounts_data":  accounts_data,
+        "demo_products":  demo_products,
+        "real_products":  real_products,
         "active_section": "accounts",
-        "acct_success":  acct_success,
-        "acct_error":    acct_error,
+        "acct_success":   acct_success,
+        "acct_error":     acct_error,
     })
 
 
 @login_required
 def create_account_view(request):
-    """POST: create a new trading account and optionally fund it from wallet."""
+    """
+    POST /accounts/create/
+
+    Creates a TradingAccount from an AccountProduct catalog entry.
+    Expects: product_id=<int>  [amount=<decimal> — required for REAL accounts]
+
+    Demo accounts: no wallet debit, uses product.default_balance.
+    Real accounts:  validates amount >= product.min_deposit, transfers wallet → account.
+    CHALLENGE/FUNDED cannot be created via this endpoint.
+    """
     if request.method != "POST":
         return redirect("simulator:accounts")
 
-    form = CreateAccountForm(request.POST)
-    if not form.is_valid():
-        errors = " ".join(
-            f"{f}: {', '.join(e)}" for f, e in form.errors.items()
-        )
-        request.session["acct_error"] = errors
+    # ── Resolve product ────────────────────────────────────────────────────────
+    try:
+        product_id = int(request.POST.get("product_id", ""))
+    except (ValueError, TypeError):
+        request.session["acct_error"] = "Producto inválido."
         return redirect("simulator:accounts")
 
-    account_type    = form.cleaned_data["account_type"]
-    initial_deposit = form.cleaned_data.get("initial_deposit") or Decimal("0")
-    leverage        = int(form.cleaned_data["leverage"])
-    is_demo         = account_type == "DEMO"
+    product = AccountProduct.objects.filter(pk=product_id, is_active=True).first()
+    if not product:
+        request.session["acct_error"] = "Producto no encontrado o inactivo."
+        return redirect("simulator:accounts")
 
+    # Guard: CHALLENGE and FUNDED cannot be created via this flow
+    if product.product_type in ("CHALLENGE", "FUNDED"):
+        request.session["acct_error"] = (
+            "Las cuentas Challenge y Funded solo se crean mediante el proceso de compra."
+        )
+        return redirect("simulator:accounts")
+
+    is_demo = product.family == AccountProduct.FAMILY_DEMO
     wallet, _ = get_or_create_wallet(request.user)
 
-    if not is_demo and initial_deposit > 0:
-        if wallet.available_balance < initial_deposit:
+    # ── Validate amount for REAL ───────────────────────────────────────────────
+    if not is_demo:
+        try:
+            amount = Decimal(str(request.POST.get("amount", "0") or "0"))
+        except Exception:
+            request.session["acct_error"] = "Monto inválido."
+            return redirect("simulator:accounts")
+
+        if amount < product.min_deposit:
             request.session["acct_error"] = (
-                f"Insufficient wallet balance. Available: ${wallet.available_balance:.2f}, "
-                f"requested: ${initial_deposit:.2f}. Please deposit funds first."
+                f"El monto mínimo para {product.name} es ${product.min_deposit:.2f}. "
+                f"Ingresaste ${amount:.2f}."
             )
             return redirect("simulator:accounts")
 
+        if wallet.available_balance < amount:
+            request.session["acct_error"] = (
+                f"Saldo insuficiente en wallet. Disponible: ${wallet.available_balance:.2f}, "
+                f"solicitado: ${amount:.2f}. Por favor deposita primero."
+            )
+            return redirect("simulator:accounts")
+
+    # ── Create account ─────────────────────────────────────────────────────────
     try:
+        from .tasks import send_email_async as _send_email
         with transaction.atomic():
             if is_demo:
-                # Demo: virtual $10,000 — no wallet debit
                 account = TradingAccount.objects.create(
                     user=request.user,
                     wallet=wallet,
-                    account_type="DEMO",
-                    leverage=leverage,
-                    initial_balance=Decimal("10000"),
+                    account_type=AccountProduct.TYPE_DEMO,
+                    leverage=product.max_leverage,
+                    initial_balance=product.default_balance,
                 )
             else:
-                # Real account: start at $0 then fund via transfer
                 account = TradingAccount.objects.create(
                     user=request.user,
                     wallet=wallet,
-                    account_type=account_type,
-                    leverage=leverage,
+                    account_type=product.product_type,
+                    leverage=product.max_leverage,
                     initial_balance=Decimal("0"),
                 )
-                if initial_deposit > 0:
-                    transfer_to_account(
-                        wallet.id, account.id, initial_deposit,
-                        note=f"Initial funding — {account_type} #{account.id}",
-                        initiated_by=request.user,
-                    )
+                transfer_to_account(
+                    wallet.id, account.id, amount,
+                    note=f"Initial funding — {product.name} #{account.id}",
+                    initiated_by=request.user,
+                )
+                account.refresh_from_db()
+
     except InsufficientFunds as exc:
         request.session["acct_error"] = str(exc)
         return redirect("simulator:accounts")
     except Exception as exc:
         logger.error("create_account_view error: %s", exc, exc_info=True)
-        request.session["acct_error"] = "Account creation failed. Please try again."
+        request.session["acct_error"] = "La creación de cuenta falló. Intenta de nuevo."
         return redirect("simulator:accounts")
 
+    # ── Confirmation email ─────────────────────────────────────────────────────
+    email = request.user.email
+    if email:
+        if is_demo:
+            subject = "Tu cuenta Demo fue creada — Money Broker"
+        else:
+            subject = "Tu cuenta Real fue creada — Money Broker"
+
+        message = (
+            f"Hola {request.user.username},\n\n"
+            f"Tu cuenta ha sido creada exitosamente.\n\n"
+            f"  Producto       : {product.name}\n"
+            f"  Plataforma     : {product.platform_label}\n"
+            f"  Account ID     : #{account.id}\n"
+            f"  Tipo interno   : {account.account_type}\n"
+            f"  Balance inicial: ${account.balance:.2f}\n"
+            f"  Apalancamiento : 1:{account.leverage}\n"
+            f"  Spread típico  : {product.typical_spread_pips} pips\n"
+            f"  Comisión/lote  : ${product.commission_per_lot:.2f}\n\n"
+            f"  Acceder al dashboard: /dashboard/{account.id}/\n"
+            f"  Login: /login/\n\n"
+            f"— Money Broker"
+        )
+        _send_email.delay(
+            subject=subject,
+            message=message,
+            recipient_list=[email],
+        )
+
     request.session["acct_success"] = (
-        f"{account_type} account #{account.id} created successfully."
+        f"Cuenta {product.name} #{account.id} creada exitosamente."
     )
     return redirect("simulator:dashboard_account", account_id=account.id)
 

@@ -1,5 +1,5 @@
 {% extends "simulator/base_app.html" %}
-{% block title %}Mis Cuentas — Money Brokers{% endblock %}
+{% block title %}Mis Cuentas — Money Broker{% endblock %}
 {% block page_title %}Mis Cuentas{% endblock %}
 
 {% block extra_styles %}
@@ -28,12 +28,11 @@
   font-family:'Orbitron',sans-serif; font-size:.62rem; font-weight:700;
   letter-spacing:.12em; text-transform:uppercase; color:var(--muted);
 }
-.wallet-amount {
-  font-size:2rem; font-weight:700; color:#fff;
-  line-height:1.1;
-}
+.wallet-amount { font-size:2rem; font-weight:700; color:#fff; line-height:1.1; }
 .wallet-pending { font-size:.78rem; color:var(--muted); margin-top:4px; }
 .wallet-actions { display:flex; gap:10px; flex-wrap:wrap; }
+
+/* ─── Buttons ─── */
 .btn {
   display:inline-flex; align-items:center; gap:7px;
   padding:9px 18px; border-radius:8px; font-size:.8rem; font-weight:700;
@@ -48,7 +47,6 @@
 }
 .btn-outline:hover { border-color:rgba(255,215,0,.35); color:var(--gold); }
 .btn-sm { padding:6px 14px; font-size:.76rem; }
-.btn-danger { background:rgba(239,83,80,.12); border:1px solid rgba(239,83,80,.25); color:#ef5350; }
 
 /* ─── Section header ─── */
 .sec-header {
@@ -60,13 +58,12 @@
   letter-spacing:.1em; text-transform:uppercase; color:var(--muted-2);
 }
 
-/* ─── Account cards grid ─── */
+/* ─── My Accounts grid ─── */
 .accounts-grid {
   display:grid;
   grid-template-columns:repeat(auto-fill, minmax(300px, 1fr));
   gap:16px; margin-bottom:32px;
 }
-
 .account-card {
   background:var(--bg-card-2); border:1px solid var(--border);
   border-radius:12px; overflow:hidden;
@@ -74,10 +71,8 @@
   display:flex; flex-direction:column;
 }
 .account-card:hover { border-color:rgba(255,215,0,.2); transform:translateY(-2px); }
-
 .ac-header {
-  padding:14px 18px 12px;
-  border-bottom:1px solid var(--border-dim);
+  padding:14px 18px 12px; border-bottom:1px solid var(--border-dim);
   display:flex; align-items:center; justify-content:space-between;
 }
 .ac-type-badge {
@@ -92,9 +87,7 @@
 .type-CRYPTO   { background:rgba(230,126,34,.15); color:#e67e22; border:1px solid rgba(230,126,34,.3); }
 .type-CHALLENGE{ background:rgba(230,126,34,.15); color:#e67e22; border:1px solid rgba(230,126,34,.3); }
 .type-FUNDED   { background:rgba(39,174,96,.15);  color:#27ae60; border:1px solid rgba(39,174,96,.3); }
-
 .ac-id { font-size:.72rem; color:var(--muted); }
-
 .ac-status {
   display:inline-block; padding:2px 8px; border-radius:4px;
   font-size:.63rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em;
@@ -104,9 +97,7 @@
 .status-Violado    { background:rgba(239,83,80,.12);  color:#ef5350; }
 .status-Completado { background:rgba(255,215,0,.1);   color:var(--gold); }
 .status-Cerrado    { background:rgba(120,123,134,.12); color:var(--muted-2); }
-
 .ac-body { padding:16px 18px; flex:1; display:flex; flex-direction:column; gap:10px; }
-
 .ac-row {
   display:flex; align-items:center; justify-content:space-between;
   border-bottom:1px solid var(--border-dim); padding-bottom:9px;
@@ -115,24 +106,84 @@
 .ac-lbl { font-size:.76rem; color:var(--muted-2); }
 .ac-val { font-size:.82rem; font-weight:600; color:var(--text); }
 .ac-val.gold { color:var(--gold); }
-.ac-val.bull { color:#26a69a; }
-.ac-val.bear { color:#ef5350; }
-
 .ac-footer {
-  padding:12px 18px;
-  border-top:1px solid var(--border-dim);
+  padding:12px 18px; border-top:1px solid var(--border-dim);
   display:flex; gap:8px; flex-wrap:wrap;
 }
 
 /* ─── Empty state ─── */
 .empty-state {
-  text-align:center; padding:60px 24px;
-  color:var(--muted); background:var(--bg-card-2);
-  border:1px dashed var(--border); border-radius:14px;
-  grid-column:1/-1;
+  text-align:center; padding:60px 24px; color:var(--muted);
+  background:var(--bg-card-2); border:1px dashed var(--border);
+  border-radius:14px; grid-column:1/-1;
 }
 .empty-state i { font-size:2.5rem; margin-bottom:14px; display:block; opacity:.25; }
 .empty-state p { font-size:.88rem; margin-bottom:18px; }
+
+/* ─── Catalog: product cards ─── */
+.catalog-section { margin-bottom:36px; }
+.catalog-grid {
+  display:grid;
+  grid-template-columns:repeat(auto-fill, minmax(260px, 1fr));
+  gap:16px;
+}
+.product-card {
+  background:var(--bg-card-2); border:1px solid var(--border);
+  border-radius:14px; overflow:hidden; display:flex; flex-direction:column;
+  transition:border-color .2s, transform .15s;
+  position:relative;
+}
+.product-card:hover { border-color:rgba(255,215,0,.3); transform:translateY(-2px); }
+
+.product-card-popular::before {
+  content:'Popular'; position:absolute; top:10px; right:-22px;
+  background:linear-gradient(135deg,#FFD700,#FFA500); color:#000;
+  font-size:.58rem; font-weight:800; letter-spacing:.06em; padding:2px 30px;
+  transform:rotate(45deg); transform-origin:top right;
+  z-index:1;
+}
+
+.pc-header {
+  padding:18px 20px 14px;
+  border-bottom:1px solid var(--border-dim);
+}
+.pc-platform {
+  font-size:.64rem; color:var(--muted); font-weight:600;
+  letter-spacing:.08em; text-transform:uppercase; margin-bottom:4px;
+}
+.pc-name {
+  font-family:'Orbitron',sans-serif; font-size:.88rem; font-weight:700;
+  color:#fff; margin-bottom:6px;
+}
+.pc-desc { font-size:.74rem; color:var(--muted-2); line-height:1.45; }
+
+.pc-specs {
+  padding:14px 20px; flex:1;
+  display:grid; grid-template-columns:1fr 1fr; gap:10px;
+}
+.pc-spec { display:flex; flex-direction:column; gap:2px; }
+.pc-spec-lbl {
+  font-size:.62rem; color:var(--muted); text-transform:uppercase;
+  letter-spacing:.07em; font-weight:600;
+}
+.pc-spec-val { font-size:.84rem; font-weight:700; color:var(--text); }
+.pc-spec-val.gold { color:var(--gold); }
+.pc-spec-val.teal { color:#26a69a; }
+
+.pc-footer { padding:14px 20px; border-top:1px solid var(--border-dim); }
+.pc-cta {
+  width:100%; display:flex; align-items:center; justify-content:center;
+  gap:8px; padding:10px 16px; border-radius:9px;
+  font-size:.8rem; font-weight:700; letter-spacing:.04em;
+  cursor:pointer; border:none;
+  background:linear-gradient(135deg,#FFD700,#FFA500); color:#000;
+  transition:opacity .15s, transform .15s;
+}
+.pc-cta:hover { opacity:.85; transform:translateY(-1px); }
+.pc-cta-outline {
+  background:transparent; border:1px solid var(--border); color:var(--text);
+}
+.pc-cta-outline:hover { border-color:rgba(255,215,0,.35); color:var(--gold); }
 
 /* ─── Modal ─── */
 .modal-backdrop {
@@ -153,12 +204,9 @@
 }
 .modal-close {
   background:none; border:none; color:var(--muted); cursor:pointer;
-  font-size:1rem; padding:0;
-  transition:color .15s;
+  font-size:1rem; padding:0; transition:color .15s;
 }
-.modal-close:hover { color:var(--bear); }
-
-/* ─── Form fields ─── */
+.modal-close:hover { color:#ef5350; }
 .form-group { margin-bottom:16px; }
 .form-label {
   display:block; font-size:.74rem; font-weight:600; color:var(--muted-2);
@@ -168,14 +216,10 @@
   width:100%; background:rgba(255,255,255,.04); border:1px solid var(--border);
   border-radius:8px; padding:10px 14px; color:var(--text);
   font-size:.84rem; font-family:'Inter',sans-serif;
-  transition:border-color .15s;
-  -webkit-appearance:none;
+  transition:border-color .15s; -webkit-appearance:none;
 }
 .form-input:focus { outline:none; border-color:rgba(255,215,0,.4); }
-.form-input option { background:#0d0d1a; }
 .form-hint { font-size:.7rem; color:var(--muted); margin-top:5px; }
-
-/* ─── Wallet balance in modals ─── */
 .modal-balance-tag {
   background:rgba(255,215,0,.08); border:1px solid rgba(255,215,0,.2);
   border-radius:8px; padding:10px 14px; margin-bottom:18px;
@@ -183,8 +227,15 @@
   display:flex; align-items:center; gap:8px;
 }
 .modal-balance-tag i { color:var(--gold); }
+.modal-product-summary {
+  background:rgba(255,255,255,.03); border:1px solid var(--border-dim);
+  border-radius:8px; padding:12px 14px; margin-bottom:16px;
+  font-size:.78rem; color:var(--muted-2); line-height:1.7;
+}
+.modal-product-summary strong { color:var(--text); }
 
 {% endblock %}
+
 
 {% block content %}
 
@@ -215,22 +266,15 @@
   </div>
 </div>
 
-<!-- ═══════════════ TRADING ACCOUNTS ═══════════════ -->
-<div class="sec-header">
-  <div class="sec-title">Cuentas de Trading</div>
-  <button class="btn btn-primary btn-sm" onclick="openModal('createModal')">
-    <i class="fa-solid fa-plus"></i> Nueva Cuenta
-  </button>
+<!-- ═══════════════ MIS CUENTAS ACTIVAS ═══════════════ -->
+{% if accounts_data %}
+<div class="sec-header" style="margin-bottom:16px">
+  <div class="sec-title">Mis Cuentas</div>
 </div>
-
-<div class="accounts-grid">
-
+<div class="accounts-grid" style="margin-bottom:40px">
   {% for item in accounts_data %}
   {% with acc=item.account %}
-
   <div class="account-card">
-
-    <!-- Header -->
     <div class="ac-header">
       <div style="display:flex;align-items:center;gap:8px">
         <span class="ac-type-badge type-{{ acc.account_type }}">{{ acc.account_type }}</span>
@@ -238,8 +282,6 @@
       </div>
       <span class="ac-status status-{{ acc.status }}">{{ acc.status }}</span>
     </div>
-
-    <!-- Body -->
     <div class="ac-body">
       <div class="ac-row">
         <span class="ac-lbl">Balance</span>
@@ -257,7 +299,7 @@
         <span class="ac-lbl">Posiciones abiertas</span>
         <span class="ac-val">{{ item.open_positions }}</span>
       </div>
-      {% if acc.account_type not in "DEMO" and acc.account_type in "CHALLENGE,FUNDED" %}
+      {% if acc.account_type == 'CHALLENGE' or acc.account_type == 'FUNDED' %}
       <div class="ac-row">
         <span class="ac-lbl">Fase</span>
         <span class="ac-val">{{ acc.phase }}</span>
@@ -268,85 +310,181 @@
         <span class="ac-val" style="color:var(--muted)">{{ acc.created_at|date:"d/m/Y" }}</span>
       </div>
     </div>
-
-    <!-- Footer actions -->
     <div class="ac-footer">
       {% if acc.status == 'Activo' %}
-      <a href="{% url 'simulator:dashboard_account' acc.id %}" class="btn btn-primary btn-sm" style="flex:1; justify-content:center">
+      <a href="{% url 'simulator:dashboard_account' acc.id %}" class="btn btn-primary btn-sm" style="flex:1;justify-content:center">
         <i class="fa-solid fa-chart-line"></i> Tradear
       </a>
       {% endif %}
-      {% if acc.account_type != 'DEMO' %}
+      {% if acc.account_type != 'DEMO' and acc.account_type != 'CHALLENGE' %}
       <button class="btn btn-outline btn-sm"
-              title="Transferir fondos del wallet a esta cuenta"
               onclick="openFundModal({{ acc.id }}, '{{ acc.account_type }}', {{ acc.balance }})">
         <i class="fa-solid fa-arrow-down-to-line"></i> Fund
       </button>
       <button class="btn btn-outline btn-sm"
-              title="Retirar fondos de esta cuenta al wallet"
               onclick="openWithdrawModal({{ acc.id }}, '{{ acc.account_type }}', {{ acc.balance }})">
         <i class="fa-solid fa-arrow-up-from-line"></i> Withdraw
       </button>
       {% endif %}
     </div>
-
   </div>
   {% endwith %}
-  {% empty %}
-  <div class="empty-state">
-    <i class="fa-solid fa-briefcase"></i>
-    <p>No tienes cuentas de trading todavía.<br>Crea tu primera cuenta para empezar.</p>
-    <button class="btn btn-primary" onclick="openModal('createModal')">
-      <i class="fa-solid fa-plus"></i> Crear Primera Cuenta
-    </button>
-  </div>
   {% endfor %}
-
 </div>
+{% endif %}
 
-<!-- ═══════════════ CREATE ACCOUNT MODAL ═══════════════ -->
-<div class="modal-backdrop" id="createModal" onclick="closeModalOnBackdrop(event, 'createModal')">
+<!-- ═══════════════ CATÁLOGO: CUENTAS REALES ═══════════════ -->
+{% if real_products %}
+<div class="catalog-section">
+  <div class="sec-header">
+    <div class="sec-title"><i class="fa-solid fa-building-columns" style="margin-right:8px;color:var(--gold)"></i>Cuentas Reales</div>
+  </div>
+  <div class="catalog-grid">
+    {% for product in real_products %}
+    <div class="product-card {% if product.is_popular %}product-card-popular{% endif %}">
+      <div class="pc-header">
+        <div class="pc-platform">{{ product.platform_label }}</div>
+        <div class="pc-name">{{ product.name }}</div>
+        {% if product.description %}
+        <div class="pc-desc">{{ product.description }}</div>
+        {% endif %}
+      </div>
+      <div class="pc-specs">
+        <div class="pc-spec">
+          <span class="pc-spec-lbl">Depósito mín.</span>
+          <span class="pc-spec-val gold">${{ product.min_deposit|floatformat:0 }}</span>
+        </div>
+        <div class="pc-spec">
+          <span class="pc-spec-lbl">Apalancamiento</span>
+          <span class="pc-spec-val">1:{{ product.max_leverage }}</span>
+        </div>
+        <div class="pc-spec">
+          <span class="pc-spec-lbl">Spread típico</span>
+          <span class="pc-spec-val teal">{{ product.typical_spread_pips }} pips</span>
+        </div>
+        <div class="pc-spec">
+          <span class="pc-spec-lbl">Comisión/lote</span>
+          <span class="pc-spec-val">${{ product.commission_per_lot|floatformat:0 }}</span>
+        </div>
+      </div>
+      <div class="pc-footer">
+        <button class="pc-cta" onclick="openRealModal({{ product.id }}, '{{ product.name|escapejs }}', {{ product.min_deposit }}, '{{ product.platform_label|escapejs }}', {{ product.max_leverage }}, '{{ product.typical_spread_pips }}', '{{ product.commission_per_lot }}')">
+          <i class="fa-solid fa-rocket"></i> Abrir Cuenta Real
+        </button>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- ═══════════════ CATÁLOGO: CUENTAS DEMO ═══════════════ -->
+{% if demo_products %}
+<div class="catalog-section">
+  <div class="sec-header">
+    <div class="sec-title"><i class="fa-solid fa-flask" style="margin-right:8px;color:#26a69a"></i>Cuentas Demo</div>
+  </div>
+  <div class="catalog-grid">
+    {% for product in demo_products %}
+    <div class="product-card {% if product.is_popular %}product-card-popular{% endif %}">
+      <div class="pc-header">
+        <div class="pc-platform">{{ product.platform_label }}</div>
+        <div class="pc-name">{{ product.name }}</div>
+        {% if product.description %}
+        <div class="pc-desc">{{ product.description }}</div>
+        {% endif %}
+      </div>
+      <div class="pc-specs">
+        <div class="pc-spec">
+          <span class="pc-spec-lbl">Balance inicial</span>
+          <span class="pc-spec-val gold">${{ product.default_balance|floatformat:0 }}</span>
+        </div>
+        <div class="pc-spec">
+          <span class="pc-spec-lbl">Apalancamiento</span>
+          <span class="pc-spec-val">1:{{ product.max_leverage }}</span>
+        </div>
+        <div class="pc-spec">
+          <span class="pc-spec-lbl">Spread típico</span>
+          <span class="pc-spec-val teal">{{ product.typical_spread_pips }} pips</span>
+        </div>
+        <div class="pc-spec">
+          <span class="pc-spec-lbl">Comisión/lote</span>
+          <span class="pc-spec-val">${{ product.commission_per_lot|floatformat:0 }}</span>
+        </div>
+      </div>
+      <div class="pc-footer">
+        <button class="pc-cta pc-cta-outline" onclick="openDemoModal({{ product.id }}, '{{ product.name|escapejs }}', {{ product.default_balance }}, '{{ product.platform_label|escapejs }}', {{ product.max_leverage }}, '{{ product.typical_spread_pips }}', '{{ product.commission_per_lot }}')">
+          <i class="fa-solid fa-flask"></i> Abrir Cuenta Demo
+        </button>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% if not real_products and not demo_products %}
+<div class="empty-state">
+  <i class="fa-solid fa-store"></i>
+  <p>No hay productos de cuenta disponibles en este momento.</p>
+</div>
+{% endif %}
+
+
+<!-- ═══════════════ MODAL: ABRIR CUENTA DEMO ═══════════════ -->
+<div class="modal-backdrop" id="demoModal" onclick="closeModalOnBackdrop(event,'demoModal')">
   <div class="modal-box">
     <div class="modal-title">
-      <span><i class="fa-solid fa-plus" style="color:var(--gold);margin-right:8px"></i>Nueva Cuenta de Trading</span>
-      <button class="modal-close" onclick="closeModal('createModal')">
-        <i class="fa-solid fa-xmark"></i>
-      </button>
+      <span><i class="fa-solid fa-flask" style="color:#26a69a;margin-right:8px"></i>Abrir Cuenta Demo</span>
+      <button class="modal-close" onclick="closeModal('demoModal')"><i class="fa-solid fa-xmark"></i></button>
     </div>
-
-    <div class="modal-balance-tag">
-      <i class="fa-solid fa-wallet"></i>
-      Wallet disponible: <strong style="color:var(--gold)">${{ wallet.available_balance|floatformat:2 }}</strong>
-    </div>
-
+    <div class="modal-product-summary" id="demoSummary"></div>
+    <p style="font-size:.8rem;color:var(--muted-2);margin-bottom:20px">
+      Las cuentas Demo usan fondos <strong style="color:var(--text)">virtuales</strong>. No se debita tu wallet.
+    </p>
     <form method="POST" action="{% url 'simulator:create_account' %}">
       {% csrf_token %}
-      <div class="form-group">
-        <label class="form-label">Tipo de cuenta</label>
-        {{ create_form.account_type }}
-        <div class="form-hint">DEMO = fondos virtuales, sin débito del wallet.</div>
-      </div>
+      <input type="hidden" name="product_id" id="demoProductId">
+      <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center">
+        <i class="fa-solid fa-rocket"></i> Confirmar — Abrir Cuenta Demo
+      </button>
+    </form>
+  </div>
+</div>
+
+<!-- ═══════════════ MODAL: ABRIR CUENTA REAL ═══════════════ -->
+<div class="modal-backdrop" id="realModal" onclick="closeModalOnBackdrop(event,'realModal')">
+  <div class="modal-box">
+    <div class="modal-title">
+      <span><i class="fa-solid fa-building-columns" style="color:var(--gold);margin-right:8px"></i>Abrir Cuenta Real</span>
+      <button class="modal-close" onclick="closeModal('realModal')"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="modal-balance-tag">
+      <i class="fa-solid fa-wallet"></i>
+      Wallet disponible: <strong style="color:var(--gold)" id="realWalletBal">${{ wallet.available_balance|floatformat:2 }}</strong>
+    </div>
+    <div class="modal-product-summary" id="realSummary"></div>
+    <form method="POST" action="{% url 'simulator:create_account' %}">
+      {% csrf_token %}
+      <input type="hidden" name="product_id" id="realProductId">
       <div class="form-group">
         <label class="form-label">Depósito inicial (USD)</label>
-        {{ create_form.initial_deposit }}
-        <div class="form-hint">Monto a transferir desde tu wallet. Déjalo en 0 para Demo.</div>
-      </div>
-      <div class="form-group">
-        <label class="form-label">Apalancamiento</label>
-        {{ create_form.leverage }}
+        <input type="number" name="amount" id="realAmount" class="form-input"
+               step="1" min="0" placeholder="0.00" required>
+        <div class="form-hint" id="realMinHint"></div>
       </div>
       <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center">
-        <i class="fa-solid fa-rocket"></i> Crear Cuenta
+        <i class="fa-solid fa-paper-plane"></i> Confirmar — Abrir Cuenta Real
       </button>
     </form>
   </div>
 </div>
 
 <!-- ═══════════════ FUND MODAL ═══════════════ -->
-<div class="modal-backdrop" id="fundModal" onclick="closeModalOnBackdrop(event, 'fundModal')">
+<div class="modal-backdrop" id="fundModal" onclick="closeModalOnBackdrop(event,'fundModal')">
   <div class="modal-box">
     <div class="modal-title">
-      <span><i class="fa-solid fa-arrow-down-to-line" style="color:var(--bull);margin-right:8px"></i>Transferir al Account</span>
+      <span><i class="fa-solid fa-arrow-down-to-line" style="color:#26a69a;margin-right:8px"></i>Transferir al Account</span>
       <button class="modal-close" onclick="closeModal('fundModal')"><i class="fa-solid fa-xmark"></i></button>
     </div>
     <div class="modal-balance-tag">
@@ -368,7 +506,7 @@
 </div>
 
 <!-- ═══════════════ WITHDRAW MODAL ═══════════════ -->
-<div class="modal-backdrop" id="withdrawModal" onclick="closeModalOnBackdrop(event, 'withdrawModal')">
+<div class="modal-backdrop" id="withdrawModal" onclick="closeModalOnBackdrop(event,'withdrawModal')">
   <div class="modal-box">
     <div class="modal-title">
       <span><i class="fa-solid fa-arrow-up-from-line" style="color:var(--amber);margin-right:8px"></i>Retirar al Wallet</span>
@@ -381,7 +519,7 @@
         <label class="form-label">Monto (USD)</label>
         <input type="number" name="amount" class="form-input" step="1" min="1" placeholder="100.00" required>
       </div>
-      <div class="form-hint" style="margin-bottom:14px; color:var(--muted)">
+      <div class="form-hint" style="margin-bottom:14px;color:var(--muted)">
         <i class="fa-solid fa-triangle-exclamation" style="color:var(--amber);margin-right:4px"></i>
         Debes cerrar todas las posiciones abiertas antes de retirar.
       </div>
@@ -394,29 +532,49 @@
 
 {% endblock %}
 
+
 {% block extra_scripts %}
 <script>
-function openModal(id) {
-  document.getElementById(id).classList.add('open');
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+function closeModalOnBackdrop(e, id) { if (e.target === document.getElementById(id)) closeModal(id); }
+
+function openDemoModal(productId, name, defaultBalance, platform, leverage, spread, commPerLot) {
+  document.getElementById('demoProductId').value = productId;
+  document.getElementById('demoSummary').innerHTML =
+    '<strong>' + name + '</strong> — ' + platform + '<br>' +
+    'Balance virtual: <strong>$' + parseFloat(defaultBalance).toFixed(0) + '</strong> · ' +
+    'Apalancamiento: <strong>1:' + leverage + '</strong><br>' +
+    'Spread: <strong>' + spread + ' pips</strong> · ' +
+    'Comisión/lote: <strong>$' + parseFloat(commPerLot).toFixed(0) + '</strong>';
+  openModal('demoModal');
 }
-function closeModal(id) {
-  document.getElementById(id).classList.remove('open');
-}
-function closeModalOnBackdrop(e, id) {
-  if (e.target === document.getElementById(id)) closeModal(id);
+
+function openRealModal(productId, name, minDeposit, platform, leverage, spread, commPerLot) {
+  document.getElementById('realProductId').value = productId;
+  document.getElementById('realAmount').min = minDeposit;
+  document.getElementById('realAmount').value = '';
+  document.getElementById('realMinHint').textContent =
+    'Depósito mínimo: $' + parseFloat(minDeposit).toFixed(2);
+  document.getElementById('realSummary').innerHTML =
+    '<strong>' + name + '</strong> — ' + platform + '<br>' +
+    'Apalancamiento: <strong>1:' + leverage + '</strong> · ' +
+    'Spread: <strong>' + spread + ' pips</strong><br>' +
+    'Comisión/lote: <strong>$' + parseFloat(commPerLot).toFixed(0) + '</strong>';
+  openModal('realModal');
 }
 
 function openFundModal(accountId, accountType, balance) {
   document.getElementById('fundForm').action = '/accounts/' + accountId + '/fund/';
   document.getElementById('fundAccInfo').textContent =
-    accountType + ' #' + accountId + '  ·  Balance actual: $' + parseFloat(balance).toFixed(2);
+    accountType + ' #' + accountId + ' · Balance actual: $' + parseFloat(balance).toFixed(2);
   openModal('fundModal');
 }
 
 function openWithdrawModal(accountId, accountType, balance) {
   document.getElementById('withdrawForm').action = '/accounts/' + accountId + '/withdraw/';
   document.getElementById('withdrawAccInfo').textContent =
-    accountType + ' #' + accountId + '  ·  Balance actual: $' + parseFloat(balance).toFixed(2);
+    accountType + ' #' + accountId + ' · Balance actual: $' + parseFloat(balance).toFixed(2);
   openModal('withdrawModal');
 }
 
@@ -427,8 +585,10 @@ function openWithdrawModal(accountId, accountType, balance) {
       const r = await fetch("{% url 'simulator:wallet_balance' %}", { credentials: 'same-origin' });
       if (!r.ok) return;
       const d = await r.json();
-      const amt = document.getElementById('walletAmount');
-      if (amt) amt.textContent = '$' + parseFloat(d.balance).toFixed(2);
+      ['walletAmount','realWalletBal'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = '$' + parseFloat(d.balance).toFixed(2);
+      });
       const pendingWrap = document.getElementById('walletPending');
       const pendingAmt  = document.getElementById('walletPendingAmt');
       if (pendingWrap && pendingAmt) {
