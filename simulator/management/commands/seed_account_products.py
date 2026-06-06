@@ -32,6 +32,10 @@ PRODUCTS = [
         "max_leverage":        100,
         "typical_spread_pips": Decimal("1.20"),
         "commission_per_lot":  Decimal("0.00"),
+        "allowed_symbols":     None,
+        "max_lot_size":        None,
+        "margin_call_level":   Decimal("100.00"),
+        "stopout_level":       Decimal("50.00"),
         "is_popular":          False,
         "sort_order":          10,
         "is_active":           True,
@@ -48,6 +52,10 @@ PRODUCTS = [
         "max_leverage":        100,
         "typical_spread_pips": Decimal("0.00"),
         "commission_per_lot":  Decimal("7.00"),
+        "allowed_symbols":     None,
+        "max_lot_size":        None,
+        "margin_call_level":   Decimal("100.00"),
+        "stopout_level":       Decimal("50.00"),
         "is_popular":          False,
         "sort_order":          20,
         "is_active":           True,
@@ -64,6 +72,10 @@ PRODUCTS = [
         "max_leverage":        100,
         "typical_spread_pips": Decimal("1.20"),
         "commission_per_lot":  Decimal("0.00"),
+        "allowed_symbols":     None,
+        "max_lot_size":        None,
+        "margin_call_level":   Decimal("100.00"),
+        "stopout_level":       Decimal("50.00"),
         "is_popular":          True,
         "sort_order":          10,
         "is_active":           True,
@@ -80,6 +92,10 @@ PRODUCTS = [
         "max_leverage":        100,
         "typical_spread_pips": Decimal("0.00"),
         "commission_per_lot":  Decimal("7.00"),
+        "allowed_symbols":     None,
+        "max_lot_size":        None,
+        "margin_call_level":   Decimal("100.00"),
+        "stopout_level":       Decimal("50.00"),
         "is_popular":          False,
         "sort_order":          20,
         "is_active":           True,
@@ -131,14 +147,15 @@ class Command(BaseCommand):
         self.stdout.write("")
         self.stdout.write(
             f"  {'CODE':<20} {'FAMILY':<6} {'TYPE':<10} {'MIN $':>7} {'DEFAULT $':>10} {'LEV':>5} "
-            f"{'SPREAD':>7} {'COMM/LOT':>9} {'POP':>4} {'ACTIVE':>6}"
+            f"{'SPREAD':>7} {'COMM/LOT':>9} {'MC%':>6} {'SO%':>6} {'POP':>4} {'ACTIVE':>6}"
         )
-        self.stdout.write("  " + "─" * 90)
+        self.stdout.write("  " + "─" * 100)
         for p in AccountProduct.objects.order_by("family", "sort_order"):
             self.stdout.write(
                 f"  {p.code or '—':<20} {p.family:<6} {p.product_type:<10} "
                 f"{float(p.min_deposit):>7.2f} {float(p.default_balance):>10.2f} "
                 f"{p.max_leverage:>5} {float(p.typical_spread_pips):>7.2f} "
                 f"{float(p.commission_per_lot):>9.2f} "
+                f"{float(p.margin_call_level):>6.1f} {float(p.stopout_level):>6.1f} "
                 f"{'✓' if p.is_popular else '':>4} {'✓' if p.is_active else '✗':>6}"
             )

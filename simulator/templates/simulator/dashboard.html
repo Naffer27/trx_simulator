@@ -1479,9 +1479,13 @@
       <div>
         <span style="font-family:'Orbitron',sans-serif;font-size:.6rem;font-weight:700;color:rgba(0,180,216,.75);letter-spacing:.1em;text-transform:uppercase;">{{ account.account_type }}</span>
         <span style="font-size:.65rem;color:var(--muted);margin-left:6px">#{{ account_id }}</span>
+        {% if account.product_name_snapshot %}<span style="font-size:.6rem;color:rgba(0,180,216,.55);margin-left:6px">· <span id="accProductName">{{ account.product_name_snapshot }}</span></span>{% else %}<span id="accProductName" style="display:none"></span>{% endif %}
       </div>
       <div style="display:flex;align-items:center;gap:10px;">
         <span style="font-size:.65rem;color:var(--muted)">1:{{ account.leverage }}</span>
+        <span id="accCommission" style="font-size:.6rem;color:var(--muted)">{% if account.commission_per_lot_snapshot and account.commission_per_lot_snapshot > 0 %}${{ account.commission_per_lot_snapshot }}/lot{% else %}—{% endif %}</span>
+        <span id="accSpreadPips" style="font-size:.6rem;color:var(--muted)">{% if account.spread_pips_snapshot and account.spread_pips_snapshot > 0 %}{{ account.spread_pips_snapshot }} pips{% else %}raw{% endif %}</span>
+        <span id="accCurrency" style="font-size:.6rem;color:var(--muted)">{{ account.currency }}</span>
         <span id="trdAccStatusBadge" style="font-size:.6rem;font-weight:700;padding:1px 7px;border-radius:4px;background:rgba(38,166,154,.15);color:#26a69a;"></span>
       </div>
     </div>
@@ -2769,6 +2773,16 @@ function renderAccount(msg){
   if(cDPct)cDPct.textContent=dailyDDUsed.toFixed(2)+'% / '+dailyLimit+'%';
   if(cMBar){cMBar.style.width=maxPct.toFixed(1)+'%';cMBar.className='chal-bar chal-bar-dd'+(totalDDUsed<maxDDLimit*0.5?' safe':'');}
   if(cMPct)cMPct.textContent=totalDDUsed.toFixed(2)+'% / '+maxDDLimit+'%';
+
+  // Phase 6B — product rule fields
+  const pnEl=document.getElementById('accProductName');
+  if(pnEl&&msg.product_name)pnEl.textContent=msg.product_name;
+  const commEl=document.getElementById('accCommission');
+  if(commEl){const c=Number(msg.commission_per_lot??0);commEl.textContent=c>0?'$'+c.toFixed(2)+'/lot':'—';}
+  const spEl=document.getElementById('accSpreadPips');
+  if(spEl){const s=Number(msg.spread_pips??0);spEl.textContent=s>0?s.toFixed(1)+' pips':'raw';}
+  const curEl=document.getElementById('accCurrency');
+  if(curEl)curEl.textContent=msg.currency||'USD';
 }
 
 /* ── Global quickbar handlers ── */

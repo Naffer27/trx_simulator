@@ -95,6 +95,21 @@ class TradingAccount(models.Model):
         help_text='True=Netting (consolidar por símbolo); False=Hedging (varias posiciones).'
     )
 
+    # ── Product link + frozen rule snapshots (Phase 6B) ───────────────────────
+    account_product = models.ForeignKey(
+        'AccountProduct', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='trading_accounts',
+    )
+    product_code_snapshot       = models.CharField(max_length=32, null=True, blank=True)
+    product_name_snapshot       = models.CharField(max_length=64, null=True, blank=True)
+    leverage_snapshot           = models.PositiveIntegerField(null=True, blank=True)
+    spread_pips_snapshot        = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
+    commission_per_lot_snapshot = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    allowed_symbols_snapshot    = models.JSONField(null=True, blank=True)
+    max_lot_size_snapshot       = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    margin_call_level_snapshot  = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    stopout_level_snapshot      = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+
     STATUS_ACTIVE    = 'Activo'
     STATUS_SUSPENDED = 'Suspendido'
     STATUS_VIOLATED  = 'Violado'
@@ -609,6 +624,12 @@ class AccountProduct(models.Model):
     commission_per_lot   = models.DecimalField(max_digits=8, decimal_places=2, default=Decimal('0.00'))
     commission_pct       = models.DecimalField(max_digits=5, decimal_places=4, default=Decimal('0.0000'))
     spread_markup        = models.DecimalField(max_digits=5, decimal_places=4, default=Decimal('0.0000'))
+
+    # ── Risk parameters (Phase 6B) ─────────────────────────────────────────────
+    allowed_symbols   = models.JSONField(null=True, blank=True)
+    max_lot_size      = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    margin_call_level = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('100.00'))
+    stopout_level     = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('50.00'))
 
     # ── Display ────────────────────────────────────────────────────────────────
     features    = models.JSONField(default=dict)

@@ -1052,6 +1052,22 @@ def create_account_view(request):
                 )
                 account.refresh_from_db()
 
+            # Freeze product rules as immutable snapshots on the account.
+            # Uses .update() to bypass TradingAccount.save() balance logic.
+            TradingAccount.objects.filter(pk=account.pk).update(
+                account_product=product,
+                product_code_snapshot=product.code,
+                product_name_snapshot=product.name,
+                leverage_snapshot=product.max_leverage,
+                spread_pips_snapshot=product.typical_spread_pips,
+                commission_per_lot_snapshot=product.commission_per_lot,
+                allowed_symbols_snapshot=product.allowed_symbols,
+                max_lot_size_snapshot=product.max_lot_size,
+                margin_call_level_snapshot=product.margin_call_level,
+                stopout_level_snapshot=product.stopout_level,
+            )
+            account.refresh_from_db()
+
     except InsufficientFunds as exc:
         request.session["acct_error"] = str(exc)
         return redirect("simulator:accounts")

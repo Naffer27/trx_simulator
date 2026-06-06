@@ -159,6 +159,14 @@ class TradingConsumer(AsyncWebsocketConsumer):
             "tier":          "",
             "profit_target": 0.0,
             "initial_balance": 0.0,
+            # Phase 6B — product rule defaults (overwritten by hydration if snapshot set)
+            "product_name":       "",
+            "commission_per_lot": 0.0,
+            "spread_pips":        0.0,
+            "allowed_symbols":    None,
+            "max_lot_size":       None,
+            "margin_call_level":  100.0,
+            "stopout_level":      50.0,
         }
         self._daily_realized_pnl = 0.0
         self._daily_pnl_date = None
@@ -775,6 +783,11 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
     # ---------------- Cuenta / PnL ----------------
     def commission_for(self, symbol: str, qty: float, price: float) -> float:
+        # Phase 6B: prefer per-lot snapshot if set (qty is already in lots).
+        # Falls back to spec.commission_pct for old accounts with no snapshot.
+        cpl = self.account.get("commission_per_lot", 0.0) or 0.0
+        if cpl > 0:
+            return round(qty * cpl, 2)
         spec = get_spec(symbol)
         notional = qty * price * spec.contract_size
         return max(0.0, notional * spec.commission_pct)
@@ -928,6 +941,11 @@ class TradingConsumer(AsyncWebsocketConsumer):
             "spread": spread,
             "profit_target": self.account.get("profit_target", 800.0),
             "initial_balance": self.account.get("initial_balance", self.account.get("balance", 0.0)),
+            # Phase 6B — product rule info
+            "product_name":       self.account.get("product_name", ""),
+            "commission_per_lot": self.account.get("commission_per_lot", 0.0),
+            "spread_pips":        self.account.get("spread_pips", 0.0),
+            "currency":           self.account.get("currency", "USD"),
         })
 
     async def _do_stopout(self) -> None:
@@ -1201,9 +1219,18 @@ class TradingConsumer(AsyncWebsocketConsumer):
         self.account["initial_balance"] = float(
             acc.get("initial_balance") or self.account["balance"]
         )
-        log.info("[hydrate] balance=%.2f equity=%.2f status=%s tier=%s",
+        # Phase 6B — product rule snapshots (None = not set, fallback to spec/default)
+        self.account["product_name"]      = acc.get("product_name", "")
+        self.account["commission_per_lot"] = acc.get("commission_per_lot", 0.0)
+        self.account["spread_pips"]        = acc.get("spread_pips", 0.0)
+        self.account["allowed_symbols"]    = acc.get("allowed_symbols", None)
+        self.account["max_lot_size"]       = acc.get("max_lot_size", None)
+        self.account["margin_call_level"]  = acc.get("margin_call_level", 100.0)
+        self.account["stopout_level"]      = acc.get("stopout_level", 50.0)
+        log.info("[hydrate] balance=%.2f equity=%.2f status=%s tier=%s product=%r comm_per_lot=%.2f",
                  self.account["balance"], self.account["equity"],
-                 self.account["status"], self.account["tier"])
+                 self.account["status"], self.account["tier"],
+                 self.account["product_name"], self.account["commission_per_lot"])
 
         items = await self._db_fetch_open_positions()
         self._positions = []
@@ -1287,6 +1314,14 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 "status":          obj.status,
                 "tier":            obj.tier or "",
                 "profit_target":   float(obj.profit_target) if obj.profit_target is not None else 0.0,
+                # Phase 6B — product snapshots
+                "product_name":          obj.product_name_snapshot or "",
+                "commission_per_lot":    float(obj.commission_per_lot_snapshot or 0),
+                "spread_pips":           float(obj.spread_pips_snapshot or 0),
+                "allowed_symbols":       obj.allowed_symbols_snapshot,
+                "max_lot_size":          float(obj.max_lot_size_snapshot) if obj.max_lot_size_snapshot is not None else None,
+                "margin_call_level":     float(obj.margin_call_level_snapshot or 100),
+                "stopout_level":         float(obj.stopout_level_snapshot or 50),
             }
         except TradingAccount.DoesNotExist:
             return None
