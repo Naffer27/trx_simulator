@@ -25,8 +25,9 @@ from simulator.wallet_ledger import credit_wallet, get_or_create_wallet
 
 User = get_user_model()
 
-ACCOUNTS_URL = "/accounts/"
-CREATE_URL   = "/accounts/create/"
+ACCOUNTS_URL  = "/accounts/"
+OPEN_URL      = "/accounts/open/"
+CREATE_URL    = "/accounts/create/"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -280,7 +281,32 @@ class GuardTests(TestCase):
         self.assertIn("/login/", r["Location"])
 
 
-# ── Catalog view ──────────────────────────────────────────────────────────────
+# ── /accounts/ — existing accounts only (no catalog) ─────────────────────────
+
+class AccountsPageTests(TestCase):
+    def setUp(self):
+        self.user = make_user()
+        make_wallet(self.user)
+        _login(self.client, self.user)
+
+    def test_accounts_page_200_for_authenticated(self):
+        r = self.client.get(ACCOUNTS_URL)
+        self.assertEqual(r.status_code, 200)
+
+    def test_accounts_page_redirects_unauthenticated(self):
+        self.client.logout()
+        r = self.client.get(ACCOUNTS_URL)
+        self.assertEqual(r.status_code, 302)
+
+    def test_accounts_page_does_not_expose_catalog_context(self):
+        _make_product(code="no-show-real")
+        _make_demo_product(code="no-show-demo")
+        r = self.client.get(ACCOUNTS_URL)
+        self.assertNotIn("real_products", r.context)
+        self.assertNotIn("demo_products", r.context)
+
+
+# ── /accounts/open/ — product catalog ────────────────────────────────────────
 
 class CatalogViewTests(TestCase):
     def setUp(self):
@@ -291,7 +317,7 @@ class CatalogViewTests(TestCase):
     def test_catalog_shows_active_products(self):
         p1 = _make_product(code="active-1")
         p2 = _make_demo_product(code="active-2")
-        r = self.client.get(ACCOUNTS_URL)
+        r = self.client.get(OPEN_URL)
         self.assertEqual(r.status_code, 200)
         real_ids  = [p.pk for p in r.context["real_products"]]
         demo_ids  = [p.pk for p in r.context["demo_products"]]
@@ -300,7 +326,7 @@ class CatalogViewTests(TestCase):
 
     def test_catalog_excludes_inactive(self):
         inactive = _make_product(code="inactive-cat", is_active=False)
-        r = self.client.get(ACCOUNTS_URL)
+        r = self.client.get(OPEN_URL)
         real_ids = [p.pk for p in r.context["real_products"]]
         demo_ids = [p.pk for p in r.context["demo_products"]]
         self.assertNotIn(inactive.pk, real_ids + demo_ids)
@@ -308,7 +334,7 @@ class CatalogViewTests(TestCase):
     def test_catalog_groups_demo_and_real(self):
         demo = _make_demo_product(code="grp-demo")
         real = _make_product(code="grp-real")
-        r = self.client.get(ACCOUNTS_URL)
+        r = self.client.get(OPEN_URL)
         demo_codes = [p.code for p in r.context["demo_products"]]
         real_codes = [p.code for p in r.context["real_products"]]
         self.assertIn("grp-demo", demo_codes)
@@ -317,10 +343,10 @@ class CatalogViewTests(TestCase):
         self.assertNotIn("grp-demo", real_codes)
 
     def test_catalog_response_200_for_authenticated(self):
-        r = self.client.get(ACCOUNTS_URL)
+        r = self.client.get(OPEN_URL)
         self.assertEqual(r.status_code, 200)
 
     def test_catalog_redirects_unauthenticated(self):
         self.client.logout()
-        r = self.client.get(ACCOUNTS_URL)
+        r = self.client.get(OPEN_URL)
         self.assertEqual(r.status_code, 302)

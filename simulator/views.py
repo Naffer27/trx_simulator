@@ -921,7 +921,7 @@ def clean_dashboard(request):
 
 @login_required
 def accounts_view(request):
-    """My Accounts page — wallet summary + all trading accounts + product catalog."""
+    """My Accounts page — wallet summary + existing trading accounts only."""
     acct_success = request.session.pop("acct_success", None)
     acct_error   = request.session.pop("acct_error",   None)
 
@@ -937,6 +937,19 @@ def accounts_view(request):
         pos_count = Position.objects.filter(account=acc).count()
         accounts_data.append({"account": acc, "open_positions": pos_count})
 
+    return render(request, "simulator/accounts.html", {
+        "wallet":         wallet,
+        "accounts_data":  accounts_data,
+        "active_section": "accounts",
+        "acct_success":   acct_success,
+        "acct_error":     acct_error,
+    })
+
+
+@login_required
+def account_open_view(request):
+    """Product catalog page — /accounts/open/ — choose Demo or Real account to open."""
+    wallet, _ = get_or_create_wallet(request.user)
     catalog = (
         AccountProduct.objects
         .filter(is_active=True)
@@ -945,14 +958,11 @@ def accounts_view(request):
     demo_products = [p for p in catalog if p.family == AccountProduct.FAMILY_DEMO]
     real_products = [p for p in catalog if p.family == AccountProduct.FAMILY_REAL]
 
-    return render(request, "simulator/accounts.html", {
+    return render(request, "simulator/account_open.html", {
         "wallet":         wallet,
-        "accounts_data":  accounts_data,
         "demo_products":  demo_products,
         "real_products":  real_products,
-        "active_section": "accounts",
-        "acct_success":   acct_success,
-        "acct_error":     acct_error,
+        "active_section": "account_open",
     })
 
 

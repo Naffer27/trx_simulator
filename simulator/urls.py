@@ -51,6 +51,8 @@ from .views import (
     # External webhook + status API
     external_challenge_activate,
     challenge_status_view,
+    # Account catalog
+    account_open_view,
 )
 
 app_name = 'simulator'
@@ -69,6 +71,7 @@ urlpatterns = [
 
     # ── My Accounts (capital flow) ──────────────────────────────
     path("accounts/",                               accounts_view,          name="accounts"),
+    path("accounts/open/",                          account_open_view,      name="account_open"),
     path("accounts/create/",                        create_account_view,    name="create_account"),
     path("accounts/<int:account_id>/fund/",         fund_account_view,      name="fund_account"),
     path("accounts/<int:account_id>/withdraw/",     withdraw_account_view,  name="withdraw_account"),

@@ -1,0 +1,486 @@
+{% extends "simulator/base_app.html" %}
+{% block title %}Abrir Cuenta — Money Broker{% endblock %}
+{% block page_title %}Abrir Cuenta{% endblock %}
+
+{% block extra_styles %}
+
+/* ─── Breadcrumb ─── */
+.breadcrumb {
+  display:flex; align-items:center; gap:8px;
+  font-size:.74rem; color:var(--muted); margin-bottom:28px;
+}
+.breadcrumb a { color:var(--muted); text-decoration:none; }
+.breadcrumb a:hover { color:var(--gold); }
+.breadcrumb-sep { opacity:.4; }
+
+/* ─── Hero ─── */
+.hero {
+  text-align:center; padding:40px 24px 36px;
+  background:var(--bg-card-2); border:1px solid var(--border);
+  border-radius:16px; margin-bottom:40px;
+  position:relative; overflow:hidden;
+}
+.hero::before {
+  content:''; position:absolute; inset:0;
+  background:radial-gradient(ellipse at 50% 0%, rgba(255,215,0,.07) 0%, transparent 60%);
+  pointer-events:none;
+}
+.hero-platform {
+  font-family:'Orbitron',sans-serif; font-size:.6rem; font-weight:700;
+  letter-spacing:.2em; text-transform:uppercase;
+  color:var(--gold); margin-bottom:14px;
+  display:flex; align-items:center; justify-content:center; gap:8px;
+}
+.hero-platform::before,
+.hero-platform::after {
+  content:''; display:block; width:28px; height:1px;
+  background:linear-gradient(to right, transparent, rgba(255,215,0,.5));
+}
+.hero-platform::after { transform:scaleX(-1); }
+.hero-title {
+  font-family:'Orbitron',sans-serif; font-size:1.45rem; font-weight:700;
+  color:#fff; margin-bottom:12px; line-height:1.25;
+}
+.hero-subtitle {
+  font-size:.88rem; color:var(--muted-2); max-width:520px;
+  margin:0 auto 24px; line-height:1.6;
+}
+.hero-badges {
+  display:flex; align-items:center; justify-content:center; gap:12px;
+  flex-wrap:wrap;
+}
+.hero-badge {
+  display:inline-flex; align-items:center; gap:6px;
+  padding:5px 13px; border-radius:20px; font-size:.72rem; font-weight:600;
+  background:rgba(255,255,255,.04); border:1px solid var(--border-dim);
+  color:var(--muted-2);
+}
+.hero-badge i { font-size:.75rem; }
+
+/* ─── Section header ─── */
+.cat-section { margin-bottom:48px; }
+.cat-header {
+  display:flex; align-items:flex-end; justify-content:space-between;
+  margin-bottom:20px; padding-bottom:12px;
+  border-bottom:1px solid var(--border-dim);
+}
+.cat-header-left { display:flex; flex-direction:column; gap:4px; }
+.cat-type-tag {
+  display:inline-flex; align-items:center; gap:6px;
+  font-size:.64rem; font-weight:700; text-transform:uppercase;
+  letter-spacing:.1em; color:var(--muted);
+}
+.cat-type-tag.real { color:#FFD700; }
+.cat-type-tag.demo { color:#26a69a; }
+.cat-section-title {
+  font-family:'Orbitron',sans-serif; font-size:.9rem; font-weight:700;
+  color:#fff;
+}
+.cat-section-desc { font-size:.78rem; color:var(--muted-2); max-width:400px; }
+
+/* ─── Product grid ─── */
+.product-grid {
+  display:grid;
+  grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));
+  gap:18px;
+}
+
+/* ─── Product card ─── */
+.product-card {
+  background:var(--bg-card-2); border:1px solid var(--border);
+  border-radius:16px; overflow:hidden; display:flex; flex-direction:column;
+  transition:border-color .22s, transform .16s, box-shadow .22s;
+  position:relative;
+}
+.product-card:hover {
+  border-color:rgba(255,215,0,.28);
+  transform:translateY(-3px);
+  box-shadow:0 12px 36px rgba(0,0,0,.35);
+}
+.product-card.popular {
+  border-color:rgba(255,215,0,.2);
+}
+
+/* Popular ribbon */
+.product-card.popular::after {
+  content:'Popular';
+  position:absolute; top:14px; right:-26px;
+  background:linear-gradient(135deg,#FFD700,#FFA500); color:#000;
+  font-size:.56rem; font-weight:900; letter-spacing:.08em;
+  padding:3px 36px; transform:rotate(45deg);
+  transform-origin:top right; pointer-events:none;
+}
+
+/* Family badge inside card */
+.pc-family-badge {
+  position:absolute; top:14px; left:14px;
+  padding:3px 9px; border-radius:20px; font-size:.6rem; font-weight:700;
+  letter-spacing:.06em; text-transform:uppercase;
+}
+.pc-family-badge.real { background:rgba(255,215,0,.12); color:#FFD700; border:1px solid rgba(255,215,0,.25); }
+.pc-family-badge.demo { background:rgba(38,166,154,.12); color:#26a69a; border:1px solid rgba(38,166,154,.25); }
+
+.pc-top {
+  padding:44px 22px 18px;   /* extra top padding for badges */
+  border-bottom:1px solid var(--border-dim);
+}
+.pc-platform {
+  font-size:.62rem; color:var(--muted); font-weight:600;
+  letter-spacing:.1em; text-transform:uppercase; margin-bottom:4px;
+}
+.pc-name {
+  font-family:'Orbitron',sans-serif; font-size:.95rem; font-weight:700;
+  color:#fff; margin-bottom:8px;
+}
+.pc-desc { font-size:.76rem; color:var(--muted-2); line-height:1.5; }
+
+/* Specs grid */
+.pc-specs {
+  padding:18px 22px; flex:1;
+  display:grid; grid-template-columns:1fr 1fr; gap:16px 12px;
+}
+.pc-spec { display:flex; flex-direction:column; gap:3px; }
+.pc-spec-lbl {
+  font-size:.6rem; color:var(--muted); text-transform:uppercase;
+  letter-spacing:.08em; font-weight:700;
+}
+.pc-spec-val { font-size:.92rem; font-weight:700; color:var(--text); }
+.pc-spec-val.gold  { color:#FFD700; }
+.pc-spec-val.teal  { color:#26a69a; }
+.pc-spec-val.purple{ color:#9b59b6; }
+
+/* Divider */
+.pc-divider { margin:0 22px; border:none; border-top:1px solid var(--border-dim); }
+
+/* Footer */
+.pc-footer { padding:18px 22px; }
+.pc-cta {
+  width:100%; display:flex; align-items:center; justify-content:center;
+  gap:9px; padding:12px 18px; border-radius:10px;
+  font-size:.84rem; font-weight:700; letter-spacing:.04em;
+  cursor:pointer; border:none;
+  transition:opacity .15s, transform .13s;
+}
+.pc-cta:hover { opacity:.87; transform:translateY(-1px); }
+.pc-cta-real {
+  background:linear-gradient(135deg,#FFD700,#FFA500); color:#000;
+}
+.pc-cta-demo {
+  background:rgba(38,166,154,.12); color:#26a69a;
+  border:1px solid rgba(38,166,154,.3);
+}
+.pc-cta-demo:hover { background:rgba(38,166,154,.18); }
+
+/* ─── Modals ─── */
+.modal-backdrop {
+  display:none; position:fixed; inset:0;
+  background:rgba(0,0,0,.8); z-index:500;
+  align-items:center; justify-content:center;
+}
+.modal-backdrop.open { display:flex; }
+.modal-box {
+  background:var(--bg-card); border:1px solid var(--border);
+  border-radius:16px; padding:28px; width:100%; max-width:440px;
+  max-height:90vh; overflow-y:auto;
+}
+.modal-title {
+  font-family:'Orbitron',sans-serif; font-size:.82rem; font-weight:700;
+  letter-spacing:.07em; color:var(--text); margin-bottom:20px;
+  display:flex; align-items:center; justify-content:space-between;
+}
+.modal-close { background:none; border:none; color:var(--muted); cursor:pointer; font-size:1rem; padding:0; }
+.modal-close:hover { color:#ef5350; }
+.modal-balance-tag {
+  background:rgba(255,215,0,.07); border:1px solid rgba(255,215,0,.2);
+  border-radius:9px; padding:10px 14px; margin-bottom:18px;
+  font-size:.8rem; color:var(--text); display:flex; align-items:center; gap:8px;
+}
+.modal-balance-tag i { color:var(--gold); }
+.modal-product-summary {
+  background:rgba(255,255,255,.025); border:1px solid var(--border-dim);
+  border-radius:9px; padding:13px 15px; margin-bottom:18px;
+  font-size:.79rem; color:var(--muted-2); line-height:1.75;
+}
+.modal-product-summary strong { color:var(--text); }
+.form-group { margin-bottom:16px; }
+.form-label {
+  display:block; font-size:.73rem; font-weight:600; color:var(--muted-2);
+  letter-spacing:.05em; text-transform:uppercase; margin-bottom:6px;
+}
+.form-input {
+  width:100%; background:rgba(255,255,255,.04); border:1px solid var(--border);
+  border-radius:8px; padding:10px 14px; color:var(--text);
+  font-size:.84rem; font-family:'Inter',sans-serif;
+  transition:border-color .14s; -webkit-appearance:none;
+}
+.form-input:focus { outline:none; border-color:rgba(255,215,0,.4); }
+.form-hint { font-size:.71rem; color:var(--muted); margin-top:5px; }
+.btn-submit {
+  width:100%; display:flex; align-items:center; justify-content:center;
+  gap:8px; padding:12px 18px; border-radius:10px; border:none;
+  font-size:.84rem; font-weight:700; letter-spacing:.04em;
+  cursor:pointer; transition:opacity .14s, transform .12s;
+}
+.btn-submit:hover { opacity:.87; transform:translateY(-1px); }
+.btn-submit-real { background:linear-gradient(135deg,#FFD700,#FFA500); color:#000; }
+.btn-submit-demo { background:rgba(38,166,154,.15); color:#26a69a; border:1px solid rgba(38,166,154,.3); }
+.btn-submit-demo:hover { background:rgba(38,166,154,.22); }
+
+/* ─── Empty state ─── */
+.empty-state {
+  text-align:center; padding:60px 24px; color:var(--muted);
+  background:var(--bg-card-2); border:1px dashed var(--border);
+  border-radius:14px;
+}
+.empty-state i { font-size:2.5rem; margin-bottom:14px; display:block; opacity:.22; }
+
+{% endblock %}
+
+
+{% block content %}
+
+<!-- Breadcrumb -->
+<div class="breadcrumb">
+  <a href="{% url 'simulator:accounts' %}"><i class="fa-solid fa-briefcase"></i> Mis Cuentas</a>
+  <span class="breadcrumb-sep">/</span>
+  <span>Abrir Cuenta</span>
+</div>
+
+<!-- ═══════════════ HERO ═══════════════ -->
+<div class="hero">
+  <div class="hero-platform">Money Broker</div>
+  <h1 class="hero-title">Abre tu cuenta Money Broker</h1>
+  <p class="hero-subtitle">
+    Elige entre cuentas reales con fondos de tu wallet o cuentas demo para
+    practicar sin riesgo. Accede al mismo motor de trading en ambas modalidades.
+  </p>
+  <div class="hero-badges">
+    <span class="hero-badge"><i class="fa-solid fa-shield-halved"></i> Plataforma segura</span>
+    <span class="hero-badge"><i class="fa-solid fa-bolt"></i> Activación inmediata</span>
+    <span class="hero-badge"><i class="fa-solid fa-chart-line"></i> Todos los instrumentos</span>
+    <span class="hero-badge"><i class="fa-solid fa-wallet"></i> Fondos desde tu wallet</span>
+  </div>
+</div>
+
+
+<!-- ═══════════════ REAL ACCOUNTS ═══════════════ -->
+{% if real_products %}
+<div class="cat-section">
+  <div class="cat-header">
+    <div class="cat-header-left">
+      <span class="cat-type-tag real"><i class="fa-solid fa-building-columns"></i> Cuentas Reales</span>
+      <div class="cat-section-title">Opera con fondos reales de tu wallet</div>
+      <div class="cat-section-desc">
+        Transfiere desde tu wallet interna. Depósito mínimo según el tipo de cuenta.
+      </div>
+    </div>
+  </div>
+  <div class="product-grid">
+    {% for product in real_products %}
+    <div class="product-card {% if product.is_popular %}popular{% endif %}">
+      <span class="pc-family-badge real">Real</span>
+
+      <div class="pc-top">
+        <div class="pc-platform">{{ product.platform_label }}</div>
+        <div class="pc-name">{{ product.name }}</div>
+        {% if product.description %}<div class="pc-desc">{{ product.description }}</div>{% endif %}
+      </div>
+
+      <div class="pc-specs">
+        <div class="pc-spec">
+          <span class="pc-spec-lbl">Depósito mín.</span>
+          <span class="pc-spec-val gold">${{ product.min_deposit|floatformat:0 }}</span>
+        </div>
+        <div class="pc-spec">
+          <span class="pc-spec-lbl">Apalancamiento</span>
+          <span class="pc-spec-val">1:{{ product.max_leverage }}</span>
+        </div>
+        <div class="pc-spec">
+          <span class="pc-spec-lbl">Spread típico</span>
+          <span class="pc-spec-val teal">{{ product.typical_spread_pips }} pips</span>
+        </div>
+        <div class="pc-spec">
+          <span class="pc-spec-lbl">Comisión/lote</span>
+          <span class="pc-spec-val {% if product.commission_per_lot > 0 %}purple{% endif %}">${{ product.commission_per_lot|floatformat:0 }}</span>
+        </div>
+      </div>
+
+      <hr class="pc-divider">
+
+      <div class="pc-footer">
+        <button class="pc-cta pc-cta-real"
+                onclick="openRealModal({{ product.id }},'{{ product.name|escapejs }}',{{ product.min_deposit }},'{{ product.platform_label|escapejs }}',{{ product.max_leverage }},'{{ product.typical_spread_pips }}','{{ product.commission_per_lot }}')">
+          <i class="fa-solid fa-rocket"></i> Abrir Cuenta Real
+        </button>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+
+<!-- ═══════════════ DEMO ACCOUNTS ═══════════════ -->
+{% if demo_products %}
+<div class="cat-section">
+  <div class="cat-header">
+    <div class="cat-header-left">
+      <span class="cat-type-tag demo"><i class="fa-solid fa-flask"></i> Cuentas Demo</span>
+      <div class="cat-section-title">Practica sin arriesgar capital</div>
+      <div class="cat-section-desc">
+        Balance virtual de $10,000. Mismos instrumentos y condiciones que la cuenta real.
+        No se debita tu wallet.
+      </div>
+    </div>
+  </div>
+  <div class="product-grid">
+    {% for product in demo_products %}
+    <div class="product-card {% if product.is_popular %}popular{% endif %}">
+      <span class="pc-family-badge demo">Demo</span>
+
+      <div class="pc-top">
+        <div class="pc-platform">{{ product.platform_label }}</div>
+        <div class="pc-name">{{ product.name }}</div>
+        {% if product.description %}<div class="pc-desc">{{ product.description }}</div>{% endif %}
+      </div>
+
+      <div class="pc-specs">
+        <div class="pc-spec">
+          <span class="pc-spec-lbl">Balance inicial</span>
+          <span class="pc-spec-val gold">${{ product.default_balance|floatformat:0 }}</span>
+        </div>
+        <div class="pc-spec">
+          <span class="pc-spec-lbl">Apalancamiento</span>
+          <span class="pc-spec-val">1:{{ product.max_leverage }}</span>
+        </div>
+        <div class="pc-spec">
+          <span class="pc-spec-lbl">Spread típico</span>
+          <span class="pc-spec-val teal">{{ product.typical_spread_pips }} pips</span>
+        </div>
+        <div class="pc-spec">
+          <span class="pc-spec-lbl">Comisión/lote</span>
+          <span class="pc-spec-val {% if product.commission_per_lot > 0 %}purple{% endif %}">${{ product.commission_per_lot|floatformat:0 }}</span>
+        </div>
+      </div>
+
+      <hr class="pc-divider">
+
+      <div class="pc-footer">
+        <button class="pc-cta pc-cta-demo"
+                onclick="openDemoModal({{ product.id }},'{{ product.name|escapejs }}',{{ product.default_balance }},'{{ product.platform_label|escapejs }}',{{ product.max_leverage }},'{{ product.typical_spread_pips }}','{{ product.commission_per_lot }}')">
+          <i class="fa-solid fa-flask"></i> Abrir Cuenta Demo
+        </button>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% if not real_products and not demo_products %}
+<div class="empty-state">
+  <i class="fa-solid fa-store"></i>
+  <p>No hay productos disponibles en este momento.</p>
+</div>
+{% endif %}
+
+
+<!-- ═══════════════ MODAL REAL ═══════════════ -->
+<div class="modal-backdrop" id="realModal" onclick="closeOnBackdrop(event,'realModal')">
+  <div class="modal-box">
+    <div class="modal-title">
+      <span><i class="fa-solid fa-building-columns" style="color:var(--gold);margin-right:8px"></i>Abrir Cuenta Real</span>
+      <button class="modal-close" onclick="closeModal('realModal')"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="modal-balance-tag">
+      <i class="fa-solid fa-wallet"></i>
+      Wallet disponible: <strong style="color:var(--gold)" id="realWalletBal">${{ wallet.available_balance|floatformat:2 }}</strong>
+    </div>
+    <div class="modal-product-summary" id="realSummary"></div>
+    <form method="POST" action="{% url 'simulator:create_account' %}">
+      {% csrf_token %}
+      <input type="hidden" name="product_id" id="realProductId">
+      <div class="form-group">
+        <label class="form-label">Depósito inicial (USD)</label>
+        <input type="number" name="amount" id="realAmount" class="form-input"
+               step="1" min="0" placeholder="0.00" required>
+        <div class="form-hint" id="realMinHint"></div>
+      </div>
+      <button type="submit" class="btn-submit btn-submit-real">
+        <i class="fa-solid fa-rocket"></i> Confirmar — Abrir Cuenta Real
+      </button>
+    </form>
+  </div>
+</div>
+
+<!-- ═══════════════ MODAL DEMO ═══════════════ -->
+<div class="modal-backdrop" id="demoModal" onclick="closeOnBackdrop(event,'demoModal')">
+  <div class="modal-box">
+    <div class="modal-title">
+      <span><i class="fa-solid fa-flask" style="color:#26a69a;margin-right:8px"></i>Abrir Cuenta Demo</span>
+      <button class="modal-close" onclick="closeModal('demoModal')"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="modal-product-summary" id="demoSummary"></div>
+    <p style="font-size:.8rem;color:var(--muted-2);margin-bottom:22px;line-height:1.6">
+      Las cuentas Demo usan fondos <strong style="color:var(--text)">virtuales</strong>.
+      Tu wallet no se verá afectado.
+    </p>
+    <form method="POST" action="{% url 'simulator:create_account' %}">
+      {% csrf_token %}
+      <input type="hidden" name="product_id" id="demoProductId">
+      <button type="submit" class="btn-submit btn-submit-demo">
+        <i class="fa-solid fa-flask"></i> Confirmar — Abrir Cuenta Demo
+      </button>
+    </form>
+  </div>
+</div>
+
+{% endblock %}
+
+
+{% block extra_scripts %}
+<script>
+function openModal(id)  { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+function closeOnBackdrop(e, id) { if (e.target === document.getElementById(id)) closeModal(id); }
+
+function openRealModal(productId, name, minDeposit, platform, leverage, spread, commPerLot) {
+  document.getElementById('realProductId').value  = productId;
+  document.getElementById('realAmount').min       = minDeposit;
+  document.getElementById('realAmount').value     = '';
+  document.getElementById('realMinHint').textContent =
+    'Depósito mínimo: $' + parseFloat(minDeposit).toFixed(2);
+  document.getElementById('realSummary').innerHTML =
+    '<strong>' + name + '</strong> — ' + platform + '<br>' +
+    'Apalancamiento: <strong>1:' + leverage + '</strong> · ' +
+    'Spread: <strong>' + spread + ' pips</strong><br>' +
+    'Comisión/lote: <strong>$' + parseFloat(commPerLot).toFixed(0) + '</strong>';
+  openModal('realModal');
+}
+
+function openDemoModal(productId, name, defaultBalance, platform, leverage, spread, commPerLot) {
+  document.getElementById('demoProductId').value = productId;
+  document.getElementById('demoSummary').innerHTML =
+    '<strong>' + name + '</strong> — ' + platform + '<br>' +
+    'Balance virtual: <strong>$' + parseFloat(defaultBalance).toLocaleString() + '</strong> · ' +
+    'Apalancamiento: <strong>1:' + leverage + '</strong><br>' +
+    'Spread: <strong>' + spread + ' pips</strong> · ' +
+    'Comisión/lote: <strong>$' + parseFloat(commPerLot).toFixed(0) + '</strong>';
+  openModal('demoModal');
+}
+
+/* Wallet balance polling */
+(function() {
+  async function refresh() {
+    try {
+      const r = await fetch("{% url 'simulator:wallet_balance' %}", { credentials: 'same-origin' });
+      if (!r.ok) return;
+      const d = await r.json();
+      const el = document.getElementById('realWalletBal');
+      if (el) el.textContent = '$' + parseFloat(d.balance).toFixed(2);
+    } catch(_) {}
+  }
+  setInterval(refresh, 12000);
+})();
+</script>
+{% endblock %}
