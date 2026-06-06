@@ -1053,7 +1053,8 @@
         <span id="accBidAsk">—</span>
       </div>
 
-      <!-- Challenge Progress (compact) -->
+      <!-- Challenge Progress (compact) — CHALLENGE / FUNDED accounts only -->
+      {% if show_challenge_panel %}
       <div class="rc-section" id="challengeCard">
         <div class="rc-section-lbl">Challenge Progress</div>
 
@@ -1134,6 +1135,88 @@
                style="width:{{ max_dd_bar_pct|floatformat:1 }}%"></div>
         </div>
       </div>
+      {% endif %}
+
+      <!-- Account Rules — DEMO / RETAIL / STANDARD / ECN / CRYPTO accounts only -->
+      {% if show_account_rules_panel %}
+      <div class="rc-section" id="accountRulesCard">
+        <div class="rc-section-lbl">Account Rules</div>
+
+        <div class="chal-row">
+          <span class="chal-k">Product</span>
+          <span class="chal-v" id="arProductName">{{ acct_rules.product_name }}</span>
+        </div>
+        <div class="chal-row">
+          <span class="chal-k">Type</span>
+          <span class="chal-v">{{ acct_rules.account_type }}</span>
+        </div>
+        <div class="chal-row">
+          <span class="chal-k">Currency</span>
+          <span class="chal-v" id="arCurrency">{{ acct_rules.currency }}</span>
+        </div>
+        <div class="chal-row">
+          <span class="chal-k">Leverage</span>
+          <span class="chal-v">1:{{ acct_rules.leverage }}</span>
+        </div>
+
+        {% if acct_rules.spread_pips is not None %}
+        <div class="chal-row">
+          <span class="chal-k">Spread</span>
+          <span class="chal-v">{% if acct_rules.spread_pips > 0 %}{{ acct_rules.spread_pips }} pips{% else %}Raw (0.0 pips){% endif %}</span>
+        </div>
+        {% endif %}
+
+        {% if acct_rules.commission_per_lot is not None %}
+        <div class="chal-row">
+          <span class="chal-k">Commission</span>
+          <span class="chal-v">{% if acct_rules.commission_per_lot > 0 %}${{ acct_rules.commission_per_lot }}/lot{% else %}—{% endif %}</span>
+        </div>
+        {% endif %}
+
+        {% if acct_rules.max_lot_size %}
+        <div class="chal-row">
+          <span class="chal-k">Max Lot Size</span>
+          <span class="chal-v">{{ acct_rules.max_lot_size }}</span>
+        </div>
+        {% endif %}
+
+        <div style="border-top:1px solid rgba(255,255,255,.06);margin:7px 0 5px;"></div>
+        <div class="rc-section-lbl" style="margin-bottom:5px;">Account Health</div>
+
+        <div class="chal-row">
+          <span class="chal-k">Balance</span>
+          <span class="chal-v" id="arBalance">—</span>
+        </div>
+        <div class="chal-row">
+          <span class="chal-k">Equity</span>
+          <span class="chal-v" id="arEquity">—</span>
+        </div>
+        <div class="chal-row">
+          <span class="chal-k">Margin Used</span>
+          <span class="chal-v" id="arMarginUsed">—</span>
+        </div>
+        <div class="chal-row">
+          <span class="chal-k">Free Margin</span>
+          <span class="chal-v" id="arFreeMargin">—</span>
+        </div>
+        <div class="chal-row">
+          <span class="chal-k">Margin Level</span>
+          <span class="chal-v" id="arMarginLevel">—</span>
+        </div>
+
+        {% if acct_rules.margin_call_level is not None %}
+        <div style="border-top:1px solid rgba(255,255,255,.06);margin:7px 0 5px;"></div>
+        <div class="chal-row">
+          <span class="chal-k">Margin Call</span>
+          <span class="chal-v">{{ acct_rules.margin_call_level }}%</span>
+        </div>
+        <div class="chal-row">
+          <span class="chal-k">Stop Out</span>
+          <span class="chal-v">{{ acct_rules.stopout_level }}%</span>
+        </div>
+        {% endif %}
+      </div>
+      {% endif %}
 
       <!-- Funded Account Payout Section -->
       {% if funded_section %}
@@ -2774,7 +2857,7 @@ function renderAccount(msg){
   if(cMBar){cMBar.style.width=maxPct.toFixed(1)+'%';cMBar.className='chal-bar chal-bar-dd'+(totalDDUsed<maxDDLimit*0.5?' safe':'');}
   if(cMPct)cMPct.textContent=totalDDUsed.toFixed(2)+'% / '+maxDDLimit+'%';
 
-  // Phase 6B — product rule fields
+  // Phase 6B — product rule fields (header bar)
   const pnEl=document.getElementById('accProductName');
   if(pnEl&&msg.product_name)pnEl.textContent=msg.product_name;
   const commEl=document.getElementById('accCommission');
@@ -2783,6 +2866,19 @@ function renderAccount(msg){
   if(spEl){const s=Number(msg.spread_pips??0);spEl.textContent=s>0?s.toFixed(1)+' pips':'raw';}
   const curEl=document.getElementById('accCurrency');
   if(curEl)curEl.textContent=msg.currency||'USD';
+
+  // Account Rules card — Account Health live fields
+  const arBal=document.getElementById('arBalance');   if(arBal)arBal.textContent=usd(msg.balance);
+  const arEq=document.getElementById('arEquity');     if(arEq)arEq.textContent=usd(equity);
+  const arMU=document.getElementById('arMarginUsed'); if(arMU)arMU.textContent=usd(margin);
+  const arFM=document.getElementById('arFreeMargin'); if(arFM)arFM.textContent=usd(free);
+  const arML=document.getElementById('arMarginLevel');
+  if(arML){const ml=Number(msg.margin_level??0);arML.textContent=margin>0?ml.toFixed(1)+'%':'∞';arML.style.color=ml>0&&ml<150?'#ef5350':ml<300?'#ff9800':'';}
+  // product name live update from WS (overrides server-rendered value)
+  const arPN=document.getElementById('arProductName');
+  if(arPN&&msg.product_name)arPN.textContent=msg.product_name;
+  const arCur=document.getElementById('arCurrency');
+  if(arCur&&msg.currency)arCur.textContent=msg.currency;
 }
 
 /* ── Global quickbar handlers ── */

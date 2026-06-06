@@ -633,12 +633,34 @@ def trading_dashboard(request, account_id=None):
             funded_days_until_payout = max(0, (_next_date - _today_date).days)
     # ─────────────────────────────────────────────────────────────────────
 
+    # ── Panel mode: which right-column card to show ───────────────────────────
+    _acct_type = account.account_type
+    show_challenge_panel    = _acct_type in ("CHALLENGE", "FUNDED")
+    show_account_rules_panel = _acct_type in MARGIN_ENGINE_TYPES
+
+    # Account rules snapshot — used by the Account Rules card for margin accounts
+    acct_rules = {
+        "product_name":       account.product_name_snapshot or _acct_type,
+        "account_type":       _acct_type,
+        "currency":           account.currency or "USD",
+        "leverage":           account.leverage_snapshot or account.leverage,
+        "spread_pips":        account.spread_pips_snapshot,
+        "commission_per_lot": account.commission_per_lot_snapshot,
+        "margin_call_level":  account.margin_call_level_snapshot,
+        "stopout_level":      account.stopout_level_snapshot,
+        "max_lot_size":       account.max_lot_size_snapshot,
+    }
+
     context = {
         'account': account,
         'account_id': account.id,
         'trades': trades,
         'open_trades_json': json.dumps(formatted_trades, cls=DjangoJSONEncoder),
         'active_section': 'trading',
+        # Panel mode flags
+        'show_challenge_panel':    show_challenge_panel,
+        'show_account_rules_panel': show_account_rules_panel,
+        'acct_rules':              acct_rules,
         # Phase 4A intelligence
         'realized_dd_pct':       realized_dd_pct,
         'daily_realized_dd_pct': daily_realized_dd_pct,
