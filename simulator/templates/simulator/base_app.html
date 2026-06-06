@@ -413,6 +413,12 @@
         <span class="sb-text">Mis Cuentas</span>
       </a>
 
+      <!-- Abrir Cuenta -->
+      <a href="{% url 'simulator:account_open' %}" class="sb-link {% if active_section == 'account_open' %}active{% endif %}">
+        <span class="sb-icon"><i class="fa-solid fa-circle-plus"></i></span>
+        <span class="sb-text">Abrir Cuenta</span>
+      </a>
+
       <!-- Cartera (dropdown) -->
       <div class="sb-group {% if active_section == 'deposit' or active_section == 'deposit_history' or active_section == 'withdraw' or active_section == 'withdraw_history' %}open{% endif %}"
            data-group="cartera">
