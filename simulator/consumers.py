@@ -57,6 +57,113 @@ def base_price_for(symbol: str) -> float:
     return get_spec(symbol).base_price
 
 
+# ── Phase 6B.1 — Pre-Trade Margin Guard ──────────────────────────────────────
+# Default caps applied to all accounts. Product snapshots can supply
+# tighter per-account values (margin_call_level_snapshot, max_lot_size_snapshot,
+# allowed_symbols_snapshot) that override these global defaults.
+
+_DEFAULT_MAX_MARGIN_PER_TRADE_PCT = 10.0   # single-trade margin / equity ≤ 10 %
+_DEFAULT_MAX_TOTAL_MARGIN_PCT     = 50.0   # total margin after open / equity ≤ 50 %
+
+
+def _compute_pretrade_margin_guard(
+    symbol: str,
+    qty: float,
+    entry_px: float,
+    equity: float,
+    margin_used_now: float,
+    account_snap: dict,
+    spec_max_leverage: int,
+    spec_contract_size: float,
+) -> tuple[bool, str, str]:
+    """
+    Pure pre-trade guard — no I/O, no DB, no side effects.
+
+    Returns (ok, code, user_message).
+      ok=True  → order may proceed
+      ok=False → order rejected; code and message sent to the frontend
+
+    Checks (in order):
+      1. allowed_symbols_snapshot  — symbol whitelist
+      2. max_lot_size_snapshot     — product-level hard lot cap
+      3. per-trade margin %        — required_margin / equity ≤ 10 %
+      4. total margin after open % — (used + required) / equity ≤ 50 %
+      5. margin_level projection   — equity / (used + required) ≥ margin_call_level_snapshot
+    """
+    # 1 — Symbol whitelist (None = all symbols allowed)
+    allowed = account_snap.get("allowed_symbols")
+    if allowed is not None and symbol not in allowed:
+        return (
+            False,
+            "symbol_not_allowed",
+            "Orden rechazada: símbolo no permitido para esta cuenta.",
+        )
+
+    # 2 — Product max lot size snapshot
+    max_lot = account_snap.get("max_lot_size")
+    if max_lot is not None and qty > float(max_lot):
+        return (
+            False,
+            "lot_size_exceeds_product_limit",
+            (
+                f"Orden rechazada: el tamaño es demasiado alto para esta cuenta. "
+                f"Máximo permitido: {float(max_lot):.3f} lotes. Prueba con un lote menor."
+            ),
+        )
+
+    # 3 — Compute required margin
+    account_lev = max(1, int(account_snap.get("leverage", 50)))
+    effective_lev = max(1, min(account_lev, spec_max_leverage))
+    required_margin = abs(entry_px * qty * spec_contract_size) / effective_lev
+    equity = max(float(equity), 0.01)
+
+    per_trade_pct = required_margin / equity * 100.0
+    if per_trade_pct > _DEFAULT_MAX_MARGIN_PER_TRADE_PCT:
+        return (
+            False,
+            "margin_per_trade_exceeded",
+            (
+                f"Orden rechazada: margen insuficiente. Esta operación requeriría "
+                f"{per_trade_pct:.1f}% de tu equity como margen "
+                f"(límite: {_DEFAULT_MAX_MARGIN_PER_TRADE_PCT:.0f}%). "
+                "Prueba con un lote menor."
+            ),
+        )
+
+    # 4 — Total margin cap after this trade
+    total_margin_after = float(margin_used_now) + required_margin
+    total_margin_pct = total_margin_after / equity * 100.0
+    if total_margin_pct > _DEFAULT_MAX_TOTAL_MARGIN_PCT:
+        return (
+            False,
+            "total_margin_exceeded",
+            (
+                f"Orden rechazada: esta operación excedería el uso máximo de margen "
+                f"permitido ({_DEFAULT_MAX_TOTAL_MARGIN_PCT:.0f}%). "
+                f"Margen total proyectado: {total_margin_pct:.1f}%. "
+                "Cierra posiciones o usa un lote menor."
+            ),
+        )
+
+    # 5 — Margin level projection vs margin_call_level_snapshot
+    margin_call_level = float(account_snap.get("margin_call_level") or 100.0)
+    if total_margin_after > 0:
+        margin_level_after = equity / total_margin_after * 100.0
+        if margin_level_after < margin_call_level:
+            return (
+                False,
+                "margin_call_level_breach",
+                (
+                    f"Orden rechazada: margen insuficiente. "
+                    f"El nivel de margen proyectado ({margin_level_after:.1f}%) quedaría "
+                    f"por debajo del límite de tu cuenta ({margin_call_level:.0f}%). "
+                    "Prueba con un lote menor."
+                ),
+            )
+
+    return True, "ok", ""
+
+
 # ======================================================
 #                       CONSUMER
 # ======================================================
@@ -577,9 +684,20 @@ class TradingConsumer(AsyncWebsocketConsumer):
             await self.send_json({"type":"positions","items":self._positions_snapshot()})
             return
 
-        # ── Position risk assessment ──────────────────────────────────
+        # Phase 6B.1 — per-product margin guard (snapshot-based, pure, no DB)
         eq_now = self.account["balance"] + self._unrealized_pnl_total()
         mg_now = self._margin_used_total()
+        _spec  = get_spec(sym)
+        _guard_ok, _guard_code, _guard_msg = _compute_pretrade_margin_guard(
+            sym, qty, self.exec_price(sym, side), eq_now, mg_now,
+            self.account, _spec.max_leverage, _spec.contract_size,
+        )
+        if not _guard_ok:
+            await self.send_json({"type": "error", "code": _guard_code, "message": _guard_msg})
+            return
+
+        # ── Position risk assessment ──────────────────────────────────
+        # eq_now / mg_now already computed above — reuse them.
         lev    = max(1, int(self.account.get("leverage", 50)))
         risk_assessment = await self._db_evaluate_risk(sym, qty, eq_now, mg_now, lev)
         risk_level = risk_assessment.get("risk_level", "LOW")
