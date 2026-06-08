@@ -41,6 +41,8 @@ from .views import (
     # Email verification
     verify_email_view,
     resend_verification_view,
+    # Legal acceptance
+    accept_terms_view,
     # Broker ecosystem modules
     calendar_view,
     associates_view,
@@ -123,6 +125,9 @@ urlpatterns = [
     # ── Email verification ───────────────────────────────────────────────────
     path("verify-email/<str:token>/", verify_email_view,       name="verify_email"),
     path("resend-verification/",      resend_verification_view, name="resend_verification"),
+
+    # ── Legal acceptance ─────────────────────────────────────────────────────
+    path("legal/accept/", accept_terms_view, name="accept_terms"),
 
     # ── Broker Ecosystem Modules ─────────────────────────────────────────────
     path("calendar/",             calendar_view,       name="calendar"),

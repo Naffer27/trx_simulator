@@ -1366,6 +1366,36 @@ class EmailVerification(models.Model):
         return f"EmailVerification(user={self.user_id}, verified={self.verified})"
 
 
+# ── Legal acceptance ──────────────────────────────────────────────────────────
+
+TERMS_VERSION            = "2026-06-v1"
+RISK_DISCLOSURE_VERSION  = "2026-06-v1"
+
+
+class TermsAcceptance(models.Model):
+    """
+    Immutable record that a user accepted the current terms and risk disclaimer.
+    A new record is required whenever TERMS_VERSION or RISK_DISCLOSURE_VERSION bumps.
+    """
+    user                    = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="terms_acceptances"
+    )
+    terms_version           = models.CharField(max_length=32)
+    risk_disclaimer_version = models.CharField(max_length=32)
+    accepted_at             = models.DateTimeField(auto_now_add=True)
+    ip_address              = models.GenericIPAddressField(null=True, blank=True)
+    user_agent              = models.CharField(max_length=512, blank=True, default="")
+
+    class Meta:
+        db_table = "simulator_terms_acceptance"
+
+    def __str__(self):
+        return (
+            f"TermsAcceptance(user={self.user_id}, "
+            f"terms={self.terms_version}, risk={self.risk_disclaimer_version})"
+        )
+
+
 class AuditLog(models.Model):
     """
     Append-only operational audit log.

@@ -17,6 +17,7 @@ from django.contrib.auth import get_user_model
 from simulator.models import (
     AccountProduct, BrokerLedger, ChallengeEnrollment, ChallengeProduct, Deposit,
     EmailVerification, FundedConfig, LedgerEntry, Position, Trade, TradingAccount,
+    TermsAcceptance, TERMS_VERSION, RISK_DISCLOSURE_VERSION,
     Wallet, WalletTransaction,
 )
 from simulator.wallet_ledger import credit_wallet, get_or_create_wallet
@@ -28,14 +29,17 @@ def make_user(
     username: str | None = None,
     password: str = "testpass123",
     email_verified: bool = True,
+    terms_accepted: bool = True,
     **kwargs,
 ) -> User:
     """
     Create and return a unique User.
 
-    email_verified=True (default) creates a confirmed EmailVerification record
-    so that money-action gates pass in tests that are not testing email verification.
-    Pass email_verified=False to test the unverified-user path.
+    email_verified=True  — creates a confirmed EmailVerification so money-action
+                           email gates pass in tests not focused on email verification.
+    terms_accepted=True  — creates a TermsAcceptance for current versions so
+                           legal gates pass in tests not focused on terms acceptance.
+    Pass False for either to exercise the blocked-user path.
     """
     from django.utils import timezone as _tz
 
@@ -47,6 +51,14 @@ def make_user(
         verified=email_verified,
         verified_at=_tz.now() if email_verified else None,
     )
+    if terms_accepted:
+        TermsAcceptance.objects.create(
+            user=user,
+            terms_version=TERMS_VERSION,
+            risk_disclaimer_version=RISK_DISCLOSURE_VERSION,
+            ip_address=None,
+            user_agent="",
+        )
     return user
 
 

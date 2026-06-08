@@ -20,7 +20,7 @@ from .models import (
     CalendarEvent, Referral, Bonus, BrokerDocument, ExpertAdvisor,
     TradingViolation, TraderScore, AccountEquitySnapshot,
     ChallengeEnrollment, ChallengeProduct, AccountProduct, Wallet,
-    EmailVerification,
+    EmailVerification, TermsAcceptance, TERMS_VERSION, RISK_DISCLOSURE_VERSION,
 )
 from .challenge_engine import (
     evaluate_phase as _ce_evaluate_phase,
@@ -64,6 +64,23 @@ def _is_email_verified(user) -> bool:
 _EMAIL_GATE_MSG = (
     "Debes verificar tu email antes de usar funciones financieras. "
     "Revisa tu bandeja de entrada."
+)
+
+
+def _has_accepted_terms(user) -> bool:
+    """Return True if the user has accepted the current terms and risk disclosure versions."""
+    try:
+        return TermsAcceptance.objects.filter(
+            user=user,
+            terms_version=TERMS_VERSION,
+            risk_disclaimer_version=RISK_DISCLOSURE_VERSION,
+        ).exists()
+    except Exception:
+        return False
+
+
+_TERMS_GATE_MSG = (
+    "Debes aceptar los términos y el aviso de riesgo antes de usar funciones financieras."
 )
 
 from market_data.symbol_specs import get_spec as _get_sym_spec, allowed_symbols as _allowed_symbols
@@ -1072,10 +1089,14 @@ def create_account_view(request):
     is_demo = product.family == AccountProduct.FAMILY_DEMO
     wallet, _ = get_or_create_wallet(request.user)
 
-    # ── Email verification gate (real accounts only) ───────────────────────────
-    if not is_demo and not _is_email_verified(request.user):
-        request.session["acct_error"] = _EMAIL_GATE_MSG
-        return redirect("simulator:accounts")
+    # ── Compliance gates — real accounts only ─────────────────────────────────
+    if not is_demo:
+        if not _is_email_verified(request.user):
+            request.session["acct_error"] = _EMAIL_GATE_MSG
+            return redirect("simulator:accounts")
+        if not _has_accepted_terms(request.user):
+            request.session["acct_error"] = _TERMS_GATE_MSG
+            return redirect("simulator:accounts")
 
     # ── Validate amount for REAL ───────────────────────────────────────────────
     if not is_demo:
@@ -1211,6 +1232,9 @@ def fund_account_view(request, account_id):
 
     if not _is_email_verified(request.user):
         request.session["acct_error"] = _EMAIL_GATE_MSG
+        return redirect("simulator:accounts")
+    if not _has_accepted_terms(request.user):
+        request.session["acct_error"] = _TERMS_GATE_MSG
         return redirect("simulator:accounts")
 
     amount = form.cleaned_data["amount"]
@@ -1569,9 +1593,11 @@ def challenge_purchase_view(request, product_id):
 
     error = None
     if request.method == "POST":
-        # ── Email verification gate ───────────────────────────────────────────
+        # ── Compliance gates (email → terms) ─────────────────────────────────
         if not _is_email_verified(request.user):
             error = _EMAIL_GATE_MSG
+        elif not _has_accepted_terms(request.user):
+            error = _TERMS_GATE_MSG
         else:
             crypto_currency = request.POST.get("crypto_currency", "").strip()
             try:
@@ -1641,11 +1667,16 @@ def deposit_view(request):
     error = None
 
     if request.method == "POST":
-        # ── Email verification gate ───────────────────────────────────────────
+        # ── Compliance gates (email → terms) ─────────────────────────────────
+        _gate_err = None
         if not _is_email_verified(request.user):
+            _gate_err = _EMAIL_GATE_MSG
+        elif not _has_accepted_terms(request.user):
+            _gate_err = _TERMS_GATE_MSG
+        if _gate_err:
             return render(request, "simulator/deposit.html", {
                 "form": DepositForm(), "wallet": wallet,
-                "error": _EMAIL_GATE_MSG, "active_section": "deposit",
+                "error": _gate_err, "active_section": "deposit",
             })
 
         form = DepositForm(request.POST)
@@ -2071,9 +2102,11 @@ def withdraw_view(request):
     if request.method == "POST":
         form = WithdrawForm(request.POST)
         if form.is_valid():
-            # ── Email verification gate ────────────────────────────────────────
+            # ── Compliance gates (email → terms → 2FA) ────────────────────────
             if not _is_email_verified(request.user):
                 error = _EMAIL_GATE_MSG
+            elif not _has_accepted_terms(request.user):
+                error = _TERMS_GATE_MSG
 
             # ── 2FA gate — checked before any financial operation ──────────────
             if not error:
@@ -3116,6 +3149,50 @@ def verify_email_view(request, token: str):
             context["message"] = "No se pudo completar la verificación. Intenta de nuevo."
 
     return render(request, "simulator/email_verify.html", context)
+
+
+@login_required
+def accept_terms_view(request):
+    """
+    GET  /legal/accept/        — show terms + risk disclaimer checkboxes.
+    POST /legal/accept/        — validate, persist TermsAcceptance, redirect.
+
+    Supports ?next=<path> to return user to their original destination.
+    """
+    _next = request.GET.get("next") or request.POST.get("next") or ""
+    if _next and not _next.startswith("/"):
+        _next = ""  # reject absolute URLs / off-site redirects
+
+    # If already accepted, fast-forward
+    if _has_accepted_terms(request.user):
+        return redirect(_next or reverse("simulator:home"))
+
+    error = None
+    if request.method == "POST":
+        required = ["accept_terms", "accept_risk", "accept_withdrawal_policy", "understand_risk"]
+        if not all(request.POST.get(f) for f in required):
+            error = "Debes marcar todas las casillas para continuar."
+        else:
+            TermsAcceptance.objects.get_or_create(
+                user=request.user,
+                terms_version=TERMS_VERSION,
+                risk_disclaimer_version=RISK_DISCLOSURE_VERSION,
+                defaults={
+                    "ip_address": get_client_ip(request),
+                    "user_agent": request.META.get("HTTP_USER_AGENT", "")[:512],
+                },
+            )
+            logger.info("[accept_terms] user=%s terms=%s risk=%s",
+                        request.user.username, TERMS_VERSION, RISK_DISCLOSURE_VERSION)
+            return redirect(_next or reverse("simulator:home"))
+
+    return render(request, "simulator/terms_accept.html", {
+        "error":          error,
+        "next":           _next,
+        "terms_version":  TERMS_VERSION,
+        "risk_version":   RISK_DISCLOSURE_VERSION,
+        "active_section": "legal",
+    })
 
 
 @login_required
