@@ -2012,14 +2012,31 @@ def withdraw_view(request):
     if request.method == "POST":
         form = WithdrawForm(request.POST)
         if form.is_valid():
-            amount_usd      = form.cleaned_data["amount_usd"]
-            crypto_currency = form.cleaned_data["crypto_currency"]
-            wallet_address  = form.cleaned_data["wallet_address"]
-
-            # Fast pre-check for UX (non-atomic; real check is inside atomic below)
-            if wallet.available_balance < amount_usd:
-                error = f"Balance insuficiente. Disponible: ${wallet.available_balance:,.2f}"
+            # ── 2FA gate — checked before any financial operation ──────────────
+            from .models import TOTPDevice
+            from .two_factor import verify_totp_code as _verify_otp
+            _device = TOTPDevice.objects.filter(user=request.user, confirmed=True).first()
+            if not _device:
+                error = "Debes activar 2FA (autenticación de dos factores) antes de solicitar retiros."
             else:
+                _otp_code = request.POST.get("otp_code", "").strip()
+                if not _verify_otp(_device.secret, _otp_code):
+                    security_log("withdrawal.2fa_failed",
+                                 username=request.user.username, user_id=request.user.pk)
+                    error = "Código 2FA incorrecto. Verifica tu app y vuelve a intentarlo."
+
+            if error:
+                pass  # fall through to re-render form with error
+            else:
+                amount_usd      = form.cleaned_data["amount_usd"]
+                crypto_currency = form.cleaned_data["crypto_currency"]
+                wallet_address  = form.cleaned_data["wallet_address"]
+
+            # ── Original financial flow — only reached when 2FA passed ─────────
+            if not error and wallet.available_balance < amount_usd:
+                error = f"Balance insuficiente. Disponible: ${wallet.available_balance:,.2f}"
+
+            if not error:
                 try:
                     with transaction.atomic():
                         # Lock wallet row — serializes ALL concurrent withdrawal
