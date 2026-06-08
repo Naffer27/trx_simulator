@@ -29,6 +29,8 @@ EV_DEPOSIT_CALLBACK  = "deposit.callback"
 
 EV_WITHDRAW_REQUEST  = "withdrawal.requested"
 EV_WITHDRAW_CALLBACK = "withdrawal.callback"
+EV_WITHDRAW_APPROVED = "withdrawal.approved"
+EV_WITHDRAW_REJECTED = "withdrawal.rejected"
 EV_WITHDRAW_COMPLETE = "withdrawal.completed"
 EV_WITHDRAW_FAILED   = "withdrawal.failed"
 EV_WITHDRAW_REFUNDED = "withdrawal.refunded"

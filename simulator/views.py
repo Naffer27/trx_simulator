@@ -37,11 +37,19 @@ from .audit import (
     log_audit,
     EV_AUTH_LOGIN_SUCCESS, EV_AUTH_LOGIN_FAILED,
     EV_DEPOSIT_CREATED, EV_DEPOSIT_CREDITED, EV_DEPOSIT_CALLBACK,
-    EV_WITHDRAW_REQUEST, EV_WITHDRAW_CALLBACK, EV_WITHDRAW_COMPLETE,
+    EV_WITHDRAW_REQUEST, EV_WITHDRAW_CALLBACK, EV_WITHDRAW_APPROVED,
+    EV_WITHDRAW_REJECTED, EV_WITHDRAW_COMPLETE,
     EV_WITHDRAW_FAILED, EV_WITHDRAW_REFUNDED,
     EV_ACCOUNT_FUNDED, EV_ACCOUNT_WITHDRAWN,
     EV_ADMIN_VIEW,
 )
+
+
+def _mask_wallet(addr: str) -> str:
+    """Return a privacy-safe representation: first 6 + ... + last 4 chars."""
+    if not addr or len(addr) <= 10:
+        return addr
+    return f"{addr[:6]}...{addr[-4:]}"
 from market_data.symbol_specs import get_spec as _get_sym_spec, allowed_symbols as _allowed_symbols
 
 logger = logging.getLogger(__name__)
@@ -2057,25 +2065,43 @@ def withdraw_view(request):
                         },
                     )
 
+                    _masked_addr = _mask_wallet(wallet_address)
                     try:
-                        from django.core.mail import send_mail as _send_mail
-                        _send_mail(
+                        from .tasks import send_email_async as _send_email
+                        _send_email.delay(
                             subject=f"Solicitud de retiro #{wr.id} recibida — Money Brokers",
                             message=(
                                 f"Hola {request.user.username},\n\n"
                                 f"Tu solicitud de retiro #{wr.id} fue recibida y está siendo revisada.\n\n"
                                 f"  Monto:        ${amount_usd} USD\n"
                                 f"  Criptomoneda: {crypto_currency.upper()}\n"
-                                f"  Dirección:    {wallet_address}\n\n"
+                                f"  Dirección:    {_masked_addr}\n\n"
                                 f"Te notificaremos cuando sea procesada (24-48h).\n\n"
                                 f"— Money Brokers"
                             ),
-                            from_email=settings.DEFAULT_FROM_EMAIL,
                             recipient_list=[request.user.email],
-                            fail_silently=True,
                         )
                     except Exception as mail_exc:
-                        logger.warning("[withdraw] confirmation email failed: %s", mail_exc)
+                        logger.warning("[withdraw] user confirmation email failed wr=%d: %s", wr.id, mail_exc)
+
+                    try:
+                        from .tasks import send_email_async as _send_email
+                        _admin_email = settings.ADMINS[0][1] if settings.ADMINS else None
+                        if _admin_email:
+                            _send_email.delay(
+                                subject=f"[Admin] Nueva solicitud de retiro #{wr.id} — ${amount_usd}",
+                                message=(
+                                    f"Usuario:    {request.user.username} ({request.user.email})\n"
+                                    f"Monto:      ${amount_usd} USD\n"
+                                    f"Moneda:     {crypto_currency.upper()}\n"
+                                    f"Dirección:  {_masked_addr}\n"
+                                    f"WR ID:      #{wr.id}\n\n"
+                                    f"Revisar en el panel de administración."
+                                ),
+                                recipient_list=[_admin_email],
+                            )
+                    except Exception as mail_exc:
+                        logger.warning("[withdraw] admin notification email failed wr=%d: %s", wr.id, mail_exc)
 
                     return redirect("simulator:withdraw_history")
 
@@ -2196,19 +2222,28 @@ def withdraw_payout_callback(request):
                 )
                 logger.info("[payout_cb] REFUNDED wr_id=%d amount=%s", wr.id, wr.amount_usd)
                 log_audit(
-                    request, EV_WITHDRAW_REFUNDED,
-                    f"Withdrawal #{wr.id} FAILED — refunded ${wr.amount_usd}",
+                    request, EV_WITHDRAW_FAILED,
+                    f"Withdrawal #{wr.id} FAILED by NowPayments — payout {payout_id}",
                     detail={
                         "withdrawal_id": wr.id,
                         "payout_id": payout_id,
                         "np_status": np_status,
                         "amount_usd": str(wr.amount_usd),
+                    },
+                )
+                log_audit(
+                    request, EV_WITHDRAW_REFUNDED,
+                    f"Withdrawal #{wr.id} refunded ${wr.amount_usd} after payout failure",
+                    detail={
+                        "withdrawal_id": wr.id,
+                        "payout_id": payout_id,
+                        "amount_usd": str(wr.amount_usd),
                         "wallet_id": wallet.id,
                     },
                 )
                 try:
-                    from django.core.mail import send_mail as _send_mail
-                    _send_mail(
+                    from .tasks import send_email_async as _send_email
+                    _send_email.delay(
                         subject=f"Retiro #{wr.id} fallido — fondos devueltos",
                         message=(
                             f"Hola {wr.user.username},\n\n"
@@ -2217,12 +2252,10 @@ def withdraw_payout_callback(request):
                             f"Contacta a soporte si tienes dudas.\n\n"
                             f"— Money Brokers"
                         ),
-                        from_email=settings.DEFAULT_FROM_EMAIL,
                         recipient_list=[wr.user.email],
-                        fail_silently=True,
                     )
-                except Exception:
-                    pass
+                except Exception as mail_exc:
+                    logger.warning("[payout_cb] failed email queuing failed wr=%d: %s", wr.id, mail_exc)
 
             elif new_status == WithdrawalRequest.STATUS_COMPLETED:
                 logger.info("[payout_cb] COMPLETED wr_id=%d payout_id=%s", wr.id, payout_id)
@@ -2235,27 +2268,25 @@ def withdraw_payout_callback(request):
                         "amount_usd": str(wr.amount_usd),
                         "crypto_amount": str(wr.crypto_amount),
                         "currency": wr.crypto_currency,
-                        "wallet_address": wr.wallet_address,
+                        "wallet_address": _mask_wallet(wr.wallet_address),
                     },
                 )
                 try:
-                    from django.core.mail import send_mail as _send_mail
-                    _send_mail(
+                    from .tasks import send_email_async as _send_email
+                    _send_email.delay(
                         subject=f"Retiro #{wr.id} completado — Money Brokers",
                         message=(
                             f"Hola {wr.user.username},\n\n"
                             f"Tu retiro #{wr.id} fue enviado exitosamente.\n\n"
                             f"  Monto:     ${wr.amount_usd} USD\n"
                             f"  Cripto:    {wr.crypto_amount} {wr.crypto_currency.upper()}\n"
-                            f"  Dirección: {wr.wallet_address}\n\n"
+                            f"  Dirección: {_mask_wallet(wr.wallet_address)}\n\n"
                             f"— Money Brokers"
                         ),
-                        from_email=settings.DEFAULT_FROM_EMAIL,
                         recipient_list=[wr.user.email],
-                        fail_silently=True,
                     )
-                except Exception:
-                    pass
+                except Exception as mail_exc:
+                    logger.warning("[payout_cb] completed email queuing failed wr=%d: %s", wr.id, mail_exc)
 
             WithdrawalRequest.objects.filter(pk=wr.pk).update(**update)
 

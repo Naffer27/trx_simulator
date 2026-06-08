@@ -1332,6 +1332,12 @@ import logging as _logging
 _wlog = _logging.getLogger(__name__)
 
 
+def _mask_wallet(addr: str) -> str:
+    if not addr or len(addr) <= 10:
+        return addr
+    return f"{addr[:6]}...{addr[-4:]}"
+
+
 @admin.action(description="✅ Aprobar — enviar pago crypto vía NowPayments")
 def approve_withdrawals(modeladmin, request, queryset):
     from . import nowpayments as _np
@@ -1367,24 +1373,36 @@ def approve_withdrawals(modeladmin, request, queryset):
                 reviewed_by      = request.user,
                 reviewed_at      = now(),
             )
+            from .audit import log_audit, EV_WITHDRAW_APPROVED
+            log_audit(
+                request, EV_WITHDRAW_APPROVED,
+                f"Withdrawal #{wr.id} approved by {request.user.username} — ${wr.amount_usd}",
+                detail={
+                    "withdrawal_id": wr.id,
+                    "amount_usd": str(wr.amount_usd),
+                    "currency": wr.crypto_currency,
+                    "np_batch_id": batch_id,
+                    "np_payout_id": payout_id,
+                    "reviewed_by": request.user.username,
+                },
+            )
             try:
-                send_mail(
+                from .tasks import send_email_async as _send_email
+                _send_email.delay(
                     subject=f"Retiro #{wr.id} aprobado — en proceso",
                     message=(
                         f"Hola {wr.user.username},\n\n"
                         f"Tu retiro #{wr.id} fue aprobado y está siendo enviado.\n\n"
                         f"  Monto:     ${wr.amount_usd} USD\n"
                         f"  Cripto:    {crypto_amount} {wr.crypto_currency.upper()}\n"
-                        f"  Dirección: {wr.wallet_address}\n\n"
+                        f"  Dirección: {_mask_wallet(wr.wallet_address)}\n\n"
                         f"El pago llegará en los próximos minutos según la red.\n\n"
                         f"— Money Brokers"
                     ),
-                    from_email=_cfg.DEFAULT_FROM_EMAIL,
                     recipient_list=[wr.user.email],
-                    fail_silently=True,
                 )
-            except Exception:
-                pass
+            except Exception as mail_exc:
+                _wlog.warning("[admin] approve email queuing failed wr=%d: %s", wr.id, mail_exc)
             ok += 1
 
         except Exception as exc:
@@ -1425,8 +1443,20 @@ def reject_withdrawals(modeladmin, request, queryset):
                 reviewed_by = request.user,
                 reviewed_at = now(),
             )
+            from .audit import log_audit, EV_WITHDRAW_REJECTED
+            log_audit(
+                request, EV_WITHDRAW_REJECTED,
+                f"Withdrawal #{wr.id} rejected by {request.user.username} — ${wr.amount_usd} refunded",
+                detail={
+                    "withdrawal_id": wr.id,
+                    "amount_usd": str(wr.amount_usd),
+                    "currency": wr.crypto_currency,
+                    "reviewed_by": request.user.username,
+                },
+            )
             try:
-                send_mail(
+                from .tasks import send_email_async as _send_email
+                _send_email.delay(
                     subject=f"Retiro #{wr.id} rechazado — fondos devueltos",
                     message=(
                         f"Hola {wr.user.username},\n\n"
@@ -1435,12 +1465,10 @@ def reject_withdrawals(modeladmin, request, queryset):
                         f"Contacta a soporte para más información.\n\n"
                         f"— Money Brokers"
                     ),
-                    from_email=_cfg.DEFAULT_FROM_EMAIL,
                     recipient_list=[wr.user.email],
-                    fail_silently=True,
                 )
-            except Exception:
-                pass
+            except Exception as mail_exc:
+                _wlog.warning("[admin] reject email queuing failed wr=%d: %s", wr.id, mail_exc)
             count += 1
         except Exception as exc:
             _wlog.error("[admin] reject withdrawal #%d failed: %s", wr.id, exc, exc_info=True)

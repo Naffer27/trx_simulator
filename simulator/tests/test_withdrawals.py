@@ -1,6 +1,7 @@
 # simulator/tests/test_withdrawals.py
 """
-Withdrawal safety tests — double-debit prevention, atomicity, idempotency.
+Withdrawal safety tests — double-debit prevention, atomicity, idempotency,
+audit logging, and email notifications.
 
 Covers:
   - Sufficient balance required to create withdrawal
@@ -12,18 +13,24 @@ Covers:
   - payout_callback: COMPLETED status does NOT refund wallet
   - payout_callback: idempotent — second FAILED IPN does not double-refund
   - User cannot see/affect another user's withdrawals
+  - Audit log created at every lifecycle stage
+  - User and admin emails queued at request; user email queued at approve/reject/callback
+  - Wallet address masked in all outbound emails
 """
 import json
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import patch, call
 
-from django.test import TestCase
+from django.test import TestCase, RequestFactory
 from django.urls import reverse
+from django.contrib.auth import get_user_model
 
 from simulator.models import (
-    Wallet, WalletTransaction, WithdrawalRequest,
+    AuditLog, Wallet, WalletTransaction, WithdrawalRequest,
 )
 from simulator.tests.factories import make_user, make_wallet
+
+User = get_user_model()
 
 WITHDRAW_URL  = "/withdraw/"
 CALLBACK_URL  = "/withdraw/callback/"
@@ -297,3 +304,260 @@ class WithdrawalUserIsolationTests(TestCase):
         self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
         self.wallet_b.refresh_from_db()
         self.assertEqual(self.wallet_b.available_balance, Decimal("300"))
+
+
+# ── Audit log ────────────────────────────────────────────────────────────────
+
+_PATCH_EMAIL = patch("simulator.tasks.send_email_async.delay")
+
+
+class WithdrawalAuditLogTests(TestCase):
+    def setUp(self):
+        _PATCH_RATELIMIT.start()
+        _PATCH_EMAIL.start()
+        self.user   = make_user(email="audit@test.com")
+        self.wallet = make_wallet(self.user, initial_balance=Decimal("500"))
+        self.client.force_login(self.user)
+
+    def tearDown(self):
+        _PATCH_RATELIMIT.stop()
+        _PATCH_EMAIL.stop()
+
+    def test_requested_creates_audit_log(self):
+        self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+        self.assertTrue(
+            AuditLog.objects.filter(event_type="withdrawal.requested").exists()
+        )
+
+    def test_requested_audit_log_has_correct_user(self):
+        self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+        log = AuditLog.objects.get(event_type="withdrawal.requested")
+        self.assertEqual(log.user, self.user)
+
+    def test_requested_audit_log_detail_has_withdrawal_id(self):
+        self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+        log = AuditLog.objects.get(event_type="withdrawal.requested")
+        self.assertIn("withdrawal_id", log.detail)
+
+    def _make_approved_wr(self, payout_id="np_pay_001", batch_id="batch_001", amount="80.00"):
+        from simulator.wallet_ledger import debit_wallet
+        debit_tx = debit_wallet(
+            self.wallet.id, Decimal(amount), WalletTransaction.TX_WITHDRAW, note="test"
+        )
+        return WithdrawalRequest.objects.create(
+            user=self.user, amount_usd=Decimal(amount), crypto_currency="btc",
+            wallet_address="bc1qtest", status=WithdrawalRequest.STATUS_APPROVED,
+            np_payout_id=payout_id, np_batch_id=batch_id, debit_tx=debit_tx,
+        )
+
+    @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
+    def test_failed_callback_creates_failed_audit_log(self, _sig):
+        """FAILED IPN creates withdrawal.failed audit entry."""
+        wr = self._make_approved_wr()
+        self.client.post(CALLBACK_URL, _payout_ipn(wr.id, "FAILED"),
+                         content_type="application/json")
+        self.assertTrue(
+            AuditLog.objects.filter(event_type="withdrawal.failed").exists()
+        )
+
+    @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
+    def test_failed_callback_creates_refunded_audit_log(self, _sig):
+        """FAILED IPN also creates withdrawal.refunded audit entry (funds returned)."""
+        wr = self._make_approved_wr(payout_id="np_pay_002", batch_id="batch_002")
+        self.client.post(CALLBACK_URL, _payout_ipn(wr.id, "FAILED", "np_pay_002", "batch_002"),
+                         content_type="application/json")
+        self.assertTrue(
+            AuditLog.objects.filter(event_type="withdrawal.refunded").exists()
+        )
+
+    @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
+    def test_completed_callback_creates_audit_log(self, _sig):
+        wr = self._make_approved_wr(payout_id="np_pay_003", batch_id="batch_003")
+        self.client.post(CALLBACK_URL, _payout_ipn(wr.id, "FINISHED", "np_pay_003", "batch_003"),
+                         content_type="application/json")
+        self.assertTrue(
+            AuditLog.objects.filter(event_type="withdrawal.completed").exists()
+        )
+
+
+class WithdrawalAdminAuditLogTests(TestCase):
+    """Audit logs for admin approve and reject actions."""
+
+    def setUp(self):
+        self.admin = make_user(email="admin@test.com", is_staff=True, is_superuser=True)
+        self.user  = make_user(email="auser@test.com")
+        self.wallet = make_wallet(self.user, initial_balance=Decimal("500"))
+        from simulator.wallet_ledger import debit_wallet
+        self.debit_tx = debit_wallet(
+            self.wallet.id, Decimal("80"), WalletTransaction.TX_WITHDRAW, note="test"
+        )
+        self.wr = WithdrawalRequest.objects.create(
+            user=self.user, amount_usd=Decimal("80"), crypto_currency="btc",
+            wallet_address="bc1qtest000000000000000000000000000000000",
+            status=WithdrawalRequest.STATUS_PENDING,
+            debit_tx=self.debit_tx,
+        )
+
+    def _admin_request(self):
+        from django.contrib.messages.storage.cookie import CookieStorage
+        request = RequestFactory().post("/admin/")
+        request.user = self.admin
+        request._messages = CookieStorage(request)
+        return request
+
+    @patch("simulator.tasks.send_email_async.delay")
+    @patch("simulator.nowpayments.estimate_price", return_value=Decimal("0.001"))
+    @patch("simulator.nowpayments.create_payout", return_value={
+        "id": "batch_01", "status": "CREATED",
+        "withdrawals": [{"id": "pay_01"}],
+    })
+    def test_approved_creates_audit_log(self, _payout, _price, _email):
+        from simulator.admin import approve_withdrawals
+        from django.contrib.admin.sites import AdminSite
+        from simulator.admin import WithdrawalRequestAdmin
+
+        ma = WithdrawalRequestAdmin(WithdrawalRequest, AdminSite())
+        approve_withdrawals(ma, self._admin_request(),
+                            WithdrawalRequest.objects.filter(pk=self.wr.pk))
+
+        self.assertTrue(
+            AuditLog.objects.filter(event_type="withdrawal.approved").exists()
+        )
+
+    @patch("simulator.tasks.send_email_async.delay")
+    def test_rejected_creates_audit_log(self, _email):
+        from simulator.admin import reject_withdrawals
+        from django.contrib.admin.sites import AdminSite
+        from simulator.admin import WithdrawalRequestAdmin
+
+        ma = WithdrawalRequestAdmin(WithdrawalRequest, AdminSite())
+        reject_withdrawals(ma, self._admin_request(),
+                           WithdrawalRequest.objects.filter(pk=self.wr.pk))
+
+        self.assertTrue(
+            AuditLog.objects.filter(event_type="withdrawal.rejected").exists()
+        )
+
+    @patch("simulator.tasks.send_email_async.delay")
+    def test_rejected_audit_log_detail_has_reviewed_by(self, _email):
+        from simulator.admin import reject_withdrawals
+        from django.contrib.admin.sites import AdminSite
+        from simulator.admin import WithdrawalRequestAdmin
+
+        ma = WithdrawalRequestAdmin(WithdrawalRequest, AdminSite())
+        reject_withdrawals(ma, self._admin_request(),
+                           WithdrawalRequest.objects.filter(pk=self.wr.pk))
+
+        log = AuditLog.objects.get(event_type="withdrawal.rejected")
+        self.assertEqual(log.detail.get("reviewed_by"), self.admin.username)
+
+
+# ── Email notifications ───────────────────────────────────────────────────────
+
+class WithdrawalEmailTests(TestCase):
+    def setUp(self):
+        _PATCH_RATELIMIT.start()
+        self.user   = make_user(email="emailtest@test.com")
+        self.wallet = make_wallet(self.user, initial_balance=Decimal("500"))
+        self.client.force_login(self.user)
+
+    def tearDown(self):
+        _PATCH_RATELIMIT.stop()
+
+    @patch("simulator.tasks.send_email_async.delay")
+    def test_user_confirmation_email_queued_on_request(self, mock_delay):
+        self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+        # At least one call whose recipient_list includes the user's email
+        user_email_calls = [
+            c for c in mock_delay.call_args_list
+            if self.user.email in c.kwargs.get("recipient_list", [])
+        ]
+        self.assertTrue(len(user_email_calls) >= 1)
+
+    @patch("simulator.tasks.send_email_async.delay")
+    def test_admin_notification_email_queued_on_request(self, mock_delay):
+        from django.conf import settings
+        admin_email = settings.ADMINS[0][1] if settings.ADMINS else None
+        if not admin_email:
+            self.skipTest("ADMINS not configured")
+        self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+        admin_calls = [
+            c for c in mock_delay.call_args_list
+            if admin_email in c.kwargs.get("recipient_list", [])
+        ]
+        self.assertTrue(len(admin_calls) >= 1)
+
+    @patch("simulator.tasks.send_email_async.delay")
+    def test_wallet_address_masked_in_user_email(self, mock_delay):
+        """Full wallet address must NOT appear in any outbound email body."""
+        full_addr = "bc1qtest000000000000000000000000000000000"
+        self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+        for c in mock_delay.call_args_list:
+            body = c.kwargs.get("message", "")
+            self.assertNotIn(full_addr, body,
+                             "Full wallet address leaked in email body")
+
+    @patch("simulator.tasks.send_email_async.delay")
+    def test_wallet_address_masked_format_in_user_email(self, mock_delay):
+        """Masked address in the format 'bc1qte...0000' must appear in user email."""
+        self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+        user_calls = [
+            c for c in mock_delay.call_args_list
+            if self.user.email in c.kwargs.get("recipient_list", [])
+        ]
+        self.assertTrue(len(user_calls) >= 1)
+        body = user_calls[0].kwargs.get("message", "")
+        self.assertIn("bc1qte...0000", body)
+
+    @patch("simulator.tasks.send_email_async.delay")
+    def test_email_failure_does_not_break_withdrawal_creation(self, mock_delay):
+        """If email queuing raises, the WR must still be created."""
+        mock_delay.side_effect = Exception("Celery down")
+        self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+        self.assertEqual(WithdrawalRequest.objects.filter(user=self.user).count(), 1)
+
+    @patch("simulator.tasks.send_email_async.delay")
+    @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
+    def test_completed_callback_email_queued(self, _sig, mock_delay):
+        from simulator.wallet_ledger import debit_wallet
+        debit_tx = debit_wallet(
+            self.wallet.id, Decimal("80"), WalletTransaction.TX_WITHDRAW, note="test"
+        )
+        wr = WithdrawalRequest.objects.create(
+            user=self.user, amount_usd=Decimal("80"), crypto_currency="btc",
+            wallet_address="bc1qtest000000000000000000000000000000000",
+            status=WithdrawalRequest.STATUS_APPROVED,
+            np_payout_id="np_pay_099", np_batch_id="batch_099", debit_tx=debit_tx,
+        )
+        mock_delay.reset_mock()
+        self.client.post(CALLBACK_URL,
+                         _payout_ipn(wr.id, "FINISHED", "np_pay_099", "batch_099"),
+                         content_type="application/json")
+        user_calls = [
+            c for c in mock_delay.call_args_list
+            if self.user.email in c.kwargs.get("recipient_list", [])
+        ]
+        self.assertTrue(len(user_calls) >= 1)
+
+    @patch("simulator.tasks.send_email_async.delay")
+    @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
+    def test_completed_callback_wallet_address_masked(self, _sig, mock_delay):
+        """Full wallet address must not appear in the COMPLETED callback email."""
+        from simulator.wallet_ledger import debit_wallet
+        full_addr = "bc1qtest000000000000000000000000000000000"
+        debit_tx = debit_wallet(
+            self.wallet.id, Decimal("80"), WalletTransaction.TX_WITHDRAW, note="test"
+        )
+        wr = WithdrawalRequest.objects.create(
+            user=self.user, amount_usd=Decimal("80"), crypto_currency="btc",
+            wallet_address=full_addr,
+            status=WithdrawalRequest.STATUS_APPROVED,
+            np_payout_id="np_pay_100", np_batch_id="batch_100", debit_tx=debit_tx,
+        )
+        mock_delay.reset_mock()
+        self.client.post(CALLBACK_URL,
+                         _payout_ipn(wr.id, "FINISHED", "np_pay_100", "batch_100"),
+                         content_type="application/json")
+        for c in mock_delay.call_args_list:
+            body = c.kwargs.get("message", "")
+            self.assertNotIn(full_addr, body)
