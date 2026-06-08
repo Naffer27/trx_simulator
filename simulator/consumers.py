@@ -491,7 +491,8 @@ class TradingConsumer(AsyncWebsocketConsumer):
         mid     = event["mid"]
         ts      = event["time"]
 
-        bid, ask = broker_price(symbol, raw_bid, raw_ask)
+        bid, ask = broker_price(symbol, raw_bid, raw_ask,
+                               markup_pips=float(self.account.get("spread_pips", 0.0) or 0.0))
         self.set_state(symbol, bid, ask, mid)
         await self.send_json({"type": "tick", "symbol": symbol, "bid": bid, "ask": ask, "time": ts})
         await self._on_tick(symbol, mid, volume=0.0, ts=ts)
@@ -628,6 +629,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
                     symbol,
                     round(last_close - spr / 2, dec),
                     round(last_close + spr / 2, dec),
+                    markup_pips=float(self.account.get("spread_pips", 0.0) or 0.0),
                 )
                 return hist
             log.warning("[consumer] Binance REST history failed for %s — falling back to synthetic", symbol)
@@ -660,7 +662,10 @@ class TradingConsumer(AsyncWebsocketConsumer):
         """Seed bid/ask/mid from FeedManager on connect / symbol change."""
         raw_bid = self._feed.last_bid(symbol)
         raw_ask = self._feed.last_ask(symbol)
-        self._bid_state[symbol], self._ask_state[symbol] = broker_price(symbol, raw_bid, raw_ask)
+        self._bid_state[symbol], self._ask_state[symbol] = broker_price(
+            symbol, raw_bid, raw_ask,
+            markup_pips=float(self.account.get("spread_pips", 0.0) or 0.0),
+        )
         self._price_state[symbol] = self._feed.last_price(symbol)
 
     def set_state(self, symbol, bid: float, ask: float, mid: float):
@@ -1647,14 +1652,17 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 except Exception as _bl_exc:
                     log.warning("[broker_ledger] commission insert failed pos=%s: %s", position_id, _bl_exc)
 
-            # BrokerLedger SPREAD — revenue earned at open (half-spread × qty × contract_size).
+            # BrokerLedger SPREAD — revenue = (base_pips + account_markup) × pip_size/2 × qty × contract_size
             # Nested savepoint: spread revenue failure never rolls back the trader transaction.
             _spread_cfg = _get_spread_config(symbol)
-            if _spread_cfg is not None and _spread_cfg.enabled:
+            _base_pips     = float(_spread_cfg.spread_pips) if (_spread_cfg is not None and _spread_cfg.enabled) else 0.0
+            _markup_pips   = float(self.account.get("spread_pips", 0.0) or 0.0)
+            _effective_pips = _base_pips + _markup_pips
+            if _effective_pips > 0:
                 try:
                     with transaction.atomic():
                         _spread_rev = calculate_spread_revenue(
-                            symbol, float(qty), float(_spread_cfg.spread_pips)
+                            symbol, float(qty), _effective_pips,
                         )
                         if _spread_rev > 0:
                             BrokerLedger.objects.create(
@@ -1662,8 +1670,17 @@ class TradingConsumer(AsyncWebsocketConsumer):
                                 amount=Decimal(str(_spread_rev)),
                                 source_account_id=self._db_account_id,
                                 symbol=symbol,
-                                meta={"side": side, "db_pos_id": position_id, "spread_pips": float(_spread_cfg.spread_pips)},
+                                meta={
+                                    "side": side,
+                                    "db_pos_id": position_id,
+                                    "spread_pips": _effective_pips,
+                                    "base_pips": _base_pips,
+                                    "account_markup_pips": _markup_pips,
+                                },
                             )
+                        log.debug("[broker_ledger] spread pos=%s symbol=%s effective_pips=%.4f "
+                                  "(base=%.4f markup=%.4f) rev=%.6f",
+                                  position_id, symbol, _effective_pips, _base_pips, _markup_pips, _spread_rev)
                 except Exception as _sp_exc:
                     log.warning("[broker_ledger] spread insert failed pos=%s: %s", position_id, _sp_exc)
 

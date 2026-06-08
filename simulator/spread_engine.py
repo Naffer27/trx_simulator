@@ -41,26 +41,33 @@ def _get_config(symbol: str):
     return cfg
 
 
-def broker_price(symbol: str, bid: float, ask: float) -> tuple[float, float]:
+def broker_price(symbol: str, bid: float, ask: float,
+                 markup_pips: float = 0.0) -> tuple[float, float]:
     """
-    Apply broker spread markup to raw market bid/ask.
+    Apply broker spread to raw market bid/ask.
     Returns (client_bid, client_ask).
 
+    effective_pips = BrokerSpreadConfig.spread_pips + markup_pips
     Widens the spread symmetrically:
-      client_bid = bid − (spread_pips × pip_size / 2)
-      client_ask = ask + (spread_pips × pip_size / 2)
+      client_bid = bid − (effective_pips × pip_size / 2)
+      client_ask = ask + (effective_pips × pip_size / 2)
 
-    Falls through unchanged if no config exists or on any error.
-    Normalizes symbol so 'EURUSD' and 'EUR/USD' are treated identically.
+    markup_pips is the per-account additive spread from spread_pips_snapshot
+    (0.0 for ECN; positive for Standard/Retail). Old accounts without a snapshot
+    pass markup_pips=0.0 and see pure BrokerSpreadConfig behaviour.
+
+    Falls through unchanged if effective_pips <= 0 or on any error.
     """
     try:
         symbol = normalize_symbol(symbol)
         cfg = _get_config(symbol)
-        if cfg is None:
+        base_pips = float(cfg.spread_pips) if cfg is not None else 0.0
+        effective_pips = base_pips + markup_pips
+        if effective_pips <= 0.0:
             return bid, ask
         from market_data.symbol_specs import get_spec
         spec  = get_spec(symbol)
-        extra = float(cfg.spread_pips) * spec.pip_size / 2
+        extra = effective_pips * spec.pip_size / 2
         return (
             round(bid - extra, spec.price_decimals),
             round(ask + extra, spec.price_decimals),

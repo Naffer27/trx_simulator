@@ -194,3 +194,130 @@ class TestCalculateSpreadRevenue(TestCase):
         rev1 = calculate_spread_revenue("EUR/USD", qty=0.1, spread_pips=2.0)
         rev2 = calculate_spread_revenue("EUR/USD", qty=0.2, spread_pips=2.0)
         self.assertAlmostEqual(rev2, rev1 * 2, places=8)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# broker_price — markup_pips (account-level additive spread)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestBrokerPriceMarkup(TestCase):
+    """
+    Verifies the account-level spread markup (spread_pips_snapshot) wired into
+    broker_price() via markup_pips parameter.
+
+    Model: effective_pips = BrokerSpreadConfig.spread_pips + markup_pips
+    """
+
+    def setUp(self):
+        _clear_cache()
+
+    def tearDown(self):
+        _clear_cache()
+
+    def test_old_account_zero_markup_unchanged_vs_config_only(self):
+        """Old account (NULL snapshot) → markup_pips=0.0 → identical to legacy call."""
+        make_spread_config(symbol="EUR/USD", spread_pips=Decimal("2.00"))
+        bid, ask = 1.10000, 1.10100
+
+        legacy  = broker_price("EUR/USD", bid, ask)
+        with_zero = broker_price("EUR/USD", bid, ask, markup_pips=0.0)
+
+        self.assertEqual(legacy, with_zero)
+
+    def test_ecn_markup_zero_uses_base_spread_only(self):
+        """
+        ECN product: markup_pips=0.0, BrokerSpreadConfig=2 pips.
+        effective = 2 pips → only base spread applied, no extra.
+        """
+        make_spread_config(symbol="EUR/USD", spread_pips=Decimal("2.00"))
+        bid, ask = 1.10000, 1.10100
+
+        client_bid, client_ask = broker_price("EUR/USD", bid, ask, markup_pips=0.0)
+
+        # extra = 2 × 0.0001 / 2 = 0.0001 per side
+        self.assertAlmostEqual(client_bid, bid - 0.0001, places=5)
+        self.assertAlmostEqual(client_ask, ask + 0.0001, places=5)
+
+    def test_standard_markup_adds_to_base_spread(self):
+        """
+        Standard product: markup_pips=1.0 over 2-pip base → effective=3 pips.
+        extra = 3 × 0.0001 / 2 = 0.00015 per side.
+        """
+        make_spread_config(symbol="EUR/USD", spread_pips=Decimal("2.00"))
+        bid, ask = 1.10000, 1.10100
+
+        client_bid, client_ask = broker_price("EUR/USD", bid, ask, markup_pips=1.0)
+
+        self.assertAlmostEqual(client_bid, bid - 0.00015, places=5)
+        self.assertAlmostEqual(client_ask, ask + 0.00015, places=5)
+
+    def test_no_config_markup_zero_passthrough(self):
+        """No BrokerSpreadConfig + markup_pips=0.0 → passthrough (original behaviour)."""
+        bid, ask = 1.10000, 1.10100
+
+        client_bid, client_ask = broker_price("EUR/USD", bid, ask, markup_pips=0.0)
+
+        self.assertEqual(client_bid, bid)
+        self.assertEqual(client_ask, ask)
+
+    def test_no_config_markup_positive_applies_markup_only(self):
+        """
+        No BrokerSpreadConfig + markup_pips=1.5 → applies markup alone.
+        EUR/USD: extra = 1.5 × 0.0001 / 2 = 0.000075 per side.
+        Result is rounded to price_decimals=5.
+        """
+        bid, ask = 1.10000, 1.10100
+
+        client_bid, client_ask = broker_price("EUR/USD", bid, ask, markup_pips=1.5)
+
+        # round(1.10000 − 0.000075, 5) = 1.09993
+        self.assertAlmostEqual(client_bid, round(bid - 0.000075, 5), places=5)
+        self.assertAlmostEqual(client_ask, round(ask + 0.000075, 5), places=5)
+
+    def test_btcusd_markup_coherent_with_pip_size(self):
+        """
+        BTCUSD pip_size=1.0: markup_pips=1.2 → extra = 1.2 × 1.0 / 2 = $0.60 per side.
+        With BrokerSpreadConfig=15 pips: effective=16.2 → extra = 16.2 × 1.0 / 2 = $8.10.
+        """
+        make_spread_config(symbol="BTCUSD", spread_pips=Decimal("15.00"))
+        bid, ask = 82000.00, 82015.00
+
+        client_bid, client_ask = broker_price("BTCUSD", bid, ask, markup_pips=1.2)
+
+        # effective = 16.2 pips × 1.0 pip_size / 2 = 8.10 per side
+        self.assertAlmostEqual(client_bid, bid - 8.10, places=2)
+        self.assertAlmostEqual(client_ask, ask + 8.10, places=2)
+
+    def test_btcusd_markup_only_no_config(self):
+        """BTCUSD no config + markup_pips=1.2 → extra = 1.2/2 = $0.60 per side."""
+        bid, ask = 82000.00, 82015.00
+
+        client_bid, client_ask = broker_price("BTCUSD", bid, ask, markup_pips=1.2)
+
+        self.assertAlmostEqual(client_bid, bid - 0.60, places=2)
+        self.assertAlmostEqual(client_ask, ask + 0.60, places=2)
+
+    def test_mid_price_preserved_with_markup(self):
+        """Markup widens spread symmetrically; mid-price is unchanged."""
+        make_spread_config(symbol="EUR/USD", spread_pips=Decimal("2.00"))
+        bid, ask = 1.10000, 1.10100
+
+        client_bid, client_ask = broker_price("EUR/USD", bid, ask, markup_pips=1.0)
+
+        raw_mid    = (bid + ask) / 2
+        client_mid = (client_bid + client_ask) / 2
+        self.assertAlmostEqual(raw_mid, client_mid, places=5)
+
+    def test_effective_spread_revenue_base_plus_markup(self):
+        """
+        Revenue must reflect effective total (base + markup), not base alone.
+        EUR/USD: base=2 pips, markup=1 pip → effective=3 pips, qty=1.0 lot.
+        half_spread = 3 × 0.0001 / 2 = 0.00015
+        revenue     = 0.00015 × 1.0 × 100_000 = 15.0
+        """
+        base_rev     = calculate_spread_revenue("EUR/USD", qty=1.0, spread_pips=2.0)
+        effective_rev = calculate_spread_revenue("EUR/USD", qty=1.0, spread_pips=3.0)
+
+        self.assertAlmostEqual(base_rev,      10.0, places=6)
+        self.assertAlmostEqual(effective_rev, 15.0, places=6)
+        self.assertGreater(effective_rev, base_rev)
