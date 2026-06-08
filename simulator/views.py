@@ -19,7 +19,7 @@ from .models import (
     WalletTransaction, WithdrawalRequest, MARGIN_ENGINE_TYPES,
     CalendarEvent, Referral, Bonus, BrokerDocument, ExpertAdvisor,
     TradingViolation, TraderScore, AccountEquitySnapshot,
-    ChallengeEnrollment, ChallengeProduct, AccountProduct,
+    ChallengeEnrollment, ChallengeProduct, AccountProduct, Wallet,
 )
 from .challenge_engine import (
     evaluate_phase as _ce_evaluate_phase,
@@ -1980,6 +1980,10 @@ def np_supported_currencies_view(request):
 
 # ── Crypto Withdrawal ─────────────────────────────────────────────────────────
 
+class _PendingWithdrawalExists(Exception):
+    """Raised inside the atomic block when a PENDING withdrawal already exists."""
+
+
 @login_required
 @rate_limit("withdraw", limit=5, window=60, by="user")
 def withdraw_view(request):
@@ -1987,6 +1991,12 @@ def withdraw_view(request):
     GET  /withdraw/  — show withdrawal form with wallet balance.
     POST /withdraw/  — validate, debit wallet atomically, create WithdrawalRequest.
     Funds are reserved immediately; admin approval triggers the NP payout.
+
+    Double-withdrawal prevention:
+      Inside the atomic block, the wallet row is locked with select_for_update()
+      BEFORE checking pending withdrawals. This serializes all concurrent
+      withdrawal attempts for the same user — concurrent requests block on the
+      wallet lock, so the pending check is race-condition safe.
     """
     wallet, _ = get_or_create_wallet(request.user)
     error = None
@@ -1998,11 +2008,23 @@ def withdraw_view(request):
             crypto_currency = form.cleaned_data["crypto_currency"]
             wallet_address  = form.cleaned_data["wallet_address"]
 
+            # Fast pre-check for UX (non-atomic; real check is inside atomic below)
             if wallet.available_balance < amount_usd:
                 error = f"Balance insuficiente. Disponible: ${wallet.available_balance:,.2f}"
             else:
                 try:
                     with transaction.atomic():
+                        # Lock wallet row — serializes ALL concurrent withdrawal
+                        # attempts for this user on both the pending check and debit.
+                        Wallet.objects.select_for_update().get(pk=wallet.id)
+
+                        # Guard: one PENDING withdrawal per user at a time.
+                        if WithdrawalRequest.objects.filter(
+                            user=request.user,
+                            status=WithdrawalRequest.STATUS_PENDING,
+                        ).exists():
+                            raise _PendingWithdrawalExists()
+
                         debit_tx = debit_wallet(
                             wallet.id,
                             amount_usd,
@@ -2057,6 +2079,11 @@ def withdraw_view(request):
 
                     return redirect("simulator:withdraw_history")
 
+                except _PendingWithdrawalExists:
+                    error = (
+                        "Ya tienes un retiro pendiente. "
+                        "Espera a que sea procesado antes de solicitar otro."
+                    )
                 except InsufficientFunds:
                     error = "Balance insuficiente."
                 except Exception as exc:
@@ -2144,7 +2171,14 @@ def withdraw_payout_callback(request):
 
         with transaction.atomic():
             wr = WithdrawalRequest.objects.select_for_update().get(pk=wr.pk)
-            if wr.status in (WithdrawalRequest.STATUS_COMPLETED, WithdrawalRequest.STATUS_REJECTED):
+            # All three terminal statuses are irreversible — skip idempotently.
+            # FAILED was previously missing, allowing duplicate FAILED IPNs to double-refund.
+            _TERMINAL = (
+                WithdrawalRequest.STATUS_COMPLETED,
+                WithdrawalRequest.STATUS_REJECTED,
+                WithdrawalRequest.STATUS_FAILED,
+            )
+            if wr.status in _TERMINAL:
                 logger.info("[payout_cb] already final wr_id=%d status=%s — skip", wr.id, wr.status)
                 continue
 
