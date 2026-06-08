@@ -194,15 +194,6 @@
                placeholder="••••••••" autocomplete="current-password" required>
       </div>
 
-      <div class="field">
-        <label for="id_access_code">Access Code <span style="color:#444;font-weight:400;text-transform:none;">(optional in dev)</span></label>
-        {% if code %}
-          <input type="text" id="id_access_code" name="access_code" value="{{ code }}" readonly>
-        {% else %}
-          <input type="text" id="id_access_code" name="access_code" placeholder="Código opcional — soporte te lo solicita">
-        {% endif %}
-      </div>
-
       <button type="submit" class="btn-auth">Sign In &rarr;</button>
     </form>
 
@@ -210,6 +201,9 @@
 
     <p class="auth-footer">
       Don't have an account? <a href="{% url 'simulator:register' %}">Open Account</a>
+    </p>
+    <p class="auth-footer" style="margin-top:10px;">
+      <a href="#">Forgot password?</a>
     </p>
     <p class="auth-footer" style="margin-top:12px;">
       <a href="{% url 'simulator:landing' %}">&larr; Volver</a>

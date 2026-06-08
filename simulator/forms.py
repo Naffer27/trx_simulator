@@ -9,16 +9,6 @@ from .models import TradingAccount, Deposit, MARGIN_ENGINE_TYPES
 class LoginForm(forms.Form):
     username = forms.CharField(label="Usuario", max_length=150)
     password = forms.CharField(label="Contraseña", widget=forms.PasswordInput)
-    # por defecto opcional; se vuelve requerido si hay BROKER_ACCESS_CODE y no estás en DEBUG
-    access_code = forms.CharField(label="Código de acceso", max_length=50, required=False)
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        require_code = bool(getattr(settings, "BROKER_ACCESS_CODE", "").strip()) and not settings.DEBUG
-        self.fields["access_code"].required = require_code
-        self.fields["access_code"].help_text = (
-            "Requerido por el administrador." if require_code else "Opcional (modo desarrollo)."
-        )
 
 
 class TradingAccountForm(forms.ModelForm):

@@ -176,95 +176,46 @@ def register_view(request):
 # -----------------------
 @rate_limit("login", limit=8, window=300)
 def login_view(request):
-    """
-    En DEV (DEBUG=True) o si BROKER_ACCESS_CODE está vacío → el código es opcional.
-    En PROD, si BROKER_ACCESS_CODE tiene valor → se acepta ese código global
-    o el código de Purchase del usuario.
-    """
     error = None
-    code_prefill = request.GET.get('code', None)
 
     if request.method == 'POST':
-        username    = request.POST.get('username', '')
-        password    = request.POST.get('password', '')
-        access_code = (request.POST.get('access_code') or '').strip()
+        username = request.POST.get('username', '')
+        password = request.POST.get('password', '')
 
-        # Allow login with email — resolve to username transparently
+        # Allow login with email address — resolve to username transparently
         if "@" in username:
             from django.contrib.auth import get_user_model as _gum
             _email_user = _gum().objects.filter(email=username).first()
             if _email_user:
                 username = _email_user.username
 
-        ip = get_client_ip(request)
+        ip   = get_client_ip(request)
         user = authenticate(request, username=username, password=password)
+
         if user is None:
             error = "Usuario o contraseña inválidos"
-            security_log(
-                "auth.login_failed",
-                ip=ip,
-                username=username,
-                reason="bad_credentials",
-            )
-            log_audit(request, EV_AUTH_LOGIN_FAILED, f"Login failed (bad credentials) for {username}",
+            security_log("auth.login_failed", ip=ip, username=username, reason="bad_credentials")
+            log_audit(request, EV_AUTH_LOGIN_FAILED,
+                      f"Login failed (bad credentials) for {username}",
                       detail={"username": username, "ip": ip, "reason": "bad_credentials"})
         else:
-            expected_global = (getattr(settings, "BROKER_ACCESS_CODE", "") or "").strip()
+            auth_login(request, user)
+            security_log("auth.login_success", level="info", ip=ip,
+                         username=username, user_id=user.pk)
+            log_audit(request, EV_AUTH_LOGIN_SUCCESS,
+                      f"Login success for {username}",
+                      detail={"username": username, "ip": ip})
+            active = (
+                TradingAccount.objects
+                .filter(user=user, status="Activo")
+                .order_by("-id")
+                .first()
+            )
+            if active:
+                request.session["account_id"] = active.id
+            return redirect("simulator:home")
 
-            ok_code = False
-            purchase = None
-
-            # 1) Si hay código global configurado, lo aceptamos
-            if expected_global:
-                ok_code = (access_code == expected_global)
-
-            # 2) Si no pasó por el global, probamos contra Purchase del usuario
-            if not ok_code and access_code:
-                purchase = Purchase.objects.filter(user=user, code=access_code).first()
-                ok_code = purchase is not None
-
-            # 3) En DEV o si no hay BROKER_ACCESS_CODE definido y no envían código → permitir
-            if not ok_code and (settings.DEBUG or not expected_global) and not access_code:
-                ok_code = True  # acceso libre en desarrollo
-
-            if not ok_code:
-                error = "Código inválido"
-                security_log(
-                    "auth.login_failed",
-                    ip=ip,
-                    username=username,
-                    reason="bad_access_code",
-                )
-                log_audit(request, EV_AUTH_LOGIN_FAILED, f"Login failed (bad access code) for {username}",
-                          detail={"username": username, "ip": ip, "reason": "bad_access_code"})
-            else:
-                auth_login(request, user)
-                security_log(
-                    "auth.login_success",
-                    level="info",
-                    ip=ip,
-                    username=username,
-                    user_id=user.pk,
-                )
-                log_audit(request, EV_AUTH_LOGIN_SUCCESS, f"Login success for {username}",
-                          detail={"username": username, "ip": ip})
-                # Set session to the user's most recent active account if one exists,
-                # but never create one here — account management lives in /accounts/.
-                active = (
-                    TradingAccount.objects
-                    .filter(user=user, status="Activo")
-                    .order_by("-id")
-                    .first()
-                )
-                if active:
-                    request.session["account_id"] = active.id
-                return redirect("simulator:home")
-
-    return render(request, 'simulator/login.html', {
-        'error': error,
-        'code': code_prefill,
-        'form': LoginForm(),
-    })
+    return render(request, 'simulator/login.html', {'error': error, 'form': LoginForm()})
 
 
 # -----------------------
