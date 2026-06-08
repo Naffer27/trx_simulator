@@ -190,6 +190,12 @@ class LoginUsernameEmailTests(TestCase):
 class LoginTemplateTests(TestCase):
     """Login template must not expose CODE-* placeholder that looks like purchase.code."""
 
+    def setUp(self):
+        _PATCH_RATELIMIT.start()
+
+    def tearDown(self):
+        _PATCH_RATELIMIT.stop()
+
     def test_access_code_placeholder_does_not_use_code_format(self):
         resp = self.client.get(_LOGIN_URL)
         self.assertEqual(resp.status_code, 200)
