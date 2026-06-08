@@ -191,9 +191,8 @@ Detalles de tu cuenta:
 - Balance inicial: {base_balance}
 - Nivel: {tier}
 - Fase: {phase}
-- Código de acceso: {purchase.code}
 
-Ya puedes iniciar sesión y acceder al simulador.
+Para acceder al simulador usa el username y contraseña que registraste.
 """
 
             html_message_user = f"""
@@ -245,15 +244,14 @@ Ya puedes iniciar sesión y acceder al simulador.
     <div class="content">
       <p>Hola <strong>{user.username}</strong>,</p>
       <p>Tu cuenta de fondeo ha sido creada exitosamente. Aquí tienes los detalles:</p>
-      
+
       <div class="highlight">
         <p><strong>Balance inicial:</strong> {base_balance}</p>
         <p><strong>Nivel:</strong> {tier}</p>
         <p><strong>Fase:</strong> {phase}</p>
-        <p><strong>Código de acceso:</strong> {purchase.code}</p>
       </div>
 
-      <p>Ya puedes iniciar sesión en el simulador y comenzar tu challenge.</p>
+      <p>Para acceder al simulador usa el <strong>username</strong> y <strong>contraseña</strong> que registraste.</p>
 
       <p style="text-align:center;">
         <a href="http://127.0.0.1:8000/login/" class="btn">Entrar al Simulador</a>
@@ -296,7 +294,7 @@ Un nuevo usuario ha creado cuenta:
                 fail_silently=True,
             )
 
-            return redirect("simulator:login")
+            return redirect("simulator:accounts")
     else:
         form = RegisterForm()
     return render(request, "simulator/register.html", {"form": form})
@@ -319,6 +317,13 @@ def login_view(request):
         username    = request.POST.get('username', '')
         password    = request.POST.get('password', '')
         access_code = (request.POST.get('access_code') or '').strip()
+
+        # Allow login with email — resolve to username transparently
+        if "@" in username:
+            from django.contrib.auth import get_user_model as _gum
+            _email_user = _gum().objects.filter(email=username).first()
+            if _email_user:
+                username = _email_user.username
 
         ip = get_client_ip(request)
         user = authenticate(request, username=username, password=password)
