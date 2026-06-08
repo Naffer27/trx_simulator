@@ -19,9 +19,9 @@ from django.contrib.auth import get_user_model
 from django.db import IntegrityError
 from django.test import TestCase
 
-from simulator.models import AccountProduct, TradingAccount
+from simulator.models import AccountProduct, LedgerEntry, TradingAccount, WalletTransaction
 from simulator.tests.factories import make_user, make_wallet
-from simulator.wallet_ledger import credit_wallet, get_or_create_wallet
+from simulator.wallet_ledger import InsufficientFunds, credit_wallet, get_or_create_wallet
 
 User = get_user_model()
 
@@ -350,3 +350,196 @@ class CatalogViewTests(TestCase):
         self.client.logout()
         r = self.client.get(OPEN_URL)
         self.assertEqual(r.status_code, 302)
+
+
+# ── Real account — extended correctness tests (Hotfix: wallet balance validation) ─
+
+class RealAccountBalanceCorrectnessTests(TestCase):
+    """
+    Verifies that after a successful real account creation:
+    - account.balance == deposited amount
+    - account.equity  == deposited amount
+    - wallet is debited by exactly that amount
+    - a LedgerEntry(EV_DEPOSIT) is created
+    - all product snapshot fields are populated
+    """
+
+    def setUp(self):
+        self.user    = make_user(email="corr@test.com")
+        self.wallet  = make_wallet(self.user, initial_balance=Decimal("500"))
+        self.product = _make_product(min_deposit=Decimal("10.00"))
+        _login(self.client, self.user)
+
+    @patch("simulator.tasks.send_email_async")
+    def test_account_balance_equals_deposited_amount(self, _email):
+        self.client.post(CREATE_URL, {"product_id": self.product.pk, "amount": "150"})
+        account = TradingAccount.objects.get(user=self.user)
+        self.assertEqual(account.balance, Decimal("150"))
+
+    @patch("simulator.tasks.send_email_async")
+    def test_account_equity_equals_deposited_amount(self, _email):
+        self.client.post(CREATE_URL, {"product_id": self.product.pk, "amount": "150"})
+        account = TradingAccount.objects.get(user=self.user)
+        self.assertEqual(account.equity, Decimal("150"))
+
+    @patch("simulator.tasks.send_email_async")
+    def test_wallet_debited_by_exact_amount(self, _email):
+        self.client.post(CREATE_URL, {"product_id": self.product.pk, "amount": "75"})
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.available_balance, Decimal("425"))
+
+    @patch("simulator.tasks.send_email_async")
+    def test_ledger_entry_deposit_created(self, _email):
+        self.client.post(CREATE_URL, {"product_id": self.product.pk, "amount": "200"})
+        account = TradingAccount.objects.get(user=self.user)
+        entry = LedgerEntry.objects.filter(
+            account=account,
+            event_type=LedgerEntry.EV_DEPOSIT,
+        ).first()
+        self.assertIsNotNone(entry, "LedgerEntry(EV_DEPOSIT) must be created on account funding")
+        self.assertEqual(entry.amount, Decimal("200"))
+        self.assertEqual(entry.balance_after, Decimal("200"))
+
+    @patch("simulator.tasks.send_email_async")
+    def test_product_snapshots_written(self, _email):
+        self.client.post(CREATE_URL, {"product_id": self.product.pk, "amount": "50"})
+        account = TradingAccount.objects.get(user=self.user)
+        self.assertEqual(account.product_code_snapshot, self.product.code)
+        self.assertEqual(account.product_name_snapshot, self.product.name)
+        self.assertEqual(account.leverage_snapshot, self.product.max_leverage)
+        self.assertEqual(account.margin_call_level_snapshot, self.product.margin_call_level)
+        self.assertEqual(account.stopout_level_snapshot, self.product.stopout_level)
+
+
+class RealAccountInputValidationTests(TestCase):
+    """
+    Missing / zero / negative amount must be rejected before any DB write.
+    """
+
+    def setUp(self):
+        self.user    = make_user(email="input@test.com")
+        self.wallet  = make_wallet(self.user, initial_balance=Decimal("500"))
+        self.product = _make_product(code="input-real", min_deposit=Decimal("10.00"))
+        _login(self.client, self.user)
+
+    def _no_account(self):
+        self.assertEqual(TradingAccount.objects.filter(user=self.user).count(), 0)
+
+    def test_amount_missing_rejected(self):
+        r = self.client.post(CREATE_URL, {"product_id": self.product.pk})
+        self.assertEqual(r.status_code, 302)
+        self._no_account()
+        self.assertIn("acct_error", r.wsgi_request.session)
+        self.assertIn("requerido", r.wsgi_request.session["acct_error"])
+
+    def test_amount_empty_string_rejected(self):
+        r = self.client.post(CREATE_URL, {"product_id": self.product.pk, "amount": ""})
+        self.assertEqual(r.status_code, 302)
+        self._no_account()
+        self.assertIn("acct_error", r.wsgi_request.session)
+
+    def test_amount_zero_rejected(self):
+        r = self.client.post(CREATE_URL, {"product_id": self.product.pk, "amount": "0"})
+        self.assertEqual(r.status_code, 302)
+        self._no_account()
+        self.assertIn("acct_error", r.wsgi_request.session)
+        self.assertIn("mayor a cero", r.wsgi_request.session["acct_error"])
+
+    def test_amount_negative_rejected(self):
+        r = self.client.post(CREATE_URL, {"product_id": self.product.pk, "amount": "-50"})
+        self.assertEqual(r.status_code, 302)
+        self._no_account()
+        self.assertIn("acct_error", r.wsgi_request.session)
+
+    def test_wallet_not_debited_on_missing_amount(self):
+        self.client.post(CREATE_URL, {"product_id": self.product.pk})
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.available_balance, Decimal("500"))
+
+    def test_wallet_not_debited_on_zero_amount(self):
+        self.client.post(CREATE_URL, {"product_id": self.product.pk, "amount": "0"})
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.available_balance, Decimal("500"))
+
+
+class RealAccountAtomicRollbackTests(TestCase):
+    """
+    If the wallet debit fails inside the atomic block, no TradingAccount is left behind.
+    Simulates a concurrent double-spend that passes the pre-check but fails at debit time.
+    """
+
+    def setUp(self):
+        self.user    = make_user(email="rollback@test.com")
+        self.wallet  = make_wallet(self.user, initial_balance=Decimal("500"))
+        self.product = _make_product(code="rollback-real", min_deposit=Decimal("10.00"))
+        _login(self.client, self.user)
+
+    def test_debit_failure_rolls_back_account_creation(self):
+        with patch(
+            "simulator.views.transfer_to_account",
+            side_effect=InsufficientFunds("Concurrent drain — balance gone"),
+        ):
+            r = self.client.post(
+                CREATE_URL, {"product_id": self.product.pk, "amount": "100"}
+            )
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(TradingAccount.objects.filter(user=self.user).count(), 0)
+
+    def test_wallet_intact_after_debit_failure(self):
+        with patch(
+            "simulator.views.transfer_to_account",
+            side_effect=InsufficientFunds("Concurrent drain — balance gone"),
+        ):
+            self.client.post(CREATE_URL, {"product_id": self.product.pk, "amount": "100"})
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.available_balance, Decimal("500"))
+
+    def test_email_not_sent_on_debit_failure(self):
+        with patch("simulator.tasks.send_email_async") as mock_email, \
+             patch(
+                 "simulator.views.transfer_to_account",
+                 side_effect=InsufficientFunds("Concurrent drain"),
+             ):
+            self.client.post(CREATE_URL, {"product_id": self.product.pk, "amount": "100"})
+        mock_email.delay.assert_not_called()
+
+    def test_error_message_set_on_debit_failure(self):
+        with patch(
+            "simulator.views.transfer_to_account",
+            side_effect=InsufficientFunds("Concurrent drain — balance gone"),
+        ):
+            r = self.client.post(
+                CREATE_URL, {"product_id": self.product.pk, "amount": "100"}
+            )
+        self.assertIn("acct_error", r.wsgi_request.session)
+
+
+class DemoAccountWalletIsolationTests(TestCase):
+    """Demo account creation must never touch the wallet."""
+
+    def setUp(self):
+        self.user    = make_user(email="demo_iso@test.com")
+        self.wallet  = make_wallet(self.user, initial_balance=Decimal("200"))
+        self.product = _make_demo_product(code="demo-iso")
+        _login(self.client, self.user)
+
+    @patch("simulator.tasks.send_email_async")
+    def test_demo_wallet_balance_unchanged(self, _email):
+        self.client.post(CREATE_URL, {"product_id": self.product.pk})
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.available_balance, Decimal("200"))
+
+    @patch("simulator.tasks.send_email_async")
+    def test_demo_no_wallet_transaction_created(self, _email):
+        initial_tx_count = WalletTransaction.objects.filter(wallet=self.wallet).count()
+        self.client.post(CREATE_URL, {"product_id": self.product.pk})
+        self.assertEqual(
+            WalletTransaction.objects.filter(wallet=self.wallet).count(),
+            initial_tx_count,
+        )
+
+    @patch("simulator.tasks.send_email_async")
+    def test_demo_balance_from_product_default(self, _email):
+        self.client.post(CREATE_URL, {"product_id": self.product.pk})
+        account = TradingAccount.objects.get(user=self.user)
+        self.assertEqual(account.balance, self.product.default_balance)

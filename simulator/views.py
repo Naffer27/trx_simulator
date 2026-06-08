@@ -1027,10 +1027,19 @@ def create_account_view(request):
 
     # ── Validate amount for REAL ───────────────────────────────────────────────
     if not is_demo:
+        raw_amount = request.POST.get("amount", "").strip()
+        if not raw_amount:
+            request.session["acct_error"] = "El monto es requerido para cuentas reales."
+            return redirect("simulator:accounts")
+
         try:
-            amount = Decimal(str(request.POST.get("amount", "0") or "0"))
+            amount = Decimal(str(raw_amount))
         except Exception:
             request.session["acct_error"] = "Monto inválido."
+            return redirect("simulator:accounts")
+
+        if amount <= 0:
+            request.session["acct_error"] = "El monto debe ser mayor a cero."
             return redirect("simulator:accounts")
 
         if amount < product.min_deposit:
