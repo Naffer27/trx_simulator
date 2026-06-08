@@ -138,8 +138,8 @@ def register_view(request):
                 from .email_verification import make_email_token as _make_token
                 from .tasks import send_email_async as _send_async
                 _token = _make_token(user.pk)
-                _verify_url = request.build_absolute_uri(
-                    reverse("simulator:verify_email", args=[_token])
+                _verify_url = (
+                    settings.SITE_URL + reverse("simulator:verify_email", args=[_token])
                 )
                 _send_async.delay(
                     subject="Verifica tu email — TRX Simulator",
@@ -3039,8 +3039,8 @@ def resend_verification_view(request):
         from .email_verification import make_email_token as _make_token
         from .tasks import send_email_async as _send_async
         _token = _make_token(request.user.pk)
-        _verify_url = request.build_absolute_uri(
-            reverse("simulator:verify_email", args=[_token])
+        _verify_url = (
+            settings.SITE_URL + reverse("simulator:verify_email", args=[_token])
         )
         _send_async.delay(
             subject="Verifica tu email — TRX Simulator",

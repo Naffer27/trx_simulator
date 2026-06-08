@@ -378,6 +378,11 @@ EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")  # required in .env
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 ADMINS = [("Admin", os.getenv("ADMIN_EMAIL", "nafferphotographer@gmail.com"))]
 
+# Public base URL used to build links inside emails.
+# In development: http://127.0.0.1:8000
+# In production:  https://yourdomain.com  (no trailing slash)
+SITE_URL = os.getenv("SITE_URL", "http://127.0.0.1:8000").rstrip("/")
+
 # ===============================
 # 🔐 CSRF / Proxy
 # ===============================
