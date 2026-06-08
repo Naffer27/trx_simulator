@@ -390,14 +390,30 @@ CSRF_TRUSTED_ORIGINS = [
     "https://*.ngrok-free.dev",
     "https://*.ngrok-free.app",
 ]
-# ngrok suele mandar X-Forwarded-Proto=https
+# Trust X-Forwarded-Proto from upstream proxy (nginx, ngrok, Render, etc.)
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 USE_X_FORWARDED_HOST = True
 
-# endurecer cookies en prod
+# ── Cookie hardening ──────────────────────────────────────────────────────────
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SAMESITE = "Lax"
+
+# ── HSTS / TLS enforcement ────────────────────────────────────────────────────
+# Defaults are all safe for local dev (0 / False).
+# In production set SECURE_HSTS_SECONDS=31536000 only after HTTPS is verified
+# end-to-end — enabling prematurely will lock users out of HTTP permanently.
+SECURE_HSTS_SECONDS            = int(os.getenv("SECURE_HSTS_SECONDS", "0"))
+SECURE_HSTS_INCLUDE_SUBDOMAINS = os.getenv(
+    "SECURE_HSTS_INCLUDE_SUBDOMAINS", "False"
+).strip().lower() in {"1", "true", "yes"}
+SECURE_HSTS_PRELOAD            = os.getenv(
+    "SECURE_HSTS_PRELOAD", "False"
+).strip().lower() in {"1", "true", "yes"}
+# Never redirect in DEBUG — avoids breaking local HTTP dev server.
+SECURE_SSL_REDIRECT            = (not DEBUG) and os.getenv(
+    "SECURE_SSL_REDIRECT", "False"
+).strip().lower() in {"1", "true", "yes"}
 
 # ===============================
 # 📡 API Keys externas
