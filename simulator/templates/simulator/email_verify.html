@@ -1,0 +1,25 @@
+{% extends "simulator/base_app.html" %}
+{% block title %}Verificación de Email — TRX Simulator{% endblock %}
+{% block page_title %}Verificación de Email{% endblock %}
+
+{% block content %}
+<div style="max-width:500px;margin:80px auto;text-align:center;padding:40px 24px;">
+  {% if success %}
+    <h2 style="color:#00e676;">✓ Email verificado</h2>
+    <p style="color:#ccc;">{{ message }}</p>
+    <a href="{% url 'simulator:home' %}" style="
+      display:inline-block;margin-top:24px;padding:10px 28px;
+      background:#00e676;color:#000;border-radius:8px;font-weight:bold;text-decoration:none;">
+      Ir al inicio
+    </a>
+  {% else %}
+    <h2 style="color:#ff5252;">✗ Enlace inválido</h2>
+    <p style="color:#ccc;">{{ message }}</p>
+    <a href="{% url 'simulator:home' %}" style="
+      display:inline-block;margin-top:24px;padding:10px 28px;
+      background:#444;color:#fff;border-radius:8px;text-decoration:none;">
+      Volver al inicio
+    </a>
+  {% endif %}
+</div>
+{% endblock %}

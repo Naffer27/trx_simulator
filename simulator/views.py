@@ -20,6 +20,7 @@ from .models import (
     CalendarEvent, Referral, Bonus, BrokerDocument, ExpertAdvisor,
     TradingViolation, TraderScore, AccountEquitySnapshot,
     ChallengeEnrollment, ChallengeProduct, AccountProduct, Wallet,
+    EmailVerification,
 )
 from .challenge_engine import (
     evaluate_phase as _ce_evaluate_phase,
@@ -50,6 +51,21 @@ def _mask_wallet(addr: str) -> str:
     if not addr or len(addr) <= 10:
         return addr
     return f"{addr[:6]}...{addr[-4:]}"
+
+
+def _is_email_verified(user) -> bool:
+    """Return True only when the user has a confirmed EmailVerification record."""
+    try:
+        return user.email_verification.verified
+    except Exception:
+        return False
+
+
+_EMAIL_GATE_MSG = (
+    "Debes verificar tu email antes de usar funciones financieras. "
+    "Revisa tu bandeja de entrada."
+)
+
 from market_data.symbol_specs import get_spec as _get_sym_spec, allowed_symbols as _allowed_symbols
 
 logger = logging.getLogger(__name__)
@@ -97,6 +113,29 @@ def register_view(request):
             user = form.save()
             tier = form.cleaned_data["tier"]
             phase = form.cleaned_data["phase"]
+
+            # ── Email verification — create unverified record + send link ──────
+            EmailVerification.objects.create(user=user, verified=False)
+            try:
+                from .email_verification import make_email_token as _make_token
+                from .tasks import send_email_async as _send_async
+                _token = _make_token(user.pk)
+                _verify_url = request.build_absolute_uri(
+                    reverse("simulator:verify_email", args=[_token])
+                )
+                _send_async.delay(
+                    subject="Verifica tu email — TRX Simulator",
+                    message=(
+                        f"Hola {user.username},\n\n"
+                        f"Verifica tu email visitando el siguiente enlace:\n{_verify_url}\n\n"
+                        "El enlace expira en 48 horas.\n\n"
+                        "Si no creaste esta cuenta, ignora este mensaje."
+                    ),
+                    recipient_list=[user.email],
+                )
+            except Exception as _exc:
+                logger.warning("[register] verification email failed for user=%s: %s",
+                               user.username, _exc)
 
             # Crear Purchase asociado al usuario con código disponible
             purchase = Purchase.objects.create(
@@ -1033,6 +1072,11 @@ def create_account_view(request):
     is_demo = product.family == AccountProduct.FAMILY_DEMO
     wallet, _ = get_or_create_wallet(request.user)
 
+    # ── Email verification gate (real accounts only) ───────────────────────────
+    if not is_demo and not _is_email_verified(request.user):
+        request.session["acct_error"] = _EMAIL_GATE_MSG
+        return redirect("simulator:accounts")
+
     # ── Validate amount for REAL ───────────────────────────────────────────────
     if not is_demo:
         raw_amount = request.POST.get("amount", "").strip()
@@ -1163,6 +1207,10 @@ def fund_account_view(request, account_id):
     form = FundAccountForm(request.POST)
     if not form.is_valid():
         request.session["acct_error"] = "Invalid amount."
+        return redirect("simulator:accounts")
+
+    if not _is_email_verified(request.user):
+        request.session["acct_error"] = _EMAIL_GATE_MSG
         return redirect("simulator:accounts")
 
     amount = form.cleaned_data["amount"]
@@ -1521,48 +1569,52 @@ def challenge_purchase_view(request, product_id):
 
     error = None
     if request.method == "POST":
-        crypto_currency = request.POST.get("crypto_currency", "").strip()
-        try:
-            _np.to_np_code(crypto_currency)   # validates the currency exists
-        except (ValueError, AttributeError):
-            error = f"Moneda no soportada: {crypto_currency}"
+        # ── Email verification gate ───────────────────────────────────────────
+        if not _is_email_verified(request.user):
+            error = _EMAIL_GATE_MSG
         else:
-            deposit = Deposit.objects.create(
-                user=request.user,
-                amount_usd=product.price_usd,
-                crypto_currency=crypto_currency,
-                status=Deposit.STATUS_PENDING,
-                challenge_product=product,
-            )
-            logger.info(
-                "[challenge_purchase] deposit=%d product=%d user=%s amount=%.2f",
-                deposit.pk, product.pk, request.user.username, float(product.price_usd),
-            )
+            crypto_currency = request.POST.get("crypto_currency", "").strip()
             try:
-                callback_url = request.build_absolute_uri(
-                    reverse("simulator:deposit_callback")
+                _np.to_np_code(crypto_currency)   # validates the currency exists
+            except (ValueError, AttributeError):
+                error = f"Moneda no soportada: {crypto_currency}"
+            else:
+                deposit = Deposit.objects.create(
+                    user=request.user,
+                    amount_usd=product.price_usd,
+                    crypto_currency=crypto_currency,
+                    status=Deposit.STATUS_PENDING,
+                    challenge_product=product,
                 )
-                data = _np.create_payment(
-                    product.price_usd, crypto_currency, deposit.id, callback_url
+                logger.info(
+                    "[challenge_purchase] deposit=%d product=%d user=%s amount=%.2f",
+                    deposit.pk, product.pk, request.user.username, float(product.price_usd),
                 )
-                from django.utils.dateparse import parse_datetime
-                exp_raw = data.get("expiration_estimate_date")
-                Deposit.objects.filter(pk=deposit.pk).update(
-                    nowpayments_payment_id  = str(data.get("payment_id", "")),
-                    nowpayments_invoice_url = data.get("invoice_url", "") or "",
-                    pay_address             = data.get("pay_address", "") or "",
-                    pay_amount              = data.get("pay_amount"),
-                    expires_at              = parse_datetime(exp_raw) if exp_raw else None,
-                    status                  = data.get("payment_status", Deposit.STATUS_WAITING),
-                )
-                return redirect("simulator:deposit_status", deposit_id=deposit.pk)
-            except Exception as exc:
-                logger.error(
-                    "[challenge_purchase] NP failed deposit=%d %s: %s",
-                    deposit.pk, type(exc).__name__, exc, exc_info=True,
-                )
-                Deposit.objects.filter(pk=deposit.pk).update(status=Deposit.STATUS_FAILED)
-                error = "No se pudo crear el pago. Por favor intenta más tarde."
+                try:
+                    callback_url = request.build_absolute_uri(
+                        reverse("simulator:deposit_callback")
+                    )
+                    data = _np.create_payment(
+                        product.price_usd, crypto_currency, deposit.id, callback_url
+                    )
+                    from django.utils.dateparse import parse_datetime
+                    exp_raw = data.get("expiration_estimate_date")
+                    Deposit.objects.filter(pk=deposit.pk).update(
+                        nowpayments_payment_id  = str(data.get("payment_id", "")),
+                        nowpayments_invoice_url = data.get("invoice_url", "") or "",
+                        pay_address             = data.get("pay_address", "") or "",
+                        pay_amount              = data.get("pay_amount"),
+                        expires_at              = parse_datetime(exp_raw) if exp_raw else None,
+                        status                  = data.get("payment_status", Deposit.STATUS_WAITING),
+                    )
+                    return redirect("simulator:deposit_status", deposit_id=deposit.pk)
+                except Exception as exc:
+                    logger.error(
+                        "[challenge_purchase] NP failed deposit=%d %s: %s",
+                        deposit.pk, type(exc).__name__, exc, exc_info=True,
+                    )
+                    Deposit.objects.filter(pk=deposit.pk).update(status=Deposit.STATUS_FAILED)
+                    error = "No se pudo crear el pago. Por favor intenta más tarde."
 
     from .currencies import CRYPTO_CHOICES
     return render(request, "simulator/challenge_purchase.html", {
@@ -1589,6 +1641,13 @@ def deposit_view(request):
     error = None
 
     if request.method == "POST":
+        # ── Email verification gate ───────────────────────────────────────────
+        if not _is_email_verified(request.user):
+            return render(request, "simulator/deposit.html", {
+                "form": DepositForm(), "wallet": wallet,
+                "error": _EMAIL_GATE_MSG, "active_section": "deposit",
+            })
+
         form = DepositForm(request.POST)
         if form.is_valid():
             amount_usd      = form.cleaned_data["amount_usd"]
@@ -2012,18 +2071,23 @@ def withdraw_view(request):
     if request.method == "POST":
         form = WithdrawForm(request.POST)
         if form.is_valid():
+            # ── Email verification gate ────────────────────────────────────────
+            if not _is_email_verified(request.user):
+                error = _EMAIL_GATE_MSG
+
             # ── 2FA gate — checked before any financial operation ──────────────
-            from .models import TOTPDevice
-            from .two_factor import verify_totp_code as _verify_otp
-            _device = TOTPDevice.objects.filter(user=request.user, confirmed=True).first()
-            if not _device:
-                error = "Debes activar 2FA (autenticación de dos factores) antes de solicitar retiros."
-            else:
-                _otp_code = request.POST.get("otp_code", "").strip()
-                if not _verify_otp(_device.secret, _otp_code):
-                    security_log("withdrawal.2fa_failed",
-                                 username=request.user.username, user_id=request.user.pk)
-                    error = "Código 2FA incorrecto. Verifica tu app y vuelve a intentarlo."
+            if not error:
+                from .models import TOTPDevice
+                from .two_factor import verify_totp_code as _verify_otp
+                _device = TOTPDevice.objects.filter(user=request.user, confirmed=True).first()
+                if not _device:
+                    error = "Debes activar 2FA (autenticación de dos factores) antes de solicitar retiros."
+                else:
+                    _otp_code = request.POST.get("otp_code", "").strip()
+                    if not _verify_otp(_device.secret, _otp_code):
+                        security_log("withdrawal.2fa_failed",
+                                     username=request.user.username, user_id=request.user.pk)
+                        error = "Código 2FA incorrecto. Verifica tu app y vuelve a intentarlo."
 
             if error:
                 pass  # fall through to re-render form with error
@@ -3015,3 +3079,77 @@ def challenge_status_view(request, external_event_id: str):
         return JsonResponse({"error": "Enrollment not found"}, status=404)
 
     return JsonResponse(_enrollment_snapshot(enrollment))
+
+
+# ── Email verification ────────────────────────────────────────────────────────
+
+def verify_email_view(request, token: str):
+    """
+    GET /verify-email/<token>/
+    Validates the signed token, marks EmailVerification.verified=True.
+    Does not require login — link is opened from the user's email client.
+    """
+    from .email_verification import verify_email_token as _check_token
+
+    user_pk = _check_token(token)
+    context: dict = {}
+
+    if user_pk is None:
+        context["success"] = False
+        context["message"] = "El enlace de verificación es inválido o ha expirado."
+    else:
+        try:
+            from django.contrib.auth import get_user_model as _gum
+            _User = _gum()
+            user = _User.objects.get(pk=user_pk)
+            ev, _ = EmailVerification.objects.get_or_create(user=user)
+            if not ev.verified:
+                ev.verified    = True
+                ev.verified_at = timezone.now()
+                ev.save(update_fields=["verified", "verified_at"])
+                logger.info("[email_verify] user=%s email verified", user.username)
+            context["success"] = True
+            context["message"] = "¡Tu email ha sido verificado exitosamente!"
+        except Exception as exc:
+            logger.error("[email_verify] error: %s", exc)
+            context["success"] = False
+            context["message"] = "No se pudo completar la verificación. Intenta de nuevo."
+
+    return render(request, "simulator/email_verify.html", context)
+
+
+@login_required
+def resend_verification_view(request):
+    """POST /resend-verification/ — re-queues the verification email."""
+    if request.method != "POST":
+        return redirect("simulator:home")
+
+    try:
+        ev = request.user.email_verification
+        if ev.verified:
+            return redirect("simulator:home")
+    except EmailVerification.DoesNotExist:
+        EmailVerification.objects.create(user=request.user, verified=False)
+
+    try:
+        from .email_verification import make_email_token as _make_token
+        from .tasks import send_email_async as _send_async
+        _token = _make_token(request.user.pk)
+        _verify_url = request.build_absolute_uri(
+            reverse("simulator:verify_email", args=[_token])
+        )
+        _send_async.delay(
+            subject="Verifica tu email — TRX Simulator",
+            message=(
+                f"Hola {request.user.username},\n\n"
+                f"Verifica tu email visitando:\n{_verify_url}\n\n"
+                "El enlace expira en 48 horas."
+            ),
+            recipient_list=[request.user.email],
+        )
+        logger.info("[resend_verification] sent to user=%s", request.user.username)
+    except Exception as exc:
+        logger.warning("[resend_verification] email failed user=%s: %s",
+                       request.user.username, exc)
+
+    return redirect("simulator:home")

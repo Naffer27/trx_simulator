@@ -38,6 +38,9 @@ from .views import (
     totp_setup_view,
     totp_verify_view,
     totp_disable_view,
+    # Email verification
+    verify_email_view,
+    resend_verification_view,
     # Broker ecosystem modules
     calendar_view,
     associates_view,
@@ -116,6 +119,10 @@ urlpatterns = [
     path("account/2fa/setup/",   totp_setup_view,   name="totp_setup"),
     path("account/2fa/verify/",  totp_verify_view,  name="totp_verify"),
     path("account/2fa/disable/", totp_disable_view, name="totp_disable"),
+
+    # ── Email verification ───────────────────────────────────────────────────
+    path("verify-email/<str:token>/", verify_email_view,       name="verify_email"),
+    path("resend-verification/",      resend_verification_view, name="resend_verification"),
 
     # ── Broker Ecosystem Modules ─────────────────────────────────────────────
     path("calendar/",             calendar_view,       name="calendar"),

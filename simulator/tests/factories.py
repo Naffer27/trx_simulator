@@ -16,18 +16,38 @@ from django.contrib.auth import get_user_model
 
 from simulator.models import (
     AccountProduct, BrokerLedger, ChallengeEnrollment, ChallengeProduct, Deposit,
-    FundedConfig, LedgerEntry, Position, Trade, TradingAccount, Wallet, WalletTransaction,
+    EmailVerification, FundedConfig, LedgerEntry, Position, Trade, TradingAccount,
+    Wallet, WalletTransaction,
 )
 from simulator.wallet_ledger import credit_wallet, get_or_create_wallet
 
 User = get_user_model()
 
 
-def make_user(username: str | None = None, password: str = "testpass123", **kwargs) -> User:
-    """Create and return a unique User."""
+def make_user(
+    username: str | None = None,
+    password: str = "testpass123",
+    email_verified: bool = True,
+    **kwargs,
+) -> User:
+    """
+    Create and return a unique User.
+
+    email_verified=True (default) creates a confirmed EmailVerification record
+    so that money-action gates pass in tests that are not testing email verification.
+    Pass email_verified=False to test the unverified-user path.
+    """
+    from django.utils import timezone as _tz
+
     if username is None:
         username = f"user_{uuid.uuid4().hex[:8]}"
-    return User.objects.create_user(username=username, password=password, **kwargs)
+    user = User.objects.create_user(username=username, password=password, **kwargs)
+    EmailVerification.objects.create(
+        user=user,
+        verified=email_verified,
+        verified_at=_tz.now() if email_verified else None,
+    )
+    return user
 
 
 def make_wallet(user=None, initial_balance: Decimal = Decimal("0")) -> Wallet:

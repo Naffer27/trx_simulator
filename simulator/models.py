@@ -1348,6 +1348,24 @@ class TOTPDevice(models.Model):
         return f"TOTPDevice(user={self.user_id}, confirmed={self.confirmed})"
 
 
+class EmailVerification(models.Model):
+    """
+    Tracks whether a user's email address has been confirmed via a signed link.
+    One record per user — created at registration with verified=False.
+    """
+    user        = models.OneToOneField(
+        User, on_delete=models.CASCADE, related_name="email_verification"
+    )
+    verified    = models.BooleanField(default=False)
+    verified_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "simulator_email_verification"
+
+    def __str__(self):
+        return f"EmailVerification(user={self.user_id}, verified={self.verified})"
+
+
 class AuditLog(models.Model):
     """
     Append-only operational audit log.
