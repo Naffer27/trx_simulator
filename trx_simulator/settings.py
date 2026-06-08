@@ -4,7 +4,9 @@ Django settings for trx_simulator project.
 
 from pathlib import Path
 import os
+import sys
 from dotenv import load_dotenv  # cargar secretos sin hardcodear
+from django.core.exceptions import ImproperlyConfigured
 
 # ===============================
 # 🔑 Cargar variables de entorno
@@ -13,10 +15,20 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")  # si no existe, no rompe
 
 # Seguridad / Debug
-SECRET_KEY = os.getenv(
-    "DJANGO_SECRET_KEY",
-    "django-insecure-quo5(^mgzytvr!!+qes+#ywpo0y29+x7)pav7m2!k26(pd7ct6",  # fallback dev
-)
+_secret_key = os.getenv("DJANGO_SECRET_KEY", "").strip()
+if not _secret_key:
+    _running_tests = len(sys.argv) > 1 and sys.argv[1] == "test"
+    if _running_tests:
+        # Fixed test-only secret. Never used outside `manage.py test`.
+        _secret_key = "test-only-secret-key-not-for-production-use-ever"
+    else:
+        raise ImproperlyConfigured(
+            "DJANGO_SECRET_KEY environment variable is not set. "
+            "Add it to your .env file. "
+            "Generate one with: python -c \"from django.core.management.utils "
+            "import get_random_secret_key; print(get_random_secret_key())\""
+        )
+SECRET_KEY = _secret_key
 DEBUG = os.getenv("DEBUG", "False").strip().lower() in {"1", "true", "yes"}
 
 # Acceso con código (usado por LoginForm para requerirlo en PROD)
