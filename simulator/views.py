@@ -128,10 +128,11 @@ def register_view(request):
         form = RegisterForm(request.POST)
         if form.is_valid():
             user = form.save()
-            tier = form.cleaned_data["tier"]
-            phase = form.cleaned_data["phase"]
 
-            # ── Email verification — create unverified record + send link ──────
+            # Wallet con saldo cero
+            Wallet.objects.get_or_create(user=user)
+
+            # Email verification — registro sin cuenta verificada
             EmailVerification.objects.create(user=user, verified=False)
             try:
                 from .email_verification import make_email_token as _make_token
@@ -150,150 +151,20 @@ def register_view(request):
                     ),
                     recipient_list=[user.email],
                 )
+                _send_async.delay(
+                    subject="📢 Nuevo usuario registrado",
+                    message=(
+                        f"Un nuevo usuario ha creado cuenta:\n\n"
+                        f"- Usuario: {user.username}\n"
+                        f"- Email: {user.email}\n"
+                    ),
+                    recipient_list=["nafferphotographer@gmail.com"],
+                )
             except Exception as _exc:
-                logger.warning("[register] verification email failed for user=%s: %s",
+                logger.warning("[register] email task failed for user=%s: %s",
                                user.username, _exc)
 
-            # Crear Purchase asociado al usuario con código disponible
-            purchase = Purchase.objects.create(
-                user=user,
-                tier=tier,
-                code=f"CODE-{user.id}-{random.randint(1000,9999)}",
-                used=False
-            )
-
-            # Crear TradingAccount asociada al usuario
-            base_balance = 10000 if tier == "10K" else (50000 if tier == "50K" else 100000)
-            account = TradingAccount.objects.create(
-                user=user,
-                tier=tier,
-                phase=phase,
-                balance=base_balance,
-                equity=base_balance,
-                status="Activo"
-            )
-
-            # Guardar en sesión y login
-            request.session['account_id'] = account.id
             auth_login(request, user)
-
-            # =====================
-            # 📧 Correo HTML al usuario con código
-            # =====================
-            subject_user = "🎉 Bienvenido a TRX Found — Tu Cuenta de Fondeo"
-            message_user = f"""
-Hola {user.username},
-
-Tu cuenta de fondeo ha sido creada exitosamente 🚀
-
-Detalles de tu cuenta:
-- Usuario: {user.username}
-- Balance inicial: {base_balance}
-- Nivel: {tier}
-- Fase: {phase}
-
-Para acceder al simulador usa el username y contraseña que registraste.
-"""
-
-            html_message_user = f"""
-<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8">
-  <style>
-    body {{
-      font-family: Arial, sans-serif;
-      background: #f9f9f9;
-      color: #333;
-      margin: 0; padding: 0;
-    }}
-    .container {{
-      max-width: 600px; margin: 40px auto; background: #fff;
-      border-radius: 12px; overflow: hidden;
-      box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-    }}
-    .header {{
-      background: linear-gradient(135deg, #ffd700, #ffb300);
-      color: #000; text-align: center; padding: 20px;
-    }}
-    .header h1 {{ margin: 0; font-size: 24px; font-weight: bold; }}
-    .content {{ padding: 20px; line-height: 1.6; }}
-    .highlight {{
-      background: #fffae6;
-      border-left: 4px solid #ffb300;
-      padding: 10px; margin: 20px 0;
-      border-radius: 6px;
-    }}
-    .footer {{
-      text-align: center; padding: 15px; font-size: 12px; color: #666;
-      border-top: 1px solid #eee;
-    }}
-    .btn {{
-      display: inline-block; padding: 12px 20px;
-      background: #ffb300; color: #000; font-weight: bold;
-      text-decoration: none; border-radius: 6px;
-      margin-top: 20px;
-    }}
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h1>🚀 Bienvenido a TRX Found</h1>
-    </div>
-    <div class="content">
-      <p>Hola <strong>{user.username}</strong>,</p>
-      <p>Tu cuenta de fondeo ha sido creada exitosamente. Aquí tienes los detalles:</p>
-
-      <div class="highlight">
-        <p><strong>Balance inicial:</strong> {base_balance}</p>
-        <p><strong>Nivel:</strong> {tier}</p>
-        <p><strong>Fase:</strong> {phase}</p>
-      </div>
-
-      <p>Para acceder al simulador usa el <strong>username</strong> y <strong>contraseña</strong> que registraste.</p>
-
-      <p style="text-align:center;">
-        <a href="http://127.0.0.1:8000/login/" class="btn">Entrar al Simulador</a>
-      </p>
-    </div>
-    <div class="footer">
-      © 2025 TRX Found · Este es un correo automático, por favor no responder.
-    </div>
-  </div>
-</body>
-</html>
-"""
-
-            send_mail(
-                subject_user,
-                message_user,  # fallback texto plano
-                "nafferphotographer@gmail.com",
-                [user.email],
-                fail_silently=True,
-                html_message=html_message_user
-            )
-
-            # 📧 Correo al admin
-            subject_admin = "📢 Nuevo usuario registrado"
-            message_admin = f"""
-Un nuevo usuario ha creado cuenta:
-
-- Usuario: {user.username}
-- Email: {user.email}
-- Balance inicial: {base_balance}
-- Nivel: {tier}
-- Fase: {phase}
-- Código: {purchase.code}
-"""
-            send_mail(
-                subject_admin,
-                message_admin,
-                "nafferphotographer@gmail.com",
-                ["nafferphotographer@gmail.com"],
-                fail_silently=True,
-            )
-
             return redirect("simulator:accounts")
     else:
         form = RegisterForm()

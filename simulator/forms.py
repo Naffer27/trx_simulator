@@ -45,18 +45,10 @@ class RegisterForm(forms.ModelForm):
     password1 = forms.CharField(label="Contraseña", widget=forms.PasswordInput)
     password2 = forms.CharField(label="Confirmar contraseña", widget=forms.PasswordInput)
     email = forms.EmailField(required=True)
-    tier = forms.ChoiceField(
-        choices=[("10K", "10K"), ("50K", "50K"), ("100K", "100K")],
-        label="Nivel de fondeo"
-    )
-    phase = forms.ChoiceField(
-        choices=[("Fase 1", "Fase 1"), ("Fase 2", "Fase 2")],
-        label="Fase inicial"
-    )
 
     class Meta:
         model = User
-        fields = ("username", "email", "password1", "password2", "tier", "phase")
+        fields = ("username", "email", "password1", "password2")
 
     # Validaciones útiles
     def clean_password2(self):

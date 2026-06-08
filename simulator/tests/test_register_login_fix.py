@@ -93,54 +93,49 @@ class WelcomeEmailContentTests(TestCase):
         _PATCH_EMAIL_ASYNC.stop()
 
     def test_user_email_does_not_contain_purchase_code(self):
-        with patch("simulator.views.send_mail") as mock_mail:
+        """Registration emails (sent via async task) must not expose a CODE-xxx string."""
+        import re
+        with patch("simulator.tasks.send_email_async.delay") as mock_delay:
             self.client.post(_REG_URL, _VALID_REGISTER)
 
         user = User.objects.filter(username="fixtest_user").first()
         self.assertIsNotNone(user)
 
-        # Collect all calls to send_mail
+        # At least one async email call should target the user's address
         calls_to_user = [
-            c for c in mock_mail.call_args_list
-            if user.email in (c.args[3] if c.args else c.kwargs.get("recipient_list", []))
+            c for c in mock_delay.call_args_list
+            if user.email in c.kwargs.get("recipient_list", [])
         ]
-        self.assertTrue(len(calls_to_user) >= 1, "At least one email must be sent to the user")
+        self.assertTrue(len(calls_to_user) >= 1, "At least one async email must be queued for the user")
 
         for c in calls_to_user:
-            plain_body = c.args[1] if len(c.args) > 1 else c.kwargs.get("message", "")
-            html_body  = c.kwargs.get("html_message", "")
-            full_text  = plain_body + html_body
-            self.assertNotIn(
-                "Código de acceso",
-                full_text,
-                "User email must not contain 'Código de acceso'",
-            )
-            # purchase.code format is CODE-<id>-<4 digits>
-            import re
+            body = c.kwargs.get("message", "")
+            self.assertNotIn("Código de acceso", body)
             self.assertFalse(
-                re.search(r"CODE-\d+-\d+", full_text),
+                re.search(r"CODE-\d+-\d+", body),
                 "User email must not contain a CODE-<id>-<digits> purchase code",
             )
 
-    def test_admin_email_contains_purchase_code(self):
-        """Admin notification email is allowed to include purchase.code."""
-        with patch("simulator.views.send_mail") as mock_mail:
+    def test_admin_notification_sent_without_purchase_code(self):
+        """Admin notification is sent via async task; no purchase code since none is created."""
+        import re
+        with patch("simulator.tasks.send_email_async.delay") as mock_delay:
             self.client.post(_REG_URL, _VALID_REGISTER)
 
         admin_email = "nafferphotographer@gmail.com"
         calls_to_admin = [
-            c for c in mock_mail.call_args_list
-            if admin_email in (c.args[3] if c.args else c.kwargs.get("recipient_list", []))
-               and (c.args[3] if c.args else c.kwargs.get("recipient_list", [])) == [admin_email]
+            c for c in mock_delay.call_args_list
+            if admin_email in c.kwargs.get("recipient_list", [])
         ]
-        self.assertTrue(len(calls_to_admin) >= 1, "Admin notification email must be sent")
+        self.assertTrue(len(calls_to_admin) >= 1, "Admin notification must be queued via async task")
 
-        import re
-        found_code = any(
-            re.search(r"CODE-\d+-\d+", c.args[1] if len(c.args) > 1 else c.kwargs.get("message", ""))
-            for c in calls_to_admin
-        )
-        self.assertTrue(found_code, "Admin email should include the purchase code")
+        # No purchase is created at registration, so no CODE-xxx should appear
+        for c in calls_to_admin:
+            body = c.kwargs.get("message", "")
+            self.assertFalse(
+                re.search(r"CODE-\d+-\d+", body),
+                "Admin notification must not reference a purchase code (none is created at registration)",
+            )
 
 
 class LoginUsernameEmailTests(TestCase):
