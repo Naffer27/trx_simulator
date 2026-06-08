@@ -1333,9 +1333,9 @@
         <div class="rc-field-row">
           <label class="rc-field-lbl">Volume (lots)</label>
           <div class="rc-stepper">
-            <button id="lotDec2" class="rc-step-btn" onclick="(()=>{const i=document.getElementById('qty');i.value=Math.max(0.001,(parseFloat(i.value)||0.01)-0.01).toFixed(2);i.dispatchEvent(new Event('input'))})()">−</button>
-            <input id="qty" type="number" min="0.001" step="0.01" value="0.01" class="rc-stepper-val">
-            <button id="lotInc2" class="rc-step-btn" onclick="(()=>{const i=document.getElementById('qty');i.value=Math.min(100,(parseFloat(i.value)||0.01)+0.01).toFixed(2);i.dispatchEvent(new Event('input'))})()">+</button>
+            <button id="lotDec2" class="rc-step-btn" onclick="_adjustLot(-1)">−</button>
+            <input id="qty" type="number" min="0.01" step="0.01" value="0.01" class="rc-stepper-val">
+            <button id="lotInc2" class="rc-step-btn" onclick="_adjustLot(1)">+</button>
           </div>
         </div>
 
@@ -1718,6 +1718,62 @@ const volPointForBar=b=>{const span=Math.max((b.high??b.close)-(b.low??b.close),
 const isMobile=()=>matchMedia('(max-width:900px)').matches;
 const usd=v=>v==null?'—':('$'+Number(v).toLocaleString(undefined,{maximumFractionDigits:2}));
 
+/* ── Lot specs per symbol (mirrors SymbolSpec.lot_step / min_lot) ── */
+const LOT_SPECS = {
+  "AUD/USD": {step:0.01,  min:0.01,  dec:2},
+  "BTCUSD":  {step:0.001, min:0.001, dec:3},
+  "ETHUSD":  {step:0.01,  min:0.01,  dec:2},
+  "EUR/USD": {step:0.01,  min:0.01,  dec:2},
+  "GBP/USD": {step:0.01,  min:0.01,  dec:2},
+  "NAS100":  {step:0.1,   min:0.1,   dec:1},
+  "NZD/USD": {step:0.01,  min:0.01,  dec:2},
+  "SOLUSD":  {step:0.1,   min:0.1,   dec:1},
+  "US30":    {step:0.1,   min:0.1,   dec:1},
+  "US500":   {step:0.1,   min:0.1,   dec:1},
+  "USD/CAD": {step:0.01,  min:0.01,  dec:2},
+  "USD/CHF": {step:0.01,  min:0.01,  dec:2},
+  "USD/JPY": {step:0.01,  min:0.01,  dec:2},
+  "XAG/USD": {step:0.01,  min:0.01,  dec:2},
+  "XAU/USD": {step:0.01,  min:0.01,  dec:2},
+};
+function getLotStep(sym)    { return (LOT_SPECS[sym]||{step:0.01}).step; }
+function getLotMin(sym)     { return (LOT_SPECS[sym]||{min:0.01}).min; }
+function getLotDecimals(sym){ return (LOT_SPECS[sym]||{dec:2}).dec; }
+function normalizeLot(sym, v){
+  const s=LOT_SPECS[sym]||{step:0.01,min:0.01,dec:2};
+  const val=Math.max(s.min, Math.min(100, parseFloat(v)||s.min));
+  return +val.toFixed(s.dec);
+}
+
+/* Updates step/min on the shared desktop qty input and mobile lot input for the current symbol */
+function _updateQtyInputAttrs(sym){
+  const step=getLotStep(sym), min=getLotMin(sym), dec=getLotDecimals(sym);
+  const qtyEl=document.getElementById('qty');
+  if(qtyEl){
+    qtyEl.step=step; qtyEl.min=min;
+    const cur=parseFloat(qtyEl.value)||min;
+    if(cur < min) qtyEl.value=min.toFixed(dec);
+  }
+  const mebEl=document.getElementById('mebLotVal');
+  if(mebEl){
+    mebEl.step=step; mebEl.min=min;
+    const cur=parseFloat(mebEl.value)||min;
+    if(cur < min) mebEl.value=min.toFixed(dec);
+  }
+}
+
+/* Increment/decrement desktop lot stepper by ±1 step for the active symbol */
+function _adjustLot(dir){
+  if(!activePanel)return;
+  const sym=activePanel.currentSymbol;
+  const step=getLotStep(sym), min=getLotMin(sym), dec=getLotDecimals(sym);
+  const i=document.getElementById('qty');
+  if(!i)return;
+  const cur=parseFloat(i.value)||min;
+  i.value=+(Math.max(min, Math.min(100, cur + dir*step)).toFixed(dec));
+  i.dispatchEvent(new Event('input'));
+}
+
 /* ── Global state ── */
 const allPanels=[];
 let activePanel=null;
@@ -1921,7 +1977,7 @@ class TradingPanel {
     this.oBid=null;
     this.oAsk=null;
     this.oLotV=null;
-    this.mobileLot=0.01;
+    this.mobileLot=getLotMin(this.currentSymbol);
     this._fPanel=document.getElementById('mobileExecBar');
     const indBtn=this.wrapper.querySelector('.p-ind-btn');
     if(indBtn)indBtn.addEventListener('click',e=>{e.stopPropagation();_openIndicatorMenu(indBtn);});
@@ -1931,8 +1987,8 @@ class TradingPanel {
     const lotEl=this.oLotV||document.getElementById('mebLotVal');
     if(!lotEl)return;
     const v=parseFloat(lotEl.value);
-    if(!isNaN(v)&&v>0)this.mobileLot=Math.min(100,Math.max(0.01,+v.toFixed(2)));
-    lotEl.value=this.mobileLot.toFixed(2);
+    if(!isNaN(v)&&v>0)this.mobileLot=normalizeLot(this.currentSymbol, v);
+    lotEl.value=this.mobileLot.toFixed(getLotDecimals(this.currentSymbol));
   }
 
   _sendOverlayOrder(side){
@@ -1951,6 +2007,9 @@ class TradingPanel {
     if(isMobile())updatePanelTabs();
     this.lastClose=null; this.prevClose=null; this.prevCandleClose=null; this.bid=this.ask=null; this._resetAgg();
     hideQB();
+    // Reset lot to min for new symbol and update input attrs if this is the active panel
+    this.mobileLot=getLotMin(this.currentSymbol);
+    if(this===activePanel)_updateQtyInputAttrs(this.currentSymbol);
     if(this.ws?.readyState===WebSocket.OPEN){
       this.ws.send(JSON.stringify({action:'change_symbol',symbol:this.currentSymbol}));
       this._loadHistory();
@@ -2549,7 +2608,9 @@ function setActive(panel){
   updateGlobalWSStatus(t);
   panel._updateBidAsk();
   if(panel.lastClose!=null)panel.setPrice(panel.lastClose,panel.prevClose);
-  if(isMobile()){const _lv=document.getElementById('mebLotVal');if(_lv)_lv.value=(panel.mobileLot||0.01).toFixed(2);}
+  const dec=getLotDecimals(panel.currentSymbol);
+  if(isMobile()){const _lv=document.getElementById('mebLotVal');if(_lv)_lv.value=(panel.mobileLot||getLotMin(panel.currentSymbol)).toFixed(dec);}
+  _updateQtyInputAttrs(panel.currentSymbol);
   const mhdrSymSel=document.getElementById('mhdrSymSel');
   if(mhdrSymSel)mhdrSymSel.value=panel.currentSymbol;
   _syncMhdrTFBadge(panel.currentTF||'1m');
@@ -2560,8 +2621,8 @@ function _initMobExecBar(){
   const lotVal=document.getElementById('mebLotVal');
   document.getElementById('mebSell')?.addEventListener('click',()=>{try{navigator.vibrate&&navigator.vibrate(15);}catch(_){}activePanel?._sendOverlayOrder('sell');});
   document.getElementById('mebBuy')?.addEventListener('click',()=>{try{navigator.vibrate&&navigator.vibrate(15);}catch(_){}activePanel?._sendOverlayOrder('buy');});
-  document.getElementById('mebLotInc')?.addEventListener('click',e=>{e.stopPropagation();try{navigator.vibrate&&navigator.vibrate(15);}catch(_){}if(!activePanel)return;activePanel._syncLotFromInput();activePanel.mobileLot=Math.min(100,+(activePanel.mobileLot+0.01).toFixed(2));if(lotVal)lotVal.value=activePanel.mobileLot.toFixed(2);});
-  document.getElementById('mebLotDec')?.addEventListener('click',e=>{e.stopPropagation();try{navigator.vibrate&&navigator.vibrate(15);}catch(_){}if(!activePanel)return;activePanel._syncLotFromInput();activePanel.mobileLot=Math.max(0.01,+(activePanel.mobileLot-0.01).toFixed(2));if(lotVal)lotVal.value=activePanel.mobileLot.toFixed(2);});
+  document.getElementById('mebLotInc')?.addEventListener('click',e=>{e.stopPropagation();try{navigator.vibrate&&navigator.vibrate(15);}catch(_){}if(!activePanel)return;activePanel._syncLotFromInput();const _sym=activePanel.currentSymbol;activePanel.mobileLot=normalizeLot(_sym,activePanel.mobileLot+getLotStep(_sym));if(lotVal)lotVal.value=activePanel.mobileLot.toFixed(getLotDecimals(_sym));});
+  document.getElementById('mebLotDec')?.addEventListener('click',e=>{e.stopPropagation();try{navigator.vibrate&&navigator.vibrate(15);}catch(_){}if(!activePanel)return;activePanel._syncLotFromInput();const _sym=activePanel.currentSymbol;activePanel.mobileLot=normalizeLot(_sym,activePanel.mobileLot-getLotStep(_sym));if(lotVal)lotVal.value=activePanel.mobileLot.toFixed(getLotDecimals(_sym));});
   if(lotVal)lotVal.addEventListener('change',()=>activePanel?._syncLotFromInput());
 }
 
@@ -2942,7 +3003,9 @@ sheetSave.addEventListener('click',()=>{
 /* ── Order buttons ── */
 function sendActiveOrder(side){
   if(!activePanel)return;
-  const qty=Number(document.getElementById('qty').value||lotVal?.textContent||1);
+  const sym=activePanel.currentSymbol;
+  const rawQty=parseFloat(document.getElementById('qty')?.value);
+  const qty=rawQty >= getLotMin(sym) ? +rawQty.toFixed(getLotDecimals(sym)) : getLotMin(sym);
   const slV=document.getElementById('sl').value,tpV=document.getElementById('tp').value;
   activePanel.sendOrder(side,qty,slV!==''?Number(slV):null,tpV!==''?Number(tpV):null);
 }

@@ -119,6 +119,21 @@ def _compute_pretrade_margin_guard(
 
     per_trade_pct = required_margin / equity * 100.0
     if per_trade_pct > _DEFAULT_MAX_MARGIN_PER_TRADE_PCT:
+        _guard_log = logging.getLogger("simulator.guard")
+        _guard_log.warning(
+            "[guard] REJECTED margin_per_trade_exceeded | sym=%s qty=%s entry_px=%.2f "
+            "equity=%.2f margin_used_now=%.2f required_margin=%.4f margin_after=%.4f "
+            "free_margin=%.4f margin_level_after=%.2f per_trade_pct=%.2f%% "
+            "max_per_trade=%.1f%% max_total=%.1f%% account_lev=%d spec_max_lev=%d "
+            "effective_lev=%d",
+            symbol, qty, entry_px, equity, float(margin_used_now),
+            required_margin, float(margin_used_now) + required_margin,
+            equity - (float(margin_used_now) + required_margin),
+            equity / (float(margin_used_now) + required_margin) * 100.0 if (float(margin_used_now) + required_margin) > 0 else 0.0,
+            per_trade_pct,
+            _DEFAULT_MAX_MARGIN_PER_TRADE_PCT, _DEFAULT_MAX_TOTAL_MARGIN_PCT,
+            account_lev, spec_max_leverage, effective_lev,
+        )
         return (
             False,
             "margin_per_trade_exceeded",
@@ -134,6 +149,18 @@ def _compute_pretrade_margin_guard(
     total_margin_after = float(margin_used_now) + required_margin
     total_margin_pct = total_margin_after / equity * 100.0
     if total_margin_pct > _DEFAULT_MAX_TOTAL_MARGIN_PCT:
+        _guard_log = logging.getLogger("simulator.guard")
+        _guard_log.warning(
+            "[guard] REJECTED total_margin_exceeded | sym=%s qty=%s entry_px=%.2f "
+            "equity=%.2f margin_used_now=%.2f required_margin=%.4f margin_after=%.4f "
+            "free_margin=%.4f per_trade_pct=%.2f%% total_margin_pct=%.2f%% "
+            "max_total=%.1f%% account_lev=%d spec_max_lev=%d effective_lev=%d",
+            symbol, qty, entry_px, equity, float(margin_used_now),
+            required_margin, total_margin_after,
+            equity - total_margin_after,
+            per_trade_pct, total_margin_pct,
+            _DEFAULT_MAX_TOTAL_MARGIN_PCT, account_lev, spec_max_leverage, effective_lev,
+        )
         return (
             False,
             "total_margin_exceeded",
@@ -150,6 +177,18 @@ def _compute_pretrade_margin_guard(
     if total_margin_after > 0:
         margin_level_after = equity / total_margin_after * 100.0
         if margin_level_after < margin_call_level:
+            _guard_log = logging.getLogger("simulator.guard")
+            _guard_log.warning(
+                "[guard] REJECTED margin_call_level_breach | sym=%s qty=%s entry_px=%.2f "
+                "equity=%.2f margin_used_now=%.2f required_margin=%.4f margin_after=%.4f "
+                "free_margin=%.4f margin_level_after=%.2f%% margin_call_level_snap=%.2f%% "
+                "account_lev=%d spec_max_lev=%d effective_lev=%d",
+                symbol, qty, entry_px, equity, float(margin_used_now),
+                required_margin, total_margin_after,
+                equity - total_margin_after,
+                margin_level_after, margin_call_level,
+                account_lev, spec_max_leverage, effective_lev,
+            )
             return (
                 False,
                 "margin_call_level_breach",
