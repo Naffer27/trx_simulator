@@ -149,6 +149,92 @@ class TestCheckEquityStopout(SimpleTestCase):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 2b. check_equity_stopout — stopout_level_snapshot wired in
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestRetailStopoutLevelSnapshot(SimpleTestCase):
+    """
+    Verifies that check_equity_stopout() uses the caller-supplied stopout_level
+    instead of the hardcoded 50.0 for RETAIL accounts.
+
+    Scenario: equity=2 000, margin_used=5 000 → margin_level = 40%.
+      stopout_level=30  → 40 ≥ 30 → no liquidation (False)
+      stopout_level=50  → 40 < 50 → liquidation (True)
+    """
+
+    def _call(self, stopout_level, *, equity=2_000.0, margin_used=5_000.0):
+        return check_equity_stopout(
+            equity=equity,
+            peak_balance=10_000.0,
+            tier="",
+            account_type="RETAIL",
+            margin_used=margin_used,
+            stopout_level=stopout_level,
+        )
+
+    def test_custom_stopout_30_no_liquidation_at_margin_level_40(self):
+        """stopout_level=30: margin_level=40% ≥ 30% → no margin call."""
+        self.assertFalse(self._call(30.0))
+
+    def test_custom_stopout_50_triggers_at_margin_level_40(self):
+        """stopout_level=50: margin_level=40% < 50% → margin call."""
+        self.assertTrue(self._call(50.0))
+
+    def test_default_stopout_50_backward_compatible(self):
+        """Omitting stopout_level defaults to 50.0 — existing behaviour unchanged."""
+        result_explicit = check_equity_stopout(
+            equity=2_000.0, peak_balance=10_000.0, tier="",
+            account_type="RETAIL", margin_used=5_000.0,
+        )
+        result_default = check_equity_stopout(
+            equity=2_000.0, peak_balance=10_000.0, tier="",
+            account_type="RETAIL", margin_used=5_000.0, stopout_level=50.0,
+        )
+        self.assertEqual(result_explicit, result_default)
+        self.assertTrue(result_explicit)
+
+    def test_old_account_fallback_50_triggers(self):
+        """Accounts without stopout_level_snapshot use fallback 50 → same outcome."""
+        # margin_level = 1 000/3 000 × 100 = 33.3% < 50 → True
+        self.assertTrue(self._call(50.0, equity=1_000.0, margin_used=3_000.0))
+
+    def test_old_account_fallback_50_safe_when_margin_ok(self):
+        """margin_level = 10 000/1 000 × 100 = 1000% ≥ 50 → False."""
+        self.assertFalse(self._call(50.0, equity=10_000.0, margin_used=1_000.0))
+
+    def test_challenge_account_ignores_stopout_level_param(self):
+        """CHALLENGE uses DD-based stopout; stopout_level param has no effect."""
+        # 10K tier: max_dd=10% → floor = 9 000; equity=8 999 → True
+        below = check_equity_stopout(
+            equity=8_999.0, peak_balance=10_000.0, tier="10K",
+            stopout_level=99.0,  # should be ignored for challenge
+        )
+        # equity=9 001 → False
+        above = check_equity_stopout(
+            equity=9_001.0, peak_balance=10_000.0, tier="10K",
+            stopout_level=1.0,  # should be ignored for challenge
+        )
+        self.assertTrue(below)
+        self.assertFalse(above)
+
+    def test_ecn_account_uses_stopout_level(self):
+        """ECN is also in MARGIN_ENGINE_TYPES — snapshot applies there too."""
+        # margin_level=40% with stopout_level=45 → triggers
+        self.assertTrue(self._call(45.0))
+        # margin_level=40% with stopout_level=35 → safe
+        self.assertFalse(self._call(35.0))
+
+    def test_no_margin_used_never_triggers_regardless_of_threshold(self):
+        """margin_used=0 → no open positions → False for any stopout_level."""
+        self.assertFalse(
+            check_equity_stopout(
+                equity=100.0, peak_balance=10_000.0, tier="",
+                account_type="RETAIL", margin_used=0.0, stopout_level=99.0,
+            )
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 3. validate_order_risk — pre-trade gate (DB)
 # ─────────────────────────────────────────────────────────────────────────────
 

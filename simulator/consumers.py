@@ -1043,6 +1043,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 tier=self.account.get("tier", "10K"),
                 account_type=_acct_type,
                 margin_used=self.account.get("margin_used", 0.0),
+                stopout_level=self.account.get("stopout_level", 50.0),
             ):
                 from .models import MARGIN_ENGINE_TYPES
                 if _acct_type in MARGIN_ENGINE_TYPES:
@@ -1198,10 +1199,11 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
     async def _do_retail_liquidation(self) -> None:
         """RETAIL margin call — close all positions, account stays ACTIVE.
-        Triggers when margin_level < 50%. Unlike _do_stopout, no suspension."""
-        log.warning("[margin_call] margin_level<50%% equity=%.2f margin=%.2f account #%s",
-                    self.account["equity"], self.account.get("margin_used", 0.0),
-                    self._db_account_id)
+        Triggers when margin_level < stopout_level. Unlike _do_stopout, no suspension."""
+        _stopout_threshold = self.account.get("stopout_level", 50.0)
+        log.warning("[margin_call] margin_level<%.0f%% equity=%.2f margin=%.2f account #%s",
+                    _stopout_threshold, self.account["equity"],
+                    self.account.get("margin_used", 0.0), self._db_account_id)
         closed_items = []
         failed_positions = []
         now_ts = int(time.time())
@@ -1247,7 +1249,8 @@ class TradingConsumer(AsyncWebsocketConsumer):
         await self.send_json({"type": "positions", "items": []})
         await self.send_json({
             "type": "account:margin_call",
-            "reason": "margin_level_below_50pct",
+            "reason": "margin_level_below_stopout",
+            "stopout_level": _stopout_threshold,
             "balance": round(self.account["balance"], 2),
         })
         dec = step_decimals_for(self.symbol)[1]

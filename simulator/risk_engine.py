@@ -427,12 +427,13 @@ def validate_order_risk(account, lot_size: float, open_positions_count: int,
 
 def check_equity_stopout(equity: float, peak_balance: float, tier: str,
                          account=None, account_type: str = "",
-                         margin_used: float = 0.0) -> bool:
+                         margin_used: float = 0.0,
+                         stopout_level: float = 50.0) -> bool:
     """
     Real-time in-memory equity stopout check (no DB).
 
-    RETAIL: margin-call engine — triggers when margin_level < 50%
-            (equity / margin_used × 100 < 50). No DD enforcement.
+    RETAIL: margin-call engine — triggers when margin_level < stopout_level
+            (equity / margin_used × 100 < stopout_level). No DD enforcement.
     CHALLENGE/FUNDED: DD-based stopout from peak balance.
     """
     _is_retail = (account_type in MARGIN_ENGINE_TYPES) or (
@@ -441,7 +442,7 @@ def check_equity_stopout(equity: float, peak_balance: float, tier: str,
     if _is_retail:
         if margin_used <= 0:
             return False  # no open positions → no margin call possible
-        return (equity / margin_used * 100.0) < 50.0
+        return (equity / margin_used * 100.0) < stopout_level
 
     # CHALLENGE / FUNDED — drawdown from peak
     if account is not None:
