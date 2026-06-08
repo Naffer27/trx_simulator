@@ -387,3 +387,172 @@ class CallbackActivationFailureRollbackTests(TestCase):
         except Exception:
             pass
         self.assertEqual(ChallengeEnrollment.objects.filter(deposit=deposit).count(), 0)
+
+
+# ── Confirmed-amount correctness (Hotfix: deposit.amount_usd → credit_amount) ─
+
+def _ipn_no_confirmed(payment_id, payment_status, order_id="", amount="100.00"):
+    """IPN payload without actually_paid_amount — simulates providers that omit it."""
+    return json.dumps({
+        "payment_id":    payment_id,
+        "payment_status": payment_status,
+        "order_id":      str(order_id),
+        "pay_currency":  "btc",
+        "price_currency": "usd",
+        "price_amount":  float(amount),
+    })
+
+
+class CallbackWalletConfirmedAmountTests(TestCase):
+    """Wallet top-up credits confirmed amount, not requested amount."""
+
+    def setUp(self):
+        _PATCH_RATELIMIT.start()
+        self.user = make_user()
+
+    def tearDown(self):
+        _PATCH_RATELIMIT.stop()
+
+    @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
+    def test_credits_confirmed_amount_not_requested(self, _sig):
+        """finished IPN with actually_paid_amount=$95 on $100 deposit → wallet gets $95."""
+        wallet  = make_wallet(user=self.user)
+        deposit = make_deposit(self.user, amount_usd=Decimal("100.00"), payment_id="amt_001")
+        body = _ipn("amt_001", "finished", deposit.pk, "95.00")
+        r = self.client.post(CALLBACK_URL, body, content_type="application/json")
+        self.assertEqual(r.status_code, 200)
+        wallet.refresh_from_db()
+        self.assertEqual(wallet.available_balance, Decimal("95.00"))
+
+    @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
+    def test_credits_full_confirmed_when_amounts_match(self, _sig):
+        """Standard full payment: confirmed == requested → wallet gets full amount."""
+        wallet  = make_wallet(user=self.user)
+        deposit = make_deposit(self.user, amount_usd=Decimal("200.00"), payment_id="amt_002")
+        body = _ipn("amt_002", "finished", deposit.pk, "200.00")
+        self.client.post(CALLBACK_URL, body, content_type="application/json")
+        wallet.refresh_from_db()
+        self.assertEqual(wallet.available_balance, Decimal("200.00"))
+
+    @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
+    def test_falls_back_to_amount_usd_when_no_confirmed_field(self, _sig):
+        """Provider omits actually_paid_amount → fall back to deposit.amount_usd."""
+        wallet  = make_wallet(user=self.user)
+        deposit = make_deposit(self.user, amount_usd=Decimal("50.00"), payment_id="amt_003")
+        body = _ipn_no_confirmed("amt_003", "finished", deposit.pk, "50.00")
+        self.client.post(CALLBACK_URL, body, content_type="application/json")
+        wallet.refresh_from_db()
+        self.assertEqual(wallet.available_balance, Decimal("50.00"))
+
+    @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
+    def test_deposit_credited_true_after_underpayment(self, _sig):
+        """Even if confirmed < requested, regular wallet deposit is still marked credited."""
+        wallet  = make_wallet(user=self.user)
+        deposit = make_deposit(self.user, amount_usd=Decimal("100.00"), payment_id="amt_004")
+        body = _ipn("amt_004", "finished", deposit.pk, "80.00")
+        self.client.post(CALLBACK_URL, body, content_type="application/json")
+        deposit.refresh_from_db()
+        self.assertTrue(deposit.credited)
+
+    @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
+    def test_duplicate_wallet_webhook_no_double_credit(self, _sig):
+        """Second identical webhook must not credit the wallet a second time."""
+        wallet  = make_wallet(user=self.user)
+        deposit = make_deposit(self.user, amount_usd=Decimal("100.00"), payment_id="amt_005")
+        body = _ipn("amt_005", "finished", deposit.pk, "100.00")
+        self.client.post(CALLBACK_URL, body, content_type="application/json")
+        self.client.post(CALLBACK_URL, body, content_type="application/json")
+        wallet.refresh_from_db()
+        self.assertEqual(wallet.available_balance, Decimal("100.00"))
+
+
+class CallbackPartialPaymentStorageTests(TestCase):
+    """partially_paid status stores confirmed_amount_usd and stays uncredited."""
+
+    def setUp(self):
+        _PATCH_RATELIMIT.start()
+        self.user = make_user()
+
+    def tearDown(self):
+        _PATCH_RATELIMIT.stop()
+
+    @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
+    def test_partial_payment_stores_confirmed_amount_usd(self, _sig):
+        deposit = make_deposit(self.user, amount_usd=Decimal("100.00"), payment_id="pp_001")
+        body = _ipn("pp_001", "partially_paid", deposit.pk, "60.00")
+        self.client.post(CALLBACK_URL, body, content_type="application/json")
+        deposit.refresh_from_db()
+        self.assertEqual(deposit.confirmed_amount_usd, Decimal("60.00"))
+
+    @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
+    def test_partial_payment_wallet_not_credited(self, _sig):
+        wallet  = make_wallet(user=self.user)
+        deposit = make_deposit(self.user, amount_usd=Decimal("100.00"), payment_id="pp_002")
+        body = _ipn("pp_002", "partially_paid", deposit.pk, "60.00")
+        self.client.post(CALLBACK_URL, body, content_type="application/json")
+        wallet.refresh_from_db()
+        self.assertEqual(wallet.available_balance, Decimal("0"))
+
+    @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
+    def test_partial_payment_deposit_uncredited(self, _sig):
+        deposit = make_deposit(self.user, amount_usd=Decimal("100.00"), payment_id="pp_003")
+        body = _ipn("pp_003", "partially_paid", deposit.pk, "60.00")
+        self.client.post(CALLBACK_URL, body, content_type="application/json")
+        deposit.refresh_from_db()
+        self.assertFalse(deposit.credited)
+
+    @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
+    def test_partial_payment_status_updated(self, _sig):
+        deposit = make_deposit(self.user, amount_usd=Decimal("100.00"), payment_id="pp_004")
+        body = _ipn("pp_004", "partially_paid", deposit.pk, "60.00")
+        self.client.post(CALLBACK_URL, body, content_type="application/json")
+        deposit.refresh_from_db()
+        self.assertEqual(deposit.status, "partially_paid")
+
+
+class CallbackChallengeUnderpaidTests(TestCase):
+    """Challenge purchase with confirmed amount below product price must NOT activate."""
+
+    def setUp(self):
+        _PATCH_RATELIMIT.start()
+        self.user    = make_user()
+        self.product = make_challenge_product()
+
+    def tearDown(self):
+        _PATCH_RATELIMIT.stop()
+
+    @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
+    def test_finished_underpaid_does_not_create_enrollment(self, _sig):
+        """finished IPN but confirmed amount < price → no enrollment."""
+        deposit = _make_challenge_deposit(self.user, self.product, "cup_001")
+        underpaid = str(deposit.challenge_product.price_usd - Decimal("1.00"))
+        body = _ipn("cup_001", "finished", deposit.pk, underpaid)
+        self.client.post(CALLBACK_URL, body, content_type="application/json")
+        self.assertEqual(ChallengeEnrollment.objects.filter(deposit=deposit).count(), 0)
+
+    @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
+    def test_finished_underpaid_deposit_not_credited(self, _sig):
+        deposit = _make_challenge_deposit(self.user, self.product, "cup_002")
+        underpaid = str(deposit.challenge_product.price_usd - Decimal("1.00"))
+        body = _ipn("cup_002", "finished", deposit.pk, underpaid)
+        self.client.post(CALLBACK_URL, body, content_type="application/json")
+        deposit.refresh_from_db()
+        self.assertFalse(deposit.credited)
+
+    @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
+    def test_finished_underpaid_stores_confirmed_amount(self, _sig):
+        deposit = _make_challenge_deposit(self.user, self.product, "cup_003")
+        underpaid = deposit.challenge_product.price_usd - Decimal("5.00")
+        body = _ipn("cup_003", "finished", deposit.pk, str(underpaid))
+        self.client.post(CALLBACK_URL, body, content_type="application/json")
+        deposit.refresh_from_db()
+        self.assertEqual(deposit.confirmed_amount_usd, underpaid)
+
+    @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
+    def test_finished_exact_price_activates_enrollment(self, _sig):
+        """Edge: confirmed == price exactly → should activate."""
+        deposit = _make_challenge_deposit(self.user, self.product, "cup_004")
+        exact = str(deposit.challenge_product.price_usd)
+        body = _ipn("cup_004", "finished", deposit.pk, exact)
+        self.client.post(CALLBACK_URL, body, content_type="application/json")
+        self.assertEqual(ChallengeEnrollment.objects.filter(deposit=deposit).count(), 1)

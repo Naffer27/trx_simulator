@@ -1717,29 +1717,48 @@ def deposit_callback(request):
             update_fields["nowpayments_payment_id"] = payment_id
 
         actually_paid = data.get("actually_paid_amount") or data.get("outcome_amount")
-        if actually_paid:
-            update_fields["confirmed_amount_usd"] = Decimal(str(actually_paid))
+        _confirmed_dec = Decimal(str(actually_paid)) if actually_paid else None
+        if _confirmed_dec:
+            update_fields["confirmed_amount_usd"] = _confirmed_dec
+
+        # Credit the amount NowPayments confirmed. Fall back to the requested amount
+        # only when the provider sends no confirmation field at all.
+        credit_amount = _confirmed_dec if (_confirmed_dec and _confirmed_dec > 0) else deposit.amount_usd
 
         if payment_status in Deposit.CREDITED_STATUSES:
             if deposit.challenge_product_id:
-                # ── Challenge purchase: create enrollment, activate Phase 1 ──────
-                _fulfill_challenge_purchase(deposit)
-                logger.info(
-                    "[callback] CHALLENGE ACTIVATED deposit_id=%d product_id=%d user=%s",
-                    deposit.id, deposit.challenge_product_id, deposit.user_id,
-                )
+                # ── Challenge purchase ────────────────────────────────────────────
+                # Confirmed amount must cover the full product price before activating.
+                required = deposit.challenge_product.price_usd
+                if credit_amount < required:
+                    logger.warning(
+                        "[callback] CHALLENGE UNDERPAID deposit_id=%d required=%s "
+                        "confirmed=%s — enrollment NOT created",
+                        deposit.id, required, credit_amount,
+                    )
+                    # credited stays False; status row is updated for support visibility
+                else:
+                    _fulfill_challenge_purchase(deposit)
+                    logger.info(
+                        "[callback] CHALLENGE ACTIVATED deposit_id=%d product_id=%d user=%s",
+                        deposit.id, deposit.challenge_product_id, deposit.user_id,
+                    )
+                    update_fields["credited"]     = True
+                    update_fields["credited_at"]  = timezone.now()
+                    update_fields["confirmed_at"] = timezone.now()
             else:
-                # ── Regular wallet top-up ─────────────────────────────────────────
+                # ── Regular wallet top-up: credit confirmed amount ────────────────
                 wallet, _ = get_or_create_wallet(deposit.user)
                 credit_wallet(
                     wallet.id,
-                    deposit.amount_usd,
+                    credit_amount,
                     WalletTransaction.TX_DEPOSIT,
                     deposit=deposit,
                     note=f"NowPayments #{payment_id} {deposit.crypto_currency.upper()}",
                 )
 
-                # Drain pending_balance if it was incremented during confirming
+                # Drain pending_balance if it was incremented during confirming.
+                # Always drain deposit.amount_usd (what was added), not credit_amount.
                 if deposit.status == Deposit.STATUS_CONFIRMING:
                     from django.db.models import F
                     from .models import Wallet as WalletModel
@@ -1749,26 +1768,36 @@ def deposit_callback(request):
 
                 logger.info(
                     "[callback] WALLET CREDITED deposit_id=%d payment_id=%s "
-                    "amount_usd=%s currency=%s wallet_id=%d",
+                    "confirmed_usd=%s requested_usd=%s currency=%s wallet_id=%d",
                     deposit.id, payment_id,
-                    deposit.amount_usd, deposit.crypto_currency.upper(), wallet.id,
+                    credit_amount, deposit.amount_usd,
+                    deposit.crypto_currency.upper(), wallet.id,
                 )
                 log_audit(
                     request, EV_DEPOSIT_CREDITED,
-                    f"Deposit #{deposit.id} credited ${deposit.amount_usd}",
+                    f"Deposit #{deposit.id} credited ${credit_amount}",
                     detail={
-                        "deposit_id":   deposit.id,
-                        "payment_id":   payment_id,
-                        "amount_usd":   str(deposit.amount_usd),
-                        "currency":     deposit.crypto_currency,
-                        "wallet_id":    wallet.id,
+                        "deposit_id":     deposit.id,
+                        "payment_id":     payment_id,
+                        "amount_usd":     str(deposit.amount_usd),
+                        "confirmed_usd":  str(credit_amount),
+                        "currency":       deposit.crypto_currency,
+                        "wallet_id":      wallet.id,
                         "payment_status": payment_status,
                     },
                 )
 
-            update_fields["credited"]     = True
-            update_fields["credited_at"]  = timezone.now()
-            update_fields["confirmed_at"] = timezone.now()
+                update_fields["credited"]     = True
+                update_fields["credited_at"]  = timezone.now()
+                update_fields["confirmed_at"] = timezone.now()
+
+        elif payment_status == Deposit.STATUS_PARTIALLY_PAID:
+            # Partial payment: save confirmed amount for support, do NOT credit.
+            logger.warning(
+                "[callback] PARTIAL PAYMENT deposit_id=%d requested=%s confirmed=%s "
+                "— NOT credited, pending support review",
+                deposit.id, deposit.amount_usd, credit_amount,
+            )
 
         elif payment_status == Deposit.STATUS_CONFIRMING:
             # Funds on-chain but not yet final — show as pending in wallet
