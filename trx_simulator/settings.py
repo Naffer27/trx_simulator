@@ -367,15 +367,25 @@ LOGIN_URL = "simulator:login"
 LOGIN_REDIRECT_URL = "simulator:dashboard"
 
 # ===============================
-# 📧 Configuración de Gmail (SMTP)
 # ===============================
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
-EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
-EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True").strip().lower() in {"1", "true", "yes"}
+# 📧 Email
+# Dev  (DEBUG=True):  filebased — emails saved to dev_emails/ for inspection
+# Prod (DEBUG=False): smtp or a transactional provider (SendGrid, Mailgun, etc.)
+# Override any default by setting EMAIL_BACKEND explicitly in .env.
+# ===============================
+_default_email_backend = (
+    "django.core.mail.backends.filebased.EmailBackend"
+    if DEBUG
+    else "django.core.mail.backends.smtp.EmailBackend"
+)
+EMAIL_BACKEND   = os.getenv("EMAIL_BACKEND", _default_email_backend)
+EMAIL_FILE_PATH = os.getenv("EMAIL_FILE_PATH", str(BASE_DIR / "dev_emails"))
+EMAIL_HOST      = os.getenv("EMAIL_HOST", "smtp.gmail.com")
+EMAIL_PORT      = int(os.getenv("EMAIL_PORT", "587"))
+EMAIL_USE_TLS   = os.getenv("EMAIL_USE_TLS", "True").strip().lower() in {"1", "true", "yes"}
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
-EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")  # required in .env
-DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+DEFAULT_FROM_EMAIL  = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER) or "noreply@moneybrokers.app"
 ADMINS = [("Admin", os.getenv("ADMIN_EMAIL", "nafferphotographer@gmail.com"))]
 
 # Public base URL used to build links inside emails.

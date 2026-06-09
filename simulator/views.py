@@ -851,11 +851,12 @@ def accounts_view(request):
         accounts_data.append({"account": acc, "open_positions": pos_count})
 
     return render(request, "simulator/accounts.html", {
-        "wallet":         wallet,
-        "accounts_data":  accounts_data,
-        "active_section": "accounts",
-        "acct_success":   acct_success,
-        "acct_error":     acct_error,
+        "wallet":          wallet,
+        "accounts_data":   accounts_data,
+        "active_section":  "accounts",
+        "acct_success":    acct_success,
+        "acct_error":      acct_error,
+        "email_verified":  _is_email_verified(request.user),
     })
 
 

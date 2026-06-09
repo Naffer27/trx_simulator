@@ -17,3 +17,6 @@ staticfiles/
 node_modules/
 dump.rdb
 .env.save
+
+# dev emails (filebased backend — local only, never commit)
+dev_emails/*.log
