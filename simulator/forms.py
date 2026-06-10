@@ -3,6 +3,7 @@ from decimal import Decimal
 from django import forms
 from django.contrib.auth.models import User
 from django.conf import settings
+from django.contrib.auth.password_validation import validate_password
 from .models import TradingAccount, Deposit, MARGIN_ENGINE_TYPES
 
 
@@ -46,6 +47,7 @@ class RegisterForm(forms.ModelForm):
         p2 = self.cleaned_data.get("password2")
         if p1 != p2:
             raise forms.ValidationError("Las contraseñas no coinciden.")
+        validate_password(p2)
         return p2
 
     def clean_email(self):
