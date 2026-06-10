@@ -148,6 +148,15 @@ urlpatterns = [
     # ── Internal Challenge Status API (Phase 5G) ──────────────────────────────
     path("api/internal/challenge/status/<str:external_event_id>/", challenge_status_view, name="challenge_status"),
 
+    # ── Password Change (authenticated users) ───────────────────────────────
+    path("password-change/", auth_views.PasswordChangeView.as_view(
+        template_name="simulator/password_change_form.html",
+        success_url=reverse_lazy("simulator:password_change_done"),
+    ), name="password_change"),
+    path("password-change/done/", auth_views.PasswordChangeDoneView.as_view(
+        template_name="simulator/password_change_done.html",
+    ), name="password_change_done"),
+
     # ── Password Reset ───────────────────────────────────────────────────────
     path("password-reset/", auth_views.PasswordResetView.as_view(
         template_name="simulator/password_reset_form.html",

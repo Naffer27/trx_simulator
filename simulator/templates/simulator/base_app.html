@@ -514,6 +514,15 @@
         <span class="sb-text">Expertos (EAs)</span>
       </a>
 
+      <div class="sb-divider"></div>
+
+      <!-- Cambiar Contraseña -->
+      <a href="{% url 'simulator:password_change' %}"
+         class="sb-link {% if active_section == 'password_change' %}active{% endif %}">
+        <span class="sb-icon"><i class="fa-solid fa-key"></i></span>
+        <span class="sb-text">Cambiar Contraseña</span>
+      </a>
+
     </nav>
 
     <!-- Footer / user -->

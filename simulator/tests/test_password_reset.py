@@ -15,12 +15,16 @@ Covers:
   10. Normal login still works unchanged
 """
 import re
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
 from django.core import mail
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from simulator.tests.factories import make_user
+
+_PATCH_RATELIMIT = patch("simulator.ratelimit.rate_check", return_value=(True, 0))
 
 User = get_user_model()
 
@@ -32,6 +36,12 @@ LOGIN_URL           = "/login/"
 @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
 class ForgotPasswordLinkTests(TestCase):
     """The login page must have a real link pointing to the password reset form."""
+
+    def setUp(self):
+        _PATCH_RATELIMIT.start()
+
+    def tearDown(self):
+        _PATCH_RATELIMIT.stop()
 
     def test_login_has_forgot_password_link(self):
         resp = self.client.get(LOGIN_URL)
@@ -78,6 +88,12 @@ class PasswordResetFormTests(TestCase):
 @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
 class PasswordResetConfirmTests(TestCase):
     """The confirm page must validate the token and allow setting a new password."""
+
+    def setUp(self):
+        _PATCH_RATELIMIT.start()
+
+    def tearDown(self):
+        _PATCH_RATELIMIT.stop()
 
     def _get_confirm_url(self, email):
         """Trigger a reset for *email* and extract the confirm URL from outbox."""
@@ -153,8 +169,12 @@ class NormalLoginUnchangedTests(TestCase):
     """Password reset flow must not disturb normal username/password login."""
 
     def setUp(self):
+        _PATCH_RATELIMIT.start()
         self.user = make_user(username="stable_user", email="stable@example.com",
                               password="StablePass!1")
+
+    def tearDown(self):
+        _PATCH_RATELIMIT.stop()
 
     def test_login_still_works(self):
         resp = self.client.post(LOGIN_URL, {
