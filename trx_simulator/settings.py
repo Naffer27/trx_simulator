@@ -379,10 +379,9 @@ LOGIN_URL = "simulator:login"
 LOGIN_REDIRECT_URL = "simulator:dashboard"
 
 # ===============================
-# ===============================
 # 📧 Email
 # Dev  (DEBUG=True):  filebased — emails saved to dev_emails/ for inspection
-# Prod (DEBUG=False): smtp or a transactional provider (SendGrid, Mailgun, etc.)
+# Prod (DEBUG=False): smtp — EMAIL_HOST must be set in .env
 # Override any default by setting EMAIL_BACKEND explicitly in .env.
 # ===============================
 _default_email_backend = (
@@ -390,15 +389,30 @@ _default_email_backend = (
     if DEBUG
     else "django.core.mail.backends.smtp.EmailBackend"
 )
-EMAIL_BACKEND   = os.getenv("EMAIL_BACKEND", _default_email_backend)
-EMAIL_FILE_PATH = os.getenv("EMAIL_FILE_PATH", str(BASE_DIR / "dev_emails"))
-EMAIL_HOST      = os.getenv("EMAIL_HOST", "smtp.gmail.com")
-EMAIL_PORT      = int(os.getenv("EMAIL_PORT", "587"))
-EMAIL_USE_TLS   = os.getenv("EMAIL_USE_TLS", "True").strip().lower() in {"1", "true", "yes"}
-EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_BACKEND       = os.getenv("EMAIL_BACKEND", _default_email_backend)
+EMAIL_FILE_PATH     = os.getenv("EMAIL_FILE_PATH", str(BASE_DIR / "dev_emails"))
+EMAIL_HOST          = os.getenv("EMAIL_HOST", "")
+EMAIL_PORT          = int(os.getenv("EMAIL_PORT", "587"))
+EMAIL_USE_TLS       = os.getenv("EMAIL_USE_TLS", "True").strip().lower()  in {"1", "true", "yes"}
+EMAIL_USE_SSL       = os.getenv("EMAIL_USE_SSL", "False").strip().lower() in {"1", "true", "yes"}
+EMAIL_TIMEOUT       = int(os.getenv("EMAIL_TIMEOUT", "10"))
+EMAIL_HOST_USER     = os.getenv("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
-DEFAULT_FROM_EMAIL  = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER) or "noreply@moneybrokers.app"
-ADMINS = [("Admin", os.getenv("ADMIN_EMAIL", "nafferphotographer@gmail.com"))]
+DEFAULT_FROM_EMAIL  = os.getenv("DEFAULT_FROM_EMAIL", "") or "noreply@moneybrokers.app"
+SERVER_EMAIL        = os.getenv("SERVER_EMAIL", "") or DEFAULT_FROM_EMAIL
+ADMINS              = [("Admin", os.getenv("ADMIN_EMAIL", "nafferphotographer@gmail.com"))]
+
+# Guard: production SMTP requires EMAIL_HOST to be explicitly configured.
+# Skipped during `manage.py test` so the test runner is never blocked.
+_smtp_in_use = "smtp.EmailBackend" in EMAIL_BACKEND
+if not DEBUG and _smtp_in_use and not EMAIL_HOST:
+    _in_test_run = len(sys.argv) > 1 and sys.argv[1] == "test"
+    if not _in_test_run:
+        raise ImproperlyConfigured(
+            "EMAIL_HOST must be set when DEBUG=False and using the SMTP email backend. "
+            "Add EMAIL_HOST to your .env file (e.g. smtp.sendgrid.net, smtp.mailgun.org). "
+            "See DEPLOY.md for email provider configuration."
+        )
 
 # Public base URL used to build links inside emails.
 # In development: http://127.0.0.1:8000
