@@ -35,9 +35,16 @@ DEBUG = os.getenv("DEBUG", "False").strip().lower() in {"1", "true", "yes"}
 BROKER_ACCESS_CODE = os.getenv("BROKER_ACCESS_CODE", "").strip()
 
 _BASE_HOSTS = ["0.0.0.0", "127.0.0.1", "localhost", ".ngrok-free.dev", ".ngrok-free.app"]
+
+# Primary production domain — set DOMAIN=yourdomain.com in prod .env
+# Automatically includes the bare domain and the www. subdomain.
+DOMAIN = os.getenv("DOMAIN", "").strip()
+_domain_hosts = [DOMAIN, f"www.{DOMAIN}"] if DOMAIN else []
+_extra_hosts  = [h.strip() for h in os.getenv("ALLOWED_HOSTS_EXTRA", "").split(",") if h.strip()]
+
 # In DEBUG mode allow wildcard so ngrok subdomains don't cause 400s during development.
 # In production, only the explicit list is used.
-ALLOWED_HOSTS = ["*"] + _BASE_HOSTS if DEBUG else _BASE_HOSTS
+ALLOWED_HOSTS = (["*"] + _BASE_HOSTS) if DEBUG else (_BASE_HOSTS + _domain_hosts + _extra_hosts)
 
 # Apps
 INSTALLED_APPS = [
@@ -401,6 +408,9 @@ SITE_URL = os.getenv("SITE_URL", "http://127.0.0.1:8000").rstrip("/")
 # ===============================
 # 🔐 CSRF / Proxy
 # ===============================
+_domain_csrf = [f"https://{DOMAIN}", f"https://www.{DOMAIN}"] if DOMAIN else []
+_extra_csrf  = [o.strip() for o in os.getenv("CSRF_TRUSTED_ORIGINS_EXTRA", "").split(",") if o.strip()]
+
 CSRF_TRUSTED_ORIGINS = [
     "http://127.0.0.1:8000",
     "http://localhost:8000",
@@ -409,7 +419,7 @@ CSRF_TRUSTED_ORIGINS = [
     "https://127.0.0.1",
     "https://*.ngrok-free.dev",
     "https://*.ngrok-free.app",
-]
+] + _domain_csrf + _extra_csrf
 # Trust X-Forwarded-Proto from upstream proxy (nginx, ngrok, Render, etc.)
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 USE_X_FORWARDED_HOST = True
