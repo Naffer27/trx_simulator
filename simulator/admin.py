@@ -17,6 +17,7 @@ from .models import (
     BrokerLedger, BrokerSpreadConfig,
     BrokerEquitySnapshot, BrokerRevenueSnapshot,
     ChallengeProduct, ChallengeEnrollment, FundedConfig,
+    KYCProfile,
 )
 from . import challenge_engine
 
@@ -2482,6 +2483,61 @@ class FundedConfigAdmin(admin.ModelAdmin):
     def funded_account_link(self, obj):
         account = obj.enrollment.funded_account if obj.enrollment_id else None
         return _account_link(account)
+
+
+# ─────────────────────────────────────────────
+# KYC
+# ─────────────────────────────────────────────
+
+@admin.register(KYCProfile)
+class KYCProfileAdmin(admin.ModelAdmin):
+    list_display   = ("user", "status", "legal_name", "country",
+                      "document_type", "submitted_at", "reviewed_at", "reviewed_by")
+    list_filter    = ("status", "country", "document_type")
+    search_fields  = ("user__username", "user__email", "legal_name")
+    readonly_fields = ("user", "created_at", "updated_at", "submitted_at",
+                       "reviewed_at", "reviewed_by")
+    ordering       = ("-submitted_at", "-created_at")
+
+    fieldsets = (
+        ("Identity", {
+            "fields": ("user", "status", "legal_name", "country"),
+        }),
+        ("Document", {
+            "fields": ("document_type", "document_number",
+                       "document_front", "document_back", "selfie"),
+        }),
+        ("Review", {
+            "fields": ("reviewed_by", "reviewed_at", "rejection_reason"),
+        }),
+        ("Timestamps", {
+            "fields": ("submitted_at", "created_at", "updated_at"),
+            "classes": ("collapse",),
+        }),
+    )
+
+    @admin.action(description="Approve selected KYC profiles")
+    def approve_kyc(self, request, queryset):
+        from django.utils import timezone
+        updated = queryset.filter(status=KYCProfile.STATUS_PENDING).update(
+            status=KYCProfile.STATUS_APPROVED,
+            reviewed_at=timezone.now(),
+            reviewed_by=request.user,
+            rejection_reason="",
+        )
+        self.message_user(request, f"{updated} KYC profile(s) approved.")
+
+    @admin.action(description="Reject selected KYC profiles")
+    def reject_kyc(self, request, queryset):
+        from django.utils import timezone
+        updated = queryset.filter(status=KYCProfile.STATUS_PENDING).update(
+            status=KYCProfile.STATUS_REJECTED,
+            reviewed_at=timezone.now(),
+            reviewed_by=request.user,
+        )
+        self.message_user(request, f"{updated} KYC profile(s) rejected.")
+
+    actions = ["approve_kyc", "reject_kyc"]
 
 
 # ─────────────────────────────────────────────

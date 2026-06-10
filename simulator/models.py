@@ -1574,3 +1574,65 @@ class ExpertAdvisor(models.Model):
     def __str__(self):
         v = f" v{self.version}" if self.version else ""
         return f"{self.name}{v} [{self.category}]"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# KYC — Know Your Customer (manual review)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class KYCProfile(models.Model):
+    STATUS_NOT_STARTED = "not_started"
+    STATUS_PENDING     = "pending"
+    STATUS_APPROVED    = "approved"
+    STATUS_REJECTED    = "rejected"
+
+    STATUS_CHOICES = [
+        (STATUS_NOT_STARTED, "Not Started"),
+        (STATUS_PENDING,     "Pending Review"),
+        (STATUS_APPROVED,    "Approved"),
+        (STATUS_REJECTED,    "Rejected"),
+    ]
+
+    DOCUMENT_TYPE_CHOICES = [
+        ("passport",         "Passport"),
+        ("national_id",      "National ID"),
+        ("drivers_license",  "Driver's License"),
+        ("residence_permit", "Residence Permit"),
+    ]
+
+    user             = models.OneToOneField(User, on_delete=models.CASCADE,
+                                            related_name="kyc_profile")
+    status           = models.CharField(max_length=20, choices=STATUS_CHOICES,
+                                        default=STATUS_NOT_STARTED, db_index=True)
+    legal_name       = models.CharField(max_length=200, blank=True)
+    country          = models.CharField(max_length=100, blank=True)
+    document_type    = models.CharField(max_length=30, choices=DOCUMENT_TYPE_CHOICES,
+                                        blank=True)
+    document_number  = models.CharField(max_length=100, blank=True)
+    document_front   = models.FileField(upload_to="kyc/documents/", blank=True, null=True)
+    document_back    = models.FileField(upload_to="kyc/documents/", blank=True, null=True)
+    selfie           = models.FileField(upload_to="kyc/selfies/",   blank=True, null=True)
+    submitted_at     = models.DateTimeField(null=True, blank=True)
+    reviewed_at      = models.DateTimeField(null=True, blank=True)
+    reviewed_by      = models.ForeignKey(User, on_delete=models.SET_NULL,
+                                         null=True, blank=True,
+                                         related_name="kyc_reviews")
+    rejection_reason = models.TextField(blank=True)
+    created_at       = models.DateTimeField(auto_now_add=True)
+    updated_at       = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name        = "KYC Profile"
+        verbose_name_plural = "KYC Profiles"
+        ordering            = ["-submitted_at", "-created_at"]
+
+    def __str__(self):
+        return f"KYC({self.user.username}) [{self.status}]"
+
+    @property
+    def is_approved(self) -> bool:
+        return self.status == self.STATUS_APPROVED
+
+    @property
+    def is_pending(self) -> bool:
+        return self.status == self.STATUS_PENDING
