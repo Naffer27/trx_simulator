@@ -20,3 +20,4 @@ dump.rdb
 
 # dev emails (filebased backend — local only, never commit)
 dev_emails/*.log
+media/
