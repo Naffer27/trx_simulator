@@ -21,6 +21,7 @@ from .models import (
     TradingViolation, TraderScore, AccountEquitySnapshot,
     ChallengeEnrollment, ChallengeProduct, AccountProduct, Wallet,
     EmailVerification, TermsAcceptance, TERMS_VERSION, RISK_DISCLOSURE_VERSION,
+    KYCProfile,
 )
 from .challenge_engine import (
     evaluate_phase as _ce_evaluate_phase,
@@ -29,7 +30,7 @@ from .challenge_engine import (
     FAILED as _CE_FAILED,
     activate_challenge_enrollment as _ce_activate,
 )
-from .forms import LoginForm, RegisterForm, DepositForm, WithdrawForm, CreateAccountForm, FundAccountForm, WithdrawAccountForm
+from .forms import LoginForm, RegisterForm, DepositForm, WithdrawForm, CreateAccountForm, FundAccountForm, WithdrawAccountForm, KYCProfileForm
 from .wallet_ledger import credit_wallet, debit_wallet, transfer_to_account, transfer_to_wallet, get_or_create_wallet, InsufficientFunds
 from .currencies import to_np_code, CURRENCY_MAP
 from .observability import security_log, get_client_ip
@@ -2791,6 +2792,40 @@ def experts_view(request):
         'by_category': by_category,
         'total':       eas.count(),
         'active_section': 'experts',
+    })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# KYC — Know Your Customer verification
+# ─────────────────────────────────────────────────────────────────────────────
+
+@login_required
+def kyc_view(request):
+    kyc, _ = KYCProfile.objects.get_or_create(user=request.user)
+
+    editable = kyc.status in (KYCProfile.STATUS_NOT_STARTED, KYCProfile.STATUS_REJECTED)
+    form     = None
+
+    if editable:
+        if request.method == "POST":
+            form = KYCProfileForm(request.POST, request.FILES, instance=kyc)
+            if form.is_valid():
+                kyc            = form.save(commit=False)
+                kyc.status     = KYCProfile.STATUS_PENDING
+                kyc.submitted_at = timezone.now()
+                kyc.reviewed_at  = None
+                kyc.reviewed_by  = None
+                kyc.rejection_reason = ""
+                kyc.save()
+                return redirect("simulator:kyc")
+        else:
+            form = KYCProfileForm(instance=kyc)
+
+    return render(request, "simulator/kyc.html", {
+        "kyc":            kyc,
+        "form":           form,
+        "editable":       editable,
+        "active_section": "kyc",
     })
 
 

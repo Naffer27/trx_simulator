@@ -516,6 +516,13 @@
 
       <div class="sb-divider"></div>
 
+      <!-- Verificación KYC -->
+      <a href="{% url 'simulator:kyc' %}"
+         class="sb-link {% if active_section == 'kyc' %}active{% endif %}">
+        <span class="sb-icon"><i class="fa-solid fa-id-card"></i></span>
+        <span class="sb-text">Verificación KYC</span>
+      </a>
+
       <!-- Cambiar Contraseña -->
       <a href="{% url 'simulator:password_change' %}"
          class="sb-link {% if active_section == 'password_change' %}active{% endif %}">

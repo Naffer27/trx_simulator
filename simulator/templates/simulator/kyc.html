@@ -1,0 +1,247 @@
+{% extends "simulator/base_app.html" %}
+{% block title %}Verificación KYC — Money Brokers{% endblock %}
+{% block page_title %}Verificación KYC{% endblock %}
+
+{% block extra_styles %}
+.kyc-wrap { max-width: 580px; margin: 0 auto; }
+.kyc-card {
+  background: var(--bg-card-2);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 32px 36px;
+  box-shadow: 0 0 40px rgba(255,215,0,.04), 0 16px 40px rgba(0,0,0,.5);
+  margin-bottom: 24px;
+}
+.kyc-status-badge {
+  display: inline-block;
+  padding: 5px 14px;
+  border-radius: 20px;
+  font-size: .72rem;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  margin-bottom: 18px;
+}
+.badge-not_started { background: rgba(255,255,255,.07); color: var(--muted); }
+.badge-pending     { background: rgba(255,165,0,.15);   color: #FFA500; border: 1px solid rgba(255,165,0,.3); }
+.badge-approved    { background: rgba(39,174,96,.15);   color: #27ae60; border: 1px solid rgba(39,174,96,.3); }
+.badge-rejected    { background: rgba(239,83,80,.15);   color: #ef5350; border: 1px solid rgba(239,83,80,.3); }
+.kyc-title {
+  font-family: 'Orbitron', sans-serif;
+  font-size: .88rem; font-weight: 900;
+  letter-spacing: .06em; color: #fff;
+  margin-bottom: 6px;
+}
+.kyc-sub  { font-size: .78rem; color: var(--muted); line-height: 1.6; margin-bottom: 28px; }
+.kyc-reason {
+  background: rgba(239,83,80,.08);
+  border: 1px solid rgba(239,83,80,.2);
+  border-radius: 8px;
+  color: #ef5350;
+  font-size: .78rem;
+  padding: 12px 16px;
+  margin-bottom: 24px;
+  line-height: 1.5;
+}
+.field { margin-bottom: 18px; }
+.field label {
+  display: block;
+  font-size: .68rem; font-weight: 600;
+  letter-spacing: .06em; text-transform: uppercase;
+  color: var(--muted-2); margin-bottom: 7px;
+}
+.field-hint { font-size: .68rem; color: var(--muted); margin-top: 4px; }
+.field input[type="text"],
+.field select {
+  width: 100%;
+  background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,215,0,.12);
+  border-radius: 8px;
+  padding: 11px 14px;
+  color: #fff;
+  font-family: 'Inter', sans-serif;
+  font-size: .88rem;
+  transition: border-color .18s, box-shadow .18s;
+}
+.field input[type="text"]:focus,
+.field select:focus {
+  outline: none;
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px rgba(255,215,0,.08);
+}
+.field select option { background: #0d0d1a; color: #fff; }
+.field input[type="file"] {
+  width: 100%;
+  background: rgba(255,255,255,.03);
+  border: 1px dashed rgba(255,215,0,.2);
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: var(--muted);
+  font-size: .82rem;
+  cursor: pointer;
+}
+.field-error { font-size: .73rem; color: #ef5350; margin-top: 5px; }
+.form-alert {
+  background: rgba(239,83,80,.10);
+  border: 1px solid rgba(239,83,80,.25);
+  border-radius: 8px;
+  color: #ef5350;
+  font-size: .78rem;
+  padding: 10px 14px;
+  margin-bottom: 20px;
+}
+.btn-kyc {
+  width: 100%; margin-top: 8px;
+  padding: 12px;
+  background: linear-gradient(135deg, #FFD700, #FFA500);
+  color: #000;
+  font-family: 'Inter', sans-serif;
+  font-size: .88rem; font-weight: 700;
+  letter-spacing: .04em;
+  border: none; border-radius: 8px;
+  cursor: pointer;
+  transition: opacity .18s, transform .15s, box-shadow .18s;
+}
+.btn-kyc:hover {
+  opacity: .9; transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(255,215,0,.22);
+}
+.btn-kyc:active { transform: translateY(0); }
+.kyc-info-icon { font-size: 2rem; margin-bottom: 14px; }
+{% endblock %}
+
+{% block content %}
+<div class="kyc-wrap">
+
+  {# ── Status badge ── #}
+  <div class="kyc-card">
+    <span class="kyc-status-badge badge-{{ kyc.status }}">
+      {% if kyc.status == "not_started" %}Sin verificar
+      {% elif kyc.status == "pending" %}En revisión
+      {% elif kyc.status == "approved" %}Verificado
+      {% elif kyc.status == "rejected" %}Rechazado
+      {% endif %}
+    </span>
+
+    {# ── APPROVED ── #}
+    {% if kyc.status == "approved" %}
+      <div class="kyc-info-icon" style="color:var(--bull);">✔</div>
+      <h1 class="kyc-title">Identidad Verificada</h1>
+      <p class="kyc-sub">
+        Tu identidad ha sido verificada exitosamente.<br>
+        Puedes realizar retiros y abrir cuentas reales sin restricciones.
+      </p>
+
+    {# ── PENDING ── #}
+    {% elif kyc.status == "pending" %}
+      <div class="kyc-info-icon" style="color:#FFA500;">&#9203;</div>
+      <h1 class="kyc-title">Verificación en Proceso</h1>
+      <p class="kyc-sub">
+        Hemos recibido tus documentos y están siendo revisados por nuestro equipo.<br>
+        El proceso normalmente tarda <strong>1–2 días hábiles</strong>.<br>
+        Te notificaremos por email cuando esté listo.
+      </p>
+
+    {# ── NOT STARTED / REJECTED — show form ── #}
+    {% else %}
+      {% if kyc.status == "rejected" %}
+        <div class="kyc-info-icon" style="color:#ef5350;">&#x26A0;</div>
+        <h1 class="kyc-title">Verificación Rechazada</h1>
+        {% if kyc.rejection_reason %}
+          <div class="kyc-reason">
+            <strong>Motivo:</strong> {{ kyc.rejection_reason }}
+          </div>
+        {% endif %}
+        <p class="kyc-sub">Por favor corrige los problemas indicados y envía tus documentos nuevamente.</p>
+      {% else %}
+        <div class="kyc-info-icon" style="color:var(--gold);">&#x1F4CB;</div>
+        <h1 class="kyc-title">Verificación de Identidad</h1>
+        <p class="kyc-sub">
+          Para acceder a retiros y cuentas reales, debemos verificar tu identidad.<br>
+          Sube un documento de identidad válido y un selfie.
+          Tus datos están protegidos y se usan solo para cumplimiento regulatorio.
+        </p>
+      {% endif %}
+
+      {# ── Form ── #}
+      {% if form.errors %}
+        <div class="form-alert">Por favor corrige los errores indicados abajo.</div>
+      {% endif %}
+
+      <form method="post" enctype="multipart/form-data" novalidate>
+        {% csrf_token %}
+
+        <div class="field">
+          <label for="{{ form.legal_name.id_for_label }}">Nombre legal completo</label>
+          <input type="text"
+                 id="{{ form.legal_name.id_for_label }}"
+                 name="legal_name"
+                 value="{{ form.legal_name.value|default:'' }}"
+                 placeholder="Ej: Juan Carlos Pérez Rodríguez"
+                 required>
+          {% for err in form.legal_name.errors %}<p class="field-error">{{ err }}</p>{% endfor %}
+        </div>
+
+        <div class="field">
+          <label for="{{ form.country.id_for_label }}">País de residencia</label>
+          <input type="text"
+                 id="{{ form.country.id_for_label }}"
+                 name="country"
+                 value="{{ form.country.value|default:'' }}"
+                 placeholder="Ej: Venezuela"
+                 required>
+          {% for err in form.country.errors %}<p class="field-error">{{ err }}</p>{% endfor %}
+        </div>
+
+        <div class="field">
+          <label for="{{ form.document_type.id_for_label }}">Tipo de documento</label>
+          <select id="{{ form.document_type.id_for_label }}" name="document_type" required>
+            <option value="">— Selecciona —</option>
+            {% for val, label in form.document_type.field.choices %}
+              {% if val %}
+                <option value="{{ val }}" {% if form.document_type.value == val %}selected{% endif %}>{{ label }}</option>
+              {% endif %}
+            {% endfor %}
+          </select>
+          {% for err in form.document_type.errors %}<p class="field-error">{{ err }}</p>{% endfor %}
+        </div>
+
+        <div class="field">
+          <label for="{{ form.document_number.id_for_label }}">Número de documento <span style="color:var(--muted);font-weight:400;">(opcional)</span></label>
+          <input type="text"
+                 id="{{ form.document_number.id_for_label }}"
+                 name="document_number"
+                 value="{{ form.document_number.value|default:'' }}"
+                 placeholder="Ej: V-12345678">
+          {% for err in form.document_number.errors %}<p class="field-error">{{ err }}</p>{% endfor %}
+        </div>
+
+        <div class="field">
+          <label for="{{ form.document_front.id_for_label }}">Frente del documento</label>
+          <input type="file" id="{{ form.document_front.id_for_label }}"
+                 name="document_front" accept="image/*,.pdf" required>
+          <p class="field-hint">JPG, PNG o PDF — máx. 5 MB</p>
+          {% for err in form.document_front.errors %}<p class="field-error">{{ err }}</p>{% endfor %}
+        </div>
+
+        <div class="field">
+          <label for="{{ form.document_back.id_for_label }}">Reverso del documento <span style="color:var(--muted);font-weight:400;">(opcional)</span></label>
+          <input type="file" id="{{ form.document_back.id_for_label }}"
+                 name="document_back" accept="image/*,.pdf">
+          {% for err in form.document_back.errors %}<p class="field-error">{{ err }}</p>{% endfor %}
+        </div>
+
+        <div class="field">
+          <label for="{{ form.selfie.id_for_label }}">Selfie sosteniendo el documento <span style="color:var(--muted);font-weight:400;">(opcional)</span></label>
+          <input type="file" id="{{ form.selfie.id_for_label }}"
+                 name="selfie" accept="image/*">
+          {% for err in form.selfie.errors %}<p class="field-error">{{ err }}</p>{% endfor %}
+        </div>
+
+        <button type="submit" class="btn-kyc">Enviar verificación &rarr;</button>
+      </form>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}

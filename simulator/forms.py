@@ -4,7 +4,7 @@ from django import forms
 from django.contrib.auth.models import User
 from django.conf import settings
 from django.contrib.auth.password_validation import validate_password
-from .models import TradingAccount, Deposit, MARGIN_ENGINE_TYPES
+from .models import TradingAccount, Deposit, MARGIN_ENGINE_TYPES, KYCProfile
 
 
 class LoginForm(forms.Form):
@@ -210,3 +210,27 @@ class WithdrawAccountForm(forms.Form):
             "class": "form-input", "step": "1", "min": "1", "placeholder": "100.00",
         }),
     )
+
+
+class KYCProfileForm(forms.ModelForm):
+    class Meta:
+        model  = KYCProfile
+        fields = [
+            "legal_name",
+            "country",
+            "document_type",
+            "document_number",
+            "document_front",
+            "document_back",
+            "selfie",
+        ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["legal_name"].required     = True
+        self.fields["country"].required        = True
+        self.fields["document_type"].required  = True
+        self.fields["document_front"].required = True
+        self.fields["document_number"].required = False
+        self.fields["document_back"].required   = False
+        self.fields["selfie"].required          = False
