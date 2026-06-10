@@ -470,6 +470,17 @@ NOWPAYMENTS_WEBHOOK_URL   = os.getenv("NOWPAYMENTS_WEBHOOK_URL", "")
 NOWPAYMENTS_EMAIL         = os.getenv("NOWPAYMENTS_EMAIL", "")
 NOWPAYMENTS_PASSWORD      = os.getenv("NOWPAYMENTS_PASSWORD", "")
 
+# Guard: NOWPAYMENTS_IPN_SECRET must be set in production so that deposit and
+# withdrawal callbacks cannot be spoofed. Skipped during `manage.py test`.
+if not DEBUG and not NOWPAYMENTS_IPN_SECRET:
+    _in_test_run = len(sys.argv) > 1 and sys.argv[1] == "test"
+    if not _in_test_run:
+        raise ImproperlyConfigured(
+            "NOWPAYMENTS_IPN_SECRET must be set when DEBUG=False. "
+            "Without it, any attacker can spoof deposit and withdrawal callbacks. "
+            "Add NOWPAYMENTS_IPN_SECRET to your .env file."
+        )
+
 # ===============================
 # 🔭 Observability — Sentry
 # ===============================
