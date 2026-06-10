@@ -516,6 +516,13 @@
 
       <div class="sb-divider"></div>
 
+      <!-- Mi Perfil -->
+      <a href="{% url 'simulator:profile' %}"
+         class="sb-link {% if active_section == 'profile' %}active{% endif %}">
+        <span class="sb-icon"><i class="fa-solid fa-user"></i></span>
+        <span class="sb-text">Mi Perfil</span>
+      </a>
+
       <!-- Verificación KYC -->
       <a href="{% url 'simulator:kyc' %}"
          class="sb-link {% if active_section == 'kyc' %}active{% endif %}">

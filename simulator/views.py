@@ -30,7 +30,7 @@ from .challenge_engine import (
     FAILED as _CE_FAILED,
     activate_challenge_enrollment as _ce_activate,
 )
-from .forms import LoginForm, RegisterForm, DepositForm, WithdrawForm, CreateAccountForm, FundAccountForm, WithdrawAccountForm, KYCProfileForm
+from .forms import LoginForm, RegisterForm, DepositForm, WithdrawForm, CreateAccountForm, FundAccountForm, WithdrawAccountForm, KYCProfileForm, UserProfileForm
 from .wallet_ledger import credit_wallet, debit_wallet, transfer_to_account, transfer_to_wallet, get_or_create_wallet, InsufficientFunds
 from .currencies import to_np_code, CURRENCY_MAP
 from .observability import security_log, get_client_ip
@@ -2810,6 +2810,40 @@ def experts_view(request):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# User Profile
+# ─────────────────────────────────────────────────────────────────────────────
+
+@login_required
+def profile_view(request):
+    """GET /profile/ — view and edit basic profile (first/last name)."""
+    saved = False
+    if request.method == "POST":
+        form = UserProfileForm(request.POST, instance=request.user)
+        if form.is_valid():
+            form.save()
+            return redirect("simulator:profile")
+    else:
+        form = UserProfileForm(instance=request.user)
+        saved = request.GET.get("saved") == "1"
+
+    try:
+        kyc_status = request.user.kyc_profile.status
+    except KYCProfile.DoesNotExist:
+        kyc_status = KYCProfile.STATUS_NOT_STARTED
+
+    from .models import TOTPDevice as _TOTPDevice
+    totp_enabled = _TOTPDevice.objects.filter(user=request.user, confirmed=True).exists()
+
+    return render(request, "simulator/profile.html", {
+        "form":           form,
+        "kyc_status":     kyc_status,
+        "email_verified": _is_email_verified(request.user),
+        "totp_enabled":   totp_enabled,
+        "active_section": "profile",
+    })
+
+
 # KYC — Know Your Customer verification
 # ─────────────────────────────────────────────────────────────────────────────
 

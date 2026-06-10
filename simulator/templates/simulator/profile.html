@@ -1,0 +1,203 @@
+{% extends "simulator/base_app.html" %}
+{% block title %}Mi Perfil — Money Brokers{% endblock %}
+{% block page_title %}Mi Perfil{% endblock %}
+
+{% block extra_styles %}
+.profile-wrap { max-width: 640px; margin: 0 auto; }
+.profile-card {
+  background: var(--bg-card-2);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 30px 34px;
+  margin-bottom: 20px;
+  box-shadow: 0 8px 32px rgba(0,0,0,.45);
+}
+.profile-section-title {
+  font-family: 'Orbitron', sans-serif;
+  font-size: .78rem; font-weight: 900;
+  letter-spacing: .08em; text-transform: uppercase;
+  color: var(--gold); margin-bottom: 20px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255,215,0,.1);
+}
+.info-row {
+  display: flex; align-items: baseline;
+  gap: 10px; margin-bottom: 14px;
+  font-size: .86rem;
+}
+.info-label {
+  min-width: 130px; font-size: .68rem; font-weight: 700;
+  letter-spacing: .07em; text-transform: uppercase;
+  color: var(--muted-2); flex-shrink: 0;
+}
+.info-value { color: #fff; }
+.field { margin-bottom: 18px; }
+.field label {
+  display: block; font-size: .68rem; font-weight: 600;
+  letter-spacing: .06em; text-transform: uppercase;
+  color: var(--muted-2); margin-bottom: 7px;
+}
+.field input[type="text"] {
+  width: 100%;
+  background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,215,0,.12);
+  border-radius: 8px; padding: 11px 14px;
+  color: #fff; font-family: 'Inter', sans-serif;
+  font-size: .88rem;
+  transition: border-color .18s, box-shadow .18s;
+  box-sizing: border-box;
+}
+.field input[type="text"]:focus {
+  outline: none; border-color: var(--gold);
+  box-shadow: 0 0 0 3px rgba(255,215,0,.08);
+}
+.field-error { font-size: .73rem; color: #ef5350; margin-top: 5px; }
+.btn-save {
+  width: 100%; margin-top: 6px; padding: 12px;
+  background: linear-gradient(135deg, #FFD700, #FFA500);
+  color: #000; font-family: 'Inter', sans-serif;
+  font-size: .88rem; font-weight: 700; letter-spacing: .04em;
+  border: none; border-radius: 8px; cursor: pointer;
+  transition: opacity .18s, transform .15s;
+}
+.btn-save:hover { opacity: .9; transform: translateY(-1px); }
+.btn-save:active { transform: translateY(0); }
+.saved-banner {
+  background: rgba(39,174,96,.12);
+  border: 1px solid rgba(39,174,96,.3);
+  border-radius: 8px; color: #27ae60;
+  font-size: .82rem; padding: 12px 16px;
+  margin-bottom: 20px;
+}
+.status-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 13px 0;
+  border-bottom: 1px solid rgba(255,255,255,.04);
+  font-size: .84rem;
+}
+.status-row:last-child { border-bottom: none; }
+.status-label { color: var(--muted-2); }
+.status-badge {
+  padding: 3px 12px; border-radius: 20px;
+  font-size: .68rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .07em;
+}
+.badge-ok   { background: rgba(39,174,96,.15); color: #27ae60; border: 1px solid rgba(39,174,96,.3); }
+.badge-warn { background: rgba(255,165,0,.12); color: #FFA500; border: 1px solid rgba(255,165,0,.25); }
+.badge-off  { background: rgba(255,255,255,.06); color: var(--muted); }
+.status-action { font-size: .76rem; color: var(--gold); text-decoration: none; }
+.status-action:hover { text-decoration: underline; }
+{% endblock %}
+
+{% block content %}
+<div class="profile-wrap">
+
+  {# ── Personal info ── #}
+  <div class="profile-card">
+    <div class="profile-section-title">Información de Cuenta</div>
+
+    <div class="info-row">
+      <span class="info-label">Usuario</span>
+      <span class="info-value">{{ user.username }}</span>
+    </div>
+    <div class="info-row">
+      <span class="info-label">Email</span>
+      <span class="info-value">{{ user.email }}</span>
+    </div>
+    <div class="info-row">
+      <span class="info-label">Miembro desde</span>
+      <span class="info-value">{{ user.date_joined|date:"d M Y" }}</span>
+    </div>
+  </div>
+
+  {# ── Editable fields ── #}
+  <div class="profile-card">
+    <div class="profile-section-title">Nombre</div>
+
+    {% if request.GET.saved == "1" %}
+    <div class="saved-banner"><i class="fa-solid fa-check"></i> Cambios guardados.</div>
+    {% endif %}
+
+    <form method="post" novalidate>
+      {% csrf_token %}
+
+      <div class="field">
+        <label for="{{ form.first_name.id_for_label }}">Nombre</label>
+        <input type="text"
+               id="{{ form.first_name.id_for_label }}"
+               name="first_name"
+               value="{{ form.first_name.value|default:'' }}"
+               placeholder="Nombre">
+        {% for err in form.first_name.errors %}<p class="field-error">{{ err }}</p>{% endfor %}
+      </div>
+
+      <div class="field">
+        <label for="{{ form.last_name.id_for_label }}">Apellido</label>
+        <input type="text"
+               id="{{ form.last_name.id_for_label }}"
+               name="last_name"
+               value="{{ form.last_name.value|default:'' }}"
+               placeholder="Apellido">
+        {% for err in form.last_name.errors %}<p class="field-error">{{ err }}</p>{% endfor %}
+      </div>
+
+      <button type="submit" class="btn-save">Guardar cambios</button>
+    </form>
+  </div>
+
+  {# ── Security status ── #}
+  <div class="profile-card">
+    <div class="profile-section-title">Estado de Seguridad</div>
+
+    <div class="status-row">
+      <span class="status-label">Email verificado</span>
+      {% if email_verified %}
+        <span class="status-badge badge-ok">Verificado</span>
+      {% else %}
+        <div style="display:flex;align-items:center;gap:12px;">
+          <span class="status-badge badge-warn">Sin verificar</span>
+          <a href="{% url 'simulator:resend_verification' %}" class="status-action">Reenviar →</a>
+        </div>
+      {% endif %}
+    </div>
+
+    <div class="status-row">
+      <span class="status-label">Autenticación 2FA</span>
+      {% if totp_enabled %}
+        <div style="display:flex;align-items:center;gap:12px;">
+          <span class="status-badge badge-ok">Activado</span>
+          <a href="{% url 'simulator:totp_disable' %}" class="status-action">Desactivar →</a>
+        </div>
+      {% else %}
+        <div style="display:flex;align-items:center;gap:12px;">
+          <span class="status-badge badge-off">Desactivado</span>
+          <a href="{% url 'simulator:totp_setup' %}" class="status-action">Activar →</a>
+        </div>
+      {% endif %}
+    </div>
+
+    <div class="status-row">
+      <span class="status-label">Verificación KYC</span>
+      {% if kyc_status == "approved" %}
+        <span class="status-badge badge-ok">Aprobado</span>
+      {% elif kyc_status == "pending" %}
+        <div style="display:flex;align-items:center;gap:12px;">
+          <span class="status-badge badge-warn">En revisión</span>
+        </div>
+      {% elif kyc_status == "rejected" %}
+        <div style="display:flex;align-items:center;gap:12px;">
+          <span class="status-badge" style="background:rgba(239,83,80,.12);color:#ef5350;border:1px solid rgba(239,83,80,.25);">Rechazado</span>
+          <a href="{% url 'simulator:kyc' %}" class="status-action">Reenviar →</a>
+        </div>
+      {% else %}
+        <div style="display:flex;align-items:center;gap:12px;">
+          <span class="status-badge badge-off">Sin verificar</span>
+          <a href="{% url 'simulator:kyc' %}" class="status-action">Verificar →</a>
+        </div>
+      {% endif %}
+    </div>
+
+  </div>
+
+</div>
+{% endblock %}

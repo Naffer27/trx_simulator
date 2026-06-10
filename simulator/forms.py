@@ -212,6 +212,21 @@ class WithdrawAccountForm(forms.Form):
     )
 
 
+class UserProfileForm(forms.ModelForm):
+    first_name = forms.CharField(
+        label="Nombre", max_length=150, required=False,
+        widget=forms.TextInput(attrs={"placeholder": "Nombre"}),
+    )
+    last_name = forms.CharField(
+        label="Apellido", max_length=150, required=False,
+        widget=forms.TextInput(attrs={"placeholder": "Apellido"}),
+    )
+
+    class Meta:
+        model = User
+        fields = ["first_name", "last_name"]
+
+
 class KYCProfileForm(forms.ModelForm):
     class Meta:
         model  = KYCProfile

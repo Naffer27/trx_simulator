@@ -62,6 +62,8 @@ from .views import (
     account_open_view,
     # KYC
     kyc_view,
+    # Profile
+    profile_view,
 )
 
 app_name = 'simulator'
@@ -142,6 +144,7 @@ urlpatterns = [
     path("documents/",            documents_view,      name="documents"),
     path("experts/",              experts_view,        name="experts"),
     path("kyc/",                  kyc_view,            name="kyc"),
+    path("profile/",              profile_view,        name="profile"),
 
     # ── Challenge Purchase ────────────────────────────────────────────────────
     path("challenges/",                       challenge_catalog_view,  name="challenge_catalog"),
