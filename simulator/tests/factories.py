@@ -319,6 +319,18 @@ def make_challenge_enrollment(
     )
 
 
+def make_kyc_approved(user) -> "KYCProfile":
+    """Create or update a KYCProfile for *user* with status=approved."""
+    from simulator.models import KYCProfile
+    kyc, _ = KYCProfile.objects.get_or_create(user=user)
+    kyc.status = KYCProfile.STATUS_APPROVED
+    kyc.legal_name = "Test User"
+    kyc.country = "Test Country"
+    kyc.document_type = "national_id"
+    kyc.save()
+    return kyc
+
+
 def make_funded_config(
     enrollment: ChallengeEnrollment | None = None,
     funded_type: str = FundedConfig.FUNDED_SIM,

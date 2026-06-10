@@ -84,6 +84,10 @@ _TERMS_GATE_MSG = (
     "Debes aceptar los términos y el aviso de riesgo antes de usar funciones financieras."
 )
 
+_KYC_GATE_MSG = (
+    "Debes completar y aprobar tu verificación KYC antes de retirar fondos."
+)
+
 from market_data.symbol_specs import get_spec as _get_sym_spec, allowed_symbols as _allowed_symbols
 
 logger = logging.getLogger(__name__)
@@ -1927,6 +1931,11 @@ def withdraw_view(request):
     wallet, _ = get_or_create_wallet(request.user)
     error = None
 
+    try:
+        kyc_approved = request.user.kyc_profile.status == KYCProfile.STATUS_APPROVED
+    except KYCProfile.DoesNotExist:
+        kyc_approved = False
+
     if request.method == "POST":
         form = WithdrawForm(request.POST)
         if form.is_valid():
@@ -1949,6 +1958,10 @@ def withdraw_view(request):
                         security_log("withdrawal.2fa_failed",
                                      username=request.user.username, user_id=request.user.pk)
                         error = "Código 2FA incorrecto. Verifica tu app y vuelve a intentarlo."
+
+            # ── KYC gate — identity must be approved before any financial operation ──
+            if not error and not kyc_approved:
+                error = _KYC_GATE_MSG
 
             if error:
                 pass  # fall through to re-render form with error
@@ -2065,6 +2078,7 @@ def withdraw_view(request):
         "form":           form,
         "wallet":         wallet,
         "error":          error,
+        "kyc_approved":   kyc_approved,
         "active_section": "withdraw",
     })
 

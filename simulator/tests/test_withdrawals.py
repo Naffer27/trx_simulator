@@ -29,7 +29,7 @@ from django.contrib.auth import get_user_model
 from simulator.models import (
     AuditLog, Wallet, WalletTransaction, WithdrawalRequest, TOTPDevice,
 )
-from simulator.tests.factories import make_user, make_wallet
+from simulator.tests.factories import make_user, make_wallet, make_kyc_approved
 
 User = get_user_model()
 
@@ -79,6 +79,7 @@ class WithdrawalCreationTests(TestCase):
         self.user   = make_user(email="wd@test.com")
         self.wallet = make_wallet(self.user, initial_balance=Decimal("200"))
         _make_device(self.user)
+        make_kyc_approved(self.user)
         self.client.force_login(self.user)
 
     def tearDown(self):
@@ -127,6 +128,7 @@ class DuplicatePendingWithdrawalTests(TestCase):
         self.user   = make_user(email="dup@test.com")
         self.wallet = make_wallet(self.user, initial_balance=Decimal("500"))
         _make_device(self.user)
+        make_kyc_approved(self.user)
         self.client.force_login(self.user)
 
     def tearDown(self):
@@ -185,6 +187,7 @@ class WithdrawalAtomicRollbackTests(TestCase):
         self.user   = make_user(email="atomic@test.com")
         self.wallet = make_wallet(self.user, initial_balance=Decimal("300"))
         _make_device(self.user)
+        make_kyc_approved(self.user)
         self.client.force_login(self.user)
 
     def tearDown(self):
@@ -301,6 +304,8 @@ class WithdrawalUserIsolationTests(TestCase):
         self.wallet_b = make_wallet(self.user_b, initial_balance=Decimal("300"))
         _make_device(self.user_a)
         _make_device(self.user_b)
+        make_kyc_approved(self.user_a)
+        make_kyc_approved(self.user_b)
 
     def tearDown(self):
         _PATCH_RATELIMIT.stop()
@@ -346,6 +351,7 @@ class WithdrawalAuditLogTests(TestCase):
         self.user   = make_user(email="audit@test.com")
         self.wallet = make_wallet(self.user, initial_balance=Decimal("500"))
         _make_device(self.user)
+        make_kyc_approved(self.user)
         self.client.force_login(self.user)
 
     def tearDown(self):
@@ -491,6 +497,7 @@ class WithdrawalEmailTests(TestCase):
         self.user   = make_user(email="emailtest@test.com")
         self.wallet = make_wallet(self.user, initial_balance=Decimal("500"))
         _make_device(self.user)
+        make_kyc_approved(self.user)
         self.client.force_login(self.user)
 
     def tearDown(self):
@@ -606,6 +613,7 @@ class WithdrawalTwoFATests(TestCase):
         self.mock_email = _PATCH_EMAIL.start()
         self.user   = make_user(email="2fa@test.com")
         self.wallet = make_wallet(self.user, initial_balance=Decimal("200"))
+        make_kyc_approved(self.user)
         self.client.force_login(self.user)
 
     def tearDown(self):

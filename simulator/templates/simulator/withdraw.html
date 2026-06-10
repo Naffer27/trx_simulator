@@ -155,6 +155,21 @@
   }
   .addr-check.ok   { color: #27ae60; }
   .addr-check.warn { color: #e67e22; }
+  .kyc-banner {
+    background: rgba(239,83,80,.08);
+    border: 1px solid rgba(239,83,80,.25);
+    border-radius: 8px;
+    color: #ef5350;
+    font-size: .82rem;
+    padding: 14px 16px;
+    margin-bottom: 20px;
+    line-height: 1.6;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .kyc-banner a { color: #FFD700; font-weight: 700; text-decoration: none; }
+  .kyc-banner a:hover { text-decoration: underline; }
 </style>
 {% endblock %}
 
@@ -170,6 +185,17 @@
       <span style="color:rgba(255,255,255,.55);">Balance disponible:</span>
       <strong style="color:var(--gold);margin-left:auto;">${{ wallet.available_balance|floatformat:2 }}</strong>
     </div>
+
+    {% if not kyc_approved %}
+    <div class="kyc-banner">
+      <i class="fa-solid fa-id-card" style="margin-top:2px;flex-shrink:0;"></i>
+      <div>
+        <strong>Verificación KYC requerida</strong><br>
+        Debes completar y aprobar tu verificación KYC antes de retirar fondos.
+        <a href="{% url 'simulator:kyc' %}">Completar verificación &rarr;</a>
+      </div>
+    </div>
+    {% endif %}
 
     {% if error %}
     <div class="wd-error">{{ error }}</div>
