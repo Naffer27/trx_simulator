@@ -1956,7 +1956,8 @@ def withdraw_view(request):
         kyc_approved = False
 
     from django.conf import settings as _settings
-    daily_limit = Decimal(str(_settings.MAX_WITHDRAWAL_DAILY_USD))
+    daily_limit   = Decimal(str(_settings.MAX_WITHDRAWAL_DAILY_USD))
+    min_withdrawal = Decimal(str(_settings.MIN_WITHDRAWAL_USD))
     daily_used  = _get_daily_withdrawal_used(request.user)
     daily_avail = max(daily_limit - daily_used, Decimal("0"))
 
@@ -1993,6 +1994,13 @@ def withdraw_view(request):
                 amount_usd      = form.cleaned_data["amount_usd"]
                 crypto_currency = form.cleaned_data["crypto_currency"]
                 wallet_address  = form.cleaned_data["wallet_address"]
+
+            # ── Minimum withdrawal amount ──────────────────────────────────────
+            if not error:
+                from django.conf import settings as _settings
+                _min_wd = Decimal(str(_settings.MIN_WITHDRAWAL_USD))
+                if amount_usd < _min_wd:
+                    error = f"El monto mínimo de retiro es ${_min_wd:,.2f} USD."
 
             # ── Daily withdrawal cap ───────────────────────────────────────────
             if not error:
@@ -2119,10 +2127,11 @@ def withdraw_view(request):
         "wallet":         wallet,
         "error":          error,
         "kyc_approved":   kyc_approved,
-        "daily_limit":    daily_limit,
-        "daily_used":     daily_used,
-        "daily_avail":    daily_avail,
-        "active_section": "withdraw",
+        "daily_limit":     daily_limit,
+        "daily_used":      daily_used,
+        "daily_avail":     daily_avail,
+        "min_withdrawal":  min_withdrawal,
+        "active_section":  "withdraw",
     })
 
 

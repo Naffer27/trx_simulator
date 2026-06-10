@@ -475,6 +475,8 @@ NOWPAYMENTS_PASSWORD      = os.getenv("NOWPAYMENTS_PASSWORD", "")
 
 # Daily withdrawal cap — sum of pending/processing/approved/completed withdrawals
 MAX_WITHDRAWAL_DAILY_USD = int(os.getenv("MAX_WITHDRAWAL_DAILY_USD", "1500"))
+# Minimum single withdrawal amount
+MIN_WITHDRAWAL_USD = int(os.getenv("MIN_WITHDRAWAL_USD", "25"))
 
 # Guard: NOWPAYMENTS_IPN_SECRET must be set in production so that deposit and
 # withdrawal callbacks cannot be spoofed. Skipped during `manage.py test`.
