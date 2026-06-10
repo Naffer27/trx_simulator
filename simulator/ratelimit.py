@@ -63,9 +63,10 @@ def rate_check(key: str, limit: int, window: int) -> tuple[bool, int]:
         full_key = f"{_RL_PREFIX}{key}"
         pipe = r.pipeline()
         pipe.incr(full_key)
-        pipe.expire(full_key, window)   # only sets if key is new (first request in window)
         results = pipe.execute()
         count = results[0]
+        if count == 1:
+            r.expire(full_key, window)
         return count <= limit, count
     except Exception as exc:
         _log.warning("[ratelimit] Redis unavailable for key=%s — fail-open: %r", key, exc)
