@@ -122,7 +122,6 @@ def apply_spread_and_slippage(base_price, side):
 # -----------------------
 # REGISTRO DE USUARIO
 # -----------------------
-@csrf_exempt
 def register_view(request):
     if request.method == "POST":
         form = RegisterForm(request.POST)
