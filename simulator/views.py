@@ -2235,11 +2235,24 @@ def withdraw_payout_callback(request):
 
 
 # ──────────────────────────────────────────────────────────────
-# Health check — Redis + DB + Channels layer
-# GET /api/health/  →  200 OK   {"status":"ok", ...}
-#                   →  503      {"status":"degraded", ...}
+# Health check — public liveness probe
+# GET /api/health/  →  200 {"status":"ok"}
+# No internal details: DB/Redis state is an operational secret.
 # ──────────────────────────────────────────────────────────────
 def health_check(request):
+    return JsonResponse({"status": "ok"})
+
+
+# ──────────────────────────────────────────────────────────────
+# Health detail — staff-only subsystem checks
+# GET /api/health/detail/  →  200 {"status":"ok", "db":{...}, "redis":{...}}
+#                          →  503 {"status":"degraded", ...}
+#                          →  403 if not staff
+# ──────────────────────────────────────────────────────────────
+def health_detail_view(request):
+    if not (request.user.is_authenticated and request.user.is_staff):
+        return JsonResponse({"error": "forbidden"}, status=403)
+
     results = {}
     ok = True
 
