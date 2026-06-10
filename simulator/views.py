@@ -88,6 +88,10 @@ _KYC_GATE_MSG = (
     "Debes completar y aprobar tu verificación KYC antes de retirar fondos."
 )
 
+_KYC_GATE_ACCOUNT_MSG = (
+    "Debes completar y aprobar tu verificación KYC antes de abrir una cuenta real."
+)
+
 from market_data.symbol_specs import get_spec as _get_sym_spec, allowed_symbols as _allowed_symbols
 
 logger = logging.getLogger(__name__)
@@ -868,6 +872,10 @@ def accounts_view(request):
 def account_open_view(request):
     """Product catalog page — /accounts/open/ — choose Demo or Real account to open."""
     wallet, _ = get_or_create_wallet(request.user)
+    try:
+        kyc_approved = request.user.kyc_profile.status == KYCProfile.STATUS_APPROVED
+    except KYCProfile.DoesNotExist:
+        kyc_approved = False
     catalog = (
         AccountProduct.objects
         .filter(is_active=True)
@@ -880,6 +888,7 @@ def account_open_view(request):
         "wallet":         wallet,
         "demo_products":  demo_products,
         "real_products":  real_products,
+        "kyc_approved":   kyc_approved,
         "active_section": "account_open",
     })
 
@@ -928,6 +937,13 @@ def create_account_view(request):
             return redirect("simulator:accounts")
         if not _has_accepted_terms(request.user):
             request.session["acct_error"] = _TERMS_GATE_MSG
+            return redirect("simulator:accounts")
+        try:
+            _kyc_ok = request.user.kyc_profile.status == KYCProfile.STATUS_APPROVED
+        except KYCProfile.DoesNotExist:
+            _kyc_ok = False
+        if not _kyc_ok:
+            request.session["acct_error"] = _KYC_GATE_ACCOUNT_MSG
             return redirect("simulator:accounts")
 
     # ── Validate amount for REAL ───────────────────────────────────────────────

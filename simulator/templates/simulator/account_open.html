@@ -263,6 +263,22 @@
 </div>
 
 
+{% if not kyc_approved and real_products %}
+<div style="
+  background:rgba(239,83,80,.08);border:1px solid rgba(239,83,80,.25);
+  border-radius:10px;color:#ef5350;font-size:.82rem;padding:14px 18px;
+  margin-bottom:28px;line-height:1.6;display:flex;align-items:flex-start;gap:10px;">
+  <i class="fa-solid fa-id-card" style="margin-top:2px;flex-shrink:0;"></i>
+  <div>
+    <strong>Verificación KYC requerida para cuentas reales</strong><br>
+    Debes completar y aprobar tu verificación KYC antes de abrir una cuenta real.
+    <a href="{% url 'simulator:kyc' %}" style="color:#FFD700;font-weight:700;text-decoration:none;">
+      Completar verificación &rarr;
+    </a>
+  </div>
+</div>
+{% endif %}
+
 <!-- ═══════════════ REAL ACCOUNTS ═══════════════ -->
 {% if real_products %}
 <div class="cat-section">
