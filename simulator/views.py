@@ -88,6 +88,25 @@ _KYC_GATE_MSG = (
     "Debes completar y aprobar tu verificación KYC antes de retirar fondos."
 )
 
+_DAILY_LIMIT_STATUSES = (
+    WithdrawalRequest.STATUS_PENDING,
+    WithdrawalRequest.STATUS_PROCESSING,
+    WithdrawalRequest.STATUS_APPROVED,
+    WithdrawalRequest.STATUS_COMPLETED,
+)
+
+
+def _get_daily_withdrawal_used(user):
+    """Return total USD used toward the daily limit (UTC day) for this user."""
+    today = timezone.now().date()
+    agg = WithdrawalRequest.objects.filter(
+        user=user,
+        created_at__date=today,
+        status__in=_DAILY_LIMIT_STATUSES,
+    ).aggregate(total=Sum("amount_usd"))
+    return agg["total"] or Decimal("0")
+
+
 from market_data.symbol_specs import get_spec as _get_sym_spec, allowed_symbols as _allowed_symbols
 
 logger = logging.getLogger(__name__)
@@ -1936,6 +1955,11 @@ def withdraw_view(request):
     except KYCProfile.DoesNotExist:
         kyc_approved = False
 
+    from django.conf import settings as _settings
+    daily_limit = Decimal(str(_settings.MAX_WITHDRAWAL_DAILY_USD))
+    daily_used  = _get_daily_withdrawal_used(request.user)
+    daily_avail = max(daily_limit - daily_used, Decimal("0"))
+
     if request.method == "POST":
         form = WithdrawForm(request.POST)
         if form.is_valid():
@@ -1969,6 +1993,20 @@ def withdraw_view(request):
                 amount_usd      = form.cleaned_data["amount_usd"]
                 crypto_currency = form.cleaned_data["crypto_currency"]
                 wallet_address  = form.cleaned_data["wallet_address"]
+
+            # ── Daily withdrawal cap ───────────────────────────────────────────
+            if not error:
+                from django.conf import settings as _settings
+                _daily_limit = Decimal(str(_settings.MAX_WITHDRAWAL_DAILY_USD))
+                _daily_used  = _get_daily_withdrawal_used(request.user)
+                _daily_avail = _daily_limit - _daily_used
+                if _daily_avail < amount_usd:
+                    error = (
+                        f"Límite diario de retiros alcanzado. "
+                        f"Límite: ${_daily_limit:,.2f} · "
+                        f"Usado hoy: ${_daily_used:,.2f} · "
+                        f"Disponible: ${max(_daily_avail, Decimal('0')):,.2f}"
+                    )
 
             # ── Original financial flow — only reached when 2FA passed ─────────
             if not error and wallet.available_balance < amount_usd:
@@ -2074,11 +2112,16 @@ def withdraw_view(request):
         form = WithdrawForm()
 
     wallet.refresh_from_db()
+    daily_used  = _get_daily_withdrawal_used(request.user)
+    daily_avail = max(daily_limit - daily_used, Decimal("0"))
     return render(request, "simulator/withdraw.html", {
         "form":           form,
         "wallet":         wallet,
         "error":          error,
         "kyc_approved":   kyc_approved,
+        "daily_limit":    daily_limit,
+        "daily_used":     daily_used,
+        "daily_avail":    daily_avail,
         "active_section": "withdraw",
     })
 

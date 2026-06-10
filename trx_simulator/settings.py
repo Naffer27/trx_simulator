@@ -473,6 +473,9 @@ NOWPAYMENTS_WEBHOOK_URL   = os.getenv("NOWPAYMENTS_WEBHOOK_URL", "")
 NOWPAYMENTS_EMAIL         = os.getenv("NOWPAYMENTS_EMAIL", "")
 NOWPAYMENTS_PASSWORD      = os.getenv("NOWPAYMENTS_PASSWORD", "")
 
+# Daily withdrawal cap — sum of pending/processing/approved/completed withdrawals
+MAX_WITHDRAWAL_DAILY_USD = int(os.getenv("MAX_WITHDRAWAL_DAILY_USD", "1500"))
+
 # Guard: NOWPAYMENTS_IPN_SECRET must be set in production so that deposit and
 # withdrawal callbacks cannot be spoofed. Skipped during `manage.py test`.
 if not DEBUG and not NOWPAYMENTS_IPN_SECRET:
