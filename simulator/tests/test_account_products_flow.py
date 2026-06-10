@@ -20,7 +20,7 @@ from django.db import IntegrityError
 from django.test import TestCase
 
 from simulator.models import AccountProduct, LedgerEntry, TradingAccount, WalletTransaction
-from simulator.tests.factories import make_user, make_wallet, make_kyc_approved
+from simulator.tests.factories import make_user, make_wallet
 from simulator.wallet_ledger import InsufficientFunds, credit_wallet, get_or_create_wallet
 
 User = get_user_model()
@@ -179,7 +179,6 @@ class RealAccountCreationTests(TestCase):
         self.user    = make_user(email="real_user@test.com")
         self.wallet  = make_wallet(self.user, initial_balance=Decimal("500"))
         self.product = _make_product(min_deposit=Decimal("10.00"))
-        make_kyc_approved(self.user)
         _login(self.client, self.user)
 
     @patch("simulator.tasks.send_email_async")
@@ -369,7 +368,6 @@ class RealAccountBalanceCorrectnessTests(TestCase):
         self.user    = make_user(email="corr@test.com")
         self.wallet  = make_wallet(self.user, initial_balance=Decimal("500"))
         self.product = _make_product(min_deposit=Decimal("10.00"))
-        make_kyc_approved(self.user)
         _login(self.client, self.user)
 
     @patch("simulator.tasks.send_email_async")
@@ -422,7 +420,6 @@ class RealAccountInputValidationTests(TestCase):
         self.user    = make_user(email="input@test.com")
         self.wallet  = make_wallet(self.user, initial_balance=Decimal("500"))
         self.product = _make_product(code="input-real", min_deposit=Decimal("10.00"))
-        make_kyc_approved(self.user)
         _login(self.client, self.user)
 
     def _no_account(self):
@@ -475,7 +472,6 @@ class RealAccountAtomicRollbackTests(TestCase):
         self.user    = make_user(email="rollback@test.com")
         self.wallet  = make_wallet(self.user, initial_balance=Decimal("500"))
         self.product = _make_product(code="rollback-real", min_deposit=Decimal("10.00"))
-        make_kyc_approved(self.user)
         _login(self.client, self.user)
 
     def test_debit_failure_rolls_back_account_creation(self):

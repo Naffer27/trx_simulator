@@ -19,7 +19,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 
 from simulator.models import AccountProduct, TradingAccount
-from simulator.tests.factories import make_user, make_wallet, make_account, make_kyc_approved
+from simulator.tests.factories import make_user, make_wallet, make_account
 from simulator.wallet_ledger import credit_wallet, get_or_create_wallet
 
 User = get_user_model()
@@ -188,7 +188,6 @@ class RealSnapshotTests(TestCase):
         self.user = make_user(email="snap_real@test.com")
         self.wallet = make_wallet(self.user, initial_balance=Decimal("500"))
         self.product = _make_ecn_product()
-        make_kyc_approved(self.user)
         _login(self.client, self.user)
 
     @patch("simulator.tasks.send_email_async")
@@ -356,7 +355,6 @@ class SnapshotIntegrationTests(TestCase):
     def setUp(self):
         self.user = make_user(email="integ@test.com")
         make_wallet(self.user, initial_balance=Decimal("300"))
-        make_kyc_approved(self.user)
         _login(self.client, self.user)
 
     @patch("simulator.tasks.send_email_async")
