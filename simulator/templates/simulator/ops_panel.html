@@ -5,504 +5,919 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Ops Panel — {{ git_version }}</title>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Courier New', monospace; background: #0d0d0d; color: #c8c8c8; font-size: 13px; padding: 16px; }
-  h1 { color: #fff; font-size: 16px; margin-bottom: 4px; }
-  .meta { color: #888; font-size: 11px; margin-bottom: 20px; }
-  h2 { color: #4af; font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
-       border-bottom: 1px solid #222; padding-bottom: 4px; margin: 20px 0 8px; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
-  .card { background: #141414; border: 1px solid #222; border-radius: 4px; padding: 12px; }
-  .card .label { color: #888; font-size: 11px; }
-  .card .value { color: #fff; font-size: 18px; font-weight: bold; margin-top: 2px; }
-  .card .value.ok   { color: #2ecc71; }
-  .card .value.warn { color: #f39c12; }
-  .card .value.err  { color: #e74c3c; }
-  table { width: 100%; border-collapse: collapse; margin-top: 4px; }
-  th { background: #1a1a1a; color: #888; font-size: 11px; text-align: left; padding: 5px 8px; }
-  td { padding: 5px 8px; border-bottom: 1px solid #1a1a1a; color: #c8c8c8; }
-  tr:hover td { background: #181818; }
-  .badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; }
-  .badge-ok   { background: #1a3a1a; color: #2ecc71; }
-  .badge-warn { background: #3a2a00; color: #f39c12; }
-  .badge-err  { background: #3a0000; color: #e74c3c; }
-  .badge-info { background: #0a1a3a; color: #4af; }
-  .section { margin-bottom: 24px; }
-  a.refresh { display: inline-block; margin-left: 12px; color: #4af; font-size: 11px; text-decoration: none; }
-  a.refresh:hover { text-decoration: underline; }
-  .empty { color: #555; font-style: italic; padding: 6px 0; }
-  pre { background: #1a1a1a; padding: 8px; border-radius: 4px; overflow-x: auto; font-size: 11px; color: #aaa; }
-  .snapshot-age { font-size: 11px; color: #888; }
-  .snapshot-age.stale { color: #e74c3c; }
-  .card.attn { border-color: #4a3a00; }
-  .card.attn .label { color: #9a7a00; }
-  .card.attn .value { color: #ffd700; }
-  .badge-gold  { background: #2a1a00; color: #ffd700; }
-  .badge-blue  { background: #001a3a; color: #4af; }
-  .badge-green { background: #001a10; color: #2ecc71; }
-  h2.gold { color: #ffd700; border-bottom-color: #3a2a00; }
-  a.admin-link { color: #4af; text-decoration: none; font-size: 11px; }
-  a.admin-link:hover { text-decoration: underline; }
+/* ── Reset & Base ────────────────────────────────────────────────── */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Courier New', monospace;
+  background: #0d0d0d;
+  color: #c8c8c8;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* ── Page header ─────────────────────────────────────────────────── */
+.page-header {
+  background: #111;
+  border-bottom: 1px solid #1e1e1e;
+  padding: 14px 24px 12px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.page-header h1 {
+  color: #fff;
+  font-size: 15px;
+  letter-spacing: .5px;
+}
+.page-meta {
+  color: #666;
+  font-size: 11px;
+  margin-top: 3px;
+}
+.page-meta strong { color: #999; }
+a.refresh {
+  color: #4af;
+  text-decoration: none;
+  margin-left: 10px;
+  font-size: 11px;
+}
+a.refresh:hover { text-decoration: underline; }
+
+/* ── Section nav ─────────────────────────────────────────────────── */
+.section-nav {
+  display: flex;
+  gap: 4px;
+  padding: 8px 24px;
+  background: #0d0d0d;
+  border-bottom: 1px solid #181818;
+  flex-wrap: wrap;
+}
+.section-nav a {
+  color: #666;
+  text-decoration: none;
+  font-size: 11px;
+  padding: 3px 9px;
+  border: 1px solid #1e1e1e;
+  border-radius: 3px;
+  white-space: nowrap;
+  transition: color .15s, border-color .15s;
+}
+.section-nav a:hover { color: #c8c8c8; border-color: #333; }
+.section-nav a.attn { color: #ffd700; border-color: #4a3a00; }
+
+/* ── Main content ────────────────────────────────────────────────── */
+.content { padding: 24px; max-width: 1400px; }
+
+/* ── Collapsible section ─────────────────────────────────────────── */
+.ops-section {
+  margin-bottom: 28px;
+  border: 1px solid #1e1e1e;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.ops-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 18px;
+  background: #141414;
+  cursor: pointer;
+  user-select: none;
+  border-bottom: 1px solid #1e1e1e;
+  gap: 12px;
+}
+.ops-section-header:hover { background: #181818; }
+.section-title-group { display: flex; align-items: baseline; gap: 10px; flex: 1; min-width: 0; }
+.section-icon { font-size: 14px; flex-shrink: 0; }
+.section-title {
+  color: #ddd;
+  font-size: 12px;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  white-space: nowrap;
+}
+.section-desc {
+  color: #555;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.section-meta { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.section-toggle {
+  color: #444;
+  font-size: 10px;
+  transition: transform .2s;
+  flex-shrink: 0;
+}
+.section-toggle.collapsed { transform: rotate(-90deg); }
+.ops-section-body { padding: 18px; }
+.ops-section-body.hidden { display: none; }
+
+/* ── Gold section variant ────────────────────────────────────────── */
+.ops-section.gold .ops-section-header { border-left: 3px solid #ffd700; }
+.ops-section.gold .section-title { color: #ffd700; }
+
+/* ── Subsection within a section ─────────────────────────────────── */
+.subsection { margin-bottom: 22px; }
+.subsection:last-child { margin-bottom: 0; }
+.subsection-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #1e1e1e;
+}
+.subsection-title {
+  color: #888;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .8px;
+}
+a.admin-link {
+  color: #4af;
+  text-decoration: none;
+  font-size: 11px;
+}
+a.admin-link:hover { text-decoration: underline; }
+
+/* ── KPI grid ────────────────────────────────────────────────────── */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 22px;
+}
+.kpi-card {
+  background: #111;
+  border: 1px solid #222;
+  border-radius: 5px;
+  padding: 14px 16px;
+}
+.kpi-card.attn { border-color: #4a3a00; background: #0f0c00; }
+.kpi-label { color: #666; font-size: 10px; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+.kpi-value {
+  font-size: 28px;
+  font-weight: bold;
+  line-height: 1;
+  color: #fff;
+  margin-bottom: 4px;
+}
+.kpi-value.ok   { color: #2ecc71; }
+.kpi-value.warn { color: #f39c12; }
+.kpi-value.err  { color: #e74c3c; }
+.kpi-value.gold { color: #ffd700; }
+.kpi-value.info { color: #4af; }
+.kpi-sub { font-size: 10px; color: #666; margin-bottom: 8px; }
+.kpi-sub.attn { color: #9a7a00; }
+
+/* ── Standard metric grid ─────────────────────────────────────────── */
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.metric-card {
+  background: #111;
+  border: 1px solid #1e1e1e;
+  border-radius: 5px;
+  padding: 12px 14px;
+}
+.metric-card .label { color: #666; font-size: 10px; text-transform: uppercase; letter-spacing: .5px; }
+.metric-card .value { color: #fff; font-size: 20px; font-weight: bold; margin: 4px 0 2px; line-height: 1.1; }
+.metric-card .value.ok   { color: #2ecc71; }
+.metric-card .value.warn { color: #f39c12; }
+.metric-card .value.err  { color: #e74c3c; }
+.metric-card .sub { font-size: 10px; color: #555; }
+
+/* ── Tables ──────────────────────────────────────────────────────── */
+table { width: 100%; border-collapse: collapse; }
+th {
+  background: #111;
+  color: #666;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid #1e1e1e;
+}
+td {
+  padding: 7px 10px;
+  border-bottom: 1px solid #161616;
+  color: #bbb;
+  font-size: 12px;
+}
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: #141414; }
+
+/* ── Badges ──────────────────────────────────────────────────────── */
+.badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: bold;
+  letter-spacing: .3px;
+}
+.badge-ok   { background: #0d2b0d; color: #2ecc71; }
+.badge-warn { background: #2b1a00; color: #f39c12; }
+.badge-err  { background: #2b0000; color: #e74c3c; }
+.badge-info { background: #001628; color: #4af; }
+.badge-gold { background: #1a1000; color: #ffd700; }
+
+/* ── Count badge in section header ──────────────────────────────── */
+.count-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: bold;
+  background: #1e1e1e;
+  color: #666;
+}
+.count-badge.attn { background: #2a1a00; color: #ffd700; }
+.count-badge.ok   { background: #0d2b0d; color: #2ecc71; }
+.count-badge.info { background: #001628; color: #4af; }
+
+/* ── Empty state ─────────────────────────────────────────────────── */
+.empty {
+  color: #444;
+  font-style: italic;
+  padding: 12px 0;
+  font-size: 12px;
+}
+
+/* ── Snapshot age ────────────────────────────────────────────────── */
+.snapshot-age { font-size: 10px; color: #555; }
+.snapshot-age.stale { color: #e74c3c; }
 </style>
 </head>
 <body>
 
-<h1>Money Brokers — Ops Panel</h1>
-<div class="meta">
-  Version: <strong>{{ git_version }}</strong> &nbsp;|&nbsp;
-  Server time: <strong>{{ server_time|date:"Y-m-d H:i:s" }} UTC</strong>
-  <a href="{% url 'simulator:ops_panel' %}" class="refresh">[↻ Refresh]</a>
+<!-- ── Page header ────────────────────────────────────────────────── -->
+<div class="page-header">
+  <h1>Money Brokers &mdash; Ops Panel</h1>
+  <div class="page-meta">
+    <strong>{{ git_version }}</strong>
+    &nbsp;&nbsp;|&nbsp;&nbsp;
+    <strong>{{ server_time|date:"Y-m-d H:i:s" }} UTC</strong>
+    <a href="{% url 'simulator:ops_panel' %}" class="refresh">↻ Refresh</a>
+  </div>
 </div>
 
-<!-- ── Ops Attention KPIs ──────────────────────────────────── -->
-<div class="section">
-<h2 class="gold">Atención Operativa</h2>
-<div class="grid">
+<!-- ── Section nav ────────────────────────────────────────────────── -->
+<nav class="section-nav">
+  <a href="#sec-support" {% if open_tickets_count %}class="attn"{% endif %}>
+    🎫 Support {% if open_tickets_count %}({{ open_tickets_count }}){% endif %}
+  </a>
+  <a href="#sec-money" {% if kyc_pending_count or withdrawals_pending_count %}class="attn"{% endif %}>
+    💰 Money Ops{% if kyc_pending_count or withdrawals_pending_count %} (!){% endif %}
+  </a>
+  <a href="#sec-risk">📊 Broker Risk</a>
+  <a href="#sec-health">⚙️ System Health</a>
+  <a href="#sec-security">🔐 Security &amp; Audit</a>
+</nav>
 
-  <div class="card {% if open_tickets_count %}attn{% endif %}">
-    <div class="label">Tickets Abiertos / Pendientes</div>
-    <div class="value {% if open_tickets_count %}{% else %}ok{% endif %}" {% if open_tickets_count %}style="color:#ffd700;"{% endif %}>
-      {{ open_tickets_count }}
+<div class="content">
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<!--  1. CUSTOMER SUPPORT                                            -->
+<!-- ════════════════════════════════════════════════════════════════ -->
+<section class="ops-section {% if open_tickets_count %}gold{% endif %}" id="sec-support">
+  <div class="ops-section-header" onclick="toggleSection('sec-support')">
+    <div class="section-title-group">
+      <span class="section-icon">🎫</span>
+      <span class="section-title">Customer Support</span>
+      <span class="section-desc">Open tickets requiring staff attention</span>
     </div>
-    {% if open_tickets_count %}<div class="label" style="color:#9a7a00;">Requiere atención</div>{% endif %}
-    <div style="margin-top:6px;"><a href="{% url 'admin:simulator_supportticket_changelist' %}" class="admin-link">→ Ver en admin</a></div>
-  </div>
-
-  <div class="card {% if kyc_pending_count %}attn{% endif %}">
-    <div class="label">KYC Pendientes</div>
-    <div class="value {% if kyc_pending_count %}{% else %}ok{% endif %}" {% if kyc_pending_count %}style="color:#ffd700;"{% endif %}>
-      {{ kyc_pending_count }}
+    <div class="section-meta">
+      {% if open_tickets_count %}
+        <span class="count-badge attn">{{ open_tickets_count }} open</span>
+      {% else %}
+        <span class="count-badge ok">All clear</span>
+      {% endif %}
+      <span class="section-toggle" id="toggle-sec-support">▼</span>
     </div>
-    {% if kyc_pending_count %}<div class="label" style="color:#9a7a00;">Requiere revisión</div>{% endif %}
-    <div style="margin-top:6px;"><a href="{% url 'admin:simulator_kycprofile_changelist' %}" class="admin-link">→ Ver en admin</a></div>
   </div>
 
-  <div class="card {% if withdrawals_pending_count %}attn{% endif %}">
-    <div class="label">Retiros Pendientes / Procesando</div>
-    <div class="value {% if withdrawals_pending_count %}{% else %}ok{% endif %}" {% if withdrawals_pending_count %}style="color:#ffd700;"{% endif %}>
-      {{ withdrawals_pending_count }}
+  <div class="ops-section-body" id="body-sec-support">
+
+    <!-- KPI -->
+    <div class="kpi-grid">
+      <div class="kpi-card {% if open_tickets_count %}attn{% endif %}">
+        <div class="kpi-label">Open / Pending Tickets</div>
+        <div class="kpi-value {% if open_tickets_count %}gold{% else %}ok{% endif %}">{{ open_tickets_count }}</div>
+        <div class="kpi-sub {% if open_tickets_count %}attn{% endif %}">
+          {% if open_tickets_count %}Requires attention{% else %}No pending tickets{% endif %}
+        </div>
+        <a href="{% url 'admin:simulator_supportticket_changelist' %}" class="admin-link">→ Admin</a>
+      </div>
     </div>
-    {% if withdrawals_pending_count %}<div class="label" style="color:#9a7a00;">Requiere acción</div>{% endif %}
-    <div style="margin-top:6px;"><a href="{% url 'admin:simulator_withdrawalrequest_changelist' %}" class="admin-link">→ Ver en admin</a></div>
-  </div>
 
-  <div class="card">
-    <div class="label">Depósitos Confirmados (total)</div>
-    <div class="value" style="color:#4af;">{{ deposits_confirmed_count }}</div>
-    <div style="margin-top:6px;"><a href="{% url 'admin:simulator_deposit_changelist' %}" class="admin-link">→ Ver en admin</a></div>
-  </div>
-
-  <div class="card">
-    <div class="label">Nuevos Usuarios (7 días)</div>
-    <div class="value" style="color:#4af;">{{ new_users_7d }}</div>
-    <div style="margin-top:6px;"><a href="{% url 'admin:auth_user_changelist' %}" class="admin-link">→ Ver en admin</a></div>
-  </div>
-
-</div>
-</div>
-
-<!-- ── Open Support Tickets ───────────────────────────────── -->
-<div class="section">
-<h2 class="gold">Tickets de Soporte Abiertos — últimos 10
-  <a href="{% url 'admin:simulator_supportticket_changelist' %}" class="admin-link" style="float:right;font-size:10px;margin-top:2px;">→ Todos</a>
-</h2>
-{% if open_tickets %}
-<table>
-  <tr><th>#</th><th>Usuario</th><th>Asunto</th><th>Estado</th><th>Prioridad</th><th>Fecha</th></tr>
-  {% for t in open_tickets %}
-  <tr>
-    <td><a href="{% url 'admin:simulator_supportticket_change' t.id %}" class="admin-link">#{{ t.id }}</a></td>
-    <td>{{ t.user__username }}</td>
-    <td>{{ t.subject|truncatechars:45 }}</td>
-    <td>
-      <span class="badge {% if t.status == 'open' %}badge-info{% else %}badge-warn{% endif %}">
-        {{ t.status }}
-      </span>
-    </td>
-    <td>
-      <span class="badge {% if t.priority == 'urgent' %}badge-err{% elif t.priority == 'high' %}badge-warn{% else %}badge-info{% endif %}">
-        {{ t.priority }}
-      </span>
-    </td>
-    <td>{{ t.created_at|date:"m-d H:i" }}</td>
-  </tr>
-  {% endfor %}
-</table>
-{% else %}
-<div class="empty">No hay tickets abiertos ni pendientes.</div>
-{% endif %}
-</div>
-
-<!-- ── KYC Pending ───────────────────────────────────────── -->
-<div class="section">
-<h2 class="gold">KYC Pendientes de Revisión — últimos 10
-  <a href="{% url 'admin:simulator_kycprofile_changelist' %}" class="admin-link" style="float:right;font-size:10px;margin-top:2px;">→ Todos</a>
-</h2>
-{% if kyc_pending %}
-<table>
-  <tr><th>#</th><th>Usuario</th><th>Email</th><th>País</th><th>Enviado</th></tr>
-  {% for k in kyc_pending %}
-  <tr>
-    <td><a href="{% url 'admin:simulator_kycprofile_change' k.id %}" class="admin-link">#{{ k.id }}</a></td>
-    <td>{{ k.user__username }}</td>
-    <td>{{ k.user__email }}</td>
-    <td>{{ k.country|default:"—" }}</td>
-    <td>{{ k.submitted_at|date:"m-d H:i" }}</td>
-  </tr>
-  {% endfor %}
-</table>
-{% else %}
-<div class="empty">No hay perfiles KYC pendientes.</div>
-{% endif %}
-</div>
-
-<!-- ── Withdrawals Pending/Processing ───────────────────── -->
-<div class="section">
-<h2 class="gold">Retiros Pendientes / Procesando — últimos 10
-  <a href="{% url 'admin:simulator_withdrawalrequest_changelist' %}" class="admin-link" style="float:right;font-size:10px;margin-top:2px;">→ Todos</a>
-</h2>
-{% if withdrawals_pending %}
-<table>
-  <tr><th>#</th><th>Usuario</th><th>Monto USD</th><th>Moneda</th><th>Estado</th><th>Solicitado</th></tr>
-  {% for wr in withdrawals_pending %}
-  <tr>
-    <td><a href="{% url 'admin:simulator_withdrawalrequest_change' wr.id %}" class="admin-link">#{{ wr.id }}</a></td>
-    <td>{{ wr.user__username }}</td>
-    <td>${{ wr.amount_usd|floatformat:2 }}</td>
-    <td>{{ wr.crypto_currency|upper }}</td>
-    <td><span class="badge badge-warn">{{ wr.status }}</span></td>
-    <td>{{ wr.created_at|date:"m-d H:i" }}</td>
-  </tr>
-  {% endfor %}
-</table>
-{% else %}
-<div class="empty">No hay retiros pendientes ni en procesamiento.</div>
-{% endif %}
-</div>
-
-<!-- ── Recent Confirmed Deposits ─────────────────────────── -->
-<div class="section">
-<h2>Depósitos Confirmados Recientes — últimos 10
-  <a href="{% url 'admin:simulator_deposit_changelist' %}" class="admin-link" style="float:right;font-size:10px;margin-top:2px;">→ Todos</a>
-</h2>
-{% if deposits_recent %}
-<table>
-  <tr><th>#</th><th>Usuario</th><th>Monto USD</th><th>Moneda</th><th>Acreditado</th></tr>
-  {% for d in deposits_recent %}
-  <tr>
-    <td><a href="{% url 'admin:simulator_deposit_change' d.id %}" class="admin-link">#{{ d.id }}</a></td>
-    <td>{{ d.user__username }}</td>
-    <td>${{ d.amount_usd|floatformat:2 }}</td>
-    <td>{{ d.crypto_currency|upper }}</td>
-    <td>{{ d.credited_at|date:"m-d H:i" }}</td>
-  </tr>
-  {% endfor %}
-</table>
-{% else %}
-<div class="empty">Sin depósitos confirmados recientes.</div>
-{% endif %}
-</div>
-
-<!-- ── Quick Stats ────────────────────────────────────────── -->
-<div class="grid section">
-
-  <div class="card">
-    <div class="label">Redis</div>
-    <div class="value {% if redis.status == 'ok' %}ok{% else %}err{% endif %}">
-      {% if redis.status == 'ok' %}● OK{% else %}✗ ERROR{% endif %}
+    <!-- Ticket list -->
+    <div class="subsection">
+      <div class="subsection-header">
+        <span class="subsection-title">Latest open / pending tickets (max 10)</span>
+        <a href="{% url 'admin:simulator_supportticket_changelist' %}" class="admin-link">View all →</a>
+      </div>
+      {% if open_tickets %}
+      <table>
+        <tr>
+          <th>#</th>
+          <th>User</th>
+          <th>Subject</th>
+          <th>Status</th>
+          <th>Priority</th>
+          <th>Opened</th>
+        </tr>
+        {% for t in open_tickets %}
+        <tr>
+          <td><a href="{% url 'admin:simulator_supportticket_change' t.id %}" class="admin-link">#{{ t.id }}</a></td>
+          <td>{{ t.user__username }}</td>
+          <td>{{ t.subject|truncatechars:50 }}</td>
+          <td>
+            <span class="badge {% if t.status == 'open' %}badge-info{% else %}badge-warn{% endif %}">
+              {{ t.status }}
+            </span>
+          </td>
+          <td>
+            <span class="badge {% if t.priority == 'urgent' %}badge-err{% elif t.priority == 'high' %}badge-warn{% else %}badge-info{% endif %}">
+              {{ t.priority }}
+            </span>
+          </td>
+          <td>{{ t.created_at|date:"M d, H:i" }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% else %}
+      <div class="empty">No open or pending tickets — all clear.</div>
+      {% endif %}
     </div>
-    {% if redis.used_memory_mb %}
-    <div class="label" style="margin-top:6px;">{{ redis.used_memory_mb }} MB used{% if redis.maxmemory_mb %} / {{ redis.maxmemory_mb }} MB max{% endif %}</div>
+
+  </div><!-- /body -->
+</section>
+
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<!--  2. MONEY OPERATIONS                                            -->
+<!-- ════════════════════════════════════════════════════════════════ -->
+<section class="ops-section {% if kyc_pending_count or withdrawals_pending_count %}gold{% endif %}" id="sec-money">
+  <div class="ops-section-header" onclick="toggleSection('sec-money')">
+    <div class="section-title-group">
+      <span class="section-icon">💰</span>
+      <span class="section-title">Money Operations</span>
+      <span class="section-desc">KYC, withdrawals, deposits, and new users</span>
+    </div>
+    <div class="section-meta">
+      {% if kyc_pending_count or withdrawals_pending_count %}
+        <span class="count-badge attn">Action needed</span>
+      {% else %}
+        <span class="count-badge ok">All clear</span>
+      {% endif %}
+      <span class="section-toggle" id="toggle-sec-money">▼</span>
+    </div>
+  </div>
+
+  <div class="ops-section-body" id="body-sec-money">
+
+    <!-- KPI row -->
+    <div class="kpi-grid">
+      <div class="kpi-card {% if kyc_pending_count %}attn{% endif %}">
+        <div class="kpi-label">KYC Pending</div>
+        <div class="kpi-value {% if kyc_pending_count %}gold{% else %}ok{% endif %}">{{ kyc_pending_count }}</div>
+        <div class="kpi-sub {% if kyc_pending_count %}attn{% endif %}">
+          {% if kyc_pending_count %}Awaiting review{% else %}No pending KYC{% endif %}
+        </div>
+        <a href="{% url 'admin:simulator_kycprofile_changelist' %}" class="admin-link">→ Admin</a>
+      </div>
+
+      <div class="kpi-card {% if withdrawals_pending_count %}attn{% endif %}">
+        <div class="kpi-label">Withdrawals Pending</div>
+        <div class="kpi-value {% if withdrawals_pending_count %}gold{% else %}ok{% endif %}">{{ withdrawals_pending_count }}</div>
+        <div class="kpi-sub {% if withdrawals_pending_count %}attn{% endif %}">
+          {% if withdrawals_pending_count %}Pending + processing{% else %}No pending withdrawals{% endif %}
+        </div>
+        <a href="{% url 'admin:simulator_withdrawalrequest_changelist' %}" class="admin-link">→ Admin</a>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-label">Total Confirmed Deposits</div>
+        <div class="kpi-value info">{{ deposits_confirmed_count }}</div>
+        <div class="kpi-sub">All time</div>
+        <a href="{% url 'admin:simulator_deposit_changelist' %}" class="admin-link">→ Admin</a>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-label">New Users (7 days)</div>
+        <div class="kpi-value info">{{ new_users_7d }}</div>
+        <div class="kpi-sub">Registered this week</div>
+        <a href="{% url 'admin:auth_user_changelist' %}" class="admin-link">→ Admin</a>
+      </div>
+    </div>
+
+    <!-- KYC pending list -->
+    <div class="subsection">
+      <div class="subsection-header">
+        <span class="subsection-title">KYC pending review (max 10)</span>
+        <a href="{% url 'admin:simulator_kycprofile_changelist' %}" class="admin-link">View all →</a>
+      </div>
+      {% if kyc_pending %}
+      <table>
+        <tr><th>#</th><th>User</th><th>Email</th><th>Country</th><th>Submitted</th></tr>
+        {% for k in kyc_pending %}
+        <tr>
+          <td><a href="{% url 'admin:simulator_kycprofile_change' k.id %}" class="admin-link">#{{ k.id }}</a></td>
+          <td>{{ k.user__username }}</td>
+          <td>{{ k.user__email }}</td>
+          <td>{{ k.country|default:"—" }}</td>
+          <td>{{ k.submitted_at|date:"M d, H:i" }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% else %}
+      <div class="empty">No KYC profiles awaiting review.</div>
+      {% endif %}
+    </div>
+
+    <!-- Withdrawals pending list -->
+    <div class="subsection">
+      <div class="subsection-header">
+        <span class="subsection-title">Withdrawals pending / processing (max 10)</span>
+        <a href="{% url 'admin:simulator_withdrawalrequest_changelist' %}" class="admin-link">View all →</a>
+      </div>
+      {% if withdrawals_pending %}
+      <table>
+        <tr><th>#</th><th>User</th><th>Amount USD</th><th>Currency</th><th>Status</th><th>Requested</th></tr>
+        {% for wr in withdrawals_pending %}
+        <tr>
+          <td><a href="{% url 'admin:simulator_withdrawalrequest_change' wr.id %}" class="admin-link">#{{ wr.id }}</a></td>
+          <td>{{ wr.user__username }}</td>
+          <td>${{ wr.amount_usd|floatformat:2 }}</td>
+          <td>{{ wr.crypto_currency|upper }}</td>
+          <td><span class="badge badge-warn">{{ wr.status }}</span></td>
+          <td>{{ wr.created_at|date:"M d, H:i" }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% else %}
+      <div class="empty">No withdrawals pending or processing.</div>
+      {% endif %}
+    </div>
+
+    <!-- Recent confirmed deposits list -->
+    <div class="subsection">
+      <div class="subsection-header">
+        <span class="subsection-title">Recent confirmed deposits (max 10)</span>
+        <a href="{% url 'admin:simulator_deposit_changelist' %}" class="admin-link">View all →</a>
+      </div>
+      {% if deposits_recent %}
+      <table>
+        <tr><th>#</th><th>User</th><th>Amount USD</th><th>Currency</th><th>Credited at</th></tr>
+        {% for d in deposits_recent %}
+        <tr>
+          <td><a href="{% url 'admin:simulator_deposit_change' d.id %}" class="admin-link">#{{ d.id }}</a></td>
+          <td>{{ d.user__username }}</td>
+          <td>${{ d.amount_usd|floatformat:2 }}</td>
+          <td>{{ d.crypto_currency|upper }}</td>
+          <td>{{ d.credited_at|date:"M d, H:i" }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% else %}
+      <div class="empty">No confirmed deposits recorded yet.</div>
+      {% endif %}
+    </div>
+
+  </div><!-- /body -->
+</section>
+
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<!--  3. BROKER RISK                                                 -->
+<!-- ════════════════════════════════════════════════════════════════ -->
+<section class="ops-section" id="sec-risk">
+  <div class="ops-section-header" onclick="toggleSection('sec-risk')">
+    <div class="section-title-group">
+      <span class="section-icon">📊</span>
+      <span class="section-title">Broker Risk</span>
+      <span class="section-desc">Exposure, margin alerts, PnL, and stuck withdrawals</span>
+    </div>
+    <div class="section-meta">
+      {% if stuck_withdrawals %}
+        <span class="count-badge attn">{{ stuck_withdrawals|length }} stuck</span>
+      {% else %}
+        <span class="count-badge ok">No stuck WRs</span>
+      {% endif %}
+      <span class="section-toggle" id="toggle-sec-risk">▼</span>
+    </div>
+  </div>
+
+  <div class="ops-section-body" id="body-sec-risk">
+
+    <!-- Broker Exposure -->
+    {% with exp=broker_report.exposure %}
+    {% if exp %}
+    <div class="subsection">
+      <div class="subsection-header">
+        <span class="subsection-title">Net Exposure</span>
+      </div>
+      <div class="metric-grid">
+        <div class="metric-card">
+          <div class="label">Net Exposure</div>
+          <div class="value">$&nbsp;{{ exp.net_exposure_usd|floatformat:2 }}</div>
+        </div>
+        <div class="metric-card">
+          <div class="label">Gross Long</div>
+          <div class="value">$&nbsp;{{ exp.gross_long_usd|floatformat:2 }}</div>
+        </div>
+        <div class="metric-card">
+          <div class="label">Gross Short</div>
+          <div class="value">$&nbsp;{{ exp.gross_short_usd|floatformat:2 }}</div>
+        </div>
+        <div class="metric-card">
+          <div class="label">Open Positions</div>
+          <div class="value">{{ exp.open_positions }}</div>
+        </div>
+      </div>
+      {% if exp.by_symbol %}
+      <table>
+        <tr><th>Symbol</th><th>Direction</th><th>Net Qty</th><th>Long USD</th><th>Short USD</th><th>Concentration</th></tr>
+        {% for row in exp.by_symbol %}
+        <tr>
+          <td>{{ row.symbol }}</td>
+          <td>
+            <span class="badge {% if row.net_direction == 'LONG' %}badge-ok{% elif row.net_direction == 'SHORT' %}badge-err{% else %}badge-info{% endif %}">
+              {{ row.net_direction }}
+            </span>
+          </td>
+          <td>{{ row.net_qty|floatformat:4 }}</td>
+          <td>${{ row.buy_notional_usd|floatformat:2 }}</td>
+          <td>${{ row.sell_notional_usd|floatformat:2 }}</td>
+          <td>
+            {% if row.concentration_pct > 25 %}
+              <span style="color:#e74c3c;">{{ row.concentration_pct|floatformat:1 }}%</span>
+            {% else %}
+              {{ row.concentration_pct|floatformat:1 }}%
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% endif %}
+    </div>
     {% endif %}
-    {% if redis.error %}<div class="label" style="color:#e74c3c;">{{ redis.error }}</div>{% endif %}
-  </div>
-
-  <div class="card">
-    <div class="label">Active WebSockets</div>
-    <div class="value">{{ redis.ws_connections|default:"—" }}</div>
-  </div>
-
-  <div class="card">
-    <div class="label">Celery Queue Lag</div>
-    {% with lag=redis.celery_queue %}
-    <div class="value {% if lag > 20 %}err{% elif lag > 5 %}warn{% else %}ok{% endif %}">
-      {{ lag|default:"—" }} tasks
-    </div>
     {% endwith %}
-  </div>
 
-  <div class="card">
-    <div class="label">Last Snapshot</div>
-    {% if last_snapshot %}
-      <div class="value ok">{{ last_snapshot.taken_at|date:"H:i:s" }}</div>
-      <div class="snapshot-age">{{ last_snapshot.taken_at|date:"Y-m-d" }} UTC</div>
-    {% else %}
-      <div class="value err">No snapshots yet</div>
+    <!-- Critical Margin Accounts -->
+    {% with margins=broker_report.critical_margin_accounts %}
+    {% if margins %}
+    <div class="subsection">
+      <div class="subsection-header">
+        <span class="subsection-title">Critical Margin Accounts ({{ margins|length }})</span>
+      </div>
+      <table>
+        <tr><th>Account</th><th>User</th><th>Equity</th><th>Margin Level</th><th>Free Margin</th><th>Alert</th></tr>
+        {% for acc in margins %}
+        <tr>
+          <td>#{{ acc.account_id }}</td>
+          <td>{{ acc.username|default:"—" }}</td>
+          <td>${{ acc.equity|floatformat:2 }}</td>
+          <td>
+            <span class="badge {% if acc.margin_level_pct < 130 %}badge-err{% elif acc.margin_level_pct < 200 %}badge-warn{% else %}badge-ok{% endif %}">
+              {{ acc.margin_level_pct|floatformat:0 }}%
+            </span>
+          </td>
+          <td>${{ acc.free_margin|floatformat:2 }}</td>
+          <td>
+            <span class="badge {% if acc.alert == 'CRITICAL' %}badge-err{% else %}badge-warn{% endif %}">
+              {{ acc.alert }}
+            </span>
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+    </div>
     {% endif %}
-  </div>
+    {% endwith %}
 
-  {% with stuck=stuck_withdrawals %}
-  <div class="card">
-    <div class="label">Stuck Withdrawals (&gt;48h)</div>
-    <div class="value {% if stuck %}err{% else %}ok{% endif %}">
-      {{ stuck|length }}
-    </div>
-    {% if stuck %}<div class="label" style="color:#e74c3c;">Action required</div>{% endif %}
-  </div>
-  {% endwith %}
-
-  <div class="card">
-    <div class="label">Recent Task Failures</div>
-    <div class="value {% if redis.task_failures %}warn{% else %}ok{% endif %}">
-      {{ redis.task_failures|length }} (last 10)
-    </div>
-  </div>
-
-</div>
-
-<!-- ── Broker Exposure ───────────────────────────────────── -->
-{% with exp=broker_report.exposure %}
-{% if exp %}
-<div class="section">
-  <h2>Broker Net Exposure</h2>
-  <div class="grid">
-    <div class="card">
-      <div class="label">Net Exposure</div>
-      <div class="value">$&nbsp;{{ exp.net_exposure_usd|floatformat:2 }}</div>
-    </div>
-    <div class="card">
-      <div class="label">Gross Long</div>
-      <div class="value">$&nbsp;{{ exp.gross_long_usd|floatformat:2 }}</div>
-    </div>
-    <div class="card">
-      <div class="label">Gross Short</div>
-      <div class="value">$&nbsp;{{ exp.gross_short_usd|floatformat:2 }}</div>
-    </div>
-    <div class="card">
-      <div class="label">Open Positions</div>
-      <div class="value">{{ exp.open_positions }}</div>
-    </div>
-  </div>
-
-  {% if exp.by_symbol %}
-  <table style="margin-top:12px;">
-    <tr><th>Symbol</th><th>Direction</th><th>Net Qty</th><th>Long USD</th><th>Short USD</th><th>Conc %</th></tr>
-    {% for row in exp.by_symbol %}
-    <tr>
-      <td>{{ row.symbol }}</td>
-      <td>
-        <span class="badge {% if row.net_direction == 'LONG' %}badge-ok{% elif row.net_direction == 'SHORT' %}badge-err{% else %}badge-info{% endif %}">
-          {{ row.net_direction }}
-        </span>
-      </td>
-      <td>{{ row.net_qty|floatformat:4 }}</td>
-      <td>${{ row.buy_notional_usd|floatformat:2 }}</td>
-      <td>${{ row.sell_notional_usd|floatformat:2 }}</td>
-      <td>{% if row.concentration_pct > 25 %}<span style="color:#e74c3c;">{% endif %}{{ row.concentration_pct|floatformat:1 }}%{% if row.concentration_pct > 25 %}</span>{% endif %}</td>
-    </tr>
-    {% endfor %}
-  </table>
-  {% endif %}
-</div>
-{% endif %}
-{% endwith %}
-
-<!-- ── Critical Margin Accounts ──────────────────────────── -->
-{% with margins=broker_report.critical_margin_accounts %}
-{% if margins %}
-<div class="section">
-  <h2>Critical Margin Accounts ({{ margins|length }})</h2>
-  <table>
-    <tr><th>Account</th><th>User</th><th>Equity</th><th>Margin Level</th><th>Free Margin</th><th>Status</th></tr>
-    {% for acc in margins %}
-    <tr>
-      <td>#{{ acc.account_id }}</td>
-      <td>{{ acc.username|default:"—" }}</td>
-      <td>${{ acc.equity|floatformat:2 }}</td>
-      <td>
-        <span class="badge {% if acc.margin_level_pct < 130 %}badge-err{% elif acc.margin_level_pct < 200 %}badge-warn{% else %}badge-ok{% endif %}">
-          {{ acc.margin_level_pct|floatformat:0 }}%
-        </span>
-      </td>
-      <td>${{ acc.free_margin|floatformat:2 }}</td>
-      <td>
-        <span class="badge {% if acc.alert == 'CRITICAL' %}badge-err{% else %}badge-warn{% endif %}">
-          {{ acc.alert }}
-        </span>
-      </td>
-    </tr>
-    {% endfor %}
-  </table>
-</div>
-{% endif %}
-{% endwith %}
-
-<!-- ── Broker PnL ────────────────────────────────────────── -->
-{% with pnl=broker_report.pnl %}
-{% if pnl %}
-<div class="section">
-  <h2>Broker PnL Summary</h2>
-  <div class="grid">
-    <div class="card">
-      <div class="label">Total Deposited</div>
-      <div class="value">${{ pnl.total_deposited|floatformat:2 }}</div>
-    </div>
-    <div class="card">
-      <div class="label">Total Withdrawn</div>
-      <div class="value">${{ pnl.total_withdrawn|floatformat:2 }}</div>
-    </div>
-    <div class="card">
-      <div class="label">Realized PnL</div>
-      <div class="value {% if pnl.total_realized_pnl >= 0 %}ok{% else %}err{% endif %}">
-        ${{ pnl.total_realized_pnl|floatformat:2 }}
+    <!-- Broker PnL -->
+    {% with pnl=broker_report.pnl %}
+    {% if pnl %}
+    <div class="subsection">
+      <div class="subsection-header">
+        <span class="subsection-title">PnL Summary</span>
       </div>
-    </div>
-    <div class="card">
-      <div class="label">Unrealized PnL</div>
-      <div class="value {% if pnl.total_unrealized_pnl >= 0 %}ok{% else %}err{% endif %}">
-        ${{ pnl.total_unrealized_pnl|floatformat:2 }}
-      </div>
-    </div>
-    <div class="card">
-      <div class="label">Pending Deposits</div>
-      <div class="value {% if pnl.pending_deposits > 0 %}warn{% else %}ok{% endif %}">
-        {{ pnl.pending_deposits }}
-      </div>
-    </div>
-  </div>
-</div>
-{% endif %}
-{% endwith %}
-
-<!-- ── Stuck Withdrawals ──────────────────────────────────── -->
-{% if stuck_withdrawals %}
-<div class="section">
-  <h2>Stuck Withdrawals (&gt;48h pending/processing)</h2>
-  <table>
-    <tr><th>ID</th><th>User</th><th>Amount USD</th><th>Status</th><th>Created</th></tr>
-    {% for wr in stuck_withdrawals %}
-    <tr>
-      <td>#{{ wr.id }}</td>
-      <td>{{ wr.user__username }}</td>
-      <td>${{ wr.amount_usd }}</td>
-      <td><span class="badge badge-warn">{{ wr.status }}</span></td>
-      <td>{{ wr.created_at|date:"Y-m-d H:i" }}</td>
-    </tr>
-    {% endfor %}
-  </table>
-</div>
-{% else %}
-<div class="section">
-  <h2>Stuck Withdrawals</h2>
-  <div class="empty">No stuck withdrawals — all clear.</div>
-</div>
-{% endif %}
-
-<!-- ── Stress Peaks ──────────────────────────────────────── -->
-<div class="section">
-  <h2>Stress Peaks <span style="font-size:10px;color:#555;">(since last reset — persisted in Redis)</span></h2>
-  {% if peaks %}
-  <div class="grid">
-    {% if peaks.ws_connections is not None %}
-    <div class="card">
-      <div class="label">Peak WS Connections</div>
-      <div class="value {% if peaks.ws_connections > 80 %}err{% elif peaks.ws_connections > 40 %}warn{% else %}ok{% endif %}">
-        {{ peaks.ws_connections|floatformat:0 }}
+      <div class="metric-grid">
+        <div class="metric-card">
+          <div class="label">Total Deposited</div>
+          <div class="value">${{ pnl.total_deposited|floatformat:2 }}</div>
+        </div>
+        <div class="metric-card">
+          <div class="label">Total Withdrawn</div>
+          <div class="value">${{ pnl.total_withdrawn|floatformat:2 }}</div>
+        </div>
+        <div class="metric-card">
+          <div class="label">Realized PnL</div>
+          <div class="value {% if pnl.total_realized_pnl >= 0 %}ok{% else %}err{% endif %}">
+            ${{ pnl.total_realized_pnl|floatformat:2 }}
+          </div>
+        </div>
+        <div class="metric-card">
+          <div class="label">Unrealized PnL</div>
+          <div class="value {% if pnl.total_unrealized_pnl >= 0 %}ok{% else %}err{% endif %}">
+            ${{ pnl.total_unrealized_pnl|floatformat:2 }}
+          </div>
+        </div>
+        <div class="metric-card">
+          <div class="label">Pending Deposits</div>
+          <div class="value {% if pnl.pending_deposits > 0 %}warn{% else %}ok{% endif %}">
+            {{ pnl.pending_deposits }}
+          </div>
+        </div>
       </div>
     </div>
     {% endif %}
-    {% if peaks.snapshot_duration_s is not None %}
-    <div class="card">
-      <div class="label">Peak Snapshot Duration</div>
-      <div class="value {% if peaks.snapshot_duration_s > 45 %}err{% elif peaks.snapshot_duration_s > 20 %}warn{% else %}ok{% endif %}">
-        {{ peaks.snapshot_duration_s|floatformat:1 }}s
+    {% endwith %}
+
+    <!-- Stuck Withdrawals -->
+    <div class="subsection">
+      <div class="subsection-header">
+        <span class="subsection-title">Stuck Withdrawals &mdash; pending or processing &gt;48 h</span>
       </div>
+      {% if stuck_withdrawals %}
+      <table>
+        <tr><th>ID</th><th>User</th><th>Amount USD</th><th>Status</th><th>Created</th></tr>
+        {% for wr in stuck_withdrawals %}
+        <tr>
+          <td>#{{ wr.id }}</td>
+          <td>{{ wr.user__username }}</td>
+          <td>${{ wr.amount_usd }}</td>
+          <td><span class="badge badge-warn">{{ wr.status }}</span></td>
+          <td>{{ wr.created_at|date:"Y-m-d H:i" }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% else %}
+      <div class="empty">No stuck withdrawals &mdash; all clear.</div>
+      {% endif %}
     </div>
-    {% endif %}
-    {% if peaks.celery_queue_lag is not None %}
-    <div class="card">
-      <div class="label">Peak Celery Queue Lag</div>
-      <div class="value {% if peaks.celery_queue_lag > 20 %}err{% elif peaks.celery_queue_lag > 5 %}warn{% else %}ok{% endif %}">
-        {{ peaks.celery_queue_lag|floatformat:0 }} tasks
-      </div>
+
+  </div><!-- /body -->
+</section>
+
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<!--  4. SYSTEM HEALTH                                               -->
+<!-- ════════════════════════════════════════════════════════════════ -->
+<section class="ops-section" id="sec-health">
+  <div class="ops-section-header" onclick="toggleSection('sec-health')">
+    <div class="section-title-group">
+      <span class="section-icon">⚙️</span>
+      <span class="section-title">System Health</span>
+      <span class="section-desc">Redis, Celery, WebSockets, snapshots, and stress peaks</span>
     </div>
-    {% endif %}
-    {% if peaks.redis_memory_mb is not None %}
-    <div class="card">
-      <div class="label">Peak Redis Memory</div>
-      <div class="value">{{ peaks.redis_memory_mb|floatformat:1 }} MB</div>
+    <div class="section-meta">
+      {% if redis.status == 'ok' %}
+        <span class="count-badge ok">Redis OK</span>
+      {% else %}
+        <span class="count-badge attn">Redis ERROR</span>
+      {% endif %}
+      <span class="section-toggle" id="toggle-sec-health">▼</span>
     </div>
-    {% endif %}
   </div>
-  {% else %}
-    <div class="empty">No stress peaks recorded yet — peaks populate during operation.</div>
-  {% endif %}
-</div>
 
-<!-- ── Task Failures ─────────────────────────────────────── -->
-<div class="section">
-  <h2>Recent Task Failures (last 10)</h2>
-  {% if redis.task_failures %}
-  <table>
-    <tr><th>Task</th><th>Error</th><th>Time</th></tr>
-    {% for f in redis.task_failures %}
-    <tr>
-      <td>{{ f.task }}</td>
-      <td style="color:#e74c3c;">{{ f.error|truncatechars:80 }}</td>
-      <td>{{ f.ts|floatformat:0 }}</td>
-    </tr>
-    {% endfor %}
-  </table>
-  {% else %}
-    <div class="empty">No recent task failures.</div>
-  {% endif %}
-</div>
+  <div class="ops-section-body" id="body-sec-health">
 
-<!-- ── Security Events ───────────────────────────────────── -->
-<div class="section">
-  <h2>Recent Security Events</h2>
-  {% if recent_security %}
-  <table>
-    <tr><th>Time</th><th>Event</th><th>IP</th><th>Detail</th></tr>
-    {% for ev in recent_security %}
-    <tr>
-      <td>{{ ev.created_at|date:"H:i:s" }}</td>
-      <td>
-        <span class="badge {% if 'failed' in ev.event_type %}badge-err{% elif 'success' in ev.event_type %}badge-ok{% else %}badge-info{% endif %}">
-          {{ ev.event_type }}
-        </span>
-      </td>
-      <td>{{ ev.ip|default:"—" }}</td>
-      <td>{{ ev.detail.username|default:"" }}{% if ev.detail.reason %} — {{ ev.detail.reason }}{% endif %}</td>
-    </tr>
-    {% endfor %}
-  </table>
-  {% else %}
-    <div class="empty">No recent security events.</div>
-  {% endif %}
-</div>
+    <!-- Infrastructure metrics -->
+    <div class="subsection">
+      <div class="subsection-header">
+        <span class="subsection-title">Infrastructure</span>
+      </div>
+      <div class="metric-grid">
 
-<!-- ── Audit Trail ───────────────────────────────────────── -->
-<div class="section">
-  <h2>Recent Audit Events (last 20)</h2>
-  {% if recent_audit %}
-  <table>
-    <tr><th>Time</th><th>Event</th><th>Action</th><th>User</th><th>IP</th><th>Req ID</th></tr>
-    {% for ev in recent_audit %}
-    <tr>
-      <td>{{ ev.created_at|date:"H:i:s" }}</td>
-      <td><span class="badge badge-info">{{ ev.event_type }}</span></td>
-      <td>{{ ev.action|truncatechars:50 }}</td>
-      <td>{{ ev.user__username|default:"—" }}</td>
-      <td>{{ ev.ip|default:"—" }}</td>
-      <td style="font-size:10px;color:#555;">{{ ev.request_id }}</td>
-    </tr>
-    {% endfor %}
-  </table>
-  {% else %}
-    <div class="empty">No audit events yet.</div>
-  {% endif %}
-</div>
+        <div class="metric-card">
+          <div class="label">Redis</div>
+          <div class="value {% if redis.status == 'ok' %}ok{% else %}err{% endif %}">
+            {% if redis.status == 'ok' %}● OK{% else %}✗ DOWN{% endif %}
+          </div>
+          {% if redis.used_memory_mb %}
+          <div class="sub">{{ redis.used_memory_mb }} MB{% if redis.maxmemory_mb %} / {{ redis.maxmemory_mb }} MB{% endif %}</div>
+          {% endif %}
+          {% if redis.error %}<div class="sub" style="color:#e74c3c;">{{ redis.error }}</div>{% endif %}
+        </div>
+
+        <div class="metric-card">
+          <div class="label">Active WebSockets</div>
+          <div class="value">{{ redis.ws_connections|default:"—" }}</div>
+        </div>
+
+        <div class="metric-card">
+          <div class="label">Celery Queue Lag</div>
+          {% with lag=redis.celery_queue %}
+          <div class="value {% if lag > 20 %}err{% elif lag > 5 %}warn{% else %}ok{% endif %}">
+            {{ lag|default:"—" }}
+          </div>
+          <div class="sub">tasks queued</div>
+          {% endwith %}
+        </div>
+
+        <div class="metric-card">
+          <div class="label">Last Snapshot</div>
+          {% if last_snapshot %}
+            <div class="value ok">{{ last_snapshot.taken_at|date:"H:i:s" }}</div>
+            <div class="snapshot-age">{{ last_snapshot.taken_at|date:"Y-m-d" }} UTC</div>
+          {% else %}
+            <div class="value err">None</div>
+            <div class="sub">No snapshots recorded</div>
+          {% endif %}
+        </div>
+
+        {% with stuck=stuck_withdrawals %}
+        <div class="metric-card">
+          <div class="label">Stuck WRs (&gt;48h)</div>
+          <div class="value {% if stuck %}err{% else %}ok{% endif %}">{{ stuck|length }}</div>
+          {% if stuck %}<div class="sub" style="color:#e74c3c;">See Broker Risk</div>{% endif %}
+        </div>
+        {% endwith %}
+
+        <div class="metric-card">
+          <div class="label">Recent Task Failures</div>
+          <div class="value {% if redis.task_failures %}warn{% else %}ok{% endif %}">
+            {{ redis.task_failures|length }}
+          </div>
+          <div class="sub">last 10 recorded</div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Stress Peaks -->
+    <div class="subsection">
+      <div class="subsection-header">
+        <span class="subsection-title">Stress Peaks &mdash; since last reset (Redis-persisted)</span>
+      </div>
+      {% if peaks %}
+      <div class="metric-grid">
+        {% if peaks.ws_connections is not None %}
+        <div class="metric-card">
+          <div class="label">Peak WS Connections</div>
+          <div class="value {% if peaks.ws_connections > 80 %}err{% elif peaks.ws_connections > 40 %}warn{% else %}ok{% endif %}">
+            {{ peaks.ws_connections|floatformat:0 }}
+          </div>
+        </div>
+        {% endif %}
+        {% if peaks.snapshot_duration_s is not None %}
+        <div class="metric-card">
+          <div class="label">Peak Snapshot Duration</div>
+          <div class="value {% if peaks.snapshot_duration_s > 45 %}err{% elif peaks.snapshot_duration_s > 20 %}warn{% else %}ok{% endif %}">
+            {{ peaks.snapshot_duration_s|floatformat:1 }}s
+          </div>
+        </div>
+        {% endif %}
+        {% if peaks.celery_queue_lag is not None %}
+        <div class="metric-card">
+          <div class="label">Peak Celery Queue Lag</div>
+          <div class="value {% if peaks.celery_queue_lag > 20 %}err{% elif peaks.celery_queue_lag > 5 %}warn{% else %}ok{% endif %}">
+            {{ peaks.celery_queue_lag|floatformat:0 }}
+          </div>
+          <div class="sub">tasks</div>
+        </div>
+        {% endif %}
+        {% if peaks.redis_memory_mb is not None %}
+        <div class="metric-card">
+          <div class="label">Peak Redis Memory</div>
+          <div class="value">{{ peaks.redis_memory_mb|floatformat:1 }} MB</div>
+        </div>
+        {% endif %}
+      </div>
+      {% else %}
+      <div class="empty">No stress peaks recorded yet &mdash; data accumulates during operation.</div>
+      {% endif %}
+    </div>
+
+    <!-- Task Failures (collapsible log) -->
+    <div class="subsection">
+      <div class="subsection-header" style="cursor:pointer;" onclick="toggleSection('sub-task-failures')">
+        <span class="subsection-title">Task Failures (last 10)</span>
+        <span style="color:#555;font-size:11px;" id="toggle-sub-task-failures">▼ show</span>
+      </div>
+      <div id="body-sub-task-failures" class="hidden">
+        {% if redis.task_failures %}
+        <table>
+          <tr><th>Task</th><th>Error</th><th>Timestamp</th></tr>
+          {% for f in redis.task_failures %}
+          <tr>
+            <td>{{ f.task }}</td>
+            <td style="color:#e74c3c;">{{ f.error|truncatechars:90 }}</td>
+            <td>{{ f.ts|floatformat:0 }}</td>
+          </tr>
+          {% endfor %}
+        </table>
+        {% else %}
+        <div class="empty">No recent task failures.</div>
+        {% endif %}
+      </div>
+    </div>
+
+  </div><!-- /body -->
+</section>
+
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<!--  5. SECURITY & AUDIT                                            -->
+<!-- ════════════════════════════════════════════════════════════════ -->
+<section class="ops-section" id="sec-security">
+  <div class="ops-section-header" onclick="toggleSection('sec-security')">
+    <div class="section-title-group">
+      <span class="section-icon">🔐</span>
+      <span class="section-title">Security &amp; Audit</span>
+      <span class="section-desc">Recent auth events and admin audit trail</span>
+    </div>
+    <div class="section-meta">
+      <span class="count-badge info">Log</span>
+      <span class="section-toggle collapsed" id="toggle-sec-security">▼</span>
+    </div>
+  </div>
+
+  <div class="ops-section-body hidden" id="body-sec-security">
+
+    <!-- Security Events -->
+    <div class="subsection">
+      <div class="subsection-header">
+        <span class="subsection-title">Recent Security Events</span>
+      </div>
+      {% if recent_security %}
+      <table>
+        <tr><th>Time</th><th>Event</th><th>IP</th><th>Detail</th></tr>
+        {% for ev in recent_security %}
+        <tr>
+          <td>{{ ev.created_at|date:"H:i:s" }}</td>
+          <td>
+            <span class="badge {% if 'failed' in ev.event_type %}badge-err{% elif 'success' in ev.event_type %}badge-ok{% else %}badge-info{% endif %}">
+              {{ ev.event_type }}
+            </span>
+          </td>
+          <td>{{ ev.ip|default:"—" }}</td>
+          <td>{{ ev.detail.username|default:"" }}{% if ev.detail.reason %} &mdash; {{ ev.detail.reason }}{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% else %}
+      <div class="empty">No recent security events.</div>
+      {% endif %}
+    </div>
+
+    <!-- Audit Trail -->
+    <div class="subsection">
+      <div class="subsection-header">
+        <span class="subsection-title">Audit Trail (last 20 events)</span>
+      </div>
+      {% if recent_audit %}
+      <table>
+        <tr><th>Time</th><th>Event</th><th>Action</th><th>User</th><th>IP</th><th>Req ID</th></tr>
+        {% for ev in recent_audit %}
+        <tr>
+          <td>{{ ev.created_at|date:"H:i:s" }}</td>
+          <td><span class="badge badge-info">{{ ev.event_type }}</span></td>
+          <td>{{ ev.action|truncatechars:55 }}</td>
+          <td>{{ ev.user__username|default:"—" }}</td>
+          <td>{{ ev.ip|default:"—" }}</td>
+          <td style="font-size:10px;color:#444;">{{ ev.request_id }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+      {% else %}
+      <div class="empty">No audit events yet.</div>
+      {% endif %}
+    </div>
+
+  </div><!-- /body -->
+</section>
+
+</div><!-- /content -->
+
+<script>
+function toggleSection(id) {
+  var body    = document.getElementById('body-' + id);
+  var toggle  = document.getElementById('toggle-' + id);
+  if (!body) return;
+  var isHidden = body.classList.contains('hidden');
+  body.classList.toggle('hidden');
+  if (toggle) {
+    // For main section toggles: rotate arrow
+    if (toggle.classList.contains('section-toggle')) {
+      toggle.classList.toggle('collapsed', !isHidden);
+    } else {
+      // For inline sub-section toggles: swap label
+      toggle.textContent = isHidden ? '▲ hide' : '▼ show';
+    }
+  }
+}
+</script>
 
 </body>
 </html>
