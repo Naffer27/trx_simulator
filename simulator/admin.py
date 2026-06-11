@@ -17,7 +17,7 @@ from .models import (
     BrokerLedger, BrokerSpreadConfig,
     BrokerEquitySnapshot, BrokerRevenueSnapshot,
     ChallengeProduct, ChallengeEnrollment, FundedConfig,
-    KYCProfile,
+    KYCProfile, SupportTicket,
 )
 from . import challenge_engine
 
@@ -2516,6 +2516,88 @@ class KYCProfileAdmin(admin.ModelAdmin):
         self.message_user(request, f"{updated} KYC profile(s) rejected.")
 
     actions = ["approve_kyc", "reject_kyc"]
+
+
+# ─────────────────────────────────────────────
+# Support Tickets
+# ─────────────────────────────────────────────
+
+@admin.action(description="📬 Marcar como En revisión (pending)")
+def mark_pending(modeladmin, request, queryset):
+    updated = queryset.update(status=SupportTicket.STATUS_PENDING)
+    modeladmin.message_user(request, f"{updated} ticket(s) marcado(s) como En revisión.")
+
+
+@admin.action(description="✅ Marcar como Resuelto")
+def mark_resolved(modeladmin, request, queryset):
+    from django.utils import timezone as _tz
+    updated = queryset.update(
+        status=SupportTicket.STATUS_RESOLVED,
+        resolved_at=_tz.now(),
+    )
+    modeladmin.message_user(request, f"{updated} ticket(s) marcado(s) como Resuelto.")
+
+
+@admin.action(description="🔒 Marcar como Cerrado")
+def mark_closed(modeladmin, request, queryset):
+    updated = queryset.update(status=SupportTicket.STATUS_CLOSED)
+    modeladmin.message_user(request, f"{updated} ticket(s) marcado(s) como Cerrado.")
+
+
+@admin.register(SupportTicket)
+class SupportTicketAdmin(admin.ModelAdmin):
+
+    _STATUS_COLORS = {
+        SupportTicket.STATUS_OPEN:     ("#0a1a2a", "#7986cb"),
+        SupportTicket.STATUS_PENDING:  ("#2a1a00", "#f1c40f"),
+        SupportTicket.STATUS_RESOLVED: ("#0a2a1a", "#27ae60"),
+        SupportTicket.STATUS_CLOSED:   ("#1a1a1a", "#888888"),
+    }
+    _PRIORITY_COLORS = {
+        SupportTicket.PRIORITY_LOW:    ("#1a1a1a", "#888888"),
+        SupportTicket.PRIORITY_NORMAL: ("#0a1a2a", "#7986cb"),
+        SupportTicket.PRIORITY_HIGH:   ("#2a1500", "#e67e22"),
+        SupportTicket.PRIORITY_URGENT: ("#2a0000", "#e74c3c"),
+    }
+
+    @admin.display(description="Status")
+    def status_badge(self, obj):
+        bg, fg = self._STATUS_COLORS.get(obj.status, ("#1a1a1a", "#aaa"))
+        return _badge(obj.get_status_display(), bg, fg)
+
+    @admin.display(description="Priority")
+    def priority_badge(self, obj):
+        bg, fg = self._PRIORITY_COLORS.get(obj.priority, ("#1a1a1a", "#aaa"))
+        return _badge(obj.get_priority_display(), bg, fg)
+
+    @admin.display(description="User")
+    def user_col(self, obj):
+        return format_html(
+            '<strong>{}</strong><br><small style="color:#888">{}</small>',
+            obj.user.username, obj.user.email,
+        )
+
+    list_display   = ("id", "user_col", "category", "subject", "status_badge", "priority_badge", "created_at", "updated_at")
+    list_filter    = ("status", "priority", "category")
+    search_fields  = ("user__email", "user__username", "subject", "message")
+    ordering       = ("-created_at",)
+    date_hierarchy = "created_at"
+    actions        = [mark_pending, mark_resolved, mark_closed]
+
+    readonly_fields = ("user", "category", "subject", "message", "created_at", "updated_at", "resolved_at")
+
+    fieldsets = (
+        ("Ticket", {
+            "fields": ("user", "category", "subject", "message"),
+        }),
+        ("Estado", {
+            "fields": ("status", "priority", "admin_note", "resolved_at"),
+        }),
+        ("Fechas", {
+            "fields": ("created_at", "updated_at"),
+            "classes": ("collapse",),
+        }),
+    )
 
 
 # ─────────────────────────────────────────────

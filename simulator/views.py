@@ -21,7 +21,7 @@ from .models import (
     TradingViolation, TraderScore, AccountEquitySnapshot,
     ChallengeEnrollment, ChallengeProduct, AccountProduct, Wallet,
     EmailVerification, TermsAcceptance, TERMS_VERSION, RISK_DISCLOSURE_VERSION,
-    KYCProfile,
+    KYCProfile, SupportTicket,
 )
 from .challenge_engine import (
     evaluate_phase as _ce_evaluate_phase,
@@ -3170,5 +3170,57 @@ def resend_verification_view(request):
     except Exception as exc:
         logger.warning("[resend_verification] email failed user=%s: %s",
                        request.user.username, exc)
+
+    return redirect("simulator:home")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Support Tickets
+# ─────────────────────────────────────────────────────────────────────────────
+
+@login_required
+def support_view(request):
+    success = False
+    error   = None
+
+    if request.method == "POST":
+        category = request.POST.get("category", "").strip()
+        subject  = request.POST.get("subject",  "").strip()
+        message  = request.POST.get("message",  "").strip()
+
+        valid_categories = {c for c, _ in SupportTicket.CATEGORY_CHOICES}
+        if not category or category not in valid_categories:
+            error = "Selecciona una categoría válida."
+        elif not subject:
+            error = "El asunto es obligatorio."
+        elif len(subject) > 200:
+            error = "El asunto no puede superar los 200 caracteres."
+        elif not message:
+            error = "El mensaje es obligatorio."
+        else:
+            SupportTicket.objects.create(
+                user     = request.user,
+                category = category,
+                subject  = subject,
+                message  = message,
+                status   = SupportTicket.STATUS_OPEN,
+                priority = SupportTicket.PRIORITY_NORMAL,
+            )
+            logger.info("[support] ticket created user=%s subject=%r", request.user.username, subject)
+            success = True
+
+    recent_tickets = (
+        SupportTicket.objects
+        .filter(user=request.user)
+        .order_by("-created_at")[:10]
+    )
+
+    return render(request, "simulator/support.html", {
+        "tickets":        recent_tickets,
+        "category_choices": SupportTicket.CATEGORY_CHOICES,
+        "success":        success,
+        "error":          error,
+        "active_section": "support",
+    })
 
     return redirect("simulator:home")

@@ -1636,3 +1636,72 @@ class KYCProfile(models.Model):
     @property
     def is_pending(self) -> bool:
         return self.status == self.STATUS_PENDING
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Support Tickets
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SupportTicket(models.Model):
+    CATEGORY_DEPOSIT    = "deposit_issue"
+    CATEGORY_WITHDRAWAL = "withdrawal_issue"
+    CATEGORY_KYC        = "kyc_issue"
+    CATEGORY_ACCOUNT    = "account_issue"
+    CATEGORY_CHALLENGE  = "challenge_issue"
+    CATEGORY_TRADING    = "trading_issue"
+    CATEGORY_BUG        = "bug"
+    CATEGORY_OTHER      = "other"
+
+    CATEGORY_CHOICES = [
+        (CATEGORY_DEPOSIT,    "Problema con depósito"),
+        (CATEGORY_WITHDRAWAL, "Problema con retiro"),
+        (CATEGORY_KYC,        "Verificación KYC"),
+        (CATEGORY_ACCOUNT,    "Problema con cuenta"),
+        (CATEGORY_CHALLENGE,  "Problema con challenge"),
+        (CATEGORY_TRADING,    "Problema de trading"),
+        (CATEGORY_BUG,        "Reporte de bug"),
+        (CATEGORY_OTHER,      "Otro"),
+    ]
+
+    STATUS_OPEN     = "open"
+    STATUS_PENDING  = "pending"
+    STATUS_RESOLVED = "resolved"
+    STATUS_CLOSED   = "closed"
+
+    STATUS_CHOICES = [
+        (STATUS_OPEN,     "Abierto"),
+        (STATUS_PENDING,  "En revisión"),
+        (STATUS_RESOLVED, "Resuelto"),
+        (STATUS_CLOSED,   "Cerrado"),
+    ]
+
+    PRIORITY_LOW    = "low"
+    PRIORITY_NORMAL = "normal"
+    PRIORITY_HIGH   = "high"
+    PRIORITY_URGENT = "urgent"
+
+    PRIORITY_CHOICES = [
+        (PRIORITY_LOW,    "Baja"),
+        (PRIORITY_NORMAL, "Normal"),
+        (PRIORITY_HIGH,   "Alta"),
+        (PRIORITY_URGENT, "Urgente"),
+    ]
+
+    user        = models.ForeignKey(User, on_delete=models.CASCADE, related_name="support_tickets")
+    category    = models.CharField(max_length=30, choices=CATEGORY_CHOICES, default=CATEGORY_OTHER)
+    subject     = models.CharField(max_length=200)
+    message     = models.TextField()
+    status      = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_OPEN, db_index=True)
+    priority    = models.CharField(max_length=10, choices=PRIORITY_CHOICES, default=PRIORITY_NORMAL, db_index=True)
+    admin_note  = models.TextField(blank=True)
+    created_at  = models.DateTimeField(auto_now_add=True)
+    updated_at  = models.DateTimeField(auto_now=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name        = "Support Ticket"
+        verbose_name_plural = "Support Tickets"
+        ordering            = ["-created_at"]
+
+    def __str__(self):
+        return f"Ticket #{self.pk} [{self.status}] {self.subject[:40]}"

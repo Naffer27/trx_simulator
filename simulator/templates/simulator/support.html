@@ -1,0 +1,234 @@
+{% extends "simulator/base_app.html" %}
+{% load static %}
+{% block title %}Soporte — Money Brokers{% endblock %}
+{% block page_title %}Soporte{% endblock %}
+
+{% block extra_styles %}
+.sp-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: 24px;
+  max-width: 1100px;
+}
+@media (max-width: 860px) {
+  .sp-grid { grid-template-columns: 1fr; }
+}
+
+/* ── Card ── */
+.sp-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 28px 26px;
+}
+.sp-card-title {
+  font-family: 'Orbitron', sans-serif;
+  font-size: .72rem; font-weight: 700;
+  color: var(--muted-2); letter-spacing: .12em;
+  text-transform: uppercase;
+  margin-bottom: 20px;
+  display: flex; align-items: center; gap: 8px;
+}
+.sp-card-title i { color: var(--gold); }
+
+/* ── Form ── */
+.sp-field { margin-bottom: 18px; }
+.sp-label {
+  display: block;
+  font-size: .75rem; font-weight: 600;
+  color: rgba(255,255,255,.5);
+  letter-spacing: .05em; text-transform: uppercase;
+  margin-bottom: 7px;
+}
+.sp-input, .sp-select, .sp-textarea {
+  width: 100%;
+  background: #05050a;
+  border: 1px solid rgba(255,215,0,.18);
+  border-radius: 8px;
+  color: #e0e0e0;
+  font-size: .9rem;
+  padding: 10px 13px;
+  outline: none;
+  transition: border-color .2s;
+  font-family: 'Inter', sans-serif;
+  box-sizing: border-box;
+}
+.sp-input:focus, .sp-select:focus, .sp-textarea:focus {
+  border-color: var(--gold);
+}
+.sp-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%235d6175' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 36px;
+}
+.sp-textarea { resize: vertical; min-height: 110px; line-height: 1.55; }
+
+.sp-submit {
+  width: 100%;
+  background: linear-gradient(135deg, #FFD700, #FFA500);
+  color: #000;
+  font-weight: 700; font-size: .88rem;
+  border: none; border-radius: 8px;
+  padding: 12px;
+  cursor: pointer;
+  letter-spacing: .04em;
+  transition: opacity .2s;
+}
+.sp-submit:hover { opacity: .88; }
+
+/* ── Alerts ── */
+.sp-alert {
+  padding: 12px 14px;
+  border-radius: 8px;
+  font-size: .85rem;
+  margin-bottom: 18px;
+  display: flex; align-items: flex-start; gap: 8px;
+}
+.sp-alert-success { background: rgba(39,174,96,.12); border: 1px solid rgba(39,174,96,.3); color: #27ae60; }
+.sp-alert-error   { background: rgba(231,76,60,.1);  border: 1px solid rgba(231,76,60,.3); color: #e74c3c; }
+
+/* ── Ticket list ── */
+.sp-ticket-list { display: flex; flex-direction: column; gap: 12px; }
+.sp-ticket {
+  background: var(--bg-card-2);
+  border: 1px solid var(--border-dim);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+.sp-ticket-top {
+  display: flex; align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.sp-ticket-subject {
+  font-size: .85rem; font-weight: 600;
+  color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 1;
+}
+.sp-ticket-meta {
+  font-size: .75rem; color: var(--muted);
+  display: flex; gap: 10px; margin-top: 6px; align-items: center; flex-wrap: wrap;
+}
+
+/* ── Status badges ── */
+.sp-badge {
+  display: inline-block;
+  font-size: .65rem; font-weight: 700;
+  padding: 2px 8px; border-radius: 4px;
+  text-transform: uppercase; letter-spacing: .06em;
+  white-space: nowrap; flex-shrink: 0;
+}
+.sp-badge-open     { background: rgba(121,134,203,.15); color: #7986cb; }
+.sp-badge-pending  { background: rgba(241,196,15,.12);  color: #f1c40f; }
+.sp-badge-resolved { background: rgba(39,174,96,.12);   color: #27ae60; }
+.sp-badge-closed   { background: rgba(120,123,134,.12); color: #787b86; }
+
+.sp-empty {
+  text-align: center;
+  color: var(--muted);
+  font-size: .82rem;
+  padding: 32px 0;
+}
+{% endblock %}
+
+{% block content %}
+<div class="sp-grid">
+
+  <!-- ── LEFT: new ticket form ── -->
+  <div class="sp-card">
+    <div class="sp-card-title">
+      <i class="fa-solid fa-ticket"></i>
+      Nuevo ticket
+    </div>
+
+    {% if success %}
+    <div class="sp-alert sp-alert-success">
+      <i class="fa-solid fa-circle-check"></i>
+      <span>Tu ticket fue enviado. Nuestro equipo te responderá pronto.</span>
+    </div>
+    {% endif %}
+
+    {% if error %}
+    <div class="sp-alert sp-alert-error">
+      <i class="fa-solid fa-circle-exclamation"></i>
+      <span>{{ error }}</span>
+    </div>
+    {% endif %}
+
+    <form method="post" novalidate>
+      {% csrf_token %}
+
+      <div class="sp-field">
+        <label class="sp-label" for="id_category">Categoría</label>
+        <select id="id_category" name="category" class="sp-select" required>
+          <option value="">— Selecciona una categoría —</option>
+          {% for value, label in category_choices %}
+          <option value="{{ value }}"
+            {% if request.POST.category == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="sp-field">
+        <label class="sp-label" for="id_subject">Asunto</label>
+        <input id="id_subject" name="subject" type="text"
+               class="sp-input"
+               placeholder="Describe brevemente el problema"
+               maxlength="200"
+               value="{{ request.POST.subject|default:'' }}"
+               required>
+      </div>
+
+      <div class="sp-field">
+        <label class="sp-label" for="id_message">Mensaje</label>
+        <textarea id="id_message" name="message" class="sp-textarea"
+                  placeholder="Explica el problema con el mayor detalle posible…"
+                  required>{{ request.POST.message|default:'' }}</textarea>
+      </div>
+
+      <button type="submit" class="sp-submit">
+        <i class="fa-solid fa-paper-plane"></i>&nbsp; Enviar ticket
+      </button>
+    </form>
+  </div>
+
+  <!-- ── RIGHT: recent tickets ── -->
+  <div class="sp-card">
+    <div class="sp-card-title">
+      <i class="fa-solid fa-list-check"></i>
+      Mis tickets recientes
+    </div>
+
+    {% if tickets %}
+    <div class="sp-ticket-list">
+      {% for ticket in tickets %}
+      <div class="sp-ticket">
+        <div class="sp-ticket-top">
+          <span class="sp-ticket-subject" title="{{ ticket.subject }}">{{ ticket.subject }}</span>
+          <span class="sp-badge sp-badge-{{ ticket.status }}">{{ ticket.get_status_display }}</span>
+        </div>
+        <div class="sp-ticket-meta">
+          <span><i class="fa-solid fa-tag" style="opacity:.5"></i>&nbsp;{{ ticket.get_category_display }}</span>
+          <span><i class="fa-regular fa-clock" style="opacity:.5"></i>&nbsp;{{ ticket.created_at|date:"d M Y, H:i" }}</span>
+          {% if ticket.admin_note %}
+          <span style="color:var(--gold);"><i class="fa-solid fa-comment-dots"></i>&nbsp;Respuesta disponible</span>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="sp-empty">
+      <i class="fa-solid fa-inbox" style="font-size:2rem;margin-bottom:10px;display:block;opacity:.25"></i>
+      No tienes tickets aún.<br>Usa el formulario para abrir uno.
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}
