@@ -2497,23 +2497,37 @@ class KYCProfileAdmin(admin.ModelAdmin):
     @admin.action(description="Approve selected KYC profiles")
     def approve_kyc(self, request, queryset):
         from django.utils import timezone
-        updated = queryset.filter(status=KYCProfile.STATUS_PENDING).update(
-            status=KYCProfile.STATUS_APPROVED,
-            reviewed_at=timezone.now(),
-            reviewed_by=request.user,
-            rejection_reason="",
-        )
-        self.message_user(request, f"{updated} KYC profile(s) approved.")
+        pending = list(queryset.filter(status=KYCProfile.STATUS_PENDING))
+        _now = timezone.now()
+        for kyc in pending:
+            kyc.status           = KYCProfile.STATUS_APPROVED
+            kyc.reviewed_at      = _now
+            kyc.reviewed_by      = request.user
+            kyc.rejection_reason = ""
+            kyc.save(update_fields=["status", "reviewed_at", "reviewed_by", "rejection_reason"])
+            try:
+                from .kyc_emails import send_kyc_approved_email
+                send_kyc_approved_email(kyc)
+            except Exception as mail_exc:
+                _wlog.warning("[admin] kyc approved email failed kyc=%d: %s", kyc.pk, mail_exc)
+        self.message_user(request, f"{len(pending)} KYC profile(s) approved.")
 
     @admin.action(description="Reject selected KYC profiles")
     def reject_kyc(self, request, queryset):
         from django.utils import timezone
-        updated = queryset.filter(status=KYCProfile.STATUS_PENDING).update(
-            status=KYCProfile.STATUS_REJECTED,
-            reviewed_at=timezone.now(),
-            reviewed_by=request.user,
-        )
-        self.message_user(request, f"{updated} KYC profile(s) rejected.")
+        pending = list(queryset.filter(status=KYCProfile.STATUS_PENDING))
+        _now = timezone.now()
+        for kyc in pending:
+            kyc.status      = KYCProfile.STATUS_REJECTED
+            kyc.reviewed_at = _now
+            kyc.reviewed_by = request.user
+            kyc.save(update_fields=["status", "reviewed_at", "reviewed_by"])
+            try:
+                from .kyc_emails import send_kyc_rejected_email
+                send_kyc_rejected_email(kyc)
+            except Exception as mail_exc:
+                _wlog.warning("[admin] kyc rejected email failed kyc=%d: %s", kyc.pk, mail_exc)
+        self.message_user(request, f"{len(pending)} KYC profile(s) rejected.")
 
     actions = ["approve_kyc", "reject_kyc"]
 
