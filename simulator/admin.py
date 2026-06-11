@@ -1388,20 +1388,8 @@ def approve_withdrawals(modeladmin, request, queryset):
                 },
             )
             try:
-                from .tasks import send_email_async as _send_email
-                _send_email.delay(
-                    subject=f"Retiro #{wr.id} aprobado — en proceso",
-                    message=(
-                        f"Hola {wr.user.username},\n\n"
-                        f"Tu retiro #{wr.id} fue aprobado y está siendo enviado.\n\n"
-                        f"  Monto:     ${wr.amount_usd} USD\n"
-                        f"  Cripto:    {crypto_amount} {wr.crypto_currency.upper()}\n"
-                        f"  Dirección: {_mask_wallet(wr.wallet_address)}\n\n"
-                        f"El pago llegará en los próximos minutos según la red.\n\n"
-                        f"— Money Brokers"
-                    ),
-                    recipient_list=[wr.user.email],
-                )
+                from .withdrawal_emails import send_withdrawal_status_email, EVENT_APPROVED
+                send_withdrawal_status_email(wr, EVENT_APPROVED)
             except Exception as mail_exc:
                 _wlog.warning("[admin] approve email queuing failed wr=%d: %s", wr.id, mail_exc)
             ok += 1
@@ -1456,18 +1444,8 @@ def reject_withdrawals(modeladmin, request, queryset):
                 },
             )
             try:
-                from .tasks import send_email_async as _send_email
-                _send_email.delay(
-                    subject=f"Retiro #{wr.id} rechazado — fondos devueltos",
-                    message=(
-                        f"Hola {wr.user.username},\n\n"
-                        f"Tu solicitud de retiro #{wr.id} fue rechazada por el equipo.\n"
-                        f"${wr.amount_usd} USD fueron devueltos a tu wallet.\n\n"
-                        f"Contacta a soporte para más información.\n\n"
-                        f"— Money Brokers"
-                    ),
-                    recipient_list=[wr.user.email],
-                )
+                from .withdrawal_emails import send_withdrawal_status_email, EVENT_REJECTED
+                send_withdrawal_status_email(wr, EVENT_REJECTED)
             except Exception as mail_exc:
                 _wlog.warning("[admin] reject email queuing failed wr=%d: %s", wr.id, mail_exc)
             count += 1

@@ -2068,20 +2068,8 @@ def withdraw_view(request):
 
                     _masked_addr = _mask_wallet(wallet_address)
                     try:
-                        from .tasks import send_email_async as _send_email
-                        _send_email.delay(
-                            subject=f"Solicitud de retiro #{wr.id} recibida — Money Brokers",
-                            message=(
-                                f"Hola {request.user.username},\n\n"
-                                f"Tu solicitud de retiro #{wr.id} fue recibida y está siendo revisada.\n\n"
-                                f"  Monto:        ${amount_usd} USD\n"
-                                f"  Criptomoneda: {crypto_currency.upper()}\n"
-                                f"  Dirección:    {_masked_addr}\n\n"
-                                f"Te notificaremos cuando sea procesada (24-48h).\n\n"
-                                f"— Money Brokers"
-                            ),
-                            recipient_list=[request.user.email],
-                        )
+                        from .withdrawal_emails import send_withdrawal_status_email, EVENT_REQUESTED
+                        send_withdrawal_status_email(wr, EVENT_REQUESTED)
                     except Exception as mail_exc:
                         logger.warning("[withdraw] user confirmation email failed wr=%d: %s", wr.id, mail_exc)
 
@@ -2250,18 +2238,8 @@ def withdraw_payout_callback(request):
                     },
                 )
                 try:
-                    from .tasks import send_email_async as _send_email
-                    _send_email.delay(
-                        subject=f"Retiro #{wr.id} fallido — fondos devueltos",
-                        message=(
-                            f"Hola {wr.user.username},\n\n"
-                            f"El pago de tu retiro #{wr.id} no pudo completarse.\n"
-                            f"${wr.amount_usd} USD fueron devueltos a tu wallet automáticamente.\n\n"
-                            f"Contacta a soporte si tienes dudas.\n\n"
-                            f"— Money Brokers"
-                        ),
-                        recipient_list=[wr.user.email],
-                    )
+                    from .withdrawal_emails import send_withdrawal_status_email, EVENT_FAILED
+                    send_withdrawal_status_email(wr, EVENT_FAILED)
                 except Exception as mail_exc:
                     logger.warning("[payout_cb] failed email queuing failed wr=%d: %s", wr.id, mail_exc)
 
@@ -2280,19 +2258,8 @@ def withdraw_payout_callback(request):
                     },
                 )
                 try:
-                    from .tasks import send_email_async as _send_email
-                    _send_email.delay(
-                        subject=f"Retiro #{wr.id} completado — Money Brokers",
-                        message=(
-                            f"Hola {wr.user.username},\n\n"
-                            f"Tu retiro #{wr.id} fue enviado exitosamente.\n\n"
-                            f"  Monto:     ${wr.amount_usd} USD\n"
-                            f"  Cripto:    {wr.crypto_amount} {wr.crypto_currency.upper()}\n"
-                            f"  Dirección: {_mask_wallet(wr.wallet_address)}\n\n"
-                            f"— Money Brokers"
-                        ),
-                        recipient_list=[wr.user.email],
-                    )
+                    from .withdrawal_emails import send_withdrawal_status_email, EVENT_COMPLETED
+                    send_withdrawal_status_email(wr, EVENT_COMPLETED)
                 except Exception as mail_exc:
                     logger.warning("[payout_cb] completed email queuing failed wr=%d: %s", wr.id, mail_exc)
 
