@@ -1778,6 +1778,20 @@ def deposit_callback(request):
 
         Deposit.objects.filter(pk=deposit.pk).update(**update_fields)
 
+    # Send confirmation email outside the atomic block so a queuing failure
+    # never rolls back the credit.  update_fields["credited"] is True only when
+    # this callback is the one that just credited the deposit for the first time;
+    # duplicate IPNs return before reaching here via the idempotency gate above.
+    if update_fields.get("credited"):
+        try:
+            from .deposit_emails import send_deposit_confirmed_email
+            send_deposit_confirmed_email(deposit)
+        except Exception as mail_exc:
+            logger.warning(
+                "[callback] deposit email failed deposit_id=%d: %s",
+                deposit.id, mail_exc,
+            )
+
     return JsonResponse({"ok": True})
 
 
