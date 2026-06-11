@@ -544,6 +544,15 @@
         <span class="sb-text">Soporte</span>
       </a>
 
+      <!-- Ops (staff only) -->
+      {% if user.is_staff %}
+      <a href="{% url 'simulator:ops_panel' %}"
+         class="sb-link {% if active_section == 'ops_panel' %}active{% endif %}">
+        <span class="sb-icon"><i class="fa-solid fa-gauge-high"></i></span>
+        <span class="sb-text">Ops</span>
+      </a>
+      {% endif %}
+
     </nav>
 
     <!-- Footer / user -->

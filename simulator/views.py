@@ -2599,10 +2599,79 @@ def ops_panel_view(request):
     except Exception as exc:
         ctx["broker_report"] = {"error": str(exc)}
 
+    # ── Operational attention: support tickets ────────────────────────────────
+    try:
+        _open_statuses = [SupportTicket.STATUS_OPEN, SupportTicket.STATUS_PENDING]
+        ctx["open_tickets_count"] = SupportTicket.objects.filter(
+            status__in=_open_statuses
+        ).count()
+        ctx["open_tickets"] = list(
+            SupportTicket.objects
+            .filter(status__in=_open_statuses)
+            .order_by("-created_at")
+            .values("id", "user__username", "category", "subject", "status", "priority", "created_at")[:10]
+        )
+    except Exception as exc:
+        ctx["open_tickets_count"] = 0
+        ctx["open_tickets"] = []
+
+    # ── Operational attention: KYC pending ───────────────────────────────────
+    try:
+        ctx["kyc_pending_count"] = KYCProfile.objects.filter(
+            status=KYCProfile.STATUS_PENDING
+        ).count()
+        ctx["kyc_pending"] = list(
+            KYCProfile.objects
+            .filter(status=KYCProfile.STATUS_PENDING)
+            .order_by("-submitted_at")
+            .values("id", "user__username", "user__email", "country", "submitted_at")[:10]
+        )
+    except Exception as exc:
+        ctx["kyc_pending_count"] = 0
+        ctx["kyc_pending"] = []
+
+    # ── Operational attention: withdrawals pending/processing ─────────────────
+    try:
+        _wr_statuses = [WithdrawalRequest.STATUS_PENDING, WithdrawalRequest.STATUS_PROCESSING]
+        ctx["withdrawals_pending_count"] = WithdrawalRequest.objects.filter(
+            status__in=_wr_statuses
+        ).count()
+        ctx["withdrawals_pending"] = list(
+            WithdrawalRequest.objects
+            .filter(status__in=_wr_statuses)
+            .order_by("-created_at")
+            .values("id", "user__username", "amount_usd", "crypto_currency", "status", "created_at")[:10]
+        )
+    except Exception as exc:
+        ctx["withdrawals_pending_count"] = 0
+        ctx["withdrawals_pending"] = []
+
+    # ── Operational attention: recent confirmed deposits ──────────────────────
+    try:
+        ctx["deposits_confirmed_count"] = Deposit.objects.filter(credited=True).count()
+        ctx["deposits_recent"] = list(
+            Deposit.objects
+            .filter(credited=True)
+            .order_by("-credited_at")
+            .values("id", "user__username", "amount_usd", "crypto_currency", "credited_at")[:10]
+        )
+    except Exception as exc:
+        ctx["deposits_confirmed_count"] = 0
+        ctx["deposits_recent"] = []
+
+    # ── New users last 7 days ─────────────────────────────────────────────────
+    try:
+        from datetime import timedelta as _td
+        from django.contrib.auth import get_user_model as _gum
+        ctx["new_users_7d"] = _gum().objects.filter(
+            date_joined__gte=timezone.now() - _td(days=7)
+        ).count()
+    except Exception as exc:
+        ctx["new_users_7d"] = 0
+
     # ── Stuck withdrawals ─────────────────────────────────────────────────────
     try:
         from datetime import timedelta
-        from .models import WithdrawalRequest
         stuck_cutoff = timezone.now() - timedelta(hours=48)
         ctx["stuck_withdrawals"] = list(
             WithdrawalRequest.objects
@@ -2632,6 +2701,7 @@ def ops_panel_view(request):
         ctx["recent_audit"] = []
         ctx["recent_security"] = []
 
+    ctx["active_section"] = "ops_panel"
     return render(request, "simulator/ops_panel.html", ctx)
 
 

@@ -34,6 +34,15 @@
   pre { background: #1a1a1a; padding: 8px; border-radius: 4px; overflow-x: auto; font-size: 11px; color: #aaa; }
   .snapshot-age { font-size: 11px; color: #888; }
   .snapshot-age.stale { color: #e74c3c; }
+  .card.attn { border-color: #4a3a00; }
+  .card.attn .label { color: #9a7a00; }
+  .card.attn .value { color: #ffd700; }
+  .badge-gold  { background: #2a1a00; color: #ffd700; }
+  .badge-blue  { background: #001a3a; color: #4af; }
+  .badge-green { background: #001a10; color: #2ecc71; }
+  h2.gold { color: #ffd700; border-bottom-color: #3a2a00; }
+  a.admin-link { color: #4af; text-decoration: none; font-size: 11px; }
+  a.admin-link:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -43,6 +52,155 @@
   Version: <strong>{{ git_version }}</strong> &nbsp;|&nbsp;
   Server time: <strong>{{ server_time|date:"Y-m-d H:i:s" }} UTC</strong>
   <a href="{% url 'simulator:ops_panel' %}" class="refresh">[↻ Refresh]</a>
+</div>
+
+<!-- ── Ops Attention KPIs ──────────────────────────────────── -->
+<div class="section">
+<h2 class="gold">Atención Operativa</h2>
+<div class="grid">
+
+  <div class="card {% if open_tickets_count %}attn{% endif %}">
+    <div class="label">Tickets Abiertos / Pendientes</div>
+    <div class="value {% if open_tickets_count %}{% else %}ok{% endif %}" {% if open_tickets_count %}style="color:#ffd700;"{% endif %}>
+      {{ open_tickets_count }}
+    </div>
+    {% if open_tickets_count %}<div class="label" style="color:#9a7a00;">Requiere atención</div>{% endif %}
+    <div style="margin-top:6px;"><a href="{% url 'admin:simulator_supportticket_changelist' %}" class="admin-link">→ Ver en admin</a></div>
+  </div>
+
+  <div class="card {% if kyc_pending_count %}attn{% endif %}">
+    <div class="label">KYC Pendientes</div>
+    <div class="value {% if kyc_pending_count %}{% else %}ok{% endif %}" {% if kyc_pending_count %}style="color:#ffd700;"{% endif %}>
+      {{ kyc_pending_count }}
+    </div>
+    {% if kyc_pending_count %}<div class="label" style="color:#9a7a00;">Requiere revisión</div>{% endif %}
+    <div style="margin-top:6px;"><a href="{% url 'admin:simulator_kycprofile_changelist' %}" class="admin-link">→ Ver en admin</a></div>
+  </div>
+
+  <div class="card {% if withdrawals_pending_count %}attn{% endif %}">
+    <div class="label">Retiros Pendientes / Procesando</div>
+    <div class="value {% if withdrawals_pending_count %}{% else %}ok{% endif %}" {% if withdrawals_pending_count %}style="color:#ffd700;"{% endif %}>
+      {{ withdrawals_pending_count }}
+    </div>
+    {% if withdrawals_pending_count %}<div class="label" style="color:#9a7a00;">Requiere acción</div>{% endif %}
+    <div style="margin-top:6px;"><a href="{% url 'admin:simulator_withdrawalrequest_changelist' %}" class="admin-link">→ Ver en admin</a></div>
+  </div>
+
+  <div class="card">
+    <div class="label">Depósitos Confirmados (total)</div>
+    <div class="value" style="color:#4af;">{{ deposits_confirmed_count }}</div>
+    <div style="margin-top:6px;"><a href="{% url 'admin:simulator_deposit_changelist' %}" class="admin-link">→ Ver en admin</a></div>
+  </div>
+
+  <div class="card">
+    <div class="label">Nuevos Usuarios (7 días)</div>
+    <div class="value" style="color:#4af;">{{ new_users_7d }}</div>
+    <div style="margin-top:6px;"><a href="{% url 'admin:auth_user_changelist' %}" class="admin-link">→ Ver en admin</a></div>
+  </div>
+
+</div>
+</div>
+
+<!-- ── Open Support Tickets ───────────────────────────────── -->
+<div class="section">
+<h2 class="gold">Tickets de Soporte Abiertos — últimos 10
+  <a href="{% url 'admin:simulator_supportticket_changelist' %}" class="admin-link" style="float:right;font-size:10px;margin-top:2px;">→ Todos</a>
+</h2>
+{% if open_tickets %}
+<table>
+  <tr><th>#</th><th>Usuario</th><th>Asunto</th><th>Estado</th><th>Prioridad</th><th>Fecha</th></tr>
+  {% for t in open_tickets %}
+  <tr>
+    <td><a href="{% url 'admin:simulator_supportticket_change' t.id %}" class="admin-link">#{{ t.id }}</a></td>
+    <td>{{ t.user__username }}</td>
+    <td>{{ t.subject|truncatechars:45 }}</td>
+    <td>
+      <span class="badge {% if t.status == 'open' %}badge-info{% else %}badge-warn{% endif %}">
+        {{ t.status }}
+      </span>
+    </td>
+    <td>
+      <span class="badge {% if t.priority == 'urgent' %}badge-err{% elif t.priority == 'high' %}badge-warn{% else %}badge-info{% endif %}">
+        {{ t.priority }}
+      </span>
+    </td>
+    <td>{{ t.created_at|date:"m-d H:i" }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<div class="empty">No hay tickets abiertos ni pendientes.</div>
+{% endif %}
+</div>
+
+<!-- ── KYC Pending ───────────────────────────────────────── -->
+<div class="section">
+<h2 class="gold">KYC Pendientes de Revisión — últimos 10
+  <a href="{% url 'admin:simulator_kycprofile_changelist' %}" class="admin-link" style="float:right;font-size:10px;margin-top:2px;">→ Todos</a>
+</h2>
+{% if kyc_pending %}
+<table>
+  <tr><th>#</th><th>Usuario</th><th>Email</th><th>País</th><th>Enviado</th></tr>
+  {% for k in kyc_pending %}
+  <tr>
+    <td><a href="{% url 'admin:simulator_kycprofile_change' k.id %}" class="admin-link">#{{ k.id }}</a></td>
+    <td>{{ k.user__username }}</td>
+    <td>{{ k.user__email }}</td>
+    <td>{{ k.country|default:"—" }}</td>
+    <td>{{ k.submitted_at|date:"m-d H:i" }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<div class="empty">No hay perfiles KYC pendientes.</div>
+{% endif %}
+</div>
+
+<!-- ── Withdrawals Pending/Processing ───────────────────── -->
+<div class="section">
+<h2 class="gold">Retiros Pendientes / Procesando — últimos 10
+  <a href="{% url 'admin:simulator_withdrawalrequest_changelist' %}" class="admin-link" style="float:right;font-size:10px;margin-top:2px;">→ Todos</a>
+</h2>
+{% if withdrawals_pending %}
+<table>
+  <tr><th>#</th><th>Usuario</th><th>Monto USD</th><th>Moneda</th><th>Estado</th><th>Solicitado</th></tr>
+  {% for wr in withdrawals_pending %}
+  <tr>
+    <td><a href="{% url 'admin:simulator_withdrawalrequest_change' wr.id %}" class="admin-link">#{{ wr.id }}</a></td>
+    <td>{{ wr.user__username }}</td>
+    <td>${{ wr.amount_usd|floatformat:2 }}</td>
+    <td>{{ wr.crypto_currency|upper }}</td>
+    <td><span class="badge badge-warn">{{ wr.status }}</span></td>
+    <td>{{ wr.created_at|date:"m-d H:i" }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<div class="empty">No hay retiros pendientes ni en procesamiento.</div>
+{% endif %}
+</div>
+
+<!-- ── Recent Confirmed Deposits ─────────────────────────── -->
+<div class="section">
+<h2>Depósitos Confirmados Recientes — últimos 10
+  <a href="{% url 'admin:simulator_deposit_changelist' %}" class="admin-link" style="float:right;font-size:10px;margin-top:2px;">→ Todos</a>
+</h2>
+{% if deposits_recent %}
+<table>
+  <tr><th>#</th><th>Usuario</th><th>Monto USD</th><th>Moneda</th><th>Acreditado</th></tr>
+  {% for d in deposits_recent %}
+  <tr>
+    <td><a href="{% url 'admin:simulator_deposit_change' d.id %}" class="admin-link">#{{ d.id }}</a></td>
+    <td>{{ d.user__username }}</td>
+    <td>${{ d.amount_usd|floatformat:2 }}</td>
+    <td>{{ d.crypto_currency|upper }}</td>
+    <td>{{ d.credited_at|date:"m-d H:i" }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<div class="empty">Sin depósitos confirmados recientes.</div>
+{% endif %}
 </div>
 
 <!-- ── Quick Stats ────────────────────────────────────────── -->
