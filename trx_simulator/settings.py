@@ -404,6 +404,7 @@ EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
 DEFAULT_FROM_EMAIL  = os.getenv("DEFAULT_FROM_EMAIL", "") or "noreply@moneybrokers.app"
 SERVER_EMAIL        = os.getenv("SERVER_EMAIL", "") or DEFAULT_FROM_EMAIL
 ADMINS              = [("Admin", os.getenv("ADMIN_EMAIL", "nafferphotographer@gmail.com"))]
+SUPPORT_EMAIL       = os.getenv("SUPPORT_EMAIL", "").strip()
 
 # Guard: production SMTP requires EMAIL_HOST to be explicitly configured.
 # Skipped during `manage.py test` so the test runner is never blocked.

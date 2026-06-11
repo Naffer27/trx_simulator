@@ -3212,7 +3212,7 @@ def support_view(request):
         elif not message:
             error = "El mensaje es obligatorio."
         else:
-            SupportTicket.objects.create(
+            ticket = SupportTicket.objects.create(
                 user     = request.user,
                 category = category,
                 subject  = subject,
@@ -3221,6 +3221,16 @@ def support_view(request):
                 priority = SupportTicket.PRIORITY_NORMAL,
             )
             logger.info("[support] ticket created user=%s subject=%r", request.user.username, subject)
+            try:
+                from .support_emails import send_support_ticket_created_email
+                send_support_ticket_created_email(ticket)
+            except Exception as mail_exc:
+                logger.warning("[support] user email failed ticket=%d: %s", ticket.id, mail_exc)
+            try:
+                from .support_emails import send_support_ticket_admin_email
+                send_support_ticket_admin_email(ticket)
+            except Exception as mail_exc:
+                logger.warning("[support] admin email failed ticket=%d: %s", ticket.id, mail_exc)
             success = True
 
     recent_tickets = (
@@ -3236,5 +3246,3 @@ def support_view(request):
         "error":          error,
         "active_section": "support",
     })
-
-    return redirect("simulator:home")
