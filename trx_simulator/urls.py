@@ -6,8 +6,8 @@ from django.conf import settings
 from django.conf.urls.static import static
 
 urlpatterns = [
-    # Admin
-    path('admin/', admin.site.urls),
+    # Admin — path controlled by ADMIN_URL env var (default: admin/)
+    path(settings.ADMIN_URL, admin.site.urls),
 
     # Monta TODAS las rutas del app en la raíz "/" con namespace "simulator"
     path('', include(('simulator.urls', 'simulator'), namespace='simulator')),

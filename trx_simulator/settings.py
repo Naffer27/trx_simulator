@@ -422,6 +422,11 @@ if not DEBUG and _smtp_in_use and not EMAIL_HOST:
 # In production:  https://yourdomain.com  (no trailing slash)
 SITE_URL = os.getenv("SITE_URL", "http://127.0.0.1:8000").rstrip("/")
 
+# Django admin mount point — change via ADMIN_URL env var to obscure the default path.
+# Always normalised to end with exactly one "/".
+_raw_admin_url = os.getenv("ADMIN_URL", "admin/").strip().strip("/")
+ADMIN_URL = (_raw_admin_url or "admin") + "/"
+
 # ===============================
 # 🔐 CSRF / Proxy
 # ===============================
