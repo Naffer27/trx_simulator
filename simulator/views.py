@@ -1760,17 +1760,25 @@ def deposit_callback(request):
             )
 
         elif payment_status == Deposit.STATUS_CONFIRMING:
-            # Funds on-chain but not yet final — show as pending in wallet
-            from django.db.models import F
-            from .models import Wallet as WalletModel
-            wallet, _ = get_or_create_wallet(deposit.user)
-            WalletModel.objects.filter(pk=wallet.pk).update(
-                pending_balance=F("pending_balance") + deposit.amount_usd
-            )
-            logger.info(
-                "[callback] status → confirming deposit_id=%d — pending_balance +%s",
-                deposit.id, deposit.amount_usd,
-            )
+            # Funds on-chain but not yet final — show as pending in wallet.
+            # Only increment if the deposit was NOT already in confirming state;
+            # duplicate confirming IPNs must not double-increment pending_balance.
+            if deposit.status != Deposit.STATUS_CONFIRMING:
+                from django.db.models import F
+                from .models import Wallet as WalletModel
+                wallet, _ = get_or_create_wallet(deposit.user)
+                WalletModel.objects.filter(pk=wallet.pk).update(
+                    pending_balance=F("pending_balance") + deposit.amount_usd
+                )
+                logger.info(
+                    "[callback] status → confirming deposit_id=%d — pending_balance +%s",
+                    deposit.id, deposit.amount_usd,
+                )
+            else:
+                logger.info(
+                    "[callback] confirming IPN duplicate deposit_id=%d — pending_balance unchanged",
+                    deposit.id,
+                )
 
         else:
             logger.info(

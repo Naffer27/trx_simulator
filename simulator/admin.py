@@ -1347,6 +1347,7 @@ def approve_withdrawals(modeladmin, request, queryset):
     from django.core.mail import send_mail
     from django.conf import settings as _cfg
     from django.urls import reverse as _rev
+    from django.db import transaction as _tx
 
     pending = queryset.filter(status=WithdrawalRequest.STATUS_PENDING)
     if not pending.exists():
@@ -1356,6 +1357,22 @@ def approve_withdrawals(modeladmin, request, queryset):
     ok, errs = 0, []
     for wr in pending:
         try:
+            # Atomically claim the WR as APPROVED before making the external API call.
+            # Only one concurrent admin session can win this update; the loser gets
+            # claimed=0 and skips, preventing duplicate payouts.
+            with _tx.atomic():
+                claimed = WithdrawalRequest.objects.select_for_update().filter(
+                    pk=wr.pk,
+                    status=WithdrawalRequest.STATUS_PENDING,
+                ).update(
+                    status      = WithdrawalRequest.STATUS_APPROVED,
+                    reviewed_by = request.user,
+                    reviewed_at = now(),
+                )
+            if not claimed:
+                _wlog.warning("[admin] approve wr #%d skipped — status changed concurrently", wr.pk)
+                continue
+
             crypto_amount = _np.estimate_price(wr.amount_usd, wr.crypto_currency)
             cb_url = request.build_absolute_uri(
                 reverse("simulator:withdraw_payout_callback")
@@ -1371,8 +1388,6 @@ def approve_withdrawals(modeladmin, request, queryset):
                 np_payout_id     = payout_id,
                 np_payout_status = str(data.get("status", "")),
                 crypto_amount    = crypto_amount,
-                reviewed_by      = request.user,
-                reviewed_at      = now(),
             )
             from .audit import log_audit, EV_WITHDRAW_APPROVED
             log_audit(
@@ -1396,6 +1411,11 @@ def approve_withdrawals(modeladmin, request, queryset):
 
         except Exception as exc:
             _wlog.error("[admin] approve withdrawal #%d failed: %s", wr.id, exc, exc_info=True)
+            # Roll back to PENDING so admin can retry
+            WithdrawalRequest.objects.filter(
+                pk=wr.pk,
+                status=WithdrawalRequest.STATUS_APPROVED,
+            ).update(status=WithdrawalRequest.STATUS_PENDING)
             errs.append(f"#{wr.id}: {exc}")
 
     if ok:
@@ -1410,6 +1430,7 @@ def reject_withdrawals(modeladmin, request, queryset):
     from .models import WalletTransaction
     from django.core.mail import send_mail
     from django.conf import settings as _cfg
+    from django.db import transaction as _tx
 
     pending = queryset.filter(status=WithdrawalRequest.STATUS_PENDING)
     if not pending.exists():
@@ -1419,19 +1440,30 @@ def reject_withdrawals(modeladmin, request, queryset):
     count = 0
     for wr in pending:
         try:
-            wallet, _ = get_or_create_wallet(wr.user)
-            credit_wallet(
-                wallet.id,
-                wr.amount_usd,
-                WalletTransaction.TX_CORRECTION,
-                note=f"Refund — retiro #{wr.id} rechazado por admin",
-                initiated_by=request.user,
-            )
-            WithdrawalRequest.objects.filter(pk=wr.pk).update(
-                status      = WithdrawalRequest.STATUS_REJECTED,
-                reviewed_by = request.user,
-                reviewed_at = now(),
-            )
+            with _tx.atomic():
+                # Re-check status under a row lock — prevents double-rejection race.
+                wr_locked = WithdrawalRequest.objects.select_for_update().filter(
+                    pk=wr.pk,
+                    status=WithdrawalRequest.STATUS_PENDING,
+                ).first()
+                if wr_locked is None:
+                    _wlog.warning("[admin] reject wr #%d skipped — status changed concurrently", wr.pk)
+                    continue
+
+                wallet, _ = get_or_create_wallet(wr.user)
+                credit_wallet(
+                    wallet.id,
+                    wr.amount_usd,
+                    WalletTransaction.TX_CORRECTION,
+                    note=f"Refund — retiro #{wr.id} rechazado por admin",
+                    initiated_by=request.user,
+                )
+                WithdrawalRequest.objects.filter(pk=wr.pk).update(
+                    status      = WithdrawalRequest.STATUS_REJECTED,
+                    reviewed_by = request.user,
+                    reviewed_at = now(),
+                )
+
             from .audit import log_audit, EV_WITHDRAW_REJECTED
             log_audit(
                 request, EV_WITHDRAW_REJECTED,
