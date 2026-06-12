@@ -782,6 +782,7 @@ def home_view(request):
     recent_docs       = BrokerDocument.objects.filter(public=True).order_by('-created_at')[:3]
     ea_count          = ExpertAdvisor.objects.filter(active=True).count()
 
+    from .readiness import get_user_readiness as _get_readiness
     return render(request, 'simulator/home.html', {
         'account': account,
         'all_accounts': all_accounts,
@@ -799,6 +800,7 @@ def home_view(request):
         'recent_docs': recent_docs,
         'ea_count': ea_count,
         'active_section': 'dashboard',
+        'readiness': _get_readiness(request.user),
     })
 
 
@@ -2128,6 +2130,8 @@ def withdraw_view(request):
     daily_avail = max(daily_limit - daily_used, Decimal("0"))
     from .models import TOTPDevice as _TD
     _totp_enabled = _TD.objects.filter(user=request.user, confirmed=True).exists()
+    from .readiness import get_user_readiness as _get_readiness
+    _readiness = _get_readiness(request.user)
     return render(request, "simulator/withdraw.html", {
         "form":           form,
         "wallet":         wallet,
@@ -2138,6 +2142,7 @@ def withdraw_view(request):
         "daily_avail":     daily_avail,
         "min_withdrawal":  min_withdrawal,
         "totp_enabled":    _totp_enabled,
+        "readiness":       _readiness,
         "active_section":  "withdraw",
     })
 

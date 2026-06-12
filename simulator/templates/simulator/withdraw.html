@@ -230,14 +230,55 @@
       </div>
     </div>
 
-    {% if not kyc_approved %}
-    <div class="kyc-banner">
-      <i class="fa-solid fa-id-card" style="margin-top:2px;flex-shrink:0;"></i>
-      <div>
-        <strong>Verificación KYC requerida</strong><br>
-        Debes completar y aprobar tu verificación KYC antes de retirar fondos.
-        <a href="{% url 'simulator:kyc' %}">Completar verificación &rarr;</a>
+    {% if readiness.missing_requirements %}
+    <div class="kyc-banner" style="flex-direction:column;gap:10px;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <i class="fa-solid fa-triangle-exclamation" style="flex-shrink:0;"></i>
+        <strong>Requisitos pendientes para retirar</strong>
       </div>
+      <ul style="margin:0;padding:0 0 0 4px;list-style:none;display:flex;flex-direction:column;gap:6px;">
+        {% if not readiness.email_verified %}
+        <li style="font-size:.8rem;">
+          <i class="fa-solid fa-circle-xmark" style="color:#ef5350;margin-right:4px;"></i>
+          Email no verificado —
+          <a href="{% url 'simulator:resend_verification' %}">Reenviar verificación &rarr;</a>
+        </li>
+        {% endif %}
+        {% if not readiness.terms_accepted %}
+        <li style="font-size:.8rem;">
+          <i class="fa-solid fa-circle-xmark" style="color:#ef5350;margin-right:4px;"></i>
+          Términos no aceptados —
+          <a href="{% url 'simulator:accept_terms' %}">Aceptar ahora &rarr;</a>
+        </li>
+        {% endif %}
+        {% if not readiness.kyc_approved %}
+          {% if readiness.kyc_status == 'pending' %}
+          <li style="font-size:.8rem;">
+            <i class="fa-solid fa-clock" style="color:#FFA500;margin-right:4px;"></i>
+            Verificación KYC requerida — en revisión, aguarda aprobación
+          </li>
+          {% elif readiness.kyc_status == 'rejected' %}
+          <li style="font-size:.8rem;">
+            <i class="fa-solid fa-circle-xmark" style="color:#ef5350;margin-right:4px;"></i>
+            Verificación KYC requerida — KYC rechazado,
+            <a href="{% url 'simulator:kyc' %}">vuelve a enviar &rarr;</a>
+          </li>
+          {% else %}
+          <li style="font-size:.8rem;">
+            <i class="fa-solid fa-circle-xmark" style="color:#ef5350;margin-right:4px;"></i>
+            Verificación KYC requerida —
+            <a href="{% url 'simulator:kyc' %}">completar verificación &rarr;</a>
+          </li>
+          {% endif %}
+        {% endif %}
+        {% if not readiness.totp_enabled %}
+        <li style="font-size:.8rem;">
+          <i class="fa-solid fa-circle-xmark" style="color:#ef5350;margin-right:4px;"></i>
+          2FA no activado —
+          <a href="{% url 'simulator:totp_setup' %}">Activar ahora &rarr;</a>
+        </li>
+        {% endif %}
+      </ul>
     </div>
     {% endif %}
 
@@ -328,7 +369,8 @@
       <input type="hidden" name="otp_code" value="">
       {% endif %}
 
-      <button type="submit" class="submit-btn" id="submitBtn">
+      <button type="submit" class="submit-btn" id="submitBtn"
+              {% if not readiness.can_withdraw %}disabled title="Completa los requisitos antes de retirar"{% endif %}>
         SOLICITAR RETIRO
       </button>
     </form>

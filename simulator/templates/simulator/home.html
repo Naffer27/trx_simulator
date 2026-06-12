@@ -386,6 +386,74 @@
     </a>
   </div>
 
+  <!-- ╔══════════════════ ONBOARDING CHECKLIST ══════════════════╗ -->
+  {% if readiness.missing_requirements %}
+  <div class="info-card" style="margin-bottom:16px;border-color:rgba(255,165,0,.3);">
+    <div class="ic-head" style="background:rgba(255,165,0,.04);">
+      <div class="ic-title" style="color:var(--gold);">
+        <i class="fa-solid fa-list-check" style="margin-right:6px;"></i>
+        Completa tu cuenta
+      </div>
+      <span style="font-size:.72rem;color:var(--muted);">{{ readiness.missing_requirements|length }} paso{{ readiness.missing_requirements|length|pluralize }} pendiente{{ readiness.missing_requirements|length|pluralize }}</span>
+    </div>
+    <div class="ic-body" style="padding:14px 18px;">
+      <p style="font-size:.78rem;color:var(--muted);margin-bottom:12px;">
+        Completa los siguientes pasos para habilitar los retiros.
+      </p>
+      <ul style="list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:8px;">
+
+        <li style="display:flex;align-items:center;gap:10px;font-size:.82rem;">
+          {% if readiness.email_verified %}
+          <i class="fa-solid fa-circle-check" style="color:var(--bull);flex-shrink:0;"></i>
+          <span style="color:var(--muted-2);">Email verificado</span>
+          {% else %}
+          <i class="fa-solid fa-circle-xmark" style="color:var(--bear);flex-shrink:0;"></i>
+          <a href="{% url 'simulator:resend_verification' %}" style="color:var(--gold);font-weight:600;text-decoration:none;">Verificar email &rarr;</a>
+          {% endif %}
+        </li>
+
+        <li style="display:flex;align-items:center;gap:10px;font-size:.82rem;">
+          {% if readiness.terms_accepted %}
+          <i class="fa-solid fa-circle-check" style="color:var(--bull);flex-shrink:0;"></i>
+          <span style="color:var(--muted-2);">Términos y condiciones aceptados</span>
+          {% else %}
+          <i class="fa-solid fa-circle-xmark" style="color:var(--bear);flex-shrink:0;"></i>
+          <a href="{% url 'simulator:accept_terms' %}" style="color:var(--gold);font-weight:600;text-decoration:none;">Aceptar términos &rarr;</a>
+          {% endif %}
+        </li>
+
+        <li style="display:flex;align-items:center;gap:10px;font-size:.82rem;">
+          {% if readiness.kyc_approved %}
+          <i class="fa-solid fa-circle-check" style="color:var(--bull);flex-shrink:0;"></i>
+          <span style="color:var(--muted-2);">KYC aprobado</span>
+          {% elif readiness.kyc_status == 'pending' %}
+          <i class="fa-solid fa-clock" style="color:#FFA500;flex-shrink:0;"></i>
+          <span style="color:#FFA500;">KYC en revisión — aguarda aprobación</span>
+          {% elif readiness.kyc_status == 'rejected' %}
+          <i class="fa-solid fa-circle-xmark" style="color:var(--bear);flex-shrink:0;"></i>
+          <a href="{% url 'simulator:kyc' %}" style="color:var(--gold);font-weight:600;text-decoration:none;">KYC rechazado — vuelve a enviar &rarr;</a>
+          {% else %}
+          <i class="fa-solid fa-circle-xmark" style="color:var(--bear);flex-shrink:0;"></i>
+          <a href="{% url 'simulator:kyc' %}" style="color:var(--gold);font-weight:600;text-decoration:none;">Completar verificación KYC &rarr;</a>
+          {% endif %}
+        </li>
+
+        <li style="display:flex;align-items:center;gap:10px;font-size:.82rem;">
+          {% if readiness.totp_enabled %}
+          <i class="fa-solid fa-circle-check" style="color:var(--bull);flex-shrink:0;"></i>
+          <span style="color:var(--muted-2);">Autenticación 2FA activada</span>
+          {% else %}
+          <i class="fa-solid fa-circle-xmark" style="color:var(--bear);flex-shrink:0;"></i>
+          <a href="{% url 'simulator:totp_setup' %}" style="color:var(--gold);font-weight:600;text-decoration:none;">Activar 2FA &rarr;</a>
+          {% endif %}
+        </li>
+
+      </ul>
+    </div>
+  </div>
+  {% endif %}
+  <!-- /ONBOARDING CHECKLIST -->
+
   <!-- ╔══════════════════ MAIN GRID ══════════════════╗ -->
   <div class="home-grid">
 

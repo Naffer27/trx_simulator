@@ -439,6 +439,9 @@
           <a href="{% url 'simulator:withdraw' %}"
              class="sb-child {% if active_section == 'withdraw' %}active{% endif %}">
             <span class="sb-cdot"></span>Retirar
+            {% if readiness and not readiness.can_withdraw %}
+            <span style="margin-left:auto;font-size:.6rem;color:#ef5350;font-weight:700;">!</span>
+            {% endif %}
           </a>
           <a href="{% url 'simulator:withdraw_history' %}"
              class="sb-child {% if active_section == 'withdraw_history' %}active{% endif %}">
@@ -528,6 +531,15 @@
          class="sb-link {% if active_section == 'kyc' %}active{% endif %}">
         <span class="sb-icon"><i class="fa-solid fa-id-card"></i></span>
         <span class="sb-text">Verificación KYC</span>
+        {% if readiness and not readiness.kyc_approved %}
+          {% if readiness.kyc_status == 'pending' %}
+          <span class="sb-badge" style="background:rgba(255,165,0,.2);color:#FFA500;font-size:.6rem;">Revisión</span>
+          {% elif readiness.kyc_status == 'rejected' %}
+          <span class="sb-badge" style="background:rgba(239,83,80,.2);color:#ef5350;font-size:.6rem;">!</span>
+          {% else %}
+          <span class="sb-badge" style="background:rgba(239,83,80,.2);color:#ef5350;font-size:.6rem;">!</span>
+          {% endif %}
+        {% endif %}
       </a>
 
       <!-- Cambiar Contraseña -->
@@ -535,6 +547,16 @@
          class="sb-link {% if active_section == 'password_change' %}active{% endif %}">
         <span class="sb-icon"><i class="fa-solid fa-key"></i></span>
         <span class="sb-text">Cambiar Contraseña</span>
+      </a>
+
+      <!-- 2FA Setup -->
+      <a href="{% url 'simulator:totp_setup' %}"
+         class="sb-link {% if active_section == 'totp_setup' %}active{% endif %}">
+        <span class="sb-icon"><i class="fa-solid fa-shield-halved"></i></span>
+        <span class="sb-text">Autenticación 2FA</span>
+        {% if readiness and not readiness.totp_enabled %}
+        <span class="sb-badge" style="background:rgba(239,83,80,.2);color:#ef5350;font-size:.6rem;">!</span>
+        {% endif %}
       </a>
 
       <!-- Soporte -->
