@@ -1987,13 +1987,15 @@ def withdraw_view(request):
             # ── 2FA gate — checked before any financial operation ──────────────
             if not error:
                 from .models import TOTPDevice
-                from .two_factor import verify_totp_code as _verify_otp
-                _device = TOTPDevice.objects.filter(user=request.user, confirmed=True).first()
-                if not _device:
+                from .two_factor import verify_totp as _verify_totp
+                _has_device = TOTPDevice.objects.filter(
+                    user=request.user, confirmed=True
+                ).exists()
+                if not _has_device:
                     error = "Debes activar 2FA (autenticación de dos factores) antes de solicitar retiros."
                 else:
                     _otp_code = request.POST.get("otp_code", "").strip()
-                    if not _verify_otp(_device.secret, _otp_code):
+                    if not _verify_totp(request.user, _otp_code):
                         security_log("withdrawal.2fa_failed",
                                      username=request.user.username, user_id=request.user.pk)
                         error = "Código 2FA incorrecto. Verifica tu app y vuelve a intentarlo."
@@ -2124,6 +2126,8 @@ def withdraw_view(request):
     wallet.refresh_from_db()
     daily_used  = _get_daily_withdrawal_used(request.user)
     daily_avail = max(daily_limit - daily_used, Decimal("0"))
+    from .models import TOTPDevice as _TD
+    _totp_enabled = _TD.objects.filter(user=request.user, confirmed=True).exists()
     return render(request, "simulator/withdraw.html", {
         "form":           form,
         "wallet":         wallet,
@@ -2133,6 +2137,7 @@ def withdraw_view(request):
         "daily_used":      daily_used,
         "daily_avail":     daily_avail,
         "min_withdrawal":  min_withdrawal,
+        "totp_enabled":    _totp_enabled,
         "active_section":  "withdraw",
     })
 

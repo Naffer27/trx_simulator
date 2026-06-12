@@ -296,6 +296,38 @@
         direcciones equivocadas.
       </div>
 
+      {% if totp_enabled %}
+      <hr class="divider">
+
+      <!-- 2FA code -->
+      <div class="form-group">
+        <div class="field-label">
+          <i class="fa-solid fa-shield-halved" style="color:var(--gold);margin-right:4px;"></i>
+          Código de autenticación (2FA)
+        </div>
+        <input
+          type="text"
+          name="otp_code"
+          id="id_otp_code"
+          class="deposit-input"
+          placeholder="000000"
+          maxlength="6"
+          minlength="6"
+          pattern="[0-9]{6}"
+          inputmode="numeric"
+          autocomplete="one-time-code"
+          style="letter-spacing:.35em;font-size:1.1rem;text-align:center;"
+        >
+        <div class="info-row" style="margin-top:6px;">
+          <span>&#128274;</span>
+          Ingresa el código de 6 dígitos de tu app de autenticación.
+        </div>
+      </div>
+      {% else %}
+      <!-- 2FA not enabled — gate enforced server-side -->
+      <input type="hidden" name="otp_code" value="">
+      {% endif %}
+
       <button type="submit" class="submit-btn" id="submitBtn">
         SOLICITAR RETIRO
       </button>

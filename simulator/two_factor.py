@@ -91,7 +91,8 @@ def get_totp_uri(secret: str, username: str) -> str:
 def verify_totp_code(stored_secret: str, code: str) -> bool:
     """
     Verify a 6-digit TOTP code against the stored (possibly encrypted) secret.
-    Uses pyotp's built-in ±1 window (30s drift tolerance).
+    Accepts b64:<base64> (dev) and fernet:<token> (prod) prefixes.
+    Uses ±1 window (30 s drift tolerance — Google Authenticator compatible).
     Returns False on any error.
     """
     try:
@@ -101,6 +102,22 @@ def verify_totp_code(stored_secret: str, code: str) -> bool:
     except Exception as exc:
         _log.error("[2fa] verify_totp_code error: %r", exc)
         return False
+
+
+def verify_totp(user, code: str) -> bool:
+    """
+    High-level helper: look up the user's confirmed TOTPDevice and verify the code.
+
+    Returns False when:
+      - the user has no confirmed TOTPDevice
+      - the code is blank or wrong
+    Uses ±1 window (30 s drift tolerance).
+    """
+    from .models import TOTPDevice
+    device = TOTPDevice.objects.filter(user=user, confirmed=True).first()
+    if not device:
+        return False
+    return verify_totp_code(device.secret, code)
 
 
 def generate_qr_png(uri: str) -> bytes:
