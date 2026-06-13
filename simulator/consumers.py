@@ -811,8 +811,10 @@ class TradingConsumer(AsyncWebsocketConsumer):
                                   "message": "no_se_pudo_abrir_posicion"})
             return
 
-        # DB committed — safe to mutate memory now
-        self.account["balance"] = new_balance
+        # DB committed — safe to mutate memory now.
+        # Use authoritative balance from DB (returned by _db_open_position_atomic),
+        # falling back to pre-computed value only for demo sessions (no _db_account_id).
+        self.account["balance"] = result.get("new_balance", new_balance)
         db_pos_id = result["position_id"] or self._order_seq
         self._order_seq += 1
 
@@ -903,11 +905,17 @@ class TradingConsumer(AsyncWebsocketConsumer):
                                   "message": "no_se_pudo_cerrar_posicion"})
             return  # memory untouched — position still open
 
-        # Step D — DB committed: safe to mutate memory now
-        self._positions      = [p for p in self._positions if str(p.get("id")) != str(found_pos["id"])]
-        self.account["balance"]      = result["new_balance"]
-        self.account["peak_balance"] = result["new_peak"]
-        self.account["status"]       = result["new_status"]
+        # Step D — DB committed: safe to mutate memory now.
+        self._positions = [p for p in self._positions if str(p.get("id")) != str(found_pos["id"])]
+        if not result.get("already_closed"):
+            # Normal close: apply the authoritative DB values.
+            self.account["balance"]      = result["new_balance"]
+            self.account["peak_balance"] = result["new_peak"]
+            self.account["status"]       = result["new_status"]
+        # already_closed=True: position was closed by a concurrent Celery SL/TP.
+        # The DB balance is already correct; do NOT overwrite it with the stale
+        # pre-computed value. The next account:update push from the daemon will
+        # sync in-memory state.
         self._track_daily_pnl(realized)
 
         # Step E — respond to client (same payloads as before)
@@ -1632,18 +1640,31 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 position_id = pos.id
                 merged = False
 
-            if commission and commission > 0:
+            # Lock account before any balance write.
+            # Lock order: Position (above, netting only) → TradingAccount — mirrors
+            # the close path, preventing deadlocks under concurrent open+close.
+            _acct = (
+                TradingAccount.objects
+                .select_for_update()
+                .filter(id=self._db_account_id)
+                .first()
+            )
+            _commission_d = Decimal(str(commission)) if commission and commission > 0 else Decimal("0")
+            # Authoritative balance: deduct commission from current DB value, not stale memory.
+            _auth_balance = (_acct.balance - _commission_d) if _acct else Decimal(str(new_balance))
+
+            if _commission_d > 0:
                 trader_ledger = LedgerEntry.objects.create(
                     account_id=self._db_account_id,
                     event_type=LedgerEntry.EV_COMMISSION,
-                    amount=Decimal(str(-abs(commission))),
-                    balance_after=Decimal(str(new_balance)),
+                    amount=-_commission_d,
+                    balance_after=_auth_balance,
                     meta={"symbol": symbol, "side": side, "db_pos_id": position_id},
                 )
                 try:
                     BrokerLedger.objects.create(
                         revenue_type=BrokerLedger.REV_COMMISSION,
-                        amount=Decimal(str(abs(commission))),
+                        amount=_commission_d,
                         source_account_id=self._db_account_id,
                         source_ledger=trader_ledger,
                         symbol=symbol,
@@ -1684,13 +1705,13 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 except Exception as _sp_exc:
                     log.warning("[broker_ledger] spread insert failed pos=%s: %s", position_id, _sp_exc)
 
-            TradingAccount.objects.filter(id=self._db_account_id).update(
-                balance=Decimal(str(new_balance))
-            )
+            if _acct and _commission_d > 0:
+                _acct.balance = _auth_balance
+                _acct.save(update_fields=["balance"])
 
-        log.info("[db_open] pos_id=%s symbol=%s side=%s qty=%s merged=%s balance=%.2f",
-                 position_id, symbol, side, qty, merged, new_balance)
-        return {"position_id": position_id, "merged": merged}
+        log.info("[db_open] pos_id=%s symbol=%s side=%s qty=%s merged=%s balance=%.4f",
+                 position_id, symbol, side, qty, merged, float(_auth_balance))
+        return {"position_id": position_id, "merged": merged, "new_balance": float(_auth_balance)}
 
     @database_sync_to_async
     def _db_close_position_atomic(self, pos_mem: dict, close_px: float, reason: str,
