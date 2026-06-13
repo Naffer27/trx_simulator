@@ -422,6 +422,25 @@ def _close_position_sync(
         if trade_type not in ("BUY", "SELL"):
             trade_type = "BUY"
 
+        # Guard: prevent writing a negative balance to DB (extreme loss / gap risk).
+        # In normal operation the margin guard ensures new_balance >= 0 before any
+        # position is opened.  This is a last-resort defensive layer.
+        # Normalize float params to Decimal once; all subsequent comparisons stay
+        # Decimal-native to avoid float→Decimal round-trips that can silently drop
+        # sub-cent precision (e.g. round(1e-9, 8) == 0.0 loses the shortfall).
+        _ZERO         = Decimal("0")
+        _nb           = new_balance if isinstance(new_balance, Decimal) else Decimal(str(new_balance))
+        _ne           = new_equity  if isinstance(new_equity,  Decimal) else Decimal(str(new_equity))
+        _safe_balance = max(_nb, _ZERO)
+        _safe_equity  = max(_ne, _ZERO)
+        _shortfall    = abs(min(_nb, _ZERO))
+        if _shortfall > _ZERO:
+            logger.critical(
+                "[close_sync] NEGATIVE BALANCE PREVENTED: account=%s realized=%.4f "
+                "computed_balance=%s shortfall=%s — clamping to 0",
+                account_id, realized_pnl, _nb, _shortfall,
+            )
+
         trade = Trade.objects.create(
             account_id    = account_id,
             symbol        = pos_mem["symbol"],
@@ -437,13 +456,27 @@ def _close_position_sync(
         )
 
         LedgerEntry.objects.create(
-            account_id  = account_id,
-            event_type  = LedgerEntry.EV_REALIZED,
-            amount      = Decimal(str(realized_pnl)),
-            balance_after = Decimal(str(new_balance)),
-            meta        = {"symbol": pos_mem["symbol"], "side": pos_mem["side"],
-                           "reason": reason, "trade_id": trade.id},
+            account_id    = account_id,
+            event_type    = LedgerEntry.EV_REALIZED,
+            amount        = Decimal(str(realized_pnl)),
+            balance_after = _safe_balance,
+            meta          = {"symbol": pos_mem["symbol"], "side": pos_mem["side"],
+                             "reason": reason, "trade_id": trade.id},
         )
+
+        if _shortfall > _ZERO:
+            LedgerEntry.objects.create(
+                account_id    = account_id,
+                event_type    = LedgerEntry.EV_ADJUST,
+                amount        = _ZERO,
+                balance_after = _safe_balance,
+                meta          = {
+                    "reason":                    "negative_balance_guard",
+                    "shortfall":                 float(_shortfall),           # float for JSON
+                    "original_computed_balance": float(_nb),                  # float for JSON
+                    "realized_pnl":              realized_pnl,
+                },
+            )
 
         pos.delete()
 
@@ -454,8 +487,8 @@ def _close_position_sync(
             .first()
         )
         if account:
-            account.balance = Decimal(str(new_balance))
-            account.equity  = Decimal(str(new_equity))
+            account.balance = _safe_balance
+            account.equity  = _safe_equity
             account.save(update_fields=["balance", "equity"])
 
             from .risk_engine import check_and_enforce_risk
@@ -472,14 +505,14 @@ def _close_position_sync(
         else:
             violations   = []
             final_status = "Activo"
-            final_peak   = new_balance
+            final_peak   = float(_safe_balance)
 
     logger.info("[close_sync] OK pos=%r trade=%r realized=%.4f balance=%.2f status=%s",
-                pos_mem["id"], trade.id, realized_pnl, new_balance, final_status)
+                pos_mem["id"], trade.id, realized_pnl, float(_safe_balance), final_status)
     return {
         "already_closed": False,
-        "new_balance":    float(new_balance),
-        "new_equity":     float(new_equity),
+        "new_balance":    float(_safe_balance),
+        "new_equity":     float(_safe_equity),
         "new_status":     final_status,
         "new_peak":       final_peak,
         "violations":     [v.violation_type for v in violations],

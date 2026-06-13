@@ -1739,6 +1739,24 @@ class TradingConsumer(AsyncWebsocketConsumer):
             trade_type = str(pos_mem.get("side", "")).upper()
             if trade_type not in ("BUY", "SELL"):
                 trade_type = "BUY"
+
+            # Guard: prevent writing a negative balance to DB (extreme loss / gap risk).
+            # Normalize float params to Decimal once; all subsequent comparisons stay
+            # Decimal-native to avoid float→Decimal round-trips that can silently drop
+            # sub-cent precision (e.g. round(1e-9, 8) == 0.0 loses the shortfall).
+            _ZERO         = Decimal("0")
+            _nb           = new_balance if isinstance(new_balance, Decimal) else Decimal(str(new_balance))
+            _ne           = new_equity  if isinstance(new_equity,  Decimal) else Decimal(str(new_equity))
+            _safe_balance = max(_nb, _ZERO)
+            _safe_equity  = max(_ne, _ZERO)
+            _shortfall    = abs(min(_nb, _ZERO))
+            if _shortfall > _ZERO:
+                log.critical(
+                    "[db_close] NEGATIVE BALANCE PREVENTED: account=%s realized=%.4f "
+                    "computed_balance=%s shortfall=%s — clamping to 0",
+                    self._db_account_id, realized_pnl, _nb, _shortfall,
+                )
+
             trade = Trade.objects.create(
                 account_id=self._db_account_id,
                 symbol=pos_mem["symbol"],
@@ -1758,10 +1776,24 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 account_id=self._db_account_id,
                 event_type=LedgerEntry.EV_REALIZED,
                 amount=Decimal(str(realized_pnl)),
-                balance_after=Decimal(str(new_balance)),
+                balance_after=_safe_balance,
                 meta={"symbol": pos_mem["symbol"], "side": pos_mem["side"],
                       "reason": reason, "trade_id": trade.id},
             )
+
+            if _shortfall > _ZERO:
+                LedgerEntry.objects.create(
+                    account_id    = self._db_account_id,
+                    event_type    = LedgerEntry.EV_ADJUST,
+                    amount        = _ZERO,
+                    balance_after = _safe_balance,
+                    meta          = {
+                        "reason":                    "negative_balance_guard",
+                        "shortfall":                 float(_shortfall),           # float for JSON
+                        "original_computed_balance": float(_nb),                  # float for JSON
+                        "realized_pnl":              realized_pnl,
+                    },
+                )
 
             # 4. Delete Position if it existed in DB.
             if pos:
@@ -1775,8 +1807,8 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 .first()
             )
             if account:
-                account.balance = Decimal(str(new_balance))
-                account.equity  = Decimal(str(new_equity))
+                account.balance = _safe_balance
+                account.equity  = _safe_equity
                 account.save(update_fields=["balance", "equity"])
 
                 # 6. Risk engine — challenge/funded compliance checks.
@@ -1795,13 +1827,13 @@ class TradingConsumer(AsyncWebsocketConsumer):
             else:
                 violations   = []
                 final_status = self.account.get("status", "Activo")
-                final_peak   = self.account.get("peak_balance", new_balance)
+                final_peak   = self.account.get("peak_balance", float(_nb))
 
         log.info("[db_close] OK pos_id=%r trade_id=%r realized=%.4f balance=%.2f status=%s",
-                 pos_mem["id"], trade.id, realized_pnl, new_balance, final_status)
+                 pos_mem["id"], trade.id, realized_pnl, float(_safe_balance), final_status)
         return {
-            "new_balance": float(new_balance),
-            "new_equity":  float(new_equity),
+            "new_balance": float(_safe_balance),
+            "new_equity":  float(_safe_equity),
             "new_status":  final_status,
             "new_peak":    final_peak,
             "violations":  [v.violation_type for v in violations],
