@@ -1,38 +1,36 @@
 # simulator/tests/test_withdrawal_daily_limit.py
 """
-Daily withdrawal limit — MAX_WITHDRAWAL_DAILY_USD (default $1 500).
+daily_used — display informativo en /withdraw/.
 
-Counting rule: pending, processing, approved, completed count toward the limit.
-               rejected, failed do NOT count (money was returned to wallet).
+El límite diario fijo fue eliminado (decisión de producto: el dinero es del usuario).
+daily_used se sigue calculando y mostrando como información al usuario,
+pero ya NO bloquea el retiro.
+
+Counting rule (para display): pending, processing, approved, completed cuentan.
+                               rejected, failed NO cuentan (dinero devuelto a wallet).
 
 Covers:
-  1.  GET /withdraw/ shows daily_limit in page.
-  2.  GET /withdraw/ shows daily_used (0 when no withdrawals today).
-  3.  GET /withdraw/ shows daily_avail equal to full limit when no prior WRs.
-  4.  POST blocked when amount exceeds full daily limit.
-  5.  POST blocked when remaining daily quota is insufficient.
-  6.  POST succeeds when amount is exactly equal to remaining quota.
-  7.  PENDING withdrawals count toward used amount.
-  8.  PROCESSING withdrawals count toward used amount.
-  9.  APPROVED withdrawals count toward used amount.
-  10. COMPLETED withdrawals count toward used amount.
-  11. REJECTED withdrawals do NOT count toward used amount.
-  12. FAILED withdrawals do NOT count toward used amount.
-  13. Daily limit resets next day (yesterday's WRs don't count).
-  14. Blocked request does not create a WithdrawalRequest.
-  15. Blocked request does not debit wallet.
-  16. Error message mentions the daily limit.
-  17. Error message mentions the used amount.
-  18. Error message mentions the available amount.
-  19. Other users' withdrawals do not affect this user's limit.
-  20. Limit from settings.MAX_WITHDRAWAL_DAILY_USD is respected.
+  1.  GET /withdraw/ muestra daily_used en contexto.
+  2.  GET muestra daily_used = 0 cuando no hay retiros hoy.
+  3.  GET muestra daily_used refleja WR pendiente existente.
+  4.  PENDING cuenta en daily_used.
+  5.  PROCESSING cuenta en daily_used.
+  6.  APPROVED cuenta en daily_used.
+  7.  COMPLETED cuenta en daily_used.
+  8.  REJECTED no cuenta en daily_used.
+  9.  FAILED no cuenta en daily_used.
+  10. WRs de ayer no cuentan en daily_used.
+  11. WRs de otros usuarios no afectan daily_used.
+  12. Múltiples estados se suman correctamente.
+  13. daily_limit ya no está en el contexto (gate eliminado).
+  14. daily_avail ya no está en el contexto (gate eliminado).
 """
 from datetime import timedelta
 from decimal import Decimal
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase, override_settings
+from django.test import TestCase
 from django.utils import timezone
 
 from simulator.models import Wallet, WithdrawalRequest, TOTPDevice
@@ -55,18 +53,9 @@ def _make_device(user) -> TOTPDevice:
     )
 
 
-def _wr_payload(amount="50.00"):
-    return {
-        "amount_usd":      amount,
-        "crypto_currency": "btc",
-        "wallet_address":  "bc1qtest000000000000000000000000000000000",
-        "otp_code":        "000000",
-    }
-
-
 def _seed_wr(user, amount, status, days_ago=0):
-    """Create a WithdrawalRequest directly (bypassing the view) for limit testing."""
-    wallet, _ = Wallet.objects.get_or_create(user=user)
+    """Create a WithdrawalRequest directly (bypassing the view) for display testing."""
+    Wallet.objects.get_or_create(user=user)
     wr = WithdrawalRequest.objects.create(
         user=user,
         amount_usd=Decimal(str(amount)),
@@ -81,9 +70,14 @@ def _seed_wr(user, amount, status, days_ago=0):
     return wr
 
 
-# ── GET display ───────────────────────────────────────────────────────────────
+# ── GET display — daily_used ──────────────────────────────────────────────────
 
-class DailyLimitDisplayTests(TestCase):
+class DailyUsedDisplayTests(TestCase):
+    """
+    daily_used is still shown for informational purposes.
+    daily_limit and daily_avail are no longer in the context.
+    """
+
     def setUp(self):
         _PATCH_RATELIMIT.start()
         self.user   = make_user(email="dld@test.com")
@@ -95,103 +89,41 @@ class DailyLimitDisplayTests(TestCase):
     def tearDown(self):
         _PATCH_RATELIMIT.stop()
 
-    def test_get_shows_daily_limit(self):
+    def test_get_daily_used_in_context(self):
+        """daily_used is present in template context."""
         resp = self.client.get(WITHDRAW_URL)
-        self.assertContains(resp, "1500")
+        self.assertIn("daily_used", resp.context)
 
-    def test_get_shows_daily_used_zero_when_no_prior_withdrawals(self):
+    def test_get_daily_used_zero_when_no_prior_withdrawals(self):
         resp = self.client.get(WITHDRAW_URL)
-        self.assertContains(resp, "0.00")
-
-    def test_get_shows_daily_avail_equal_to_full_limit_when_unused(self):
-        resp = self.client.get(WITHDRAW_URL)
-        self.assertEqual(resp.context["daily_avail"], Decimal("1500"))
+        self.assertEqual(resp.context["daily_used"], Decimal("0"))
 
     def test_get_daily_used_reflects_existing_pending(self):
         _seed_wr(self.user, "400", WithdrawalRequest.STATUS_PENDING)
         resp = self.client.get(WITHDRAW_URL)
         self.assertEqual(resp.context["daily_used"], Decimal("400"))
 
-    def test_get_daily_avail_decreases_by_used(self):
-        _seed_wr(self.user, "600", WithdrawalRequest.STATUS_PENDING)
+    def test_daily_limit_not_in_context(self):
+        """daily_limit was removed — gate is gone."""
         resp = self.client.get(WITHDRAW_URL)
-        self.assertEqual(resp.context["daily_avail"], Decimal("900"))
+        self.assertNotIn("daily_limit", resp.context)
+
+    def test_daily_avail_not_in_context(self):
+        """daily_avail was removed — gate is gone."""
+        resp = self.client.get(WITHDRAW_URL)
+        self.assertNotIn("daily_avail", resp.context)
 
 
-# ── Gate enforcement ──────────────────────────────────────────────────────────
+# ── Counting rules for daily_used display ────────────────────────────────────
 
-@override_settings(MAX_WITHDRAWAL_DAILY_USD=1500)
-class DailyLimitGateTests(TestCase):
+class DailyUsedCountingTests(TestCase):
+    """
+    daily_used = sum of today's WRs with active statuses.
+    These rules govern what shows in the informational display.
+    """
+
     def setUp(self):
         _PATCH_RATELIMIT.start()
-        _PATCH_TOTP.start()
-        _PATCH_EMAIL.start()
-        self.user   = make_user(email="dlg@test.com")
-        self.wallet = make_wallet(self.user, initial_balance=Decimal("5000"))
-        _make_device(self.user)
-        make_kyc_approved(self.user)
-        self.client.force_login(self.user)
-
-    def tearDown(self):
-        _PATCH_RATELIMIT.stop()
-        _PATCH_TOTP.stop()
-        _PATCH_EMAIL.stop()
-
-    def test_amount_over_full_daily_limit_is_blocked(self):
-        r = self.client.post(WITHDRAW_URL, _wr_payload("1600.00"))
-        self.assertEqual(r.status_code, 200)
-        self.assertEqual(WithdrawalRequest.objects.filter(user=self.user).count(), 0)
-
-    def test_amount_exceeding_remaining_quota_is_blocked(self):
-        _seed_wr(self.user, "1400", WithdrawalRequest.STATUS_PENDING)
-        r = self.client.post(WITHDRAW_URL, _wr_payload("200.00"))
-        self.assertEqual(r.status_code, 200)
-        self.assertEqual(
-            WithdrawalRequest.objects.filter(user=self.user, status=WithdrawalRequest.STATUS_PENDING).count(),
-            1,
-        )
-
-    def test_amount_equal_to_remaining_quota_succeeds(self):
-        _seed_wr(self.user, "1000", WithdrawalRequest.STATUS_COMPLETED)
-        r = self.client.post(WITHDRAW_URL, _wr_payload("500.00"))
-        self.assertRedirects(r, "/withdraw/history/", fetch_redirect_response=False)
-        self.assertEqual(
-            WithdrawalRequest.objects.filter(user=self.user, status=WithdrawalRequest.STATUS_PENDING).count(),
-            1,
-        )
-
-    def test_blocked_request_does_not_create_wr(self):
-        r = self.client.post(WITHDRAW_URL, _wr_payload("1600.00"))
-        self.assertEqual(WithdrawalRequest.objects.filter(user=self.user).count(), 0)
-
-    def test_blocked_request_does_not_debit_wallet(self):
-        self.client.post(WITHDRAW_URL, _wr_payload("1600.00"))
-        self.wallet.refresh_from_db()
-        self.assertEqual(self.wallet.available_balance, Decimal("5000"))
-
-    def test_error_message_mentions_daily_limit(self):
-        r = self.client.post(WITHDRAW_URL, _wr_payload("1600.00"))
-        self.assertContains(r, "1,500.00")
-
-    def test_error_message_mentions_used_amount(self):
-        _seed_wr(self.user, "800", WithdrawalRequest.STATUS_APPROVED)
-        r = self.client.post(WITHDRAW_URL, _wr_payload("800.00"))
-        self.assertContains(r, "800.00")
-
-    def test_error_message_mentions_available_amount(self):
-        _seed_wr(self.user, "900", WithdrawalRequest.STATUS_PENDING)
-        r = self.client.post(WITHDRAW_URL, _wr_payload("700.00"))
-        self.assertContains(r, "600.00")
-
-
-# ── Counting rules ────────────────────────────────────────────────────────────
-
-@override_settings(MAX_WITHDRAWAL_DAILY_USD=1500)
-class DailyLimitCountingTests(TestCase):
-    def setUp(self):
-        _PATCH_RATELIMIT.start()
-        _PATCH_TOTP.start()
-        _PATCH_EMAIL.start()
         self.user   = make_user(email="dlc@test.com")
         self.wallet = make_wallet(self.user, initial_balance=Decimal("5000"))
         _make_device(self.user)
@@ -200,25 +132,23 @@ class DailyLimitCountingTests(TestCase):
 
     def tearDown(self):
         _PATCH_RATELIMIT.stop()
-        _PATCH_TOTP.stop()
-        _PATCH_EMAIL.stop()
 
     def _daily_used(self):
         return self.client.get(WITHDRAW_URL).context["daily_used"]
 
-    def test_pending_counts_toward_limit(self):
+    def test_pending_counts_toward_daily_used(self):
         _seed_wr(self.user, "300", WithdrawalRequest.STATUS_PENDING)
         self.assertEqual(self._daily_used(), Decimal("300"))
 
-    def test_processing_counts_toward_limit(self):
+    def test_processing_counts_toward_daily_used(self):
         _seed_wr(self.user, "300", WithdrawalRequest.STATUS_PROCESSING)
         self.assertEqual(self._daily_used(), Decimal("300"))
 
-    def test_approved_counts_toward_limit(self):
+    def test_approved_counts_toward_daily_used(self):
         _seed_wr(self.user, "300", WithdrawalRequest.STATUS_APPROVED)
         self.assertEqual(self._daily_used(), Decimal("300"))
 
-    def test_completed_counts_toward_limit(self):
+    def test_completed_counts_toward_daily_used(self):
         _seed_wr(self.user, "300", WithdrawalRequest.STATUS_COMPLETED)
         self.assertEqual(self._daily_used(), Decimal("300"))
 
@@ -244,33 +174,3 @@ class DailyLimitCountingTests(TestCase):
         _seed_wr(self.user, "300", WithdrawalRequest.STATUS_COMPLETED)
         _seed_wr(self.user, "100", WithdrawalRequest.STATUS_REJECTED)
         self.assertEqual(self._daily_used(), Decimal("500"))
-
-
-# ── Custom limit via settings ─────────────────────────────────────────────────
-
-class DailyLimitSettingsTests(TestCase):
-    def setUp(self):
-        _PATCH_RATELIMIT.start()
-        _PATCH_TOTP.start()
-        _PATCH_EMAIL.start()
-        self.user   = make_user(email="dls@test.com")
-        self.wallet = make_wallet(self.user, initial_balance=Decimal("5000"))
-        _make_device(self.user)
-        make_kyc_approved(self.user)
-        self.client.force_login(self.user)
-
-    def tearDown(self):
-        _PATCH_RATELIMIT.stop()
-        _PATCH_TOTP.stop()
-        _PATCH_EMAIL.stop()
-
-    @override_settings(MAX_WITHDRAWAL_DAILY_USD=100)
-    def test_low_custom_limit_blocks_large_withdrawal(self):
-        r = self.client.post(WITHDRAW_URL, _wr_payload("150.00"))
-        self.assertEqual(r.status_code, 200)
-        self.assertEqual(WithdrawalRequest.objects.filter(user=self.user).count(), 0)
-
-    @override_settings(MAX_WITHDRAWAL_DAILY_USD=100)
-    def test_low_custom_limit_allows_within_limit(self):
-        r = self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
-        self.assertRedirects(r, "/withdraw/history/", fetch_redirect_response=False)

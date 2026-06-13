@@ -209,24 +209,19 @@
       <strong style="color:var(--gold);margin-left:auto;">${{ wallet.available_balance|floatformat:2 }}</strong>
     </div>
 
-    <!-- Daily withdrawal limit -->
+    <!-- Withdrawal info -->
     <div class="daily-limit-box">
-      <div class="dl-title"><i class="fa-solid fa-gauge-high"></i>&nbsp; Límite diario de retiros</div>
+      <div class="dl-title"><i class="fa-solid fa-shield-halved"></i>&nbsp; Información de retiros</div>
       <div class="daily-limit-row">
         <span>Mínimo por retiro</span>
         <span class="dl-val">${{ min_withdrawal|floatformat:2 }}</span>
       </div>
       <div class="daily-limit-row">
-        <span>Límite diario</span>
-        <span class="dl-val">${{ daily_limit|floatformat:2 }}</span>
-      </div>
-      <div class="daily-limit-row">
-        <span>Usado hoy</span>
+        <span>Retirado hoy</span>
         <span class="dl-val used">${{ daily_used|floatformat:2 }}</span>
       </div>
-      <div class="daily-limit-row">
-        <span>Disponible hoy</span>
-        <span class="dl-val avail">${{ daily_avail|floatformat:2 }}</span>
+      <div class="daily-limit-row" style="font-style:italic;color:#aaa;font-size:0.85em;grid-column:1/-1;">
+        <span>Los retiros pueden estar sujetos a revisión manual por seguridad.</span>
       </div>
     </div>
 

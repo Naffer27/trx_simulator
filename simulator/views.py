@@ -1980,10 +1980,8 @@ def withdraw_view(request):
         kyc_approved = False
 
     from django.conf import settings as _settings
-    daily_limit   = Decimal(str(_settings.MAX_WITHDRAWAL_DAILY_USD))
     min_withdrawal = Decimal(str(_settings.MIN_WITHDRAWAL_USD))
-    daily_used  = _get_daily_withdrawal_used(request.user)
-    daily_avail = max(daily_limit - daily_used, Decimal("0"))
+    daily_used     = _get_daily_withdrawal_used(request.user)
 
     if request.method == "POST":
         form = WithdrawForm(request.POST)
@@ -2027,20 +2025,6 @@ def withdraw_view(request):
                 _min_wd = Decimal(str(_settings.MIN_WITHDRAWAL_USD))
                 if amount_usd < _min_wd:
                     error = f"El monto mínimo de retiro es ${_min_wd:,.2f} USD."
-
-            # ── Daily withdrawal cap ───────────────────────────────────────────
-            if not error:
-                from django.conf import settings as _settings
-                _daily_limit = Decimal(str(_settings.MAX_WITHDRAWAL_DAILY_USD))
-                _daily_used  = _get_daily_withdrawal_used(request.user)
-                _daily_avail = _daily_limit - _daily_used
-                if _daily_avail < amount_usd:
-                    error = (
-                        f"Límite diario de retiros alcanzado. "
-                        f"Límite: ${_daily_limit:,.2f} · "
-                        f"Usado hoy: ${_daily_used:,.2f} · "
-                        f"Disponible: ${max(_daily_avail, Decimal('0')):,.2f}"
-                    )
 
             # ── Original financial flow — only reached when 2FA passed ─────────
             if not error and wallet.available_balance < amount_usd:
@@ -2134,8 +2118,7 @@ def withdraw_view(request):
         form = WithdrawForm()
 
     wallet.refresh_from_db()
-    daily_used  = _get_daily_withdrawal_used(request.user)
-    daily_avail = max(daily_limit - daily_used, Decimal("0"))
+    daily_used = _get_daily_withdrawal_used(request.user)
     from .models import TOTPDevice as _TD
     _totp_enabled = _TD.objects.filter(user=request.user, confirmed=True).exists()
     from .readiness import get_user_readiness as _get_readiness
@@ -2145,9 +2128,7 @@ def withdraw_view(request):
         "wallet":         wallet,
         "error":          error,
         "kyc_approved":   kyc_approved,
-        "daily_limit":     daily_limit,
         "daily_used":      daily_used,
-        "daily_avail":     daily_avail,
         "min_withdrawal":  min_withdrawal,
         "totp_enabled":    _totp_enabled,
         "readiness":       _readiness,
