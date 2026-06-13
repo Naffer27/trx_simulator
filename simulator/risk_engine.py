@@ -18,7 +18,7 @@ from datetime import timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
 from django.db import IntegrityError
-from django.db.models import Sum
+from django.db.models import Case, F, Sum, Value, When
 from django.utils import timezone
 
 from market_data.symbol_specs import get_spec as _get_sym_spec
@@ -479,10 +479,18 @@ def check_and_enforce_risk(account) -> list:
     today_start = _now.replace(hour=0, minute=0, second=0, microsecond=0)
     tomorrow_start = today_start + timedelta(days=1)
 
-    # 1. Update peak_balance (high-water mark) — all account types
-    if account.balance > account.peak_balance:
-        account.peak_balance = account.balance
-        TradingAccount.objects.filter(pk=account.pk).update(peak_balance=account.peak_balance)
+    # 1. Update peak_balance (high-water mark) — all account types.
+    # CASE/WHEN SQL ensures monotonicity at the DB level without relying on
+    # the caller's select_for_update() lock.
+    TradingAccount.objects.filter(pk=account.pk).update(
+        peak_balance=Case(
+            When(peak_balance__lt=account.balance, then=Value(account.balance)),
+            default=F("peak_balance"),
+        )
+    )
+    account.peak_balance = (
+        TradingAccount.objects.only("peak_balance").get(pk=account.pk).peak_balance
+    )
 
     # 2. Max drawdown from peak
     if account.peak_balance > 0:
