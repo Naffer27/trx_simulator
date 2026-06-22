@@ -394,9 +394,10 @@ def _close_position_sync(
       - raises on unexpected DB error (caller logs and skips)
     """
     from decimal import Decimal
-    from datetime import datetime as _dt
+    from datetime import datetime as _dt, timezone as _dt_tz
     import time as _time
     from django.db import transaction as _tx
+    from django.utils import timezone as _django_tz
     from .models import Position, Trade, LedgerEntry, TradingAccount
 
     with _tx.atomic():
@@ -451,8 +452,8 @@ def _close_position_sync(
             stop_loss     = Decimal(str(pos_mem["sl"]))   if pos_mem.get("sl") is not None else None,
             take_profit   = Decimal(str(pos_mem["tp"]))   if pos_mem.get("tp") is not None else None,
             profit_loss   = Decimal(str(realized_pnl)),
-            opened_at     = _dt.utcfromtimestamp(int(pos_mem.get("opened_at", _time.time()))),
-            closed_at     = _dt.utcnow(),
+            opened_at     = _dt.fromtimestamp(int(pos_mem.get("opened_at", _time.time())), tz=_dt_tz.utc),
+            closed_at     = _django_tz.now(),
         )
 
         LedgerEntry.objects.create(

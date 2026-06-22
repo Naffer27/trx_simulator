@@ -1,11 +1,12 @@
 # simulator/consumers.py
 import os, json, asyncio, random, time, logging
-from datetime import datetime
+from datetime import datetime, timezone as dt_timezone
 from urllib.parse import parse_qs
 
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.db import transaction
+from django.utils import timezone
 
 from market_data.feeds import get_feed_manager
 from market_data.symbol_specs import get_spec, allowed_symbols, kline_symbols
@@ -1018,8 +1019,8 @@ class TradingConsumer(AsyncWebsocketConsumer):
     def _realized_pnl_for(self, pos, close_price): return self._unrealized_pnl_for(pos, close_price)
 
     def _track_daily_pnl(self, amount: float) -> None:
-        from datetime import date
-        today = date.today()
+        from django.utils import timezone as _tz
+        today = _tz.now().date()
         if self._daily_pnl_date != today:
             self._daily_realized_pnl = 0.0
             self._daily_pnl_date = today
@@ -1424,8 +1425,8 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
         daily_pnl = await self._db_fetch_daily_pnl()
         self._daily_realized_pnl = daily_pnl
-        from datetime import date as _date
-        self._daily_pnl_date = _date.today()
+        from django.utils import timezone as _tz
+        self._daily_pnl_date = _tz.now().date()
         log.info("[hydrate] daily_realized_pnl=%.2f for %s", self._daily_realized_pnl, self._daily_pnl_date)
 
     @database_sync_to_async
@@ -1540,15 +1541,18 @@ class TradingConsumer(AsyncWebsocketConsumer):
     def _db_fetch_daily_pnl(self) -> float:
         if not self._db_account_id:
             return 0.0
-        from django.utils import timezone
+        from django.utils import timezone as _tz
         from django.db.models import Sum
-        today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        from datetime import timedelta as _td
+        today_start = _tz.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        tomorrow_start = today_start + _td(days=1)
         result = (
             LedgerEntry.objects
             .filter(
                 account_id=self._db_account_id,
                 event_type=LedgerEntry.EV_REALIZED,
                 created_at__gte=today_start,
+                created_at__lt=tomorrow_start,
             )
             .aggregate(total=Sum("amount"))["total"]
         )
@@ -1788,8 +1792,8 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 stop_loss=Decimal(str(pos_mem["sl"])) if pos_mem.get("sl") is not None else None,
                 take_profit=Decimal(str(pos_mem["tp"])) if pos_mem.get("tp") is not None else None,
                 profit_loss=Decimal(str(realized_pnl)),
-                opened_at=datetime.utcfromtimestamp(int(pos_mem.get("opened_at", time.time()))),
-                closed_at=datetime.utcnow(),
+                opened_at=datetime.fromtimestamp(int(pos_mem.get("opened_at", time.time())), tz=dt_timezone.utc),
+                closed_at=timezone.now(),
             )
 
             # 3. Record LedgerEntry EV_REALIZED (balance_after = post-close balance).
@@ -1910,8 +1914,8 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 stop_loss=Decimal(str(pos_mem["sl"])) if pos_mem.get("sl") is not None else None,
                 take_profit=Decimal(str(pos_mem["tp"])) if pos_mem.get("tp") is not None else None,
                 profit_loss=Decimal(str(realized_pnl)),
-                opened_at=datetime.utcfromtimestamp(int(pos_mem.get("opened_at", time.time()))),
-                closed_at=datetime.utcnow(),
+                opened_at=datetime.fromtimestamp(int(pos_mem.get("opened_at", time.time())), tz=dt_timezone.utc),
+                closed_at=timezone.now(),
             )
             log.info("[db_close] Trade created id=%r", trade.id)
 
