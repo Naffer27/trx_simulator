@@ -162,7 +162,10 @@ def evaluate_position_risk(account, symbol: str, lot_size: float,
         from .exposure_engine import _get_current_price
         price = _get_current_price(symbol)
     except Exception:
-        price = 1.17
+        try:
+            price = _get_sym_spec(symbol).base_price
+        except KeyError:
+            price = 1.0
     try:
         sym_spec = _get_sym_spec(symbol)
         if price <= 0:
