@@ -1,7 +1,7 @@
 """
 simulator/tests/test_funded_payout_sim_approval.py — Bloque H.2
 
-Audits _approve_sim_payout() in simulator/admin.py (FUNDED_SIM flow).
+Audits approve_sim_payout() in simulator/funded_payouts.py (FUNDED_SIM flow).
 No HTTP — calls the helper directly so each test is fast and deterministic.
 
 Scope: atomic approval, ledger debit, wallet credit, cycle reset,
@@ -14,10 +14,10 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.utils.timezone import now
 
-from simulator.admin import (
+from simulator.funded_payouts import (
     FundedPayoutAlreadyProcessed,
     InsufficientFundedBalance,
-    _approve_sim_payout,
+    approve_sim_payout,
 )
 from simulator.challenge_engine import (
     activate_challenge_enrollment,
@@ -143,7 +143,7 @@ def _make_pending_fpr(
 
 class TestApproveSimpayout(TestCase):
     """
-    H.2: _approve_sim_payout(fpr, admin_user)
+    H.2: approve_sim_payout(fpr, admin_user) from simulator.funded_payouts
 
     Each test sets up a fresh enrollment so there is no shared state.
     """
@@ -165,7 +165,7 @@ class TestApproveSimpayout(TestCase):
     # ── 1. Happy path: status transitions to completed ───────────────────────
 
     def test_fpr_status_completed(self):
-        _approve_sim_payout(self.fpr, self.admin)
+        approve_sim_payout(self.fpr, self.admin)
         self.fpr.refresh_from_db()
         self.assertEqual(self.fpr.status, FundedPayoutRequest.ST_COMPLETED)
 
@@ -175,7 +175,7 @@ class TestApproveSimpayout(TestCase):
         initial_balance = Decimal(str(self.funded_account.balance))
         trader_cut      = Decimal(str(self.fpr.trader_cut))
 
-        _approve_sim_payout(self.fpr, self.admin)
+        approve_sim_payout(self.fpr, self.admin)
 
         self.funded_account.refresh_from_db()
         expected = initial_balance - trader_cut
@@ -188,7 +188,7 @@ class TestApproveSimpayout(TestCase):
         initial_balance = Decimal(str(self.funded_account.balance))
         trader_cut      = Decimal(str(self.fpr.trader_cut))
 
-        _approve_sim_payout(self.fpr, self.admin)
+        approve_sim_payout(self.fpr, self.admin)
 
         ledger = LedgerEntry.objects.get(
             account=self.funded_account,
@@ -202,7 +202,7 @@ class TestApproveSimpayout(TestCase):
     def test_wallet_credited(self):
         trader_cut = Decimal(str(self.fpr.trader_cut))
 
-        _approve_sim_payout(self.fpr, self.admin)
+        approve_sim_payout(self.fpr, self.admin)
 
         tx = WalletTransaction.objects.get(
             wallet__user=self.user,
@@ -213,7 +213,7 @@ class TestApproveSimpayout(TestCase):
     # ── 5. FPR references (ledger_entry, wallet_credit_tx) are saved ─────────
 
     def test_fpr_references_saved(self):
-        _approve_sim_payout(self.fpr, self.admin)
+        approve_sim_payout(self.fpr, self.admin)
         self.fpr.refresh_from_db()
         self.assertIsNotNone(self.fpr.ledger_entry_id)
         self.assertIsNotNone(self.fpr.wallet_credit_tx_id)
@@ -222,7 +222,7 @@ class TestApproveSimpayout(TestCase):
 
     def test_reviewed_by_and_at_set(self):
         before = now()
-        _approve_sim_payout(self.fpr, self.admin)
+        approve_sim_payout(self.fpr, self.admin)
         self.fpr.refresh_from_db()
         self.assertEqual(self.fpr.reviewed_by_id, self.admin.pk)
         self.assertIsNotNone(self.fpr.reviewed_at)
@@ -232,7 +232,7 @@ class TestApproveSimpayout(TestCase):
 
     def test_cycle_reset_at_set(self):
         before = now()
-        _approve_sim_payout(self.fpr, self.admin)
+        approve_sim_payout(self.fpr, self.admin)
         self.fpr.refresh_from_db()
         self.assertIsNotNone(self.fpr.cycle_reset_at)
         self.assertGreaterEqual(self.fpr.cycle_reset_at, before)
@@ -244,7 +244,7 @@ class TestApproveSimpayout(TestCase):
         trader_cut      = Decimal(str(self.fpr.trader_cut))
         expected_new_initial = initial_balance - trader_cut
 
-        _approve_sim_payout(self.fpr, self.admin)
+        approve_sim_payout(self.fpr, self.admin)
 
         self.funded_account.refresh_from_db()
         self.assertEqual(self.funded_account.initial_balance, expected_new_initial)
@@ -252,7 +252,7 @@ class TestApproveSimpayout(TestCase):
     # ── 9. ledger balance_after matches new funded account balance ────────────
 
     def test_ledger_balance_after_matches_account_balance(self):
-        _approve_sim_payout(self.fpr, self.admin)
+        approve_sim_payout(self.fpr, self.admin)
         self.funded_account.refresh_from_db()
         ledger = LedgerEntry.objects.get(account=self.funded_account,
                                          event_type=LedgerEntry.EV_FUNDED_PAYOUT)
@@ -261,11 +261,11 @@ class TestApproveSimpayout(TestCase):
     # ── 10. Already-processed FPR raises FundedPayoutAlreadyProcessed ─────────
 
     def test_already_processed_raises(self):
-        _approve_sim_payout(self.fpr, self.admin)  # first approval succeeds
+        approve_sim_payout(self.fpr, self.admin)  # first approval succeeds
         self.fpr.refresh_from_db()
 
         with self.assertRaises(FundedPayoutAlreadyProcessed):
-            _approve_sim_payout(self.fpr, self.admin)  # second must fail
+            approve_sim_payout(self.fpr, self.admin)  # second must fail
 
     # ── 11. Insufficient balance raises InsufficientFundedBalance ─────────────
 
@@ -276,7 +276,7 @@ class TestApproveSimpayout(TestCase):
         self.funded_account.save(update_fields=["balance", "equity"])
 
         with self.assertRaises(InsufficientFundedBalance):
-            _approve_sim_payout(self.fpr, self.admin)
+            approve_sim_payout(self.fpr, self.admin)
 
         # FPR must still be pending — nothing committed
         self.fpr.refresh_from_db()
@@ -292,7 +292,7 @@ class TestApproveSimpayout(TestCase):
         self.fpr.refresh_from_db()
 
         with self.assertRaises(ValueError):
-            _approve_sim_payout(self.fpr, self.admin)
+            approve_sim_payout(self.fpr, self.admin)
 
         # FPR remains pending
         self.fpr.refresh_from_db()
@@ -303,9 +303,9 @@ class TestApproveSimpayout(TestCase):
     def test_atomic_rollback_on_credit_wallet_failure(self):
         initial_balance = Decimal(str(self.funded_account.balance))
 
-        with patch("simulator.admin.credit_wallet", side_effect=RuntimeError("mock failure")):
+        with patch("simulator.funded_payouts.credit_wallet", side_effect=RuntimeError("mock failure")):
             with self.assertRaises(RuntimeError):
-                _approve_sim_payout(self.fpr, self.admin)
+                approve_sim_payout(self.fpr, self.admin)
 
         # FPR still pending
         self.fpr.refresh_from_db()
@@ -333,9 +333,9 @@ class TestApproveSimpayout(TestCase):
         """
         admin2 = _make_admin()
 
-        _approve_sim_payout(self.fpr, self.admin)
+        approve_sim_payout(self.fpr, self.admin)
         self.fpr.refresh_from_db()
         self.assertEqual(self.fpr.status, FundedPayoutRequest.ST_COMPLETED)
 
         with self.assertRaises(FundedPayoutAlreadyProcessed):
-            _approve_sim_payout(self.fpr, admin2)
+            approve_sim_payout(self.fpr, admin2)

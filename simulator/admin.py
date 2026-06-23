@@ -23,8 +23,13 @@ from .models import (
     KYCProfile, SupportTicket,
     FundedPayoutRequest,
 )
-from .wallet_ledger import credit_wallet, get_or_create_wallet
 from . import challenge_engine
+from .funded_payouts import (
+    FundedPayoutAlreadyProcessed,
+    InsufficientFundedBalance,
+    approve_sim_payout,
+    approve_internal_payout,
+)
 
 
 # ─────────────────────────────────────────────
@@ -2652,109 +2657,9 @@ class SupportTicketAdmin(admin.ModelAdmin):
 
 
 # ─────────────────────────────────────────────
-# Funded payout — H.2 (FUNDED_SIM approval)
+# Funded payout — H.2/H.3 admin actions
+# (logic lives in simulator/funded_payouts.py)
 # ─────────────────────────────────────────────
-
-class FundedPayoutAlreadyProcessed(Exception):
-    """Raised when trying to approve a non-pending FundedPayoutRequest."""
-
-
-class InsufficientFundedBalance(Exception):
-    """Raised when funded account balance < trader_cut at approval time."""
-
-
-def _approve_sim_payout(fpr: FundedPayoutRequest, admin_user) -> None:
-    """
-    Atomically approve a FUNDED_SIM FundedPayoutRequest.
-
-    Steps (all inside transaction.atomic()):
-      1. Lock FPR — validate status == pending and funded_type == FUNDED_SIM.
-      2. Lock funded_account — re-validate balance >= trader_cut.
-      3. Debit funded_account (balance, equity).
-      4. Create LedgerEntry(EV_FUNDED_PAYOUT, amount=-trader_cut).
-      5. Credit user wallet via credit_wallet(TX_FUNDED_PAYOUT).
-      6. Reset cycle: initial_balance = post-debit balance.
-      7. Mark FPR completed with all references and timestamps.
-
-    Any exception inside the block rolls back all DB writes atomically.
-    Raises:
-        FundedPayoutAlreadyProcessed — status != pending.
-        ValueError                   — funded_type != FUNDED_SIM.
-        InsufficientFundedBalance    — balance < trader_cut at approval time.
-    """
-    with transaction.atomic():
-        # ── Lock and validate FPR ─────────────────────────────────────────────
-        fpr_locked = FundedPayoutRequest.objects.select_for_update().get(pk=fpr.pk)
-
-        if fpr_locked.status != FundedPayoutRequest.ST_PENDING:
-            raise FundedPayoutAlreadyProcessed(
-                f"FundedPayoutRequest #{fpr.pk} is not pending (status={fpr_locked.status})."
-            )
-        if fpr_locked.funded_type != FundedConfig.FUNDED_SIM:
-            raise ValueError(
-                f"FundedPayoutRequest #{fpr.pk} funded_type={fpr_locked.funded_type} — "
-                "use H.3 flow for FUNDED_INTERNAL."
-            )
-
-        # ── Lock and re-validate funded account ───────────────────────────────
-        account = TradingAccount.objects.select_for_update().get(
-            pk=fpr_locked.funded_account_id
-        )
-        trader_cut      = Decimal(str(fpr_locked.trader_cut))
-        current_balance = Decimal(str(account.balance))
-
-        if current_balance < trader_cut:
-            raise InsufficientFundedBalance(
-                f"Account #{account.pk} balance={current_balance} < "
-                f"trader_cut={trader_cut} at approval time."
-            )
-
-        new_balance = current_balance - trader_cut
-
-        # ── 1. Debit funded account ───────────────────────────────────────────
-        TradingAccount.objects.filter(pk=account.pk).update(
-            balance=new_balance,
-            equity=new_balance,
-        )
-
-        # ── 2. Create ledger entry ────────────────────────────────────────────
-        ledger = LedgerEntry.objects.create(
-            account_id=account.pk,
-            event_type=LedgerEntry.EV_FUNDED_PAYOUT,
-            amount=-trader_cut,
-            balance_after=new_balance,
-            meta={
-                "funded_payout_request_id": fpr.pk,
-                "broker_cut":   str(fpr_locked.broker_cut),
-                "cycle_profit": str(fpr_locked.cycle_profit),
-            },
-        )
-
-        # ── 3. Credit wallet (re-entrant atomic — savepoint semantics) ────────
-        wallet, _ = get_or_create_wallet(fpr_locked.user)
-        wallet_tx = credit_wallet(
-            wallet.id,
-            trader_cut,
-            WalletTransaction.TX_FUNDED_PAYOUT,
-            note=f"Funded SIM payout #{fpr.pk}",
-            initiated_by=admin_user,
-        )
-
-        # ── 4. Reset cycle: initial_balance = post-debit balance ──────────────
-        TradingAccount.objects.filter(pk=account.pk).update(initial_balance=new_balance)
-
-        # ── 5. Mark FPR completed ─────────────────────────────────────────────
-        _now = now()
-        FundedPayoutRequest.objects.filter(pk=fpr.pk).update(
-            status=FundedPayoutRequest.ST_COMPLETED,
-            ledger_entry=ledger,
-            wallet_credit_tx=wallet_tx,
-            reviewed_by=admin_user,
-            reviewed_at=_now,
-            cycle_reset_at=_now,
-            updated_at=_now,
-        )
-
 
 @admin.register(FundedPayoutRequest)
 class FundedPayoutRequestAdmin(admin.ModelAdmin):
@@ -2774,7 +2679,7 @@ class FundedPayoutRequestAdmin(admin.ModelAdmin):
         "cycle_reset_at", "reviewed_by", "reviewed_at",
         "created_at", "updated_at",
     )
-    actions = ["admin_approve_sim_payout"]
+    actions = ["admin_approve_sim_payout", "admin_approve_internal_payout"]
 
     _STATUS_COLORS_FPR = {
         "pending":    ("#2a1a00", "#ffa726"),
@@ -2796,7 +2701,7 @@ class FundedPayoutRequestAdmin(admin.ModelAdmin):
         ok = err = 0
         for fpr in queryset:
             try:
-                _approve_sim_payout(fpr, request.user)
+                approve_sim_payout(fpr, request.user)
                 ok += 1
             except FundedPayoutAlreadyProcessed as exc:
                 self.message_user(request, str(exc), messages.WARNING)
@@ -2811,6 +2716,40 @@ class FundedPayoutRequestAdmin(admin.ModelAdmin):
             self.message_user(
                 request,
                 f"{ok} FUNDED_SIM payout(s) approved successfully.",
+                messages.SUCCESS,
+            )
+
+    @admin.action(description="Approve FUNDED_INTERNAL payout + submit to NowPayments (H.3)")
+    def admin_approve_internal_payout(self, request, queryset):
+        from django.urls import reverse as _rev
+        ok = err = 0
+        callback_url = request.build_absolute_uri(
+            _rev("simulator:withdraw_payout_callback")
+        )
+        for fpr in queryset:
+            try:
+                approve_internal_payout(fpr, request.user, callback_url)
+                ok += 1
+            except FundedPayoutAlreadyProcessed as exc:
+                self.message_user(request, str(exc), messages.WARNING)
+                err += 1
+            except InsufficientFundedBalance as exc:
+                self.message_user(request, str(exc), messages.ERROR)
+                err += 1
+            except ValueError as exc:
+                self.message_user(request, str(exc), messages.ERROR)
+                err += 1
+            except Exception as exc:
+                self.message_user(
+                    request,
+                    f"NowPayments error on FPR #{fpr.pk}: {exc}",
+                    messages.ERROR,
+                )
+                err += 1
+        if ok:
+            self.message_user(
+                request,
+                f"{ok} FUNDED_INTERNAL payout(s) approved and submitted to NowPayments.",
                 messages.SUCCESS,
             )
 

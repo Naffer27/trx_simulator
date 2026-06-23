@@ -36,6 +36,7 @@ from .wallet_ledger import credit_wallet, debit_wallet, transfer_to_account, tra
 from .currencies import to_np_code, CURRENCY_MAP
 from .observability import security_log, get_client_ip
 from .ratelimit import rate_limit
+from .funded_payouts import handle_internal_payout_webhook
 from .audit import (
     log_audit,
     EV_AUTH_LOGIN_SUCCESS, EV_AUTH_LOGIN_FAILED,
@@ -2428,6 +2429,18 @@ def withdraw_payout_callback(request):
             if payout_id and not wr.np_payout_id:
                 update["np_payout_id"] = payout_id
 
+            # ── FUNDED_INTERNAL path — no wallet touch ────────────────────────
+            try:
+                fpr_linked = wr.funded_payout_internal
+            except FundedPayoutRequest.DoesNotExist:
+                fpr_linked = None
+
+            if fpr_linked is not None:
+                handle_internal_payout_webhook(fpr_linked, wr, new_status, payout_id)
+                WithdrawalRequest.objects.filter(pk=wr.pk).update(**update)
+                continue  # skip regular wallet refund/credit block
+
+            # ── Regular withdrawal path ───────────────────────────────────────
             if new_status == WithdrawalRequest.STATUS_FAILED:
                 wallet, _ = get_or_create_wallet(wr.user)
                 credit_wallet(
