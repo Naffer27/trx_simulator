@@ -281,15 +281,17 @@ class LedgerEntry(models.Model):
     EV_COMMISSION = 'COMMISSION'
     EV_REALIZED = 'REALIZED_PNL'
     EV_FEE = 'FEE'
-    EV_ADJUST = 'ADJUSTMENT'
+    EV_ADJUST        = 'ADJUSTMENT'
+    EV_FUNDED_PAYOUT = 'FUNDED_PAYOUT'   # debit on funded account when payout is approved (H.2/H.3)
 
     EVENT_CHOICES = [
-        (EV_DEPOSIT, EV_DEPOSIT),
-        (EV_WITHDRAW, EV_WITHDRAW),
-        (EV_COMMISSION, EV_COMMISSION),
-        (EV_REALIZED, EV_REALIZED),
-        (EV_FEE, EV_FEE),
-        (EV_ADJUST, EV_ADJUST),
+        (EV_DEPOSIT,        EV_DEPOSIT),
+        (EV_WITHDRAW,       EV_WITHDRAW),
+        (EV_COMMISSION,     EV_COMMISSION),
+        (EV_REALIZED,       EV_REALIZED),
+        (EV_FEE,            EV_FEE),
+        (EV_ADJUST,         EV_ADJUST),
+        (EV_FUNDED_PAYOUT,  'Funded Payout'),
     ]
 
     account = models.ForeignKey(TradingAccount, on_delete=models.CASCADE, related_name='ledger')
@@ -931,17 +933,19 @@ class WalletTransaction(models.Model):
     TX_BONUS        = "BONUS"         # + bono promocional
     TX_REBATE       = "REBATE"        # + rebate / cashback
     TX_COMMISSION   = "COMMISSION"    # - comisión de plataforma
-    TX_CORRECTION   = "CORRECTION"    # ± corrección admin (firmada)
+    TX_CORRECTION    = "CORRECTION"     # ± corrección admin (firmada)
+    TX_FUNDED_PAYOUT = "FUNDED_PAYOUT" # + crédito a wallet por payout fondeado (H.2 FUNDED_SIM)
 
     TX_CHOICES = [
-        (TX_DEPOSIT,      "Deposit"),
-        (TX_WITHDRAW,     "Withdraw"),
-        (TX_TRANSFER_OUT, "Transfer Out (→ Account)"),
-        (TX_TRANSFER_IN,  "Transfer In (← Account)"),
-        (TX_BONUS,        "Bonus"),
-        (TX_REBATE,       "Rebate"),
-        (TX_COMMISSION,   "Commission"),
-        (TX_CORRECTION,   "Correction"),
+        (TX_DEPOSIT,       "Deposit"),
+        (TX_WITHDRAW,      "Withdraw"),
+        (TX_TRANSFER_OUT,  "Transfer Out (→ Account)"),
+        (TX_TRANSFER_IN,   "Transfer In (← Account)"),
+        (TX_BONUS,         "Bonus"),
+        (TX_REBATE,        "Rebate"),
+        (TX_COMMISSION,    "Commission"),
+        (TX_CORRECTION,    "Correction"),
+        (TX_FUNDED_PAYOUT, "Funded Payout (← Funded Account)"),
     ]
 
     wallet            = models.ForeignKey(Wallet, on_delete=models.PROTECT, related_name="transactions")
@@ -1705,3 +1709,113 @@ class SupportTicket(models.Model):
 
     def __str__(self):
         return f"Ticket #{self.pk} [{self.status}] {self.subject[:40]}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Funded payout request (H.1 foundation — H.2/H.3 add approval flows)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class FundedPayoutRequest(models.Model):
+    """
+    User-initiated request to receive a funded-account profit payout.
+
+    Lifecycle (H.1 creates; H.2/H.3 advance):
+      pending    — created by user; no money moved yet
+      approved   — admin approved; funded_account debited (H.2/H.3)
+      processing — NowPayments batch in flight (FUNDED_INTERNAL only, H.3)
+      completed  — payout delivered + cycle reset done
+      rejected   — admin rejected; no funds moved
+      failed     — NP payout failed; reversa executed (FUNDED_INTERNAL, H.3)
+      cancelled  — user cancelled before approval; no funds moved
+
+    Monetary snapshot (cycle_profit, trader_cut, broker_cut, balance_snapshot,
+    initial_balance_snapshot) is frozen at request time and must never be updated.
+    """
+
+    ST_PENDING    = "pending"
+    ST_APPROVED   = "approved"
+    ST_PROCESSING = "processing"
+    ST_COMPLETED  = "completed"
+    ST_REJECTED   = "rejected"
+    ST_FAILED     = "failed"
+    ST_CANCELLED  = "cancelled"
+
+    STATUS_CHOICES = [
+        (ST_PENDING,    "Pending"),
+        (ST_APPROVED,   "Approved"),
+        (ST_PROCESSING, "Processing"),
+        (ST_COMPLETED,  "Completed"),
+        (ST_REJECTED,   "Rejected"),
+        (ST_FAILED,     "Failed"),
+        (ST_CANCELLED,  "Cancelled"),
+    ]
+
+    # ── Relations ─────────────────────────────────────────────────────────────
+    enrollment     = models.ForeignKey(
+        ChallengeEnrollment, on_delete=models.PROTECT, related_name="payout_requests",
+    )
+    funded_account = models.ForeignKey(
+        TradingAccount, on_delete=models.PROTECT, related_name="payout_requests",
+    )
+    funded_config  = models.ForeignKey(
+        FundedConfig, on_delete=models.PROTECT, related_name="payout_requests",
+    )
+    user = models.ForeignKey(
+        User, on_delete=models.PROTECT, related_name="funded_payout_requests",
+    )
+
+    # ── Monetary snapshot — immutable after creation ──────────────────────────
+    cycle_profit             = models.DecimalField(max_digits=12, decimal_places=2)
+    trader_cut               = models.DecimalField(max_digits=12, decimal_places=2)
+    broker_cut               = models.DecimalField(max_digits=12, decimal_places=2)
+    profit_split_pct         = models.DecimalField(max_digits=5,  decimal_places=2)
+    balance_snapshot         = models.DecimalField(max_digits=12, decimal_places=2)
+    initial_balance_snapshot = models.DecimalField(max_digits=12, decimal_places=2)
+    funded_type              = models.CharField(max_length=16)  # snapshot of FundedConfig.funded_type
+
+    # ── Crypto destination — required for FUNDED_INTERNAL only ───────────────
+    crypto_currency = models.CharField(max_length=20, blank=True, default="")
+    wallet_address  = models.CharField(max_length=200, blank=True, default="")
+
+    # ── Ledger/wallet references — filled by H.2 (FUNDED_SIM) / H.3 (FUNDED_INTERNAL) ──
+    ledger_entry = models.OneToOneField(
+        LedgerEntry, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="funded_payout_request",
+    )
+    wallet_credit_tx = models.OneToOneField(
+        WalletTransaction, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="funded_payout_sim",
+    )
+    withdrawal_request = models.OneToOneField(
+        WithdrawalRequest, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="funded_payout_internal",
+    )
+
+    # ── Cycle reset tracking — set only when status reaches completed ─────────
+    cycle_reset_at = models.DateTimeField(null=True, blank=True)
+
+    # ── Lifecycle ─────────────────────────────────────────────────────────────
+    status      = models.CharField(
+        max_length=12, choices=STATUS_CHOICES, default=ST_PENDING, db_index=True,
+    )
+    reviewed_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="reviewed_funded_payouts",
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    admin_note  = models.TextField(blank=True, default="")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name        = "Funded Payout Request"
+        verbose_name_plural = "Funded Payout Requests"
+        ordering            = ["-created_at"]
+        indexes = [
+            models.Index(fields=["user", "status"],  name="fpr_user_status_idx"),
+            models.Index(fields=["enrollment"],       name="fpr_enrollment_idx"),
+        ]
+
+    def __str__(self):
+        return f"FundedPayoutRequest #{self.pk} {self.user} ${self.trader_cut} [{self.status}]"

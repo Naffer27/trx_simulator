@@ -22,6 +22,7 @@ from .models import (
     ChallengeEnrollment, ChallengeProduct, AccountProduct, Wallet,
     EmailVerification, TermsAcceptance, TERMS_VERSION, RISK_DISCLOSURE_VERSION,
     KYCProfile, SupportTicket,
+    FundedConfig, FundedPayoutRequest,
 )
 from .challenge_engine import (
     evaluate_phase as _ce_evaluate_phase,
@@ -1955,6 +1956,212 @@ def np_supported_currencies_view(request):
 
 class _PendingWithdrawalExists(Exception):
     """Raised inside the atomic block when a PENDING withdrawal already exists."""
+
+
+class _PendingFundedPayoutExists(Exception):
+    """Raised inside the atomic block when a pending/approved funded payout already exists."""
+
+
+@login_required
+@rate_limit("funded_payout", limit=3, window=300, by="user")
+def funded_payout_request_view(request):
+    """
+    POST /funded/payout/request/  — create a FundedPayoutRequest (status=pending).
+
+    H.1: compliance + eligibility gates only. No funds move here.
+    Admin approval flows are H.2 (FUNDED_SIM) and H.3 (FUNDED_INTERNAL).
+
+    Double-request prevention:
+      funded_account is locked with select_for_update() before the pending-guard
+      check, so concurrent requests for the same enrollment serialize on the lock.
+    """
+    if request.method != "POST":
+        return JsonResponse({"ok": False, "error": "Method not allowed."}, status=405)
+
+    # ── Resolve enrollment ────────────────────────────────────────────────────
+    try:
+        enrollment_id = int(request.POST.get("enrollment_id", ""))
+    except (TypeError, ValueError):
+        return JsonResponse({"ok": False, "error": "enrollment_id inválido."}, status=400)
+
+    try:
+        enrollment = (
+            ChallengeEnrollment.objects
+            .select_related("product", "funded_account", "funded_config")
+            .get(pk=enrollment_id, user=request.user)
+        )
+    except ChallengeEnrollment.DoesNotExist:
+        return JsonResponse({"ok": False, "error": "Enrollment no encontrado."}, status=404)
+
+    if enrollment.status != ChallengeEnrollment.ST_FUNDED:
+        return JsonResponse(
+            {"ok": False, "error": "El enrollment no está en estado FUNDED."},
+            status=400,
+        )
+
+    funded_account = enrollment.funded_account
+    if funded_account is None:
+        return JsonResponse({"ok": False, "error": "No hay cuenta fondeada asociada."}, status=400)
+
+    try:
+        fc = enrollment.funded_config
+    except FundedConfig.DoesNotExist:
+        return JsonResponse({"ok": False, "error": "No hay configuración fondeada."}, status=400)
+
+    # ── Compliance gates: email → terms → 2FA → KYC ──────────────────────────
+    if not _is_email_verified(request.user):
+        return JsonResponse({"ok": False, "error": _EMAIL_GATE_MSG}, status=403)
+
+    if not _has_accepted_terms(request.user):
+        return JsonResponse({"ok": False, "error": _TERMS_GATE_MSG}, status=403)
+
+    from .models import TOTPDevice
+    from .two_factor import verify_totp as _verify_totp
+
+    _has_device = TOTPDevice.objects.filter(user=request.user, confirmed=True).exists()
+    if not _has_device:
+        return JsonResponse(
+            {"ok": False, "error": "Debes activar 2FA antes de solicitar un payout fondeado."},
+            status=403,
+        )
+    otp_code = request.POST.get("otp_code", "").strip()
+    if not _verify_totp(request.user, otp_code):
+        security_log(
+            "funded_payout.2fa_failed",
+            username=request.user.username,
+            user_id=request.user.pk,
+        )
+        return JsonResponse(
+            {"ok": False, "error": "Código 2FA incorrecto. Verifica tu app y vuelve a intentarlo."},
+            status=403,
+        )
+
+    try:
+        kyc_approved = request.user.kyc_profile.status == KYCProfile.STATUS_APPROVED
+    except KYCProfile.DoesNotExist:
+        kyc_approved = False
+    if not kyc_approved:
+        return JsonResponse({"ok": False, "error": _KYC_GATE_MSG}, status=403)
+
+    # ── Eligibility gates ─────────────────────────────────────────────────────
+    funded_account.refresh_from_db()
+
+    if funded_account.status != TradingAccount.STATUS_ACTIVE:
+        return JsonResponse(
+            {"ok": False, "error": "La cuenta fondeada está suspendida. El payout está bloqueado."},
+            status=400,
+        )
+
+    _ZERO    = Decimal("0")
+    _PENNY   = Decimal("0.01")
+    _HUNDRED = Decimal("100")
+
+    balance      = Decimal(str(funded_account.balance))
+    initial      = Decimal(str(funded_account.initial_balance or funded_account.balance))
+    cycle_profit = max(_ZERO, balance - initial)
+
+    min_payout = Decimal(str(fc.min_payout_usd))
+    if cycle_profit < min_payout:
+        return JsonResponse(
+            {
+                "ok":    False,
+                "error": (
+                    f"El profit del ciclo (${cycle_profit:,.2f}) es menor al mínimo requerido "
+                    f"(${min_payout:,.2f})."
+                ),
+            },
+            status=400,
+        )
+
+    trading_days = (
+        Trade.objects.filter(account=funded_account, closed_at__isnull=False)
+        .dates("closed_at", "day")
+        .count()
+    )
+    if trading_days < fc.min_trading_days:
+        return JsonResponse(
+            {
+                "ok":    False,
+                "error": (
+                    f"Días de trading insuficientes: {trading_days} de "
+                    f"{fc.min_trading_days} requeridos."
+                ),
+            },
+            status=400,
+        )
+
+    # ── FUNDED_INTERNAL: require crypto destination ───────────────────────────
+    crypto_currency = ""
+    wallet_address  = ""
+    if fc.funded_type == FundedConfig.FUNDED_INTERNAL:
+        from .currencies import WITHDRAWAL_CHOICES as _WC
+        _valid = {c[0] for c in _WC}
+        crypto_currency = request.POST.get("crypto_currency", "").strip()
+        wallet_address  = request.POST.get("wallet_address",  "").strip()
+        if crypto_currency not in _valid:
+            return JsonResponse(
+                {"ok": False, "error": "crypto_currency inválido para cuenta FUNDED_INTERNAL."},
+                status=400,
+            )
+        if not wallet_address:
+            return JsonResponse(
+                {"ok": False, "error": "wallet_address es requerido para cuenta FUNDED_INTERNAL."},
+                status=400,
+            )
+
+    # ── Compute split (all Decimal, no float) ────────────────────────────────
+    split_pct  = Decimal(str(fc.profit_split_pct))
+    trader_cut = (cycle_profit * split_pct / _HUNDRED).quantize(_PENNY)
+    broker_cut = (cycle_profit - trader_cut).quantize(_PENNY)
+
+    # ── Atomic: lock funded_account + duplicate guard + create FPR ───────────
+    try:
+        with transaction.atomic():
+            TradingAccount.objects.select_for_update().get(pk=funded_account.pk)
+
+            if FundedPayoutRequest.objects.filter(
+                enrollment=enrollment,
+                status__in=[FundedPayoutRequest.ST_PENDING, FundedPayoutRequest.ST_APPROVED],
+            ).exists():
+                raise _PendingFundedPayoutExists()
+
+            fpr = FundedPayoutRequest.objects.create(
+                enrollment=enrollment,
+                funded_account=funded_account,
+                funded_config=fc,
+                user=request.user,
+                cycle_profit=cycle_profit,
+                trader_cut=trader_cut,
+                broker_cut=broker_cut,
+                profit_split_pct=split_pct,
+                balance_snapshot=balance,
+                initial_balance_snapshot=initial,
+                funded_type=fc.funded_type,
+                crypto_currency=crypto_currency,
+                wallet_address=wallet_address,
+                status=FundedPayoutRequest.ST_PENDING,
+            )
+
+    except _PendingFundedPayoutExists:
+        return JsonResponse(
+            {
+                "ok":    False,
+                "error": "Ya existe una solicitud de payout pendiente o aprobada para este enrollment.",
+            },
+            status=409,
+        )
+
+    security_log(
+        "funded_payout.requested",
+        level="info",
+        user_id=request.user.pk,
+        username=request.user.username,
+        fpr_id=fpr.pk,
+        trader_cut=str(trader_cut),
+        funded_type=fc.funded_type,
+    )
+
+    return JsonResponse({"ok": True, "id": fpr.pk}, status=201)
 
 
 @login_required

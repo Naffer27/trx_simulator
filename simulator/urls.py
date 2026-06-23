@@ -66,6 +66,8 @@ from .views import (
     profile_view,
     # Support
     support_view,
+    # Funded payout (H.1)
+    funded_payout_request_view,
 )
 
 app_name = 'simulator'
@@ -148,6 +150,9 @@ urlpatterns = [
     path("kyc/",                  kyc_view,            name="kyc"),
     path("profile/",              profile_view,        name="profile"),
     path("support/",              support_view,        name="support"),
+
+    # ── Funded payout (H.1) ──────────────────────────────────────────────────
+    path("funded/payout/request/", funded_payout_request_view, name="funded_payout_request"),
 
     # ── Challenge Purchase ────────────────────────────────────────────────────
     path("challenges/",                       challenge_catalog_view,  name="challenge_catalog"),
