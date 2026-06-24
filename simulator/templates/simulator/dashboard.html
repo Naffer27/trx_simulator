@@ -197,6 +197,17 @@
   .fd-status-badge{margin-top:6px;padding:4px 8px;border-radius:4px;font-size:.63rem;font-weight:700;letter-spacing:.04em;text-align:center;}
   .fd-eligible{background:rgba(38,166,154,.15);color:#26a69a;border:1px solid rgba(38,166,154,.3);}
   .fd-pending{background:rgba(255,255,255,.05);color:rgba(255,255,255,.4);border:1px solid rgba(255,255,255,.08);}
+  .fd-payout-form{margin-top:8px;}
+  .fd-otp-row{display:flex;gap:6px;align-items:center;margin-top:6px;}
+  .fd-otp-input{flex:1;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:6px;color:#fff;font-size:.75rem;padding:6px 8px;font-family:'Inter',sans-serif;text-align:center;letter-spacing:.12em;outline:none;}
+  .fd-otp-input::placeholder{color:rgba(255,255,255,.25);letter-spacing:0;}
+  .fd-otp-input:focus{border-color:rgba(38,166,154,.5);}
+  .fd-payout-btn{background:rgba(38,166,154,.18);border:1.5px solid rgba(38,166,154,.45);color:#26a69a;border-radius:6px;padding:6px 14px;font-weight:700;font-size:.72rem;cursor:pointer;font-family:'Inter',sans-serif;white-space:nowrap;}
+  .fd-payout-btn:hover{background:rgba(38,166,154,.28);}
+  .fd-payout-btn:disabled{opacity:.4;cursor:not-allowed;}
+  .fd-payout-msg{margin-top:6px;font-size:.65rem;font-weight:700;text-align:center;padding:4px 6px;border-radius:4px;display:none;}
+  .fd-payout-msg.ok{background:rgba(38,166,154,.15);color:#26a69a;border:1px solid rgba(38,166,154,.3);display:block;}
+  .fd-payout-msg.err{background:rgba(239,83,80,.12);color:#ef5350;border:1px solid rgba(239,83,80,.3);display:block;}
 
   /* ── Analytics panel ── */
   .an-class-row{display:flex;align-items:center;gap:7px;margin-bottom:10px;padding-bottom:9px;border-bottom:1px solid rgba(255,255,255,.05);}
@@ -1259,6 +1270,17 @@
         <div class="fd-status-badge {% if funded_payout_eligible %}fd-eligible{% else %}fd-pending{% endif %}" id="fdPayoutLabel">
           {{ funded_payout_label }}
         </div>
+        {% if funded_payout_eligible %}
+        <div class="fd-payout-form" id="fdPayoutForm">
+          <div class="fd-otp-row">
+            <input type="text" id="fdOtpInput" class="fd-otp-input" maxlength="6"
+                   placeholder="2FA code" autocomplete="one-time-code" inputmode="numeric">
+            <button type="button" class="fd-payout-btn" id="fdPayoutBtn"
+                    onclick="_submitFundedPayout()">Request Payout</button>
+          </div>
+          <div class="fd-payout-msg" id="fdPayoutMsg"></div>
+        </div>
+        {% endif %}
       </div>
       {% endif %}
 
@@ -3788,5 +3810,45 @@ setInterval(()=>{
   renderQuotes('');
   window.addEventListener('beforeunload',()=>allPanels.forEach(p=>p.destroy()));
 })();
+
+function _submitFundedPayout() {
+  var btn = document.getElementById('fdPayoutBtn');
+  var otp = (document.getElementById('fdOtpInput').value || '').trim();
+  var msg = document.getElementById('fdPayoutMsg');
+  if (!otp) {
+    msg.className = 'fd-payout-msg err';
+    msg.textContent = 'Enter your 6-digit 2FA code before submitting.';
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  msg.className = 'fd-payout-msg';
+  msg.textContent = '';
+  var fd = new FormData();
+  fd.append('enrollment_id', '{{ challenge_enrollment.pk|default:"" }}');
+  fd.append('otp_code', otp);
+  fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+  fetch('{% url "simulator:funded_payout_request" %}', {method: 'POST', body: fd})
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.ok) {
+        msg.className = 'fd-payout-msg ok';
+        msg.textContent = 'Payout request submitted — awaiting admin approval.';
+        document.getElementById('fdPayoutBtn').style.display = 'none';
+        document.getElementById('fdOtpInput').style.display = 'none';
+      } else {
+        msg.className = 'fd-payout-msg err';
+        msg.textContent = data.error || 'Request failed. Please try again.';
+        btn.disabled = false;
+        btn.textContent = 'Request Payout';
+      }
+    })
+    .catch(function() {
+      msg.className = 'fd-payout-msg err';
+      msg.textContent = 'Network error. Please try again.';
+      btn.disabled = false;
+      btn.textContent = 'Request Payout';
+    });
+}
 </script>
 {% endblock %}

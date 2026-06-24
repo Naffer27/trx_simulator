@@ -487,3 +487,38 @@ class TestFundedSectionTemplate(TestCase):
             _add_closed_trade(self.funded_account, Decimal("20"), days_ago=i)
         self.funded_account.refresh_from_db()
         self.assertIn("Eligible", self._html())
+
+    # ── J.2: Funded payout request button UI ─────────────────────────────────
+
+    def test_payout_form_absent_when_not_eligible(self):
+        # No trades, no profit — not eligible — form must not appear
+        html = self._html()
+        self.assertNotIn("fdPayoutForm", html)
+
+    def test_payout_form_present_when_eligible(self):
+        self.enrollment.funded_at = timezone.now() - timezone.timedelta(days=10)
+        self.enrollment.save(update_fields=["funded_at"])
+        for i in range(5):
+            _add_closed_trade(self.funded_account, Decimal("20"), days_ago=i)
+        self.funded_account.refresh_from_db()
+        html = self._html()
+        self.assertIn("fdPayoutForm", html)
+        self.assertIn("fdPayoutBtn", html)
+        self.assertIn("fdOtpInput", html)
+
+    def test_payout_form_points_to_correct_url(self):
+        self.enrollment.funded_at = timezone.now() - timezone.timedelta(days=10)
+        self.enrollment.save(update_fields=["funded_at"])
+        for i in range(5):
+            _add_closed_trade(self.funded_account, Decimal("20"), days_ago=i)
+        self.funded_account.refresh_from_db()
+        html = self._html()
+        self.assertIn("/funded/payout/request/", html)
+
+    def test_payout_button_label(self):
+        self.enrollment.funded_at = timezone.now() - timezone.timedelta(days=10)
+        self.enrollment.save(update_fields=["funded_at"])
+        for i in range(5):
+            _add_closed_trade(self.funded_account, Decimal("20"), days_ago=i)
+        self.funded_account.refresh_from_db()
+        self.assertIn("Request Payout", self._html())
