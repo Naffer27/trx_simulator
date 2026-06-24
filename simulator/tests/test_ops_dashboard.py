@@ -85,7 +85,8 @@ def _make_deposit(user, credited=True):
 class OpsAccessControlTests(TestCase):
     def test_anonymous_redirects_to_login(self):
         response = self.client.get(OPS_URL)
-        self.assertRedirects(response, LOGIN_URL, fetch_redirect_response=False)
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(LOGIN_URL, response["Location"])
 
     def test_normal_user_redirects_to_login(self):
         user = make_user()

@@ -37,6 +37,7 @@ from .currencies import to_np_code, CURRENCY_MAP
 from .observability import security_log, get_client_ip
 from .ratelimit import rate_limit
 from .funded_payouts import handle_internal_payout_webhook
+from .two_factor import staff_require_2fa, totp_session_verified
 from .audit import (
     log_audit,
     EV_AUTH_LOGIN_SUCCESS, EV_AUTH_LOGIN_FAILED,
@@ -2514,6 +2515,10 @@ def health_check(request):
 def health_detail_view(request):
     if not (request.user.is_authenticated and request.user.is_staff):
         return JsonResponse({"error": "forbidden"}, status=403)
+    if getattr(settings, "TOTP_STAFF_REQUIRED", False) and not totp_session_verified(request):
+        from .models import TOTPDevice
+        if TOTPDevice.objects.filter(user=request.user, confirmed=True).exists():
+            return JsonResponse({"error": "2fa_required"}, status=403)
 
     results = {}
     ok = True
@@ -2559,6 +2564,10 @@ def health_detail_view(request):
 def metrics_view(request):
     if not (request.user.is_authenticated and request.user.is_staff):
         return JsonResponse({"error": "forbidden"}, status=403)
+    if getattr(settings, "TOTP_STAFF_REQUIRED", False) and not totp_session_verified(request):
+        from .models import TOTPDevice
+        if TOTPDevice.objects.filter(user=request.user, confirmed=True).exists():
+            return JsonResponse({"error": "2fa_required"}, status=403)
 
     import time as _t
     from datetime import timedelta
@@ -2664,6 +2673,10 @@ def metrics_view(request):
 def broker_monitoring_view(request):
     if not (request.user.is_authenticated and request.user.is_staff):
         return JsonResponse({"error": "forbidden"}, status=403)
+    if getattr(settings, "TOTP_STAFF_REQUIRED", False) and not totp_session_verified(request):
+        from .models import TOTPDevice
+        if TOTPDevice.objects.filter(user=request.user, confirmed=True).exists():
+            return JsonResponse({"error": "2fa_required"}, status=403)
 
     from .broker_monitoring import full_report
     report = full_report()
@@ -2683,6 +2696,10 @@ def broker_monitoring_view(request):
 def snapshots_view(request):
     if not (request.user.is_authenticated and request.user.is_staff):
         return JsonResponse({"error": "forbidden"}, status=403)
+    if getattr(settings, "TOTP_STAFF_REQUIRED", False) and not totp_session_verified(request):
+        from .models import TOTPDevice
+        if TOTPDevice.objects.filter(user=request.user, confirmed=True).exists():
+            return JsonResponse({"error": "2fa_required"}, status=403)
 
     from django.utils.dateparse import parse_datetime
     from .snapshots import query_broker_snapshots, query_account_snapshots
@@ -2730,11 +2747,8 @@ def snapshots_view(request):
 # Read-only aggregation of operational state.
 # No polling, no WebSocket — manual refresh.
 # ──────────────────────────────────────────────────────────────
+@staff_require_2fa
 def ops_panel_view(request):
-    if not (request.user.is_authenticated and request.user.is_staff):
-        return redirect("simulator:login")
-
-    from .audit import log_audit, EV_ADMIN_VIEW
     log_audit(request, EV_ADMIN_VIEW, "Staff accessed ops panel")
 
     import subprocess
