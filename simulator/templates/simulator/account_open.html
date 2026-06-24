@@ -234,6 +234,50 @@
 }
 .empty-state i { font-size:2.5rem; margin-bottom:14px; display:block; opacity:.22; }
 
+/* ─── Funding Programs card ─── */
+.fp-section { margin-bottom:40px; }
+.fp-card {
+  background:var(--bg-card-2);
+  border:1px solid rgba(255,215,0,.22);
+  border-radius:16px; padding:32px 36px;
+  position:relative; overflow:hidden;
+}
+.fp-card::before {
+  content:''; position:absolute; inset:0;
+  background:radial-gradient(ellipse at 0% 50%, rgba(255,215,0,.06) 0%, transparent 60%);
+  pointer-events:none;
+}
+.fp-badge {
+  display:inline-flex; align-items:center; gap:6px;
+  font-size:.64rem; font-weight:700; text-transform:uppercase;
+  letter-spacing:.1em; color:var(--gold); margin-bottom:14px;
+}
+.fp-title {
+  font-family:'Orbitron',sans-serif; font-size:1rem; font-weight:700;
+  color:#fff; margin-bottom:10px;
+}
+.fp-desc {
+  font-size:.84rem; color:var(--muted-2); max-width:480px;
+  margin-bottom:18px; line-height:1.6;
+}
+.fp-bullets {
+  list-style:none; margin:0 0 24px; padding:0;
+  display:flex; gap:24px; flex-wrap:wrap;
+}
+.fp-bullets li {
+  display:flex; align-items:center; gap:7px;
+  font-size:.8rem; color:var(--muted-2);
+}
+.fp-bullets li i { color:var(--gold); font-size:.72rem; }
+.fp-cta {
+  display:inline-flex; align-items:center; gap:8px;
+  padding:11px 24px; border-radius:10px;
+  background:linear-gradient(135deg,#FFD700,#FFA500); color:#000;
+  font-size:.84rem; font-weight:700; letter-spacing:.04em;
+  text-decoration:none; transition:opacity .14s, transform .12s;
+}
+.fp-cta:hover { opacity:.87; transform:translateY(-1px); }
+
 {% endblock %}
 
 
@@ -376,6 +420,28 @@
   </div>
 </div>
 {% endif %}
+
+
+<!-- ═══════════════ PROGRAMAS DE FONDEO ═══════════════ -->
+<div class="fp-section">
+  <div class="fp-card">
+    <div class="fp-badge"><i class="fa-solid fa-trophy"></i> Funding Program</div>
+    <h2 class="fp-title">Programas de Fondeo</h2>
+    <p class="fp-desc">
+      Demuestra tu habilidad y accede a capital fondeado de Money Broker.
+      Sin arriesgar tus fondos propios.
+    </p>
+    <ul class="fp-bullets">
+      <li><i class="fa-solid fa-check"></i> Cuentas 10K–100K</li>
+      <li><i class="fa-solid fa-check"></i> Fase 1 / Fase 2</li>
+      <li><i class="fa-solid fa-check"></i> Payouts al cumplir reglas</li>
+    </ul>
+    <a href="{% url 'simulator:challenge_catalog' %}" class="fp-cta">
+      <i class="fa-solid fa-rocket"></i> Empezar Challenge
+    </a>
+  </div>
+</div>
+
 
 {% if not real_products and not demo_products %}
 <div class="empty-state">

@@ -543,3 +543,24 @@ class DemoAccountWalletIsolationTests(TestCase):
         self.client.post(CREATE_URL, {"product_id": self.product.pk})
         account = TradingAccount.objects.get(user=self.user)
         self.assertEqual(account.balance, self.product.default_balance)
+
+
+# ── /accounts/open/ — Funding Programs card ──────────────────────────────────
+
+class FundingProgramsCardTests(TestCase):
+    def setUp(self):
+        self.user = make_user()
+        make_wallet(self.user)
+        _login(self.client, self.user)
+
+    def test_funding_programs_title_present(self):
+        r = self.client.get(OPEN_URL)
+        self.assertContains(r, "Programas de Fondeo")
+
+    def test_funding_programs_links_to_challenges(self):
+        r = self.client.get(OPEN_URL)
+        self.assertContains(r, "/challenges/")
+
+    def test_funding_programs_cta_text_present(self):
+        r = self.client.get(OPEN_URL)
+        self.assertContains(r, "Empezar Challenge")
