@@ -248,6 +248,16 @@
         {% if form.password2.errors %}<p class="field-error">{{ form.password2.errors|join:", " }}</p>{% endif %}
       </div>
 
+      {% if access_code_required %}
+      <p class="field-section">Beta Access</p>
+      <div class="field">
+        <label for="id_access_code">Access Code</label>
+        <input type="password" id="id_access_code" name="access_code"
+               placeholder="Enter your access code" autocomplete="off" required>
+        {% if form.access_code.errors %}<p class="field-error">{{ form.access_code.errors|join:", " }}</p>{% endif %}
+      </div>
+      {% endif %}
+
       <button type="submit" class="btn-auth">Create Account &rarr;</button>
     </form>
 

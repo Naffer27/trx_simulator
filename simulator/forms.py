@@ -41,6 +41,24 @@ class RegisterForm(forms.ModelForm):
         model = User
         fields = ("username", "email", "password1", "password2")
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if getattr(settings, "BROKER_ACCESS_CODE", "").strip():
+            self.fields["access_code"] = forms.CharField(
+                label="Access Code",
+                max_length=128,
+                widget=forms.PasswordInput(attrs={"autocomplete": "off"}),
+                required=True,
+            )
+
+    def clean_access_code(self):
+        import secrets as _secrets
+        expected = getattr(settings, "BROKER_ACCESS_CODE", "").strip()
+        submitted = self.cleaned_data.get("access_code", "")
+        if not _secrets.compare_digest(submitted.encode(), expected.encode()):
+            raise forms.ValidationError("Invalid access code.")
+        return ""  # never propagate the raw code into cleaned_data
+
     # Validaciones útiles
     def clean_password2(self):
         p1 = self.cleaned_data.get("password1")

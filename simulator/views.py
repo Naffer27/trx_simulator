@@ -150,6 +150,7 @@ def apply_spread_and_slippage(base_price, side):
 # REGISTRO DE USUARIO
 # -----------------------
 def register_view(request):
+    access_code_required = bool(getattr(settings, "BROKER_ACCESS_CODE", "").strip())
     if request.method == "POST":
         form = RegisterForm(request.POST)
         if form.is_valid():
@@ -194,7 +195,10 @@ def register_view(request):
             return redirect("simulator:accounts")
     else:
         form = RegisterForm()
-    return render(request, "simulator/register.html", {"form": form})
+    return render(request, "simulator/register.html", {
+        "form": form,
+        "access_code_required": access_code_required,
+    })
 
 
 # -----------------------
