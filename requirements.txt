@@ -1,5 +1,6 @@
 Automat==25.4.16
 Django==5.1.6
+psycopg2-binary>=2.9
 Jinja2==3.1.6
 MarkupSafe==3.0.3
 PyYAML==6.0.3

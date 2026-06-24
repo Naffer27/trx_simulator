@@ -7,7 +7,6 @@ from .views import (
     register_view,
     trading_dashboard,
     api_orden,
-    clean_dashboard,
     landing_view,
     home_view,
     switch_account_view,

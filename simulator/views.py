@@ -849,11 +849,6 @@ def history_view(request):
 
 
 # -----------------------
-# DASHBOARD LIMPIO
-# -----------------------
-def clean_dashboard(request):
-    return render(request, 'simulator/dashboard_clean.html')
-
 
 # ═══════════════════════════════════════════════════════
 # MY ACCOUNTS  —  User Capital Flow
