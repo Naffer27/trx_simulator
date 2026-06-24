@@ -1913,10 +1913,10 @@ def wallet_balance_json(request):
 @login_required
 def np_diagnostics_view(request):
     """
-    Staff-only: verify API key, connectivity, and currency code mapping.
+    Superuser-only: verify API key, connectivity, and currency code mapping.
     GET /api/np-check/
     """
-    if not request.user.is_staff:
+    if not request.user.is_superuser:
         return JsonResponse({"error": "forbidden"}, status=403)
     result = _np.api_status()
     logger.info("[NP-diag] %s", json.dumps(result, indent=2))

@@ -30,6 +30,7 @@ from .funded_payouts import (
     approve_sim_payout,
     approve_internal_payout,
 )
+from .permissions import superuser_required_action
 
 
 # ─────────────────────────────────────────────
@@ -332,6 +333,9 @@ def reset_balance(modeladmin, request, queryset):
     modeladmin.message_user(request, f"{updated} cuenta(s) reseteadas.")
 
 
+reset_balance = superuser_required_action(reset_balance)
+
+
 @admin.action(description="Suspender cuentas seleccionadas")
 def suspend_accounts(modeladmin, request, queryset):
     rows = queryset.update(status="Suspendido")
@@ -570,9 +574,11 @@ class TradingAccountAdmin(admin.ModelAdmin):
 
     def get_readonly_fields(self, request, obj=None):
         if obj is None:
-            # Add form: nothing is read-only (computed fields aren't shown at all)
             return ("created_at",)
-        return self.readonly_fields
+        base = self.readonly_fields
+        if not request.user.is_superuser:
+            base = base + ("balance", "equity", "initial_balance")
+        return base
 
     inlines = [RiskRuleInline, TraderIntelligenceInline, ViolationInline, DrawdownSnapshotInline, PositionInline, TradeInline]
     actions = [reset_balance, suspend_accounts, activate_accounts, enable_netting, disable_netting,
@@ -647,6 +653,9 @@ class TradingAccountAdmin(admin.ModelAdmin):
                 return redirect("admin:simulator_tradingaccount_dealing_desk", account_id=account.id)
 
             if desk_action == "reset":
+                if not request.user.is_superuser:
+                    messages.error(request, "Permiso denegado — esta acción requiere superusuario.")
+                    return redirect("admin:simulator_tradingaccount_dealing_desk", account_id=account.id)
                 base = account.initial_balance or Decimal(str(_TIER_INITIAL.get(account.tier, 10000)))
                 account.balance = base
                 account.equity = base
@@ -669,6 +678,9 @@ class TradingAccountAdmin(admin.ModelAdmin):
                 return redirect("admin:simulator_tradingaccount_dealing_desk", account_id=account.id)
 
             if desk_action == "force_close":
+                if not request.user.is_superuser:
+                    messages.error(request, "Permiso denegado — esta acción requiere superusuario.")
+                    return redirect("admin:simulator_tradingaccount_dealing_desk", account_id=account.id)
                 from django.db import transaction as db_tx
                 symbol = (request.POST.get("symbol") or "").strip()
                 try:
@@ -880,6 +892,22 @@ class LedgerEntryAdmin(admin.ModelAdmin):
     list_filter = ("event_type", "created_at", "account")
     search_fields = ("account__user__username", "account__user__email", "event_type")
     readonly_fields = ("created_at", "balance_after")
+
+    _ALL_READONLY = ("account", "event_type", "amount", "balance_after", "meta", "created_at")
+
+    def has_add_permission(self, request):
+        return request.user.is_superuser
+
+    def has_change_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+    def get_readonly_fields(self, request, obj=None):
+        if not request.user.is_superuser:
+            return self._ALL_READONLY
+        return self.readonly_fields
 
 
 # ─────────────────────────────────────────────
@@ -1434,6 +1462,9 @@ def approve_withdrawals(modeladmin, request, queryset):
         modeladmin.message_user(request, f"Error — {e}", messages.ERROR)
 
 
+approve_withdrawals = superuser_required_action(approve_withdrawals)
+
+
 @admin.action(description="❌ Rechazar — devolver fondos al wallet")
 def reject_withdrawals(modeladmin, request, queryset):
     from .wallet_ledger import credit_wallet, get_or_create_wallet
@@ -1497,6 +1528,9 @@ def reject_withdrawals(modeladmin, request, queryset):
 
     if count:
         modeladmin.message_user(request, f"{count} retiro(s) rechazados y fondos devueltos.", messages.SUCCESS)
+
+
+reject_withdrawals = superuser_required_action(reject_withdrawals)
 
 
 @admin.register(WithdrawalRequest)
@@ -2423,6 +2457,15 @@ class ChallengeProductAdmin(admin.ModelAdmin):
     search_fields = ("name",)
     readonly_fields = ("created_at",)
 
+    def has_add_permission(self, request):
+        return request.user.is_superuser
+
+    def has_change_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.is_superuser
+
     fieldsets = (
         (None, {
             "fields": ("name", "tier", "price_usd", "account_size", "profit_split_pct",
@@ -2697,6 +2740,7 @@ class FundedPayoutRequestAdmin(admin.ModelAdmin):
         return _badge(obj.get_status_display(), bg, fg)
 
     @admin.action(description="Approve FUNDED_SIM payout (H.2)")
+    @superuser_required_action
     def admin_approve_sim_payout(self, request, queryset):
         ok = err = 0
         for fpr in queryset:
@@ -2720,6 +2764,7 @@ class FundedPayoutRequestAdmin(admin.ModelAdmin):
             )
 
     @admin.action(description="Approve FUNDED_INTERNAL payout + submit to NowPayments (H.3)")
+    @superuser_required_action
     def admin_approve_internal_payout(self, request, queryset):
         from django.urls import reverse as _rev
         ok = err = 0
