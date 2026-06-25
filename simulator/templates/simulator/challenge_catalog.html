@@ -1,14 +1,198 @@
 {% extends "simulator/base_app.html" %}
+{% block title %}Programas de Fondeo — Money Broker{% endblock %}
+{% block page_title %}Programas de Fondeo{% endblock %}
+
+{% block extra_styles %}
+<style>
+/* ── Layout ── */
+.cc-page{max-width:1140px;margin:0 auto;padding:0 20px 60px;}
+
+/* ── Hero ── */
+.cc-hero{text-align:center;padding:48px 20px 40px;position:relative;}
+.cc-hero::after{content:'';display:block;width:80px;height:2px;background:linear-gradient(90deg,transparent,var(--gold),transparent);margin:24px auto 0;}
+.cc-hero-eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:.68rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--gold);margin-bottom:14px;}
+.cc-hero-eyebrow i{font-size:.8rem;}
+.cc-hero-title{font-size:2rem;font-weight:800;letter-spacing:-.01em;color:var(--text);margin:0 0 12px;line-height:1.18;}
+.cc-hero-title span{background:linear-gradient(135deg,var(--gold) 30%,var(--amber));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;}
+.cc-hero-sub{font-size:.95rem;color:var(--muted-2);max-width:540px;margin:0 auto;line-height:1.7;}
+
+/* ── How it works ── */
+.cc-how{background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:32px 28px;margin-bottom:44px;}
+.cc-how-title{font-size:.68rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--gold);margin:0 0 24px;}
+.cc-steps{display:flex;flex-wrap:wrap;gap:12px;}
+.cc-step{flex:1;min-width:140px;display:flex;flex-direction:column;align-items:center;text-align:center;gap:8px;padding:16px 10px;}
+.cc-step-num{width:32px;height:32px;border-radius:50%;background:rgba(255,215,0,.1);border:1px solid rgba(255,215,0,.28);display:flex;align-items:center;justify-content:center;font-size:.72rem;font-weight:800;color:var(--gold);}
+.cc-step-icon{font-size:1.1rem;color:var(--muted-2);}
+.cc-step-label{font-size:.78rem;font-weight:600;color:var(--text);line-height:1.35;}
+.cc-step-arrow{display:flex;align-items:center;color:var(--border);font-size:.75rem;padding-top:4px;}
+@media(max-width:640px){.cc-step-arrow{display:none;}}
+
+/* ── Grid ── */
+.cc-section-label{font-size:.68rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:20px;}
+.cc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:22px;margin-bottom:40px;}
+
+/* ── Card ── */
+.cc-card{background:var(--bg-card);border:1px solid var(--border);border-radius:16px;overflow:hidden;display:flex;flex-direction:column;position:relative;transition:border-color .2s,transform .2s,box-shadow .2s;}
+.cc-card:hover{border-color:rgba(255,215,0,.28);transform:translateY(-2px);box-shadow:0 8px 32px rgba(0,0,0,.45);}
+.cc-card-top{padding:22px 22px 0;}
+.cc-card-tier-badge{display:inline-flex;align-items:center;gap:6px;font-size:.62rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);background:rgba(255,215,0,.08);border:1px solid rgba(255,215,0,.2);border-radius:20px;padding:4px 10px;margin-bottom:12px;}
+.cc-card-name{font-size:1.05rem;font-weight:700;color:var(--text);margin:0 0 4px;line-height:1.3;}
+.cc-card-size{font-size:.78rem;color:var(--muted-2);margin-bottom:16px;}
+.cc-card-price{font-size:2rem;font-weight:800;color:var(--text);line-height:1;margin-bottom:4px;}
+.cc-card-price span{font-size:.9rem;font-weight:400;color:var(--muted);margin-left:2px;}
+.cc-card-price-sub{font-size:.7rem;color:var(--muted);margin-bottom:18px;}
+
+/* Divider */
+.cc-card-divider{height:1px;background:var(--border-dim);margin:0 22px;}
+
+/* Rules block */
+.cc-card-rules{padding:14px 22px;}
+.cc-rules-label{font-size:.6rem;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;}
+.cc-rule{display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:3px 0;}
+.cc-rule-key{font-size:.74rem;color:var(--muted-2);}
+.cc-rule-val{font-size:.78rem;font-weight:600;color:var(--text);text-align:right;white-space:nowrap;}
+.cc-rule-val.highlight{color:var(--bull);}
+.cc-rule-val.danger{color:var(--bear);}
+
+/* Phase tabs */
+.cc-phases{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border-dim);border-top:1px solid var(--border-dim);border-bottom:1px solid var(--border-dim);}
+.cc-phase{padding:14px 16px;background:var(--bg-card-2);}
+.cc-phase-label{font-size:.59rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;margin-bottom:8px;}
+.cc-phase-label.p1{color:#29b6f6;}
+.cc-phase-label.p2{color:#66bb6a;}
+
+/* Funded block */
+.cc-card-funded{padding:14px 22px;}
+.cc-funded-label{font-size:.6rem;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:var(--gold);margin-bottom:10px;}
+.cc-funded-split{font-size:1.4rem;font-weight:800;color:var(--bull);line-height:1;}
+.cc-funded-split-sub{font-size:.68rem;color:var(--muted);margin-bottom:8px;}
+
+/* CTA */
+.cc-card-cta{margin-top:auto;padding:16px 22px 22px;}
+.cc-btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:11px 20px;border-radius:10px;font-size:.82rem;font-weight:700;letter-spacing:.04em;text-decoration:none;border:none;cursor:pointer;transition:background .18s,transform .12s,box-shadow .18s;}
+.cc-btn-primary{background:linear-gradient(135deg,#c9a700,var(--gold));color:#000;}
+.cc-btn-primary:hover{background:linear-gradient(135deg,var(--gold),#ffe44d);transform:scale(1.02);box-shadow:0 4px 18px rgba(255,215,0,.28);}
+
+/* Empty state */
+.cc-empty{text-align:center;padding:60px 20px;color:var(--muted);}
+.cc-empty i{font-size:2.5rem;margin-bottom:16px;display:block;}
+.cc-empty p{font-size:.9rem;margin:0;}
+
+/* ── Responsive ── */
+@media(max-width:500px){
+  .cc-hero-title{font-size:1.5rem;}
+  .cc-phases{grid-template-columns:1fr;}
+  .cc-grid{grid-template-columns:1fr;}
+}
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="container">
-  <h2>Challenge Programs</h2>
-  {% for p in products %}
-  <div>
-    <strong>{{ p.name }}</strong> — {{ p.tier }} — ${{ p.price_usd }}
-    <a href="{% url 'simulator:challenge_purchase' p.pk %}">Buy</a>
+<div class="cc-page">
+
+  {# ── Hero ── #}
+  <div class="cc-hero">
+    <div class="cc-hero-eyebrow"><i class="fa-solid fa-trophy"></i> Prop Firm Challenge</div>
+    <h1 class="cc-hero-title">Programas de <span>Fondeo</span></h1>
+    <p class="cc-hero-sub">Demuestra tu habilidad. Supera el challenge. Accede a capital fondeado sin arriesgar tus fondos propios.</p>
   </div>
-  {% empty %}
-  <p>No challenge programs available.</p>
-  {% endfor %}
+
+  {# ── Cómo funciona ── #}
+  <div class="cc-how">
+    <div class="cc-how-title"><i class="fa-solid fa-route"></i>&nbsp; Cómo funciona</div>
+    <div class="cc-steps">
+      <div class="cc-step">
+        <div class="cc-step-num">1</div>
+        <i class="fa-solid fa-store cc-step-icon"></i>
+        <span class="cc-step-label">Elige tu challenge</span>
+      </div>
+      <div class="cc-step-arrow"><i class="fa-solid fa-chevron-right"></i></div>
+      <div class="cc-step">
+        <div class="cc-step-num">2</div>
+        <i class="fa-solid fa-chart-line cc-step-icon"></i>
+        <span class="cc-step-label">Opera respetando las reglas</span>
+      </div>
+      <div class="cc-step-arrow"><i class="fa-solid fa-chevron-right"></i></div>
+      <div class="cc-step">
+        <div class="cc-step-num">3</div>
+        <i class="fa-solid fa-flag-checkered cc-step-icon"></i>
+        <span class="cc-step-label">Pasa Phase 1 y Phase 2</span>
+      </div>
+      <div class="cc-step-arrow"><i class="fa-solid fa-chevron-right"></i></div>
+      <div class="cc-step">
+        <div class="cc-step-num">4</div>
+        <i class="fa-solid fa-vault cc-step-icon"></i>
+        <span class="cc-step-label">Recibe una cuenta funded</span>
+      </div>
+      <div class="cc-step-arrow"><i class="fa-solid fa-chevron-right"></i></div>
+      <div class="cc-step">
+        <div class="cc-step-num">5</div>
+        <i class="fa-solid fa-sack-dollar cc-step-icon"></i>
+        <span class="cc-step-label">Solicita tu payout</span>
+      </div>
+    </div>
+  </div>
+
+  {# ── Products grid ── #}
+  {% if products %}
+    <div class="cc-section-label"><i class="fa-solid fa-grid-2"></i>&nbsp; Programas disponibles</div>
+    <div class="cc-grid">
+      {% for p in products %}
+      <div class="cc-card">
+        <div class="cc-card-top">
+          <div class="cc-card-tier-badge"><i class="fa-solid fa-medal"></i> {{ p.tier }}</div>
+          <div class="cc-card-name">{{ p.name }}</div>
+          <div class="cc-card-size">Capital virtual: ${{ p.account_size|floatformat:0 }}</div>
+          <div class="cc-card-price">${{ p.price_usd|floatformat:2 }}<span>USD</span></div>
+          <div class="cc-card-price-sub">Pago único · acceso inmediato</div>
+        </div>
+
+        {# ── Phase rules ── #}
+        <div class="cc-phases">
+          <div class="cc-phase">
+            <div class="cc-phase-label p1">Phase 1</div>
+            <div class="cc-rule"><span class="cc-rule-key">Profit target</span><span class="cc-rule-val highlight">{{ p.p1_profit_target_pct|floatformat:0 }}%</span></div>
+            <div class="cc-rule"><span class="cc-rule-key">Daily loss</span><span class="cc-rule-val danger">{{ p.p1_max_daily_loss_pct|floatformat:0 }}%</span></div>
+            <div class="cc-rule"><span class="cc-rule-key">Max drawdown</span><span class="cc-rule-val danger">{{ p.p1_max_drawdown_pct|floatformat:0 }}%</span></div>
+            <div class="cc-rule"><span class="cc-rule-key">Min días</span><span class="cc-rule-val">{{ p.p1_min_trading_days }} días</span></div>
+            <div class="cc-rule"><span class="cc-rule-key">Duración máx</span><span class="cc-rule-val">{{ p.p1_max_duration_days }} días</span></div>
+          </div>
+          <div class="cc-phase">
+            <div class="cc-phase-label p2">Phase 2</div>
+            <div class="cc-rule"><span class="cc-rule-key">Profit target</span><span class="cc-rule-val highlight">{{ p.p2_profit_target_pct|floatformat:0 }}%</span></div>
+            <div class="cc-rule"><span class="cc-rule-key">Daily loss</span><span class="cc-rule-val danger">{{ p.p2_max_daily_loss_pct|floatformat:0 }}%</span></div>
+            <div class="cc-rule"><span class="cc-rule-key">Max drawdown</span><span class="cc-rule-val danger">{{ p.p2_max_drawdown_pct|floatformat:0 }}%</span></div>
+            <div class="cc-rule"><span class="cc-rule-key">Min días</span><span class="cc-rule-val">{{ p.p2_min_trading_days }} días</span></div>
+            <div class="cc-rule"><span class="cc-rule-key">Duración máx</span><span class="cc-rule-val">{{ p.p2_max_duration_days }} días</span></div>
+          </div>
+        </div>
+
+        <div class="cc-card-divider"></div>
+
+        {# ── Funded terms ── #}
+        <div class="cc-card-funded">
+          <div class="cc-funded-label"><i class="fa-solid fa-coins"></i> Cuenta Fondeada</div>
+          <div class="cc-funded-split">{{ p.profit_split_pct|floatformat:0 }}%<span style="font-size:.8rem;font-weight:400;color:var(--muted);margin-left:4px;">profit split</span></div>
+          <div class="cc-funded-split-sub">Al alcanzar la cuenta funded</div>
+          <div class="cc-rule"><span class="cc-rule-key">Lot size máx</span><span class="cc-rule-val">{{ p.max_lot_size|floatformat:2 }}</span></div>
+          <div class="cc-rule"><span class="cc-rule-key">Posiciones abiertas máx</span><span class="cc-rule-val">{{ p.max_open_positions }}</span></div>
+        </div>
+
+        {# ── CTA ── #}
+        <div class="cc-card-cta">
+          <a href="{% url 'simulator:challenge_purchase' p.pk %}" class="cc-btn cc-btn-primary">
+            <i class="fa-solid fa-rocket"></i> Empezar Challenge
+          </a>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="cc-empty">
+      <i class="fa-solid fa-circle-info"></i>
+      <p>No hay programas de fondeo disponibles en este momento.<br>Vuelve pronto.</p>
+    </div>
+  {% endif %}
+
 </div>
 {% endblock %}
