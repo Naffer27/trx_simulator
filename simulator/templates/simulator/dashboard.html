@@ -902,12 +902,12 @@
     <span id="mhdrPnL">—</span>
   </div>
   <div class="mhdr-chip" id="mhdrTFWrap" style="position:relative;padding:0;">
-    <button id="mhdrTFBadge" class="mfp-tf-badge">1m ▾</button>
+    <button id="mhdrTFBadge" class="mfp-tf-badge">15m ▾</button>
     <div id="mhdrTFPop" class="mfp-tf-pop" style="display:none">
       <button class="mfp-tf-pop-item" data-tf="1s">1s</button>
-      <button class="mfp-tf-pop-item active" data-tf="1m">1m</button>
+      <button class="mfp-tf-pop-item" data-tf="1m">1m</button>
       <button class="mfp-tf-pop-item" data-tf="5m">5m</button>
-      <button class="mfp-tf-pop-item" data-tf="15m">15m</button>
+      <button class="mfp-tf-pop-item active" data-tf="15m">15m</button>
       <button class="mfp-tf-pop-item" data-tf="1h">1h</button>
       <button class="mfp-tf-pop-item" data-tf="1d">1d</button>
     </div>
@@ -1958,10 +1958,10 @@ function _closeIndicatorMenu(){
    ══════════════════════════════════════════════ */
 class TradingPanel {
   constructor(wrapper, id, sym='BTCUSD'){
-    this.wrapper=wrapper; this.id=id; this.currentSymbol=sym; this.currentTF='1m';
+    this.wrapper=wrapper; this.id=id; this.currentSymbol=sym; this.currentTF='15m';
     this.ws=null; this.hb=null; this.reconnTimer=null; this.reconnDelay=800; this.connecting=false;
     this.chart=null; this.candleSeries=null; this.volumeSeries=null; this.priceLine=null;
-    this.stayLive=true; this.agg={sizeSec:60,curStart:null,o:null,h:null,l:null,c:null,vol:0};
+    this.stayLive=true; this.agg={sizeSec:900,curStart:null,o:null,h:null,l:null,c:null,vol:0};
     this.lastClose=null; this.prevClose=null; this.prevCandleClose=null; this.bid=null; this.ask=null; this.spread=0;
     this.positionsCache=[]; this.linesById=new Map(); this.selectedPosIds=new Set();
     this.lastSelectedId=null; this.pendingTmp=[]; this.dragging=null;
@@ -1984,8 +1984,8 @@ class TradingPanel {
         <span class="p-hdr-sym">${this.currentSymbol.replace('/','')}</span>
         <select class="p-sym">${opts}</select>
         <select class="p-tf">
-          <option value="1s">1s</option><option value="1m" selected>1m</option>
-          <option value="5m">5m</option><option value="15m">15m</option>
+          <option value="1s">1s</option><option value="1m">1m</option>
+          <option value="5m">5m</option><option value="15m" selected>15m</option>
           <option value="1h">1h</option><option value="1d">1d</option>
         </select>
         <span class="panel-status p-status">connecting…</span>
@@ -2658,7 +2658,7 @@ function setActive(panel){
   _updateQtyInputAttrs(panel.currentSymbol);
   const mhdrSymSel=document.getElementById('mhdrSymSel');
   if(mhdrSymSel)mhdrSymSel.value=panel.currentSymbol;
-  _syncMhdrTFBadge(panel.currentTF||'1m');
+  _syncMhdrTFBadge(panel.currentTF||'15m');
 }
 
 /* ── Mobile execution bar wiring ── */
