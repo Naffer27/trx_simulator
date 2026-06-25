@@ -258,15 +258,15 @@
     </div>
     <div>
       <div class="ps-banner-title" id="psBannerTitle">
-        {% if deposit.credited %}Depósito acreditado{% elif deposit.status == 'waiting' %}Esperando pago{% elif deposit.status == 'confirming' %}Confirmando en blockchain{% else %}{{ deposit.get_status_display }}{% endif %}
+        {% if deposit.credited %}{% if is_challenge %}Challenge activado{% else %}Depósito acreditado{% endif %}{% elif deposit.status == 'waiting' %}{% if is_challenge %}Esperando confirmación del pago{% else %}Esperando pago{% endif %}{% elif deposit.status == 'confirming' %}Confirmando en blockchain{% else %}{{ deposit.get_status_display }}{% endif %}
       </div>
       <div class="ps-banner-sub" id="psBannerSub">
         {% if deposit.credited %}
-          ${{ deposit.amount_usd }} añadidos a tu wallet.
+          {% if is_challenge %}Tu cuenta Phase 1 está lista. ¡Comienza a operar!{% else %}${{ deposit.amount_usd }} añadidos a tu wallet.{% endif %}
         {% elif deposit.status == 'waiting' %}
-          Envía exactamente el monto indicado a la dirección de abajo.
+          {% if is_challenge %}Tu challenge se activará automáticamente cuando NOWPayments confirme.{% else %}Envía exactamente el monto indicado a la dirección de abajo.{% endif %}
         {% elif deposit.status == 'confirming' %}
-          Pago recibido — esperando confirmaciones en blockchain.
+          {% if is_challenge %}Pago recibido — tu challenge se activará en breve.{% else %}Pago recibido — esperando confirmaciones en blockchain.{% endif %}
         {% else %}
           {{ deposit.get_status_display }}
         {% endif %}
@@ -350,10 +350,17 @@
       <i class="fa-solid fa-shield-halved"></i>
       Envía únicamente {{ deposit.crypto_currency|upper }} a esta dirección.
     </div>
+    {% if is_challenge %}
+    <div class="ps-info-row">
+      <i class="fa-solid fa-bolt"></i>
+      Tu challenge se activará automáticamente cuando NOWPayments confirme el pago.
+    </div>
+    {% else %}
     <div class="ps-info-row">
       <i class="fa-solid fa-bolt"></i>
       El balance se acredita automáticamente en tu wallet al confirmar.
     </div>
+    {% endif %}
     <div class="ps-info-row">
       <i class="fa-solid fa-clock"></i>
       Confirmación ~15 min · No cierres esta página.
@@ -364,16 +371,28 @@
   <!-- ═══════════════ ACTIONS ═══════════════ -->
   <div style="display:flex;gap:10px;margin-top:22px;flex-wrap:wrap;">
     {% if deposit.credited %}
-    <a href="{% url 'simulator:accounts' %}" class="btn btn-primary" style="flex:1;justify-content:center;">
-      <i class="fa-solid fa-briefcase"></i> Ver Mis Cuentas
-    </a>
+      {% if is_challenge %}
+      <a href="{% url 'simulator:accounts' %}" class="btn btn-primary" style="flex:1;justify-content:center;">
+        <i class="fa-solid fa-chart-line"></i> Ir al Panel de Trading
+      </a>
+      {% else %}
+      <a href="{% url 'simulator:accounts' %}" class="btn btn-primary" style="flex:1;justify-content:center;">
+        <i class="fa-solid fa-briefcase"></i> Ver Mis Cuentas
+      </a>
+      {% endif %}
     {% endif %}
+    {% if is_challenge %}
+    <a href="{% url 'simulator:challenge_catalog' %}" class="btn btn-outline btn-sm" style="flex:1;justify-content:center;">
+      <i class="fa-solid fa-trophy"></i> Ver Challenges
+    </a>
+    {% else %}
     <a href="{% url 'simulator:deposit_history' %}" class="btn btn-outline {% if deposit.credited %}btn-sm{% endif %}" style="flex:1;justify-content:center;">
       <i class="fa-solid fa-clock-rotate-left"></i> Historial
     </a>
     <a href="{% url 'simulator:deposit' %}" class="btn btn-outline btn-sm" style="flex:1;justify-content:center;">
       <i class="fa-solid fa-plus"></i> Nuevo depósito
     </a>
+    {% endif %}
   </div>
 
 </div>
@@ -382,13 +401,18 @@
 {% block extra_scripts %}
 <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
 <script>
-const DEPOSIT_ID   = {{ deposit.id }};
-const IS_FINAL     = {{ is_final|lower }};
-const PAY_ADDRESS  = "{{ deposit.pay_address|default:'' }}";
-const PAY_AMOUNT   = "{{ deposit.pay_amount|default:'' }}";
-const CRYPTO       = "{{ deposit.crypto_currency|upper }}";
-const EXPIRES_AT   = {% if deposit.expires_at %}"{{ deposit.expires_at|date:'c' }}"{% else %}null{% endif %};
-const POLL_URL     = "{% url 'simulator:deposit_status_json' deposit.id %}";
+const DEPOSIT_ID    = {{ deposit.id }};
+const IS_FINAL      = {{ is_final|lower }};
+const PAY_ADDRESS   = "{{ deposit.pay_address|default:'' }}";
+const PAY_AMOUNT    = "{{ deposit.pay_amount|default:'' }}";
+const CRYPTO        = "{{ deposit.crypto_currency|upper }}";
+const EXPIRES_AT    = {% if deposit.expires_at %}"{{ deposit.expires_at|date:'c' }}"{% else %}null{% endif %};
+const POLL_URL      = "{% url 'simulator:deposit_status_json' deposit.id %}";
+const IS_CHALLENGE  = {{ is_challenge|lower }};
+const CHALLENGE_NAME = "{{ challenge_product.name|default:''|escapejs }}";
+const MSG_CREDITED_TITLE = "{% if is_challenge %}Challenge activado{% else %}Depósito acreditado{% endif %}";
+const MSG_CREDITED_SUB   = "{% if is_challenge %}Tu cuenta Phase 1 está lista. ¡Comienza a operar!{% else %}${{ deposit.amount_usd }} añadidos a tu wallet.{% endif %}";
+const MSG_CONFIRMING_SUB = "{% if is_challenge %}Pago recibido — tu challenge se activará en breve.{% else %}Pago recibido — esperando confirmaciones en blockchain.{% endif %}";
 
 /* ── QR Code ── */
 function buildCryptoURI(crypto, address, amount) {
@@ -467,8 +491,8 @@ function applyState(status, credited) {
   if (credited || status === 'finished' || status === 'confirmed') {
     banner.className = 'ps-banner ps-banner-success';
     bannerIcon.innerHTML = '<i class="fa-solid fa-circle-check"></i>';
-    title.textContent = 'Depósito acreditado';
-    sub.textContent   = 'Fondos añadidos a tu wallet.';
+    title.textContent = MSG_CREDITED_TITLE;
+    sub.textContent   = MSG_CREDITED_SUB;
     // Remove pulse dot
     const dot = document.querySelector('.pulse-dot');
     if (dot) dot.remove();
@@ -476,7 +500,7 @@ function applyState(status, credited) {
     banner.className = 'ps-banner ps-banner-confirming';
     bannerIcon.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
     title.textContent = 'Confirmando en blockchain';
-    sub.textContent   = 'Pago recibido — esperando confirmaciones.';
+    sub.textContent   = MSG_CONFIRMING_SUB;
   } else if (status === 'failed' || status === 'expired') {
     banner.className = 'ps-banner ps-banner-failed';
     bannerIcon.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i>';

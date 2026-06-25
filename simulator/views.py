@@ -1843,7 +1843,7 @@ def deposit_status_view(request, deposit_id):
     Show the on-platform payment page for a specific deposit.
     Includes crypto address, amount, expiry, and live-polling status banner.
     """
-    deposit = Deposit.objects.filter(pk=deposit_id, user=request.user).first()
+    deposit = Deposit.objects.filter(pk=deposit_id, user=request.user).select_related("challenge_product").first()
     if not deposit:
         return redirect("simulator:deposit_history")
 
@@ -1852,12 +1852,15 @@ def deposit_status_view(request, deposit_id):
     is_final = deposit.credited or deposit.status in (
         Deposit.STATUS_FAILED, Deposit.STATUS_EXPIRED, Deposit.STATUS_REFUNDED
     )
+    is_challenge = bool(deposit.challenge_product_id)
 
     return render(request, "simulator/deposit_status.html", {
-        "deposit":        deposit,
-        "wallet":         wallet,
-        "is_final":       is_final,
-        "active_section": "deposit",
+        "deposit":           deposit,
+        "wallet":            wallet,
+        "is_final":          is_final,
+        "active_section":    "deposit",
+        "is_challenge":      is_challenge,
+        "challenge_product": deposit.challenge_product,
     })
 
 
@@ -1867,10 +1870,7 @@ def deposit_status_json(request, deposit_id):
     Lightweight JSON endpoint polled by the payment status page every 5 s.
     Returns: status, credited, pay_address, pay_amount, wallet_balance
     """
-    deposit = Deposit.objects.filter(pk=deposit_id, user=request.user).only(
-        "status", "credited", "amount_usd", "pay_address", "pay_amount",
-        "crypto_currency", "nowpayments_payment_id",
-    ).first()
+    deposit = Deposit.objects.filter(pk=deposit_id, user=request.user).select_related("challenge_product").first()
     if not deposit:
         return JsonResponse({"error": "not found"}, status=404)
 
@@ -1902,6 +1902,12 @@ def deposit_status_json(request, deposit_id):
 
     wallet, _ = get_or_create_wallet(request.user)
 
+    is_challenge = bool(deposit.challenge_product_id)
+    challenge_name = deposit.challenge_product.name if is_challenge else ""
+    account_id = None
+    if is_challenge and deposit.credited:
+        account_id = deposit.challenge_enrollments.values_list("phase1_account_id", flat=True).first()
+
     return JsonResponse({
         "status":          deposit.status,
         "credited":        deposit.credited,
@@ -1910,6 +1916,9 @@ def deposit_status_json(request, deposit_id):
         "pay_amount":      str(deposit.pay_amount) if deposit.pay_amount else "",
         "crypto_currency": deposit.crypto_currency.upper(),
         "wallet_balance":  str(wallet.available_balance),
+        "is_challenge":    is_challenge,
+        "challenge_name":  challenge_name,
+        "account_id":      account_id,
     })
 
 
