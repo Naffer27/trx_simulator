@@ -267,6 +267,17 @@
   .rcm-btn-confirm{background:rgba(255,152,0,.15);border:1px solid rgba(255,152,0,.5);color:#ff9800;border-radius:8px;padding:10px;font-size:.78rem;font-weight:700;cursor:pointer;transition:background .15s;}
   .rcm-btn-confirm:hover{background:rgba(255,152,0,.25);}
 
+  /* ── Close Position Confirm Modal ── */
+  #closeConfirmModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:200;align-items:center;justify-content:center;padding:16px;}
+  .ccm-box{background:#0e0e1a;border:1px solid rgba(255,215,0,.35);border-radius:14px;padding:24px;max-width:320px;width:100%;}
+  .ccm-title{font-family:'Orbitron',sans-serif;font-size:.72rem;font-weight:800;letter-spacing:.1em;color:var(--gold);margin-bottom:8px;text-align:center;}
+  .ccm-desc{font-size:.76rem;color:var(--muted-2);text-align:center;margin-bottom:20px;line-height:1.55;}
+  .ccm-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .ccm-btn-cancel{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);color:var(--muted);border-radius:8px;padding:10px;font-size:.78rem;font-weight:600;cursor:pointer;transition:background .15s;}
+  .ccm-btn-cancel:hover{background:rgba(255,255,255,.1);}
+  .ccm-btn-close-pos{background:rgba(239,83,80,.14);border:1px solid rgba(239,83,80,.4);color:#ef5350;border-radius:8px;padding:10px;font-size:.78rem;font-weight:700;cursor:pointer;transition:background .15s;}
+  .ccm-btn-close-pos:hover{background:rgba(239,83,80,.26);}
+
   .last-price{position:absolute;right:12px;top:10px;display:flex;gap:6px;z-index:2;}
   .pill{background:var(--panel);border:1px solid var(--accent);padding:4px 10px;border-radius:999px;font-size:.78rem;font-weight:700;}
   .pill.green{color:var(--bull);border-color:rgba(38,166,154,.3);}
@@ -1408,7 +1419,7 @@
       <div class="rc-section rc-qa">
         <div class="rc-section-lbl">Quick Actions</div>
         <div class="rc-qa-grid">
-          <button class="rc-qa-btn rc-qa-danger" onclick="(()=>{const p=allPanels.find(x=>x.ws?.readyState===WebSocket.OPEN);if(!p||!allPanels.some(x=>x.positionsCache.length))return;if(!confirm('Close ALL positions?'))return;allPanels.filter(x=>x.ws?.readyState===WebSocket.OPEN).forEach(x=>x.positionsCache.forEach(pos=>x.ws.send(JSON.stringify({action:'order:close',id:String(pos.id)}))))})()">Close All</button>
+          <button class="rc-qa-btn rc-qa-danger" onclick="showCloseAllConfirm()">Close All</button>
           <button class="rc-qa-btn rc-qa-muted" onclick="alert('Cancel All — no pending orders')">Cancel All</button>
         </div>
       </div>
@@ -1700,6 +1711,18 @@
     <div class="rcm-actions">
       <button class="rcm-btn-cancel" onclick="cancelRiskConfirm()">Cancelar</button>
       <button class="rcm-btn-confirm" onclick="confirmRiskOrder()">Confirmar igualmente</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Close Position Confirm Modal ── -->
+<div id="closeConfirmModal">
+  <div class="ccm-box">
+    <div class="ccm-title">Confirmar Cierre</div>
+    <div class="ccm-desc" id="ccmDesc">¿Confirmas el cierre de esta posición?</div>
+    <div class="ccm-actions">
+      <button class="ccm-btn-cancel" id="ccmCancel">Cancelar</button>
+      <button class="ccm-btn-close-pos" id="ccmConfirm">Cerrar Posición</button>
     </div>
   </div>
 </div>
@@ -2805,8 +2828,7 @@ function renderGlobalPositions(){
       e.stopPropagation();
       const posId=btn.getAttribute('data-id'),pid=btn.getAttribute('data-pid');
       const panel=_anyOpenPanel(pid);if(!panel)return;
-      if(!confirm('¿Cerrar esta posición?'))return;
-      panel.ws.send(JSON.stringify({action:'order:close',id:String(posId)}));
+      _showCloseConfirm('¿Confirmas el cierre de esta posición?',()=>panel.ws.send(JSON.stringify({action:'order:close',id:String(posId)})));
     });
   });
   tbody.querySelectorAll('.btm-btn-edit').forEach(btn=>{
@@ -3005,9 +3027,7 @@ sheet.addEventListener('click',e=>{
 // Close position from sheet
 document.getElementById('sheetClosePos').addEventListener('click',()=>{
   if(!qbPosId||!qbPanel?.ws||qbPanel.ws.readyState!==WebSocket.OPEN)return;
-  if(!confirm('¿Cerrar esta posición?'))return;
-  qbPanel.ws.send(JSON.stringify({action:'order:close',id:String(qbPosId)}));
-  closeSheet();hideQB();
+  _showCloseConfirm('¿Confirmas el cierre de esta posición?',()=>{qbPanel.ws.send(JSON.stringify({action:'order:close',id:String(qbPosId)}));closeSheet();hideQB();});
 });
 sheetSave.addEventListener('click',()=>{
   if(!qbPosId||!qbPanel?.ws||qbPanel.ws.readyState!==WebSocket.OPEN)return;
@@ -3497,6 +3517,27 @@ function cancelRiskConfirm(){
   document.getElementById('riskConfirmModal').style.display='none';
   _pendingRiskOrder=null;
 }
+
+/* ── Close Position Confirm Modal ── */
+let _ccmCallback=null;
+const _ccModal=document.getElementById('closeConfirmModal');
+document.getElementById('ccmCancel').addEventListener('click',()=>{_ccModal.style.display='none';_ccmCallback=null;});
+document.getElementById('ccmConfirm').addEventListener('click',()=>{_ccModal.style.display='none';const cb=_ccmCallback;_ccmCallback=null;cb?.();});
+_ccModal.addEventListener('click',e=>{if(e.target===_ccModal){_ccModal.style.display='none';_ccmCallback=null;}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&_ccModal.style.display==='flex'){_ccModal.style.display='none';_ccmCallback=null;}});
+function _showCloseConfirm(desc,callback){
+  document.getElementById('ccmDesc').textContent=desc;
+  _ccmCallback=callback;
+  _ccModal.style.display='flex';
+}
+function showCloseAllConfirm(){
+  if(!allPanels.some(x=>x.ws?.readyState===WebSocket.OPEN&&x.positionsCache.length))return;
+  _showCloseConfirm('¿Confirmas el cierre de TODAS las posiciones abiertas?',()=>{
+    allPanels.filter(x=>x.ws?.readyState===WebSocket.OPEN)
+      .forEach(x=>x.positionsCache.forEach(pos=>x.ws.send(JSON.stringify({action:'order:close',id:String(pos.id)}))));
+  });
+}
+
 window.addEventListener('keydown',e=>{
   if(e.key==='F1'){e.preventDefault();dbgOn=!dbgOn;dbgShow();return;}
   if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT'||e.target.tagName==='TEXTAREA')return;
