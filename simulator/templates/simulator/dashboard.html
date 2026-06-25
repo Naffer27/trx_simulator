@@ -2417,28 +2417,31 @@ class TradingPanel {
     if(!rec){
       rec={id:String(id),side,entry,qty:Number(pos.qty??1),sl:pos.sl??null,tp:pos.tp??null,plEntry:null,plSL:null,plTP:null};
       this.linesById.set(rec.id,rec);
-      rec.plEntry=this.candleSeries.createPriceLine({price:entry,color:side==='buy'?bull:bear,lineWidth:2,lineStyle:2,axisLabelVisible:true,title});
+      rec.plEntry=this.candleSeries.createPriceLine({price:entry,color:side==='buy'?bull:bear,lineWidth:1,lineStyle:2,axisLabelVisible:true,title});
     }else{rec.side=side;rec.entry=entry;rec.qty=Number(pos.qty??rec.qty??1);rec.plEntry?.applyOptions({price:entry,color:side==='buy'?bull:bear,title});}
     if(pos.sl!=null){rec.sl=Number(pos.sl);rec.plSL?rec.plSL.applyOptions({price:rec.sl}):(rec.plSL=this.candleSeries.createPriceLine({price:rec.sl,color:bear,lineWidth:1,lineStyle:1,axisLabelVisible:true,title:'SL'}));}
     if(pos.tp!=null){rec.tp=Number(pos.tp);rec.plTP?rec.plTP.applyOptions({price:rec.tp}):(rec.plTP=this.candleSeries.createPriceLine({price:rec.tp,color:bull,lineWidth:1,lineStyle:1,axisLabelVisible:true,title:'TP'}));}
   }
   _applyLineStyles(){
-    const dim=0.28,bull='#26a69a',bear='#ef5350';
+    const dim=0.20,bull='#26a69a',bear='#ef5350';
+    const entryDim='rgba(148,163,184,0.28)';
     for(const [id,rec]of this.linesById.entries()){
       const sel=this.selectedPosIds.has(id);
-      rec.plEntry?.applyOptions({color:sel?(rec.side==='buy'?bull:bear):hexToRgba(rec.side==='buy'?bull:bear,dim),lineWidth:sel?3:1,lineStyle:2});
-      rec.plSL?.applyOptions({color:sel?bear:hexToRgba(bear,dim),lineWidth:sel?2:1});
-      rec.plTP?.applyOptions({color:sel?bull:hexToRgba(bull,dim),lineWidth:sel?2:1});
+      const dragSL=this.dragging?.id===id&&this.dragging?.which==='sl';
+      const dragTP=this.dragging?.id===id&&this.dragging?.which==='tp';
+      rec.plEntry?.applyOptions({color:sel?(rec.side==='buy'?bull:bear):entryDim,lineWidth:sel?2:1,lineStyle:2});
+      rec.plSL?.applyOptions({color:(sel||dragSL)?bear:hexToRgba(bear,dim),lineWidth:(sel||dragSL)?2:1});
+      rec.plTP?.applyOptions({color:(sel||dragTP)?bull:hexToRgba(bull,dim),lineWidth:(sel||dragTP)?2:1});
     }
     this._updateRR();
   }
   ensureSL(id){
     const rec=this.linesById.get(String(id));if(!rec||rec.entry==null)return;
-    if(rec.sl==null){const step=priceFormatFor(this.currentSymbol).minMove||0.00001;rec.sl=roundToTick((rec.entry??this.lastClose)-(step*8),this.currentSymbol);rec.plSL=this.candleSeries.createPriceLine({price:rec.sl,color:'#ef5350',lineWidth:2,lineStyle:1,axisLabelVisible:true,title:'SL'});}
+    if(rec.sl==null){const step=priceFormatFor(this.currentSymbol).minMove||0.00001;rec.sl=roundToTick((rec.entry??this.lastClose)-(step*8),this.currentSymbol);rec.plSL=this.candleSeries.createPriceLine({price:rec.sl,color:'#ef5350',lineWidth:1,lineStyle:1,axisLabelVisible:true,title:'SL'});}
   }
   ensureTP(id){
     const rec=this.linesById.get(String(id));if(!rec||rec.entry==null)return;
-    if(rec.tp==null){const step=priceFormatFor(this.currentSymbol).minMove||0.00001;rec.tp=roundToTick((rec.entry??this.lastClose)+(step*8),this.currentSymbol);rec.plTP=this.candleSeries.createPriceLine({price:rec.tp,color:'#26a69a',lineWidth:2,lineStyle:1,axisLabelVisible:true,title:'TP'});}
+    if(rec.tp==null){const step=priceFormatFor(this.currentSymbol).minMove||0.00001;rec.tp=roundToTick((rec.entry??this.lastClose)+(step*8),this.currentSymbol);rec.plTP=this.candleSeries.createPriceLine({price:rec.tp,color:'#26a69a',lineWidth:1,lineStyle:1,axisLabelVisible:true,title:'TP'});}
   }
   _reconcilePending(items){
     if(!this.pendingTmp.length||!Array.isArray(items)||!items.length)return;
@@ -2574,10 +2577,10 @@ class TradingPanel {
         const rec=this.linesById.get(tid);if(!rec)return;
         const raw=this.candleSeries.coordinateToPrice(y);if(raw==null)return;
         const price=roundToTick(raw,this.currentSymbol);
-        if(price<rec.entry&&rec.plSL==null){rec.sl=price;rec.plSL=this.candleSeries.createPriceLine({price,color:'#ef5350',lineWidth:2,lineStyle:1,axisLabelVisible:true,title:'SL'});this.dragging={id:tid,which:'sl'};}
-        else if(price>rec.entry&&rec.plTP==null){rec.tp=price;rec.plTP=this.candleSeries.createPriceLine({price,color:'#26a69a',lineWidth:2,lineStyle:1,axisLabelVisible:true,title:'TP'});this.dragging={id:tid,which:'tp'};}
+        if(price<rec.entry&&rec.plSL==null){rec.sl=price;rec.plSL=this.candleSeries.createPriceLine({price,color:'#ef5350',lineWidth:1,lineStyle:1,axisLabelVisible:true,title:'SL'});this.dragging={id:tid,which:'sl'};}
+        else if(price>rec.entry&&rec.plTP==null){rec.tp=price;rec.plTP=this.candleSeries.createPriceLine({price,color:'#26a69a',lineWidth:1,lineStyle:1,axisLabelVisible:true,title:'TP'});this.dragging={id:tid,which:'tp'};}
       }
-      if(this.dragging){e.preventDefault();this.chart.applyOptions({handleScroll:false,handleScale:false});}
+      if(this.dragging){e.preventDefault();this.chart.applyOptions({handleScroll:false,handleScale:false});this._applyLineStyles();}
     },{passive:false});
 
     this.chartEl.addEventListener('pointermove',e=>{
@@ -2593,7 +2596,7 @@ class TradingPanel {
       if(!this.dragging){this._hideDragBadge();this.chart?.applyOptions({handleScroll:scrollOpts,handleScale:true});return;}
       const rec=this.linesById.get(this.dragging.id);
       if(rec&&this.ws?.readyState===WebSocket.OPEN)this.ws.send(JSON.stringify({action:'order:update',id:rec.id,symbol:this.currentSymbol,sl:rec.sl??null,tp:rec.tp??null}));
-      this.dragging=null;this._hideDragBadge();this.chart?.applyOptions({handleScroll:scrollOpts,handleScale:true});
+      this.dragging=null;this._hideDragBadge();this.chart?.applyOptions({handleScroll:scrollOpts,handleScale:true});this._applyLineStyles();
     };
     this.chartEl.addEventListener('pointerup',endDrag);
     this.chartEl.addEventListener('pointerleave',endDrag);
@@ -3035,9 +3038,9 @@ sheetSave.addEventListener('click',()=>{
   const slV=sheetSL.value===''?null:Number(sheetSL.value),tpV=sheetTP.value===''?null:Number(sheetTP.value);
   rec.sl=slV;rec.tp=tpV;
   if(rec.plSL){if(slV==null){qbPanel.candleSeries.removePriceLine(rec.plSL);rec.plSL=null;}else rec.plSL.applyOptions({price:slV});}
-  else if(slV!=null)rec.plSL=qbPanel.candleSeries.createPriceLine({price:slV,color:'#ef5350',lineWidth:2,lineStyle:1,axisLabelVisible:true,title:'SL'});
+  else if(slV!=null)rec.plSL=qbPanel.candleSeries.createPriceLine({price:slV,color:'#ef5350',lineWidth:1,lineStyle:1,axisLabelVisible:true,title:'SL'});
   if(rec.plTP){if(tpV==null){qbPanel.candleSeries.removePriceLine(rec.plTP);rec.plTP=null;}else rec.plTP.applyOptions({price:tpV});}
-  else if(tpV!=null)rec.plTP=qbPanel.candleSeries.createPriceLine({price:tpV,color:'#26a69a',lineWidth:2,lineStyle:1,axisLabelVisible:true,title:'TP'});
+  else if(tpV!=null)rec.plTP=qbPanel.candleSeries.createPriceLine({price:tpV,color:'#26a69a',lineWidth:1,lineStyle:1,axisLabelVisible:true,title:'TP'});
   qbPanel.ws.send(JSON.stringify({action:'order:update',id:String(qbPosId),symbol:qbPanel.currentSymbol,sl:slV,tp:tpV}));
   closeSheet();
 });
