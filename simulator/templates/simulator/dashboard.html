@@ -1826,7 +1826,7 @@ let globalProvider=localStorage.provider||'sim';
 const DEFAULT_SYMBOLS=['BTCUSD','EUR/USD','ETHUSD','GBP/USD'];
 let currentLayout=1;
 let colFrs=[1]; // fractional column widths for resize
-const closedTradesHistory=[];
+const closedTradesHistory={{ closed_trades_json|safe }};
 
 /* ── Global DOM ── */
 const statusEl=document.getElementById('status');

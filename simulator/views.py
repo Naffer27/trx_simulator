@@ -572,6 +572,32 @@ def trading_dashboard(request, account_id=None):
         "max_lot_size":       account.max_lot_size_snapshot,
     }
 
+    # Closed trades for History panel — last 50, newest first, this account only
+    _closed_qs = (
+        Trade.objects
+        .filter(account=account, closed_at__isnull=False)
+        .order_by('-closed_at')
+        .values('id', 'symbol', 'trade_type', 'lot_size',
+                'entry_price', 'exit_price', 'profit_loss', 'closed_at')
+        [:50]
+    )
+    closed_trades_json = json.dumps(
+        [
+            {
+                'id':     t['id'],
+                'symbol': t['symbol'],
+                'side':   t['trade_type'].lower(),
+                'qty':    float(t['lot_size']),
+                'entry':  float(t['entry_price']),
+                'close':  float(t['exit_price']) if t['exit_price'] is not None else None,
+                'pnl':    float(t['profit_loss']) if t['profit_loss'] is not None else None,
+                'ts':     int(t['closed_at'].timestamp() * 1000),
+            }
+            for t in _closed_qs
+        ],
+        cls=DjangoJSONEncoder,
+    )
+
     context = {
         'account': account,
         'account_id': account.id,
@@ -622,6 +648,8 @@ def trading_dashboard(request, account_id=None):
         'funded_min_trading_days':   funded_min_trading_days,
         'funded_next_payout_date':   funded_next_payout_date,
         'funded_days_until_payout':  funded_days_until_payout,
+        # History panel seed
+        'closed_trades_json':        closed_trades_json,
     }
     return render(request, 'simulator/dashboard.html', context)
 
