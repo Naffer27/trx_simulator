@@ -1,17 +1,252 @@
 {% extends "simulator/base_app.html" %}
+{% block title %}Checkout — {{ product.name }} — Money Broker{% endblock %}
+{% block page_title %}Checkout Challenge{% endblock %}
+
+{% block extra_styles %}
+<style>
+/* ── Layout ── */
+.cp-page{max-width:960px;margin:0 auto;padding:0 20px 60px;}
+
+/* ── Hero ── */
+.cp-hero{padding:32px 0 28px;border-bottom:1px solid var(--border-dim);margin-bottom:28px;}
+.cp-hero-eyebrow{display:inline-flex;align-items:center;gap:7px;font-size:.64rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--gold);margin-bottom:10px;}
+.cp-hero-title{font-size:1.45rem;font-weight:800;color:var(--text);margin:0 0 6px;line-height:1.2;}
+.cp-hero-sub{font-size:.84rem;color:var(--muted-2);margin:0;}
+
+/* ── Grid ── */
+.cp-grid{display:grid;grid-template-columns:1fr 340px;gap:20px;align-items:start;}
+@media(max-width:720px){.cp-grid{grid-template-columns:1fr;}}
+
+/* ── Card base ── */
+.cp-card{background:var(--bg-card);border:1px solid var(--border);border-radius:14px;overflow:hidden;}
+
+/* ── Summary card ── */
+.cp-sum-header{padding:16px 20px;border-bottom:1px solid var(--border-dim);display:flex;align-items:center;gap:10px;}
+.cp-sum-badge{display:inline-flex;align-items:center;gap:5px;font-size:.6rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);background:rgba(255,215,0,.08);border:1px solid rgba(255,215,0,.2);border-radius:20px;padding:3px 9px;}
+.cp-sum-name{font-size:.98rem;font-weight:700;color:var(--text);}
+.cp-sum-size{font-size:.74rem;color:var(--muted-2);margin-top:1px;}
+
+.cp-sum-price-row{padding:14px 20px;border-bottom:1px solid var(--border-dim);display:flex;align-items:baseline;justify-content:space-between;gap:8px;}
+.cp-sum-price-label{font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;}
+.cp-sum-price-val{font-size:1.5rem;font-weight:800;color:var(--text);}
+.cp-sum-price-val span{font-size:.78rem;font-weight:400;color:var(--muted);margin-left:3px;}
+
+/* Phases grid */
+.cp-phases{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border-dim);}
+.cp-phase{padding:14px 16px;background:var(--bg-card-2);}
+.cp-phase-label{font-size:.58rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;margin-bottom:9px;}
+.cp-phase-label.p1{color:#29b6f6;}
+.cp-phase-label.p2{color:#66bb6a;}
+.cp-rule{display:flex;justify-content:space-between;align-items:baseline;gap:6px;padding:2.5px 0;}
+.cp-rule-key{font-size:.71rem;color:var(--muted-2);}
+.cp-rule-val{font-size:.75rem;font-weight:600;color:var(--text);white-space:nowrap;}
+.cp-rule-val.ok{color:var(--bull);}
+.cp-rule-val.warn{color:var(--bear);}
+
+/* Funded row */
+.cp-funded{padding:13px 20px;border-top:1px solid var(--border-dim);display:flex;flex-wrap:wrap;gap:14px;align-items:center;}
+.cp-funded-label{font-size:.59rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);width:100%;margin-bottom:2px;}
+.cp-funded-item{display:flex;flex-direction:column;gap:2px;}
+.cp-funded-item-val{font-size:.88rem;font-weight:700;color:var(--bull);}
+.cp-funded-item-key{font-size:.64rem;color:var(--muted);}
+
+/* ── Payment card ── */
+.cp-pay-header{padding:14px 18px;border-bottom:1px solid var(--border-dim);}
+.cp-pay-header-label{font-size:.6rem;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:var(--muted);}
+
+.cp-pay-body{padding:18px;}
+
+.cp-pay-total{margin-bottom:18px;}
+.cp-pay-total-label{font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;}
+.cp-pay-total-val{font-size:2rem;font-weight:800;color:var(--text);line-height:1;}
+.cp-pay-total-val span{font-size:.82rem;font-weight:400;color:var(--muted);margin-left:4px;}
+
+/* Currency selector */
+.cp-currency-label{font-size:.68rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted-2);margin-bottom:8px;}
+.cp-currency-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:18px;}
+.cp-currency-opt{position:relative;}
+.cp-currency-opt input[type=radio]{position:absolute;opacity:0;width:0;height:0;}
+.cp-currency-opt label{display:flex;align-items:center;gap:7px;padding:9px 11px;border-radius:9px;border:1px solid var(--border-dim);background:var(--bg-card-2);cursor:pointer;font-size:.76rem;color:var(--muted-2);transition:border-color .15s,background .15s,color .15s;}
+.cp-currency-opt label:hover{border-color:rgba(255,215,0,.25);color:var(--text);}
+.cp-currency-opt input[type=radio]:checked+label{border-color:rgba(255,215,0,.45);background:rgba(255,215,0,.07);color:var(--gold);font-weight:600;}
+.cp-currency-icon{font-size:.8rem;flex-shrink:0;}
+
+/* Fallback native select for no-JS / accessibility */
+.cp-select-fallback{display:none;width:100%;padding:9px 12px;background:var(--bg-card-2);border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:.82rem;margin-bottom:18px;}
+
+/* Error banner */
+.cp-error{background:rgba(239,83,80,.09);border:1px solid rgba(239,83,80,.3);border-radius:10px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:flex-start;gap:10px;}
+.cp-error i{color:#ef5350;margin-top:1px;flex-shrink:0;}
+.cp-error-msg{font-size:.8rem;color:#ef5350;line-height:1.45;}
+
+/* Submit */
+.cp-btn{display:flex;align-items:center;justify-content:center;gap:9px;width:100%;padding:13px 20px;border-radius:10px;font-size:.88rem;font-weight:700;letter-spacing:.04em;border:none;cursor:pointer;transition:background .18s,transform .12s,box-shadow .18s;background:linear-gradient(135deg,#c9a700,var(--gold));color:#000;}
+.cp-btn:hover{background:linear-gradient(135deg,var(--gold),#ffe44d);transform:scale(1.015);box-shadow:0 4px 18px rgba(255,215,0,.28);}
+.cp-btn:active{transform:scale(.98);}
+
+.cp-btn-note{font-size:.68rem;color:var(--muted);text-align:center;margin-top:10px;line-height:1.5;}
+
+/* ── Steps footer ── */
+.cp-steps{margin-top:28px;background:var(--bg-card);border:1px solid var(--border);border-radius:14px;padding:20px 24px;}
+.cp-steps-title{font-size:.62rem;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:var(--gold);margin-bottom:16px;}
+.cp-steps-list{display:flex;flex-wrap:wrap;gap:0;}
+.cp-step{flex:1;min-width:120px;display:flex;flex-direction:column;align-items:center;text-align:center;gap:6px;padding:4px 8px;position:relative;}
+.cp-step:not(:last-child)::after{content:'';position:absolute;top:16px;right:-8px;width:16px;height:1px;background:rgba(255,215,0,.2);}
+.cp-step-dot{width:28px;height:28px;border-radius:50%;background:rgba(255,215,0,.08);border:1px solid rgba(255,215,0,.25);display:flex;align-items:center;justify-content:center;font-size:.65rem;font-weight:800;color:var(--gold);}
+.cp-step-label{font-size:.7rem;color:var(--muted-2);line-height:1.35;}
+
+@media(max-width:500px){
+  .cp-phases{grid-template-columns:1fr;}
+  .cp-currency-grid{grid-template-columns:1fr 1fr;}
+  .cp-step:not(:last-child)::after{display:none;}
+}
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="container">
-  <h2>Buy Challenge: {{ product.name }}</h2>
-  <p>Tier: {{ product.tier }} — Price: ${{ product.price_usd }}</p>
-  {% if error %}<p class="error">{{ error }}</p>{% endif %}
-  <form method="post">
-    {% csrf_token %}
-    <select name="crypto_currency">
-      {% for code, label in crypto_choices %}
-      <option value="{{ code }}">{{ label }}</option>
-      {% endfor %}
-    </select>
-    <button type="submit">Pay ${{ product.price_usd }}</button>
-  </form>
+<div class="cp-page">
+
+  {# ── Hero ── #}
+  <div class="cp-hero">
+    <div class="cp-hero-eyebrow"><i class="fa-solid fa-shield-halved"></i> Pago seguro</div>
+    <h1 class="cp-hero-title">Checkout Challenge</h1>
+    <p class="cp-hero-sub">Confirma tu programa de fondeo y completa el pago de forma segura.</p>
+  </div>
+
+  {# ── Two-column grid ── #}
+  <div class="cp-grid">
+
+    {# ── LEFT — Challenge summary ── #}
+    <div class="cp-card">
+      <div class="cp-sum-header">
+        <div>
+          <div class="cp-sum-badge"><i class="fa-solid fa-medal"></i> {{ product.tier }}</div>
+          <div class="cp-sum-name">{{ product.name }}</div>
+          <div class="cp-sum-size">Capital virtual: ${{ product.account_size|floatformat:0 }}</div>
+        </div>
+      </div>
+
+      <div class="cp-sum-price-row">
+        <span class="cp-sum-price-label">Precio del challenge</span>
+        <span class="cp-sum-price-val">${{ product.price_usd|floatformat:2 }}<span>USD</span></span>
+      </div>
+
+      {# Phase rules ── two columns #}
+      <div class="cp-phases">
+        <div class="cp-phase">
+          <div class="cp-phase-label p1">Phase 1</div>
+          <div class="cp-rule"><span class="cp-rule-key">Profit target</span><span class="cp-rule-val ok">{{ product.p1_profit_target_pct|floatformat:0 }}%</span></div>
+          <div class="cp-rule"><span class="cp-rule-key">Daily loss</span><span class="cp-rule-val warn">{{ product.p1_max_daily_loss_pct|floatformat:0 }}%</span></div>
+          <div class="cp-rule"><span class="cp-rule-key">Max drawdown</span><span class="cp-rule-val warn">{{ product.p1_max_drawdown_pct|floatformat:0 }}%</span></div>
+          <div class="cp-rule"><span class="cp-rule-key">Min días</span><span class="cp-rule-val">{{ product.p1_min_trading_days }}</span></div>
+          <div class="cp-rule"><span class="cp-rule-key">Duración máx</span><span class="cp-rule-val">{{ product.p1_max_duration_days }} días</span></div>
+        </div>
+        <div class="cp-phase">
+          <div class="cp-phase-label p2">Phase 2</div>
+          <div class="cp-rule"><span class="cp-rule-key">Profit target</span><span class="cp-rule-val ok">{{ product.p2_profit_target_pct|floatformat:0 }}%</span></div>
+          <div class="cp-rule"><span class="cp-rule-key">Daily loss</span><span class="cp-rule-val warn">{{ product.p2_max_daily_loss_pct|floatformat:0 }}%</span></div>
+          <div class="cp-rule"><span class="cp-rule-key">Max drawdown</span><span class="cp-rule-val warn">{{ product.p2_max_drawdown_pct|floatformat:0 }}%</span></div>
+          <div class="cp-rule"><span class="cp-rule-key">Min días</span><span class="cp-rule-val">{{ product.p2_min_trading_days }}</span></div>
+          <div class="cp-rule"><span class="cp-rule-key">Duración máx</span><span class="cp-rule-val">{{ product.p2_max_duration_days }} días</span></div>
+        </div>
+      </div>
+
+      {# Funded terms ── footer row #}
+      <div class="cp-funded">
+        <div class="cp-funded-label"><i class="fa-solid fa-coins"></i> Cuenta Fondeada</div>
+        <div class="cp-funded-item">
+          <span class="cp-funded-item-val">{{ product.profit_split_pct|floatformat:0 }}%</span>
+          <span class="cp-funded-item-key">Profit split</span>
+        </div>
+        <div class="cp-funded-item">
+          <span class="cp-funded-item-val">{{ product.max_lot_size|floatformat:2 }}</span>
+          <span class="cp-funded-item-key">Lot size máx</span>
+        </div>
+        <div class="cp-funded-item">
+          <span class="cp-funded-item-val">{{ product.max_open_positions }}</span>
+          <span class="cp-funded-item-key">Posiciones máx</span>
+        </div>
+      </div>
+    </div>
+
+    {# ── RIGHT — Payment card ── #}
+    <div>
+      <div class="cp-card">
+        <div class="cp-pay-header">
+          <div class="cp-pay-header-label"><i class="fa-solid fa-lock"></i>&nbsp; Pago seguro</div>
+        </div>
+        <div class="cp-pay-body">
+
+          {# Total #}
+          <div class="cp-pay-total">
+            <div class="cp-pay-total-label">Total a pagar</div>
+            <div class="cp-pay-total-val">${{ product.price_usd|floatformat:2 }}<span>USD</span></div>
+          </div>
+
+          {# Error #}
+          {% if error %}
+          <div class="cp-error">
+            <i class="fa-solid fa-circle-exclamation"></i>
+            <span class="cp-error-msg">{{ error }}</span>
+          </div>
+          {% endif %}
+
+          {# Payment form #}
+          <form method="post" id="checkoutForm">
+            {% csrf_token %}
+
+            {# Currency selector — radio cards #}
+            <div class="cp-currency-label">Elige tu criptomoneda</div>
+            <div class="cp-currency-grid" id="cryptoGrid">
+              {% for code, label in crypto_choices %}
+              <div class="cp-currency-opt">
+                <input type="radio" name="crypto_currency" id="cc_{{ code }}" value="{{ code }}"
+                       {% if forloop.first %}checked{% endif %}>
+                <label for="cc_{{ code }}">
+                  <i class="fa-brands fa-bitcoin cp-currency-icon" style="opacity:.7;"></i>
+                  {{ label }}
+                </label>
+              </div>
+              {% endfor %}
+            </div>
+
+            <button type="submit" class="cp-btn">
+              <i class="fa-solid fa-rocket"></i> Pagar Challenge
+            </button>
+          </form>
+
+          <p class="cp-btn-note">
+            <i class="fa-solid fa-bolt" style="color:rgba(255,215,0,.5);"></i>
+            El challenge se activará automáticamente cuando el pago sea confirmado.
+          </p>
+        </div>
+      </div>
+    </div>
+
+  </div>{# /cp-grid #}
+
+  {# ── Steps footer ── #}
+  <div class="cp-steps">
+    <div class="cp-steps-title"><i class="fa-solid fa-route"></i>&nbsp; Después del pago</div>
+    <div class="cp-steps-list">
+      <div class="cp-step">
+        <div class="cp-step-dot">1</div>
+        <span class="cp-step-label">Pago<br>pendiente</span>
+      </div>
+      <div class="cp-step">
+        <div class="cp-step-dot">2</div>
+        <span class="cp-step-label">Confirmación<br>NOWPayments</span>
+      </div>
+      <div class="cp-step">
+        <div class="cp-step-dot">3</div>
+        <span class="cp-step-label">Cuenta<br>Phase 1 activa</span>
+      </div>
+      <div class="cp-step">
+        <div class="cp-step-dot">4</div>
+        <span class="cp-step-label">Ir al panel<br>de trading</span>
+      </div>
+    </div>
+  </div>
+
 </div>
 {% endblock %}
