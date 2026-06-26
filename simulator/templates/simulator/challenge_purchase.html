@@ -95,6 +95,32 @@
 .cp-step-dot{width:28px;height:28px;border-radius:50%;background:rgba(255,215,0,.08);border:1px solid rgba(255,215,0,.25);display:flex;align-items:center;justify-content:center;font-size:.65rem;font-weight:800;color:var(--gold);}
 .cp-step-label{font-size:.7rem;color:var(--muted-2);line-height:1.35;}
 
+/* ── Wallet payment card ── */
+.cw-card{background:var(--bg-card);border:1px solid rgba(255,215,0,.22);border-radius:14px;overflow:hidden;margin-bottom:14px;}
+.cw-header{padding:13px 18px;border-bottom:1px solid var(--border-dim);display:flex;align-items:center;gap:8px;}
+.cw-header-label{font-size:.6rem;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:var(--gold);}
+.cw-body{padding:16px 18px;}
+.cw-row{display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:4px 0;}
+.cw-row-key{font-size:.72rem;color:var(--muted-2);}
+.cw-row-val{font-size:.82rem;font-weight:700;color:var(--text);}
+.cw-row-val.green{color:var(--bull);}
+.cw-row-val.red{color:var(--bear);}
+.cw-divider{border:none;border-top:1px solid var(--border-dim);margin:12px 0;}
+.cw-btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:12px 18px;border-radius:10px;font-size:.86rem;font-weight:700;letter-spacing:.04em;border:none;cursor:pointer;transition:background .18s,transform .12s,box-shadow .18s;background:linear-gradient(135deg,#c9a700,var(--gold));color:#000;}
+.cw-btn:hover{background:linear-gradient(135deg,var(--gold),#ffe44d);transform:scale(1.015);box-shadow:0 4px 18px rgba(255,215,0,.28);}
+.cw-btn:active{transform:scale(.98);}
+.cw-btn-deposit{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:11px 18px;border-radius:10px;font-size:.84rem;font-weight:700;letter-spacing:.04em;text-decoration:none;background:rgba(255,215,0,.07);border:1px solid rgba(255,215,0,.25);color:var(--gold);transition:background .15s;}
+.cw-btn-deposit:hover{background:rgba(255,215,0,.12);}
+.cw-shortfall{display:flex;align-items:center;gap:7px;font-size:.76rem;color:var(--bear);margin-bottom:12px;}
+.cw-shortfall i{flex-shrink:0;}
+.cw-sufficient{display:flex;align-items:center;gap:7px;font-size:.76rem;color:var(--bull);margin-bottom:12px;}
+.cw-sufficient i{flex-shrink:0;}
+.cw-error{background:rgba(239,83,80,.09);border:1px solid rgba(239,83,80,.3);border-radius:9px;padding:10px 14px;margin-bottom:12px;display:flex;align-items:flex-start;gap:9px;}
+.cw-error i{color:#ef5350;margin-top:1px;flex-shrink:0;}
+.cw-error-msg{font-size:.78rem;color:#ef5350;line-height:1.45;}
+.cw-separator{display:flex;align-items:center;gap:10px;margin:16px 0 4px;font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;}
+.cw-separator::before,.cw-separator::after{content:'';flex:1;height:1px;background:var(--border-dim);}
+
 @media(max-width:500px){
   .cp-phases{grid-template-columns:1fr;}
   .cp-currency-grid{grid-template-columns:1fr 1fr;}
@@ -169,8 +195,61 @@
       </div>
     </div>
 
-    {# ── RIGHT — Payment card ── #}
+    {# ── RIGHT — Wallet card + Crypto card ── #}
     <div>
+
+      {# ── Wallet payment card ── #}
+      <div class="cw-card">
+        <div class="cw-header">
+          <i class="fa-solid fa-wallet" style="color:var(--gold);font-size:.8rem;"></i>
+          <span class="cw-header-label">Pagar con balance interno</span>
+        </div>
+        <div class="cw-body">
+
+          {% if wallet_error %}
+          <div class="cw-error">
+            <i class="fa-solid fa-circle-exclamation"></i>
+            <span class="cw-error-msg">{{ wallet_error }}</span>
+          </div>
+          {% endif %}
+
+          <div class="cw-row">
+            <span class="cw-row-key">Tu balance disponible</span>
+            <span class="cw-row-val green">${{ wallet_balance|floatformat:2 }}</span>
+          </div>
+          <div class="cw-row">
+            <span class="cw-row-key">Precio del challenge</span>
+            <span class="cw-row-val">${{ product.price_usd|floatformat:2 }}</span>
+          </div>
+          <hr class="cw-divider">
+
+          {% if can_pay_with_wallet %}
+            <div class="cw-sufficient">
+              <i class="fa-solid fa-circle-check"></i>
+              Tu balance es suficiente para activar este challenge inmediatamente.
+            </div>
+            <form method="post" action="{% url 'simulator:challenge_wallet_purchase' product.pk %}">
+              {% csrf_token %}
+              <button type="submit" class="cw-btn">
+                <i class="fa-solid fa-wallet"></i> Pagar con mi balance
+              </button>
+            </form>
+          {% else %}
+            <div class="cw-shortfall">
+              <i class="fa-solid fa-triangle-exclamation"></i>
+              Te faltan ${{ wallet_shortfall|floatformat:2 }} para activar con tu balance.
+            </div>
+            <a href="{% url 'simulator:deposit' %}" class="cw-btn-deposit">
+              <i class="fa-solid fa-plus"></i> Depositar para empezar
+            </a>
+          {% endif %}
+
+        </div>
+      </div>
+
+      <div class="cw-separator">o paga con crypto</div>
+
+      {# ── Crypto payment card ── #}
       <div class="cp-card">
         <div class="cp-pay-header">
           <div class="cp-pay-header-label"><i class="fa-solid fa-lock"></i>&nbsp; Pago seguro</div>

@@ -1469,12 +1469,15 @@ def challenge_catalog_view(request):
 @login_required
 def challenge_purchase_view(request, product_id):
     """
-    GET  — show product detail + crypto selector.
+    GET  — show product detail + crypto selector + wallet payment option.
     POST — create a NowPayments Deposit tagged with challenge_product, redirect to status page.
     """
     product = ChallengeProduct.objects.filter(pk=product_id, is_active=True).first()
     if not product:
         return redirect("simulator:challenge_catalog")
+
+    wallet, _ = get_or_create_wallet(request.user)
+    price = product.price_usd
 
     error = None
     if request.method == "POST":
@@ -1527,13 +1530,152 @@ def challenge_purchase_view(request, product_id):
                     Deposit.objects.filter(pk=deposit.pk).update(status=Deposit.STATUS_FAILED)
                     error = "No se pudo crear el pago. Por favor intenta más tarde."
 
+    # Refresh wallet for accurate balance after any concurrent changes
+    wallet.refresh_from_db()
+    wallet_error = request.session.pop("challenge_error", None)
     from .currencies import CRYPTO_CHOICES
     return render(request, "simulator/challenge_purchase.html", {
-        "product":         product,
-        "crypto_choices":  CRYPTO_CHOICES,
-        "error":           error,
-        "active_section":  "challenges",
+        "product":             product,
+        "crypto_choices":      CRYPTO_CHOICES,
+        "error":               error,
+        "wallet":              wallet,
+        "wallet_balance":      wallet.available_balance,
+        "can_pay_with_wallet": wallet.available_balance >= price,
+        "wallet_shortfall":    max(price - wallet.available_balance, Decimal("0")),
+        "wallet_error":        wallet_error,
+        "active_section":      "challenges",
     })
+
+
+@login_required
+def challenge_wallet_purchase_view(request, product_id):
+    """
+    POST /challenges/<int:product_id>/wallet-buy/
+
+    Purchase a ChallengeProduct by debiting the user's internal wallet balance.
+    The external NOWPayments flow (challenge_purchase_view POST) is unaffected.
+
+    Atomic guarantees:
+      - wallet debit and enrollment creation are a single atomic transaction
+      - if activation fails, the entire transaction rolls back (wallet stays intact)
+      - idempotent: an active enrollment for this user+product blocks a second purchase
+    """
+    if request.method != "POST":
+        return redirect("simulator:challenge_purchase", product_id=product_id)
+
+    product = ChallengeProduct.objects.filter(pk=product_id, is_active=True).first()
+    if not product:
+        return redirect("simulator:challenge_catalog")
+
+    # Compliance gates — same as challenge_purchase_view
+    if not _is_email_verified(request.user):
+        request.session["challenge_error"] = _EMAIL_GATE_MSG
+        return redirect("simulator:challenge_purchase", product_id=product_id)
+    if not _has_accepted_terms(request.user):
+        request.session["challenge_error"] = _TERMS_GATE_MSG
+        return redirect("simulator:challenge_purchase", product_id=product_id)
+
+    wallet, _ = get_or_create_wallet(request.user)
+    price = product.price_usd
+
+    # Fast pre-check — real guard is inside atomic with select_for_update
+    if wallet.available_balance < price:
+        request.session["challenge_error"] = (
+            f"Saldo insuficiente. Disponible: ${wallet.available_balance:.2f}, "
+            f"requerido: ${price:.2f}."
+        )
+        return redirect("simulator:challenge_purchase", product_id=product_id)
+
+    class _AlreadyEnrolled(Exception):
+        pass
+
+    enrollment = None
+    try:
+        from .tasks import send_email_async
+        with transaction.atomic():
+            # Idempotency guard: lock and check for any active enrollment for this product
+            active_exists = (
+                ChallengeEnrollment.objects
+                .select_for_update()
+                .filter(
+                    user=request.user,
+                    product=product,
+                    status__in=[
+                        ChallengeEnrollment.ST_PHASE_1,
+                        ChallengeEnrollment.ST_PHASE_2,
+                        ChallengeEnrollment.ST_FUNDED,
+                    ],
+                )
+                .exists()
+            )
+            if active_exists:
+                raise _AlreadyEnrolled()
+
+            # Debit wallet (TX type "CHALLENGE_FEE" — stored as plain string since
+            # WalletTransaction.TX_CHOICES is not DB-enforced; add to TX_CHOICES
+            # formally in a future cleanup migration if desired)
+            debit_wallet(
+                wallet.id, price, "CHALLENGE_FEE",
+                note=f"Challenge purchase — {product.name} (#{product.pk})",
+                initiated_by=request.user,
+            )
+
+            # Enrollment with deposit=None marks this as a wallet-funded purchase
+            enrollment = ChallengeEnrollment.objects.create(
+                user=request.user,
+                product=product,
+                deposit=None,
+                status=ChallengeEnrollment.ST_PHASE_1,
+            )
+
+            # Activate Phase 1 — creates TradingAccount + RiskRule (idempotent)
+            _ce_activate(enrollment)
+
+        logger.info(
+            "[challenge_wallet_purchase] enrollment=%d product=%d user=%s amount=%.2f",
+            enrollment.pk, product.pk, request.user.username, float(price),
+        )
+
+        email = request.user.email
+        if email:
+            send_email_async.delay(
+                subject=f"Tu Challenge {product.name} está activo",
+                message=(
+                    f"Hola {request.user.username},\n\n"
+                    f"Tu Challenge {product.name} ({product.tier}) ha sido activado "
+                    f"usando tu balance interno.\n\n"
+                    f"Accede al simulador para ver tu cuenta Fase 1.\n\n"
+                    f"Buena suerte.\n— TRX Simulator"
+                ),
+                recipient_list=[email],
+            )
+
+        request.session["challenge_success"] = (
+            f"¡Challenge {product.name} activado exitosamente!"
+        )
+        return redirect("simulator:accounts")
+
+    except _AlreadyEnrolled:
+        request.session["challenge_error"] = (
+            "Ya tienes un Challenge activo para este producto."
+        )
+        return redirect("simulator:challenge_purchase", product_id=product_id)
+
+    except InsufficientFunds:
+        request.session["challenge_error"] = (
+            "Saldo insuficiente en wallet. Por favor deposita primero."
+        )
+        return redirect("simulator:challenge_purchase", product_id=product_id)
+
+    except Exception as exc:
+        logger.error(
+            "[challenge_wallet_purchase] failed product=%d user=%s: %s",
+            product_id, request.user.username, exc, exc_info=True,
+        )
+        request.session["challenge_error"] = (
+            "Error interno al procesar el pago. Por favor intenta más tarde."
+        )
+        return redirect("simulator:challenge_purchase", product_id=product_id)
 
 
 # ===================================================

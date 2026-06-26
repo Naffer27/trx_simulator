@@ -54,6 +54,7 @@ from .views import (
     # Challenge purchase
     challenge_catalog_view,
     challenge_purchase_view,
+    challenge_wallet_purchase_view,
     # External webhook + status API
     external_challenge_activate,
     challenge_status_view,
@@ -154,8 +155,9 @@ urlpatterns = [
     path("funded/payout/request/", funded_payout_request_view, name="funded_payout_request"),
 
     # ── Challenge Purchase ────────────────────────────────────────────────────
-    path("challenges/",                       challenge_catalog_view,  name="challenge_catalog"),
-    path("challenges/<int:product_id>/buy/",  challenge_purchase_view, name="challenge_purchase"),
+    path("challenges/",                            challenge_catalog_view,         name="challenge_catalog"),
+    path("challenges/<int:product_id>/buy/",       challenge_purchase_view,        name="challenge_purchase"),
+    path("challenges/<int:product_id>/wallet-buy/", challenge_wallet_purchase_view, name="challenge_wallet_purchase"),
 
     # ── External Challenge Activation Webhook ────────────────────────────────
     path("api/internal/challenge/activate/",  external_challenge_activate, name="external_challenge_activate"),
