@@ -264,7 +264,7 @@
         {% if deposit.credited %}
           {% if is_challenge %}Tu cuenta Phase 1 está lista. ¡Comienza a operar!{% else %}${{ deposit.amount_usd }} añadidos a tu wallet.{% endif %}
         {% elif deposit.status == 'waiting' %}
-          {% if is_challenge %}Tu challenge se activará automáticamente cuando NOWPayments confirme.{% else %}Envía exactamente el monto indicado a la dirección de abajo.{% endif %}
+          {% if is_challenge %}Tu challenge se activará automáticamente cuando confirmemos el pago.{% else %}Envía exactamente el monto indicado a la dirección de abajo.{% endif %}
         {% elif deposit.status == 'confirming' %}
           {% if is_challenge %}Pago recibido — tu challenge se activará en breve.{% else %}Pago recibido — esperando confirmaciones en blockchain.{% endif %}
         {% else %}
@@ -339,7 +339,7 @@
   {% if deposit.nowpayments_invoice_url and not is_final %}
   <a href="{{ deposit.nowpayments_invoice_url }}" target="_blank" rel="noopener" class="ps-ext-link">
     <i class="fa-solid fa-arrow-up-right-from-square"></i>
-    Abrir página de pago de NowPayments
+    Abrir página de pago externo
   </a>
   {% endif %}
 
@@ -353,7 +353,7 @@
     {% if is_challenge %}
     <div class="ps-info-row">
       <i class="fa-solid fa-bolt"></i>
-      Tu challenge se activará automáticamente cuando NOWPayments confirme el pago.
+      Tu challenge se activará automáticamente al confirmar el pago.
     </div>
     {% else %}
     <div class="ps-info-row">
