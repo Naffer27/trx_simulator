@@ -888,9 +888,11 @@ class LedgerEntryAdmin(admin.ModelAdmin):
         color = "#27ae60" if v > 0 else "#e74c3c" if v < 0 else "#888"
         return format_html('<span style="color:{};font-weight:700">{}</span>', color, f"{v:+.2f}")
 
-    list_display = ("id", "account", "event_type", "amount_colored", "balance_after", "created_at")
-    list_filter = ("event_type", "created_at", "account")
+    list_display  = ("id", "account", "event_type", "amount_colored", "balance_after", "created_at")
+    list_filter   = ("event_type", "created_at")
     search_fields = ("account__user__username", "account__user__email", "event_type")
+    ordering      = ("-id",)
+    date_hierarchy = "created_at"
     readonly_fields = ("created_at", "balance_after")
 
     _ALL_READONLY = ("account", "event_type", "amount", "balance_after", "meta", "created_at")
@@ -1197,9 +1199,15 @@ class DepositAdmin(admin.ModelAdmin):
         bg, fg = colors.get(obj.status, ("#1a1a1a", "#aaa"))
         return _badge(obj.get_status_display(), bg, fg)
 
-    list_display = ("id", "user", "amount_usd", "crypto_currency", "status_badge", "created_at", "confirmed_at")
-    list_filter = ("status", "crypto_currency", "created_at")
-    search_fields = ("user__username", "user__email")
+    @admin.display(description="Challenge?", boolean=True)
+    def is_challenge(self, obj):
+        return obj.challenge_product_id is not None
+
+    list_display  = ("id", "user", "amount_usd", "crypto_currency", "status_badge", "is_challenge", "credited", "created_at", "confirmed_at")
+    list_filter   = ("status", "crypto_currency", "credited", "created_at")
+    search_fields = ("user__username", "user__email", "nowpayments_payment_id")
+    ordering      = ("-created_at",)
+    date_hierarchy = "created_at"
     readonly_fields = ("created_at", "confirmed_at", "nowpayments_payment_id", "nowpayments_invoice_url")
 
 
@@ -2806,3 +2814,111 @@ class FundedPayoutRequestAdmin(admin.ModelAdmin):
 admin.site.site_header = "Money Brokers — Risk Desk"
 admin.site.site_title = "Money Brokers"
 admin.site.index_title = "Risk & Dealing Administration"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Admin sidebar reorganization — ADMIN_UI.1
+# Groups all simulator models into named sections without touching registrations,
+# URLs, migrations or any business logic.  Fully reversible: delete this block
+# and admin.site.__class__ = MoneyBrokerAdminSite to undo.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class MoneyBrokerAdminSite(admin.AdminSite):
+    """
+    Override get_app_list to reorganize the sidebar into logical sections.
+    All models remain registered on admin.site — only the visual grouping changes.
+    """
+
+    _SECTIONS = [
+        ("CORE OPERATIONS", "core_ops", [
+            "kycprofile",
+            "supportticket",
+            "auditlog",
+        ]),
+        ("TRADING ENGINE", "trading_eng", [
+            "tradingaccount",
+            "trade",
+            "position",
+            "riskrule",
+            "tradingviolation",
+            "drawdownsnapshot",
+            "traderscore",
+        ]),
+        ("FUNDING PROGRAMS", "funding", [
+            "challengeproduct",
+            "challengeenrollment",
+            "fundedconfig",
+            "fundedpayoutrequest",
+        ]),
+        ("PAYMENTS & LEDGER", "payments", [
+            "deposit",
+            "withdrawalrequest",
+            "ledgerentry",
+            "purchase",
+            "bonus",
+        ]),
+        ("BROKER BUSINESS", "broker_biz", [
+            "brokerledger",
+            "brokersnapshot",
+            "brokerrevenuesnapshot",
+            "brokerspreadconfig",
+            "brokerdocument",
+        ]),
+        ("GROWTH", "growth", [
+            "referral",
+        ]),
+        ("TOOLS", "tools", [
+            "expertadvisor",
+            "calendarevent",
+        ]),
+    ]
+
+    def get_app_list(self, request, app_label=None):
+        original = super().get_app_list(request, app_label)
+
+        # Separate auth/contenttypes apps from simulator models
+        sim_models: dict = {}
+        other_apps: list = []
+        for app in original:
+            if app["app_label"] == "simulator":
+                for m in app["models"]:
+                    sim_models[m["object_name"].lower()] = m
+            else:
+                other_apps.append(app)
+
+        # Build custom sections
+        custom = list(other_apps)
+        placed: set = set()
+        for section_name, section_label, model_keys in self._SECTIONS:
+            section_models = []
+            for key in model_keys:
+                if key in sim_models:
+                    section_models.append(sim_models[key])
+                    placed.add(key)
+            if section_models:
+                custom.append({
+                    "name": section_name,
+                    "app_label": section_label,
+                    "app_url": "",
+                    "has_module_perms": True,
+                    "models": section_models,
+                })
+
+        # Safety net — any simulator model not listed above goes to UNCATEGORIZED
+        leftover = [m for k, m in sim_models.items() if k not in placed]
+        if leftover:
+            custom.append({
+                "name": "UNCATEGORIZED",
+                "app_label": "uncategorized",
+                "app_url": "",
+                "has_module_perms": True,
+                "models": leftover,
+            })
+
+        return custom
+
+
+# Swap the class on the existing admin.site instance.
+# All @admin.register() decorators already bound to this object remain intact.
+# URLs remain unchanged. No registrations are affected.
+admin.site.__class__ = MoneyBrokerAdminSite
