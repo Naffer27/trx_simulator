@@ -1854,6 +1854,13 @@ def deposit_status_view(request, deposit_id):
     )
     is_challenge = bool(deposit.challenge_product_id)
 
+    account_id  = None
+    account_url = None
+    if is_challenge and deposit.credited:
+        account_id = deposit.challenge_enrollments.values_list("phase1_account_id", flat=True).first()
+        if account_id:
+            account_url = reverse("simulator:dashboard_account", args=[account_id])
+
     return render(request, "simulator/deposit_status.html", {
         "deposit":           deposit,
         "wallet":            wallet,
@@ -1861,6 +1868,8 @@ def deposit_status_view(request, deposit_id):
         "active_section":    "deposit",
         "is_challenge":      is_challenge,
         "challenge_product": deposit.challenge_product,
+        "account_id":        account_id,
+        "account_url":       account_url,
     })
 
 
@@ -1904,9 +1913,12 @@ def deposit_status_json(request, deposit_id):
 
     is_challenge = bool(deposit.challenge_product_id)
     challenge_name = deposit.challenge_product.name if is_challenge else ""
-    account_id = None
+    account_id  = None
+    account_url = None
     if is_challenge and deposit.credited:
         account_id = deposit.challenge_enrollments.values_list("phase1_account_id", flat=True).first()
+        if account_id:
+            account_url = reverse("simulator:dashboard_account", args=[account_id])
 
     return JsonResponse({
         "status":          deposit.status,
@@ -1919,6 +1931,7 @@ def deposit_status_json(request, deposit_id):
         "is_challenge":    is_challenge,
         "challenge_name":  challenge_name,
         "account_id":      account_id,
+        "account_url":     account_url,
     })
 
 

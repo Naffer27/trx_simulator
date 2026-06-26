@@ -1,10 +1,10 @@
 # simulator/tests/test_deposit_status_challenge.py
 """
-Bloque K.2G.3 — Challenge-aware Deposit Status.
+Bloque K.2G.3/K.2G.4 — Challenge-aware Deposit Status + Direct Account Link.
 
 Verifies that deposit_status.html and deposit_status_json are aware of
-whether a Deposit belongs to a challenge, showing appropriate messages
-and buttons without breaking normal wallet deposits.
+whether a Deposit belongs to a challenge, showing appropriate messages,
+buttons, and a direct link to the activated Phase 1 account when available.
 """
 from decimal import Decimal
 
@@ -13,6 +13,8 @@ from django.urls import reverse
 
 from simulator.models import Deposit
 from simulator.tests.factories import (
+    make_account,
+    make_challenge_enrollment,
     make_challenge_product,
     make_user,
     make_wallet,
@@ -178,7 +180,8 @@ class DepositStatusChallengeCreditedTests(TestCase):
         )
         self.assertIn("Phase 1 está lista", self._html(d))
 
-    def test_challenge_credited_shows_ir_al_panel_button(self):
+    def test_challenge_credited_without_enrollment_shows_fallback_button(self):
+        # No enrollment → no account_url → fallback text "Ir al Panel de Trading"
         d = _make_challenge_deposit(
             self.user, self.product,
             status=Deposit.STATUS_FINISHED, credited=True,
@@ -259,3 +262,131 @@ class DepositStatusJsonChallengeTests(TestCase):
     def test_json_account_id_none_for_wallet_deposit(self):
         d = _make_wallet_deposit(self.user)
         self.assertIsNone(self._json(d)["account_id"])
+
+    def test_json_account_url_none_when_not_credited(self):
+        d = _make_challenge_deposit(self.user, self.product)
+        self.assertIsNone(self._json(d)["account_url"])
+
+    def test_json_account_url_none_for_wallet_deposit(self):
+        d = _make_wallet_deposit(self.user)
+        self.assertIsNone(self._json(d)["account_url"])
+
+
+class DepositStatusDirectLinkTests(TestCase):
+    """K.2G.4 — Direct link to activated Phase 1 account after challenge confirmation."""
+
+    def setUp(self):
+        self.user = make_user()
+        make_wallet(self.user)
+        self.product = make_challenge_product(name="Pro 10K")
+        self.client.force_login(self.user)
+
+    def _make_credited_challenge_with_account(self):
+        """Helper: credited challenge deposit + enrollment with a Phase 1 account."""
+        account = make_account(user=self.user, tier="10K")
+        d = _make_challenge_deposit(
+            self.user, self.product,
+            status=Deposit.STATUS_FINISHED, credited=True,
+        )
+        make_challenge_enrollment(
+            user=self.user,
+            product=self.product,
+            deposit=d,
+            phase1_account=account,
+        )
+        return d, account
+
+    def _html(self, deposit):
+        r = self.client.get(_status_url(deposit.pk))
+        self.assertEqual(r.status_code, 200)
+        return r.content.decode()
+
+    def _json(self, deposit):
+        r = self.client.get(_json_url(deposit.pk))
+        self.assertEqual(r.status_code, 200)
+        return r.json()
+
+    # ── HTML button ───────────────────────────────────────────────────────
+
+    def test_credited_with_account_shows_ir_a_mi_cuenta_challenge(self):
+        d, _ = self._make_credited_challenge_with_account()
+        self.assertIn("Ir a mi cuenta Challenge", self._html(d))
+
+    def test_credited_with_account_does_not_show_ir_al_panel_fallback(self):
+        d, _ = self._make_credited_challenge_with_account()
+        self.assertNotIn("Ir al Panel de Trading", self._html(d))
+
+    def test_credited_with_account_links_to_dashboard(self):
+        d, account = self._make_credited_challenge_with_account()
+        expected = f"/dashboard/{account.id}/"
+        self.assertIn(expected, self._html(d))
+
+    def test_credited_without_account_shows_fallback_text(self):
+        d = _make_challenge_deposit(
+            self.user, self.product,
+            status=Deposit.STATUS_FINISHED, credited=True,
+        )
+        self.assertIn("Ir al Panel de Trading", self._html(d))
+
+    def test_credited_without_account_does_not_show_mi_cuenta_challenge(self):
+        d = _make_challenge_deposit(
+            self.user, self.product,
+            status=Deposit.STATUS_FINISHED, credited=True,
+        )
+        self.assertNotIn("Ir a mi cuenta Challenge", self._html(d))
+
+    def test_wallet_deposit_credited_does_not_show_ir_a_mi_cuenta(self):
+        d = _make_wallet_deposit(self.user, status=Deposit.STATUS_FINISHED, credited=True)
+        self.assertNotIn("Ir a mi cuenta Challenge", self._html(d))
+
+    # ── Context ───────────────────────────────────────────────────────────
+
+    def test_context_account_url_present_when_enrollment_exists(self):
+        d, account = self._make_credited_challenge_with_account()
+        r = self.client.get(_status_url(d.pk))
+        self.assertEqual(r.context["account_url"], f"/dashboard/{account.id}/")
+
+    def test_context_account_url_none_without_enrollment(self):
+        d = _make_challenge_deposit(
+            self.user, self.product,
+            status=Deposit.STATUS_FINISHED, credited=True,
+        )
+        r = self.client.get(_status_url(d.pk))
+        self.assertIsNone(r.context["account_url"])
+
+    def test_context_account_id_present_when_enrollment_exists(self):
+        d, account = self._make_credited_challenge_with_account()
+        r = self.client.get(_status_url(d.pk))
+        self.assertEqual(r.context["account_id"], account.id)
+
+    # ── JSON endpoint ─────────────────────────────────────────────────────
+
+    def test_json_account_url_present_when_enrollment_exists(self):
+        d, account = self._make_credited_challenge_with_account()
+        data = self._json(d)
+        self.assertEqual(data["account_url"], f"/dashboard/{account.id}/")
+
+    def test_json_account_id_present_when_enrollment_exists(self):
+        d, account = self._make_credited_challenge_with_account()
+        self.assertEqual(self._json(d)["account_id"], account.id)
+
+    def test_json_account_url_none_without_enrollment(self):
+        d = _make_challenge_deposit(
+            self.user, self.product,
+            status=Deposit.STATUS_FINISHED, credited=True,
+        )
+        self.assertIsNone(self._json(d)["account_url"])
+
+    # ── JS constant ───────────────────────────────────────────────────────
+
+    def test_account_url_js_constant_present_when_enrollment_exists(self):
+        d, account = self._make_credited_challenge_with_account()
+        html = self._html(d)
+        self.assertIn(f"ACCOUNT_URL   = \"/dashboard/{account.id}/\"", html)
+
+    def test_account_url_js_constant_empty_without_enrollment(self):
+        d = _make_challenge_deposit(
+            self.user, self.product,
+            status=Deposit.STATUS_FINISHED, credited=True,
+        )
+        self.assertIn('ACCOUNT_URL   = ""', self._html(d))

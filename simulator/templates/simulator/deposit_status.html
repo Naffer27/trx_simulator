@@ -372,8 +372,10 @@
   <div style="display:flex;gap:10px;margin-top:22px;flex-wrap:wrap;">
     {% if deposit.credited %}
       {% if is_challenge %}
-      <a href="{% url 'simulator:accounts' %}" class="btn btn-primary" style="flex:1;justify-content:center;">
-        <i class="fa-solid fa-chart-line"></i> Ir al Panel de Trading
+      <a href="{% if account_url %}{{ account_url }}{% else %}{% url 'simulator:accounts' %}{% endif %}"
+         class="btn btn-primary" id="psChallengeCta" style="flex:1;justify-content:center;">
+        <i class="fa-solid fa-chart-line"></i>
+        {% if account_url %}Ir a mi cuenta Challenge{% else %}Ir al Panel de Trading{% endif %}
       </a>
       {% else %}
       <a href="{% url 'simulator:accounts' %}" class="btn btn-primary" style="flex:1;justify-content:center;">
@@ -410,6 +412,7 @@ const EXPIRES_AT    = {% if deposit.expires_at %}"{{ deposit.expires_at|date:'c'
 const POLL_URL      = "{% url 'simulator:deposit_status_json' deposit.id %}";
 const IS_CHALLENGE  = {{ is_challenge|lower }};
 const CHALLENGE_NAME = "{{ challenge_product.name|default:''|escapejs }}";
+const ACCOUNT_URL   = "{{ account_url|default:''|escapejs }}";
 const MSG_CREDITED_TITLE = "{% if is_challenge %}Challenge activado{% else %}Depósito acreditado{% endif %}";
 const MSG_CREDITED_SUB   = "{% if is_challenge %}Tu cuenta Phase 1 está lista. ¡Comienza a operar!{% else %}${{ deposit.amount_usd }} añadidos a tu wallet.{% endif %}";
 const MSG_CONFIRMING_SUB = "{% if is_challenge %}Pago recibido — tu challenge se activará en breve.{% else %}Pago recibido — esperando confirmaciones en blockchain.{% endif %}";
@@ -534,8 +537,8 @@ if (!IS_FINAL) {
       if (data.credited || FINAL_STATUSES.includes(data.status)) {
         clearInterval(poller);
         if (data.credited) {
-          // Redirect to accounts after 3 s
-          setTimeout(() => { window.location.href = "{% url 'simulator:accounts' %}"; }, 3000);
+          const dest = data.account_url || ACCOUNT_URL || "{% url 'simulator:accounts' %}";
+          setTimeout(() => { window.location.href = dest; }, 3000);
         }
       }
     } catch (_) {}
