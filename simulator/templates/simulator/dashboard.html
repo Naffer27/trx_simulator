@@ -1161,44 +1161,20 @@
 
       <!-- Account Rules — DEMO / RETAIL / STANDARD / ECN / CRYPTO accounts only -->
       {% if show_account_rules_panel %}
+      {% if acct_rules.account_type == "DEMO" %}
+      <!-- Demo Account panel -->
       <div class="rc-section" id="accountRulesCard">
-        <div class="rc-section-lbl">Account Rules</div>
+        <div class="rc-section-lbl">Demo Account</div>
+        <div style="font-size:.65rem;color:rgba(255,255,255,.38);margin-bottom:8px;letter-spacing:.03em;">Practice environment</div>
 
-        <div class="chal-row">
-          <span class="chal-k">Product</span>
-          <span class="chal-v" id="arProductName">{{ acct_rules.product_name }}</span>
-        </div>
-        <div class="chal-row">
-          <span class="chal-k">Type</span>
-          <span class="chal-v">{{ acct_rules.account_type }}</span>
-        </div>
         <div class="chal-row">
           <span class="chal-k">Currency</span>
           <span class="chal-v" id="arCurrency">{{ acct_rules.currency }}</span>
         </div>
+        {% if acct_rules.leverage %}
         <div class="chal-row">
           <span class="chal-k">Leverage</span>
           <span class="chal-v">1:{{ acct_rules.leverage }}</span>
-        </div>
-
-        {% if acct_rules.spread_pips is not None %}
-        <div class="chal-row">
-          <span class="chal-k">Spread</span>
-          <span class="chal-v">{% if acct_rules.spread_pips > 0 %}{{ acct_rules.spread_pips }} pips{% else %}Raw (0.0 pips){% endif %}</span>
-        </div>
-        {% endif %}
-
-        {% if acct_rules.commission_per_lot is not None %}
-        <div class="chal-row">
-          <span class="chal-k">Commission</span>
-          <span class="chal-v">{% if acct_rules.commission_per_lot > 0 %}${{ acct_rules.commission_per_lot }}/lot{% else %}—{% endif %}</span>
-        </div>
-        {% endif %}
-
-        {% if acct_rules.max_lot_size %}
-        <div class="chal-row">
-          <span class="chal-k">Max Lot Size</span>
-          <span class="chal-v">{{ acct_rules.max_lot_size }}</span>
         </div>
         {% endif %}
 
@@ -1225,19 +1201,49 @@
           <span class="chal-k">Margin Level</span>
           <span class="chal-v" id="arMarginLevel">—</span>
         </div>
+      </div>
+      {% else %}
+      <!-- Real Account panel (RETAIL / ECN / STANDARD / CRYPTO) -->
+      <div class="rc-section" id="accountRulesCard">
+        <div class="rc-section-lbl">Real Account</div>
+        <div style="font-size:.65rem;color:rgba(255,255,255,.38);margin-bottom:8px;letter-spacing:.03em;">Live trading account</div>
 
-        {% if acct_rules.margin_call_level is not None %}
-        <div style="border-top:1px solid rgba(255,255,255,.06);margin:7px 0 5px;"></div>
         <div class="chal-row">
-          <span class="chal-k">Margin Call</span>
-          <span class="chal-v">{{ acct_rules.margin_call_level }}%</span>
+          <span class="chal-k">Currency</span>
+          <span class="chal-v" id="arCurrency">{{ acct_rules.currency }}</span>
         </div>
+        {% if acct_rules.leverage %}
         <div class="chal-row">
-          <span class="chal-k">Stop Out</span>
-          <span class="chal-v">{{ acct_rules.stopout_level }}%</span>
+          <span class="chal-k">Leverage</span>
+          <span class="chal-v">1:{{ acct_rules.leverage }}</span>
         </div>
         {% endif %}
+
+        <div style="border-top:1px solid rgba(255,255,255,.06);margin:7px 0 5px;"></div>
+        <div class="rc-section-lbl" style="margin-bottom:5px;">Account Health</div>
+
+        <div class="chal-row">
+          <span class="chal-k">Balance</span>
+          <span class="chal-v" id="arBalance">—</span>
+        </div>
+        <div class="chal-row">
+          <span class="chal-k">Equity</span>
+          <span class="chal-v" id="arEquity">—</span>
+        </div>
+        <div class="chal-row">
+          <span class="chal-k">Margin Used</span>
+          <span class="chal-v" id="arMarginUsed">—</span>
+        </div>
+        <div class="chal-row">
+          <span class="chal-k">Free Margin</span>
+          <span class="chal-v" id="arFreeMargin">—</span>
+        </div>
+        <div class="chal-row">
+          <span class="chal-k">Margin Level</span>
+          <span class="chal-v" id="arMarginLevel">—</span>
+        </div>
       </div>
+      {% endif %}
       {% endif %}
 
       <!-- Funded Account Payout Section -->

@@ -199,3 +199,52 @@ class ChallengePanelIsolationTests(TestCase):
         self.assertIn("realized_dd_pct", ctx)
         self.assertIn("daily_realized_dd_pct", ctx)
         self.assertIn("has_profit_target", ctx)
+
+
+class SidebarPanelTitleTests(TestCase):
+    """K.5 — sidebar renders correct title/subtitle for each account type."""
+
+    def setUp(self):
+        self.user = make_user()
+        self.client.force_login(self.user)
+
+    def _html(self, account):
+        r = self.client.get(_url(account.pk))
+        self.assertEqual(r.status_code, 200)
+        return r.content.decode()
+
+    def test_demo_shows_demo_account_title(self):
+        acc = make_account(self.user, account_type="DEMO", tier=None)
+        html = self._html(acc)
+        self.assertIn("Demo Account", html)
+
+    def test_demo_shows_practice_environment_subtitle(self):
+        acc = make_account(self.user, account_type="DEMO", tier=None)
+        html = self._html(acc)
+        self.assertIn("Practice environment", html)
+
+    def test_demo_does_not_show_real_account_title(self):
+        acc = make_account(self.user, account_type="DEMO", tier=None)
+        html = self._html(acc)
+        self.assertNotIn("Real Account", html)
+
+    def test_retail_shows_real_account_title(self):
+        acc = make_account(self.user, account_type="RETAIL", tier=None)
+        html = self._html(acc)
+        self.assertIn("Real Account", html)
+
+    def test_retail_shows_live_trading_subtitle(self):
+        acc = make_account(self.user, account_type="RETAIL", tier=None)
+        html = self._html(acc)
+        self.assertIn("Live trading account", html)
+
+    def test_ecn_shows_real_account_title(self):
+        acc = make_account(self.user, account_type="ECN", tier=None)
+        html = self._html(acc)
+        self.assertIn("Real Account", html)
+
+    def test_challenge_shows_neither_demo_nor_real_panel_title(self):
+        acc = make_account(self.user, account_type="CHALLENGE", tier="10K")
+        html = self._html(acc)
+        self.assertNotIn("Demo Account", html)
+        self.assertNotIn("Real Account", html)
