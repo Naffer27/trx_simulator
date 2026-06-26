@@ -926,12 +926,14 @@ def account_open_view(request):
     )
     demo_products = [p for p in catalog if p.family == AccountProduct.FAMILY_DEMO]
     real_products = [p for p in catalog if p.family == AccountProduct.FAMILY_REAL]
+    challenge_products = ChallengeProduct.objects.filter(is_active=True).order_by("tier", "price_usd")
 
     return render(request, "simulator/account_open.html", {
-        "wallet":         wallet,
-        "demo_products":  demo_products,
-        "real_products":  real_products,
-        "active_section": "account_open",
+        "wallet":             wallet,
+        "demo_products":      demo_products,
+        "real_products":      real_products,
+        "challenge_products": challenge_products,
+        "active_section":     "account_open",
     })
 
 
