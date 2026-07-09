@@ -6,7 +6,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#05050a" />
-  <title>{% block title %}Money Brokers{% endblock %}</title>
+  <title>{% block title %}Money Broker{% endblock %}</title>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -56,7 +56,7 @@
 <body style="padding-bottom:env(safe-area-inset-bottom);">
   <nav class="navbar navbar-expand">
     <div class="container-fluid">
-      <a class="navbar-brand" href="{% url 'simulator:landing' %}">{% block navbar_brand %}MONEY BROKERS{% endblock %}</a>
+      <a class="navbar-brand" href="{% url 'simulator:landing' %}">{% block navbar_brand %}MONEY BROKER{% endblock %}</a>
       <ul class="navbar-nav ms-auto gap-1 align-items-center">
         {% if user.is_authenticated %}
           <li class="nav-item"><a class="nav-link{% if request.resolver_match.url_name == 'dashboard' or request.resolver_match.url_name == 'dashboard_alt' %} nav-active{% endif %}" href="{% url 'simulator:home' %}">Dashboard</a></li>

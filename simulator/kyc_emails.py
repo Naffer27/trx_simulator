@@ -9,7 +9,7 @@ import logging
 
 logger = logging.getLogger("simulator.kyc_emails")
 
-_BRAND = "Money Brokers"
+_BRAND = "Money Broker"
 
 
 def send_kyc_approved_email(kyc_profile) -> None:
@@ -20,7 +20,7 @@ def send_kyc_approved_email(kyc_profile) -> None:
     username = kyc_profile.user.username
     now_str  = timezone.now().strftime("%Y-%m-%d %H:%M UTC")
 
-    subject = f"Money Brokers — KYC aprobado"
+    subject = f"Money Broker — KYC aprobado"
     body = (
         f"Hola {username},\n\n"
         f"Tu verificación KYC fue aprobada.\n"
@@ -49,7 +49,7 @@ def send_kyc_rejected_email(kyc_profile) -> None:
 
     reason_line = f"  Motivo:  {reason}\n" if reason else ""
 
-    subject = f"Money Brokers — KYC requiere revisión"
+    subject = f"Money Broker — KYC requiere revisión"
     body = (
         f"Hola {username},\n\n"
         f"Tu verificación KYC requiere revisión.\n\n"

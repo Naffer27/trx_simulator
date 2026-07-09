@@ -13,7 +13,7 @@ from django.utils import timezone
 
 logger = logging.getLogger("simulator.withdrawal_emails")
 
-_BRAND = "Money Brokers"
+_BRAND = "Money Broker"
 
 EVENT_REQUESTED = "requested"
 EVENT_APPROVED  = "approved"

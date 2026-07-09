@@ -346,7 +346,7 @@ LOGGING = {
 # ===============================
 # 🔐 2FA (TOTP)
 # ===============================
-TOTP_ISSUER_NAME    = os.getenv("TOTP_ISSUER_NAME", "Money Brokers")
+TOTP_ISSUER_NAME    = os.getenv("TOTP_ISSUER_NAME", "Money Broker")
 # Fernet key for encrypting TOTP secrets at rest.
 # Generate once with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 # Must be 32-byte base64-encoded key. If not set, secrets are stored base64-only (dev mode).

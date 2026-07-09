@@ -4,14 +4,14 @@ Support ticket email notifications.
 
 Covers:
   1.  Valid POST to /support/ queues a user confirmation email.
-  2.  Email subject contains "Money Brokers".
+  2.  Email subject contains "Money Broker".
   3.  Email body contains ticket id.
   4.  Email body contains the ticket subject.
   5.  Email body contains the ticket category display label.
   6.  If user email fails, the ticket is still created.
   7.  Admin notification is sent when SUPPORT_EMAIL is set.
   8.  Admin notification is NOT sent when SUPPORT_EMAIL is empty.
-  9.  Admin email subject contains "Money Brokers".
+  9.  Admin email subject contains "Money Broker".
   10. Admin email body contains the user's username.
   11. Admin email body contains the ticket category and priority.
   12. If admin email fails, the ticket is still created (user email also sent).
@@ -76,7 +76,7 @@ class SupportTicketCreatedEmailTests(TestCase):
             c for c in mock_email.call_args_list
             if self.user.email in c.kwargs.get("recipient_list", [])
         ]
-        self.assertIn("Money Brokers", user_calls[0].kwargs["subject"])
+        self.assertIn("Money Broker", user_calls[0].kwargs["subject"])
 
     @_PATCH_EMAIL
     def test_user_email_body_contains_ticket_id(self, mock_email):
@@ -150,7 +150,7 @@ class SupportTicketAdminEmailTests(TestCase):
             c for c in mock_email.call_args_list
             if "support@company.com" in c.kwargs.get("recipient_list", [])
         ]
-        self.assertIn("Money Brokers", admin_calls[0].kwargs["subject"])
+        self.assertIn("Money Broker", admin_calls[0].kwargs["subject"])
 
     @_PATCH_EMAIL
     @override_settings(SUPPORT_EMAIL="support@company.com")

@@ -10,7 +10,7 @@ from django.utils import timezone
 
 logger = logging.getLogger("simulator.support_emails")
 
-_BRAND = "Money Brokers"
+_BRAND = "Money Broker"
 
 
 def send_support_ticket_created_email(ticket) -> None:
@@ -29,7 +29,7 @@ def send_support_ticket_created_email(ticket) -> None:
     subject   = ticket.subject
     now_str   = timezone.now().strftime("%Y-%m-%d %H:%M UTC")
 
-    email_subject = f"Money Brokers — Ticket recibido"
+    email_subject = f"Money Broker — Ticket recibido"
     body = (
         f"Hola {username},\n\n"
         f"Recibimos tu solicitud de soporte. El equipo la revisará pronto.\n\n"
@@ -78,7 +78,7 @@ def send_support_ticket_admin_email(ticket) -> None:
     priority  = ticket.get_priority_display()
     now_str   = timezone.now().strftime("%Y-%m-%d %H:%M UTC")
 
-    email_subject = f"Money Brokers — Nuevo ticket de soporte #{ticket_id}"
+    email_subject = f"Money Broker — Nuevo ticket de soporte #{ticket_id}"
     body = (
         f"Nuevo ticket de soporte abierto.\n\n"
         f"  Ticket #:   {ticket_id}\n"

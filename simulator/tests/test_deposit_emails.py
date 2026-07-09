@@ -5,7 +5,7 @@ Deposit confirmation email notifications.
 Covers:
   1.  "finished" IPN queues one confirmation email to the deposit owner.
   2.  "confirmed" IPN queues one confirmation email.
-  3.  Email subject contains "Money Brokers".
+  3.  Email subject contains "Money Broker".
   4.  Email body contains the deposit amount.
   5.  Email body contains the crypto currency.
   6.  Email body does not contain the NowPayments API key or IPN secret.
@@ -90,7 +90,7 @@ class DepositConfirmedEmailTests(TestCase):
     def test_email_subject_contains_brand(self, mock_email, _mock_sig):
         self._post("finished")
         subj = mock_email.call_args.kwargs["subject"]
-        self.assertIn("Money Brokers", subj)
+        self.assertIn("Money Broker", subj)
 
     @_PATCH_SIG
     @_PATCH_EMAIL
@@ -182,7 +182,7 @@ class DepositEmailHelperTests(TestCase):
     @_PATCH_EMAIL
     def test_helper_subject_contains_brand(self, mock_email):
         send_deposit_confirmed_email(self.deposit)
-        self.assertIn("Money Brokers", mock_email.call_args.kwargs["subject"])
+        self.assertIn("Money Broker", mock_email.call_args.kwargs["subject"])
 
     @_PATCH_EMAIL
     def test_helper_body_contains_confirmado(self, mock_email):

@@ -1,5 +1,5 @@
 {% extends "simulator/base_app.html" %}
-{% block title %}Expertos (EAs) — Money Brokers{% endblock %}
+{% block title %}Expertos (EAs) — Money Broker{% endblock %}
 {% block page_title %}Expertos (EAs){% endblock %}
 
 {% block extra_styles %}
@@ -84,7 +84,7 @@
 {% block content %}
 <div>
   <p style="color:var(--muted-2);font-size:.85rem;margin-bottom:24px;">
-    Robots de trading y asesores expertos (EAs) disponibles para Money Brokers.
+    Robots de trading y asesores expertos (EAs) disponibles para Money Broker.
     {% if total %}<span style="color:var(--muted);margin-left:8px">{{ total }} EA{{ total|pluralize }} disponible{{ total|pluralize }}</span>{% endif %}
     Gestionado desde el panel de administración.
   </p>
@@ -130,7 +130,7 @@
   <div class="empty-state">
     <div class="empty-icon"><i class="fa-solid fa-robot"></i></div>
     <div class="empty-msg">No hay expertos disponibles en este momento.</div>
-    <div style="font-size:.75rem;color:var(--muted);margin-top:6px">Los EAs serán publicados próximamente por el equipo de Money Brokers.</div>
+    <div style="font-size:.75rem;color:var(--muted);margin-top:6px">Los EAs serán publicados próximamente por el equipo de Money Broker.</div>
   </div>
   {% endif %}
 </div>

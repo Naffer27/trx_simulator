@@ -83,7 +83,7 @@ def get_totp_uri(secret: str, username: str) -> str:
     secret must be the RAW base32 secret (not encrypted).
     """
     from django.conf import settings
-    issuer = getattr(settings, "TOTP_ISSUER_NAME", "Money Brokers")
+    issuer = getattr(settings, "TOTP_ISSUER_NAME", "Money Broker")
     totp = pyotp.TOTP(secret)
     return totp.provisioning_uri(name=username, issuer_name=issuer)
 

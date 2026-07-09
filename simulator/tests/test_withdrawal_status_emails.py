@@ -6,7 +6,7 @@ Integration tests verify that each lifecycle event causes exactly one
 user-facing email to be queued via send_email_async.delay.
 
 Content tests verify subject and body requirements via the helper directly:
-  - subject always contains "Money Brokers"
+  - subject always contains "Money Broker"
   - body always contains: monto, moneda, estado, fecha
 
 Idempotency test: a second NP callback for an already-terminal withdrawal
@@ -19,7 +19,7 @@ Covers:
   4.  completed — email queued when NP callback marks withdrawal FINISHED
   5.  failed    — email queued when NP callback marks withdrawal FAILED
   6.  no-duplicate — second FINISHED callback after COMPLETED sends no email
-  7.  subject contains "Money Brokers" for all five events
+  7.  subject contains "Money Broker" for all five events
   8.  body contains amount for all five events
   9.  body contains currency for all five events
   10. body contains status label for all five events
@@ -314,27 +314,27 @@ class WithdrawalEmailContentTests(TestCase):
     @patch("simulator.tasks.send_email_async.delay")
     def test_requested_subject_has_money_brokers(self, mock_delay):
         subject, _ = self._call_helper(mock_delay, EVENT_REQUESTED)
-        self.assertIn("Money Brokers", subject)
+        self.assertIn("Money Broker", subject)
 
     @patch("simulator.tasks.send_email_async.delay")
     def test_approved_subject_has_money_brokers(self, mock_delay):
         subject, _ = self._call_helper(mock_delay, EVENT_APPROVED)
-        self.assertIn("Money Brokers", subject)
+        self.assertIn("Money Broker", subject)
 
     @patch("simulator.tasks.send_email_async.delay")
     def test_rejected_subject_has_money_brokers(self, mock_delay):
         subject, _ = self._call_helper(mock_delay, EVENT_REJECTED)
-        self.assertIn("Money Brokers", subject)
+        self.assertIn("Money Broker", subject)
 
     @patch("simulator.tasks.send_email_async.delay")
     def test_completed_subject_has_money_brokers(self, mock_delay):
         subject, _ = self._call_helper(mock_delay, EVENT_COMPLETED)
-        self.assertIn("Money Brokers", subject)
+        self.assertIn("Money Broker", subject)
 
     @patch("simulator.tasks.send_email_async.delay")
     def test_failed_subject_has_money_brokers(self, mock_delay):
         subject, _ = self._call_helper(mock_delay, EVENT_FAILED)
-        self.assertIn("Money Brokers", subject)
+        self.assertIn("Money Broker", subject)
 
     @patch("simulator.tasks.send_email_async.delay")
     def test_all_events_body_contains_amount(self, mock_delay):

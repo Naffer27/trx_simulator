@@ -1,5 +1,5 @@
 {% extends "simulator/base_app.html" %}
-{% block title %}Archivos — Money Brokers{% endblock %}
+{% block title %}Archivos — Money Broker{% endblock %}
 {% block page_title %}Archivos{% endblock %}
 
 {% block extra_styles %}
@@ -48,7 +48,7 @@
 {% block content %}
 <div>
   <p style="color:var(--muted-2);font-size:.85rem;margin-bottom:24px;">
-    Documentos y archivos oficiales de Money Brokers. Gestiona desde el panel de administración.
+    Documentos y archivos oficiales de Money Broker. Gestiona desde el panel de administración.
     {% if total %}<span style="color:var(--muted);margin-left:8px">{{ total }} archivo{{ total|pluralize }} disponible{{ total|pluralize }}</span>{% endif %}
   </p>
 
@@ -82,7 +82,7 @@
   <div class="empty-state">
     <div class="empty-icon"><i class="fa-solid fa-folder-open"></i></div>
     <div class="empty-msg">No hay archivos disponibles en este momento.</div>
-    <div style="font-size:.75rem;color:var(--muted);margin-top:6px">Los documentos serán publicados por el equipo de Money Brokers.</div>
+    <div style="font-size:.75rem;color:var(--muted);margin-top:6px">Los documentos serán publicados por el equipo de Money Broker.</div>
   </div>
   {% endif %}
 </div>

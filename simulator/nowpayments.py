@@ -108,7 +108,7 @@ def create_payment(
         "price_currency":    "usd",
         "pay_currency":      np_code,
         "order_id":          str(deposit_id),
-        "order_description": f"Money Brokers Deposit #{deposit_id}",
+        "order_description": f"Money Broker Deposit #{deposit_id}",
     }
     if resolved_cb:
         payload["ipn_callback_url"] = resolved_cb

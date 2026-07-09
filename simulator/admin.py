@@ -2811,8 +2811,8 @@ class FundedPayoutRequestAdmin(admin.ModelAdmin):
 # Branding
 # ─────────────────────────────────────────────
 
-admin.site.site_header = "Money Brokers — Risk Desk"
-admin.site.site_title = "Money Brokers"
+admin.site.site_header = "Money Broker — Risk Desk"
+admin.site.site_title = "Money Broker"
 admin.site.index_title = "Risk & Dealing Administration"
 
 

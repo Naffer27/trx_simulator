@@ -5,9 +5,9 @@ KYC approval/rejection email notifications.
 Covers:
   1.  Approving a pending KYC queues one email to the profile owner.
   2.  Rejecting a pending KYC queues one email to the profile owner.
-  3.  Approval email subject contains "Money Brokers".
+  3.  Approval email subject contains "Money Broker".
   4.  Approval email body mentions "aprobado" and does not include document paths.
-  5.  Rejection email subject contains "Money Brokers".
+  5.  Rejection email subject contains "Money Broker".
   6.  Rejection email body includes rejection_reason when set.
   7.  Rejection email body omits reason line when rejection_reason is blank.
   8.  If email raises, admin approve action still completes (status updated).
@@ -84,7 +84,7 @@ class KYCApproveEmailTests(TestCase):
     def test_approve_email_subject_contains_brand(self, mock_delay):
         self._run_approve()
         subj = mock_delay.call_args.kwargs["subject"]
-        self.assertIn("Money Brokers", subj)
+        self.assertIn("Money Broker", subj)
 
     @_PATCH_EMAIL
     def test_approve_email_body_mentions_approved(self, mock_delay):
@@ -146,7 +146,7 @@ class KYCRejectEmailTests(TestCase):
         kyc = self._make_kyc()
         self._run_reject(kyc)
         subj = mock_delay.call_args.kwargs["subject"]
-        self.assertIn("Money Brokers", subj)
+        self.assertIn("Money Broker", subj)
 
     @_PATCH_EMAIL
     def test_reject_email_includes_rejection_reason(self, mock_delay):
@@ -203,12 +203,12 @@ class KYCEmailHelperTests(TestCase):
     @_PATCH_EMAIL
     def test_approved_subject_contains_brand(self, mock_delay):
         send_kyc_approved_email(self.kyc)
-        self.assertIn("Money Brokers", mock_delay.call_args.kwargs["subject"])
+        self.assertIn("Money Broker", mock_delay.call_args.kwargs["subject"])
 
     @_PATCH_EMAIL
     def test_rejected_subject_contains_brand(self, mock_delay):
         send_kyc_rejected_email(self.kyc)
-        self.assertIn("Money Brokers", mock_delay.call_args.kwargs["subject"])
+        self.assertIn("Money Broker", mock_delay.call_args.kwargs["subject"])
 
     @_PATCH_EMAIL
     def test_rejected_with_reason_includes_reason_in_body(self, mock_delay):

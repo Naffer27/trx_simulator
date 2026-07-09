@@ -10,7 +10,7 @@ from django.utils import timezone
 
 logger = logging.getLogger("simulator.deposit_emails")
 
-_BRAND = "Money Brokers"
+_BRAND = "Money Broker"
 
 
 def send_deposit_confirmed_email(deposit) -> None:
@@ -30,7 +30,7 @@ def send_deposit_confirmed_email(deposit) -> None:
     currency = deposit.crypto_currency.upper() if deposit.crypto_currency else "CRYPTO"
     now_str  = timezone.now().strftime("%Y-%m-%d %H:%M UTC")
 
-    subject = f"Money Brokers — Depósito confirmado"
+    subject = f"Money Broker — Depósito confirmado"
     body = (
         f"Hola {username},\n\n"
         f"Tu depósito fue confirmado y acreditado en tu wallet.\n\n"

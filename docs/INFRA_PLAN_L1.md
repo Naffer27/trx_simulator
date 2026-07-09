@@ -1,10 +1,10 @@
-# Infra Plan Real — L.1: Money Brokers en Staging
+# Infra Plan Real — L.1: Money Broker en Staging
 
 | Campo       | Valor                                              |
 |-------------|----------------------------------------------------|
 | Fecha       | 2026-06-25                                         |
 | Commit base | `247f1dd` bloque-K.4.1-save-staging-readiness-report |
-| Marca       | Money Brokers / `moneybrokers.app`                 |
+| Marca       | Money Broker / `moneybrokers.app`                 |
 | Basado en   | K.4 Staging Readiness (docs/STAGING_READINESS_K4.md) |
 
 ---
@@ -382,7 +382,7 @@ Monitor 2 (producción, cuando exista):
 | `SNAPSHOT_RETENTION_DAYS` | `7` | OK |
 | `REVENUE_SNAPSHOT_RETENTION_DAYS` | `90` | OK |
 | `LOAD_TEST_MODE` | `False` | NUNCA `True` en staging real |
-| `TOTP_ISSUER_NAME` | `Money Brokers` | OK |
+| `TOTP_ISSUER_NAME` | `Money Broker` | OK |
 | `LOG_JSON` | `false` | Cambiar a `true` en staging |
 | `SIM_LOG_LEVEL` | `INFO` | OK |
 
@@ -545,7 +545,7 @@ SendGrid tiene guía paso a paso de verificación de dominio con registros CNAME
 [ ] SNAPSHOT_RETENTION_DAYS=7
 [ ] REVENUE_SNAPSHOT_RETENTION_DAYS=90
 [ ] APP_NAME=trx_sim
-[ ] TOTP_ISSUER_NAME=Money Brokers
+[ ] TOTP_ISSUER_NAME=Money Broker
 ```
 
 ---
