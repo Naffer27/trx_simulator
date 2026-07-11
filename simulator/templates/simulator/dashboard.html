@@ -885,16 +885,7 @@
       <option value="GBP/USD">GBPUSD</option>
       <option value="USD/JPY">USDJPY</option>
       <option value="AUD/USD">AUDUSD</option>
-      <option value="USD/CAD">USDCAD</option>
-      <option value="USD/CHF">USDCHF</option>
-      <option value="NZD/USD">NZDUSD</option>
       <option value="ETHUSD">ETHUSD</option>
-      <option value="SOLUSD">SOLUSD</option>
-      <option value="XAU/USD">XAUUSD</option>
-      <option value="XAG/USD">XAGUSD</option>
-      <option value="US30">US30</option>
-      <option value="US500">US500</option>
-      <option value="NAS100">NAS100</option>
     </select>
     <span class="mhdr-sym-arrow">▾</span>
   </div>
@@ -1440,7 +1431,6 @@
           <button class="wl rc-wl-row" data-sym="AUD/USD"><span class="rc-wl-sym">AUDUSD</span><span class="rc-wl-px" data-wsym="AUD/USD">—</span></button>
           <button class="wl rc-wl-row" data-sym="BTCUSD"><span class="rc-wl-sym">BTCUSD</span><span class="rc-wl-px" data-wsym="BTCUSD">—</span></button>
           <button class="wl rc-wl-row" data-sym="ETHUSD"><span class="rc-wl-sym">ETHUSD</span><span class="rc-wl-px" data-wsym="ETHUSD">—</span></button>
-          <button class="wl rc-wl-row" data-sym="XAU/USD"><span class="rc-wl-sym">XAUUSD</span><span class="rc-wl-px" data-wsym="XAU/USD">—</span></button>
         </div>
       </div>
     </aside>
@@ -1983,7 +1973,7 @@ class TradingPanel {
   }
 
   _buildDOM(){
-    const SYMS=['EUR/USD','GBP/USD','USD/JPY','AUD/USD','USD/CAD','USD/CHF','NZD/USD','BTCUSD','ETHUSD','SOLUSD','XAU/USD','XAG/USD','US30','US500','NAS100'];
+    const SYMS=['EUR/USD','GBP/USD','USD/JPY','AUD/USD','BTCUSD','ETHUSD']; // mirrors backend _ALLOWED_SYMBOLS (symbol_specs.enabled=True)
     const opts=SYMS.map(s=>`<option value="${s}"${s===this.currentSymbol?' selected':''}>${s.replace('/','')}</option>`).join('');
     this.wrapper.innerHTML=`
       <div class="panel-toolbar">
@@ -3351,7 +3341,7 @@ function _renderHstSummary(trades){
 }
 
 /* ── Quotes panel ── */
-const ALL_SYMBOLS=['EUR/USD','GBP/USD','USD/JPY','AUD/USD','USD/CAD','USD/CHF','NZD/USD','BTCUSD','ETHUSD','SOLUSD','XAU/USD','XAG/USD','US30','US500','NAS100'];
+const ALL_SYMBOLS=['EUR/USD','GBP/USD','USD/JPY','AUD/USD','BTCUSD','ETHUSD']; // mirrors backend _ALLOWED_SYMBOLS (symbol_specs.enabled=True)
 const quotesLivePx={};
 const quotesList=document.getElementById('quotesList'),quotesSearch=document.getElementById('quotesSearch');
 function _fmtQPx(p,sym){if(p==null)return'—';const s=String(sym||'');if(s.includes('JPY')||s==='US30'||s==='US500'||s==='NAS100')return p.toFixed(2);if(s==='BTCUSD'||s==='ETHUSD')return p.toFixed(2);if(s.includes('XAU')||s.includes('XAG'))return p.toFixed(2);return p.toFixed(5);}
