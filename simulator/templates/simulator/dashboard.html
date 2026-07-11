@@ -1780,6 +1780,22 @@ const LOT_SPECS = {
 function getLotStep(sym)    { return (LOT_SPECS[sym]||{step:0.01}).step; }
 function getLotMin(sym)     { return (LOT_SPECS[sym]||{min:0.01}).min; }
 function getLotDecimals(sym){ return (LOT_SPECS[sym]||{dec:2}).dec; }
+
+/* ── Contract size per symbol (mirrors SymbolSpec.contract_size) ──
+   Per-position PnL must multiply by this; account-level PnL already
+   comes pre-computed (with contract_size) from the backend via msg.upnl.
+   XAU/USD is listed as metadata only — gold stays disabled, not selectable
+   anywhere in the UI (see SYMS / ALL_SYMBOLS / mhdrSymSel / rcWatchlist). */
+const CONTRACT_SIZE = {
+  "EUR/USD": 100000,
+  "GBP/USD": 100000,
+  "USD/JPY": 100000,
+  "AUD/USD": 100000,
+  "BTCUSD":  1,
+  "ETHUSD":  1,
+  "XAU/USD": 100,
+};
+function getContractSize(sym){ return CONTRACT_SIZE[sym] ?? 1; }
 function normalizeLot(sym, v){
   const s=LOT_SPECS[sym]||{step:0.01,min:0.01,dec:2};
   const val=Math.max(s.min, Math.min(100, parseFloat(v)||s.min));
@@ -2463,7 +2479,8 @@ class TradingPanel {
     for(const [id,rec] of this.linesById.entries()){
       if(!rec.plEntry||String(id).startsWith('tmp-'))continue;
       const qty=rec.qty||1;
-      const raw=rec.side==='buy'?(px-rec.entry)*qty:(rec.entry-px)*qty;
+      const cs=getContractSize(this.currentSymbol||'');
+      const raw=rec.side==='buy'?(px-rec.entry)*qty*cs:(rec.entry-px)*qty*cs;
       const sign=raw>=0?'+':'';
       const label=`${rec.side==='buy'?'BUY':'SELL'} ${sign}$${Math.abs(raw).toFixed(2)}`;
       rec.plEntry.applyOptions({title:label});
@@ -2793,7 +2810,8 @@ function renderGlobalPositions(){
     const entry=Number(r.avg??r.entry??0);
     const srcPanel=allPanels.find(x=>String(x.id)===String(r._pid));
     const px=srcPanel?.lastClose??0;
-    const raw=side==='buy'?(px-entry)*qty:(entry-px)*qty;
+    const cs=getContractSize(r.symbol||'');
+    const raw=side==='buy'?(px-entry)*qty*cs:(entry-px)*qty*cs;
     const pnlStr=px>0?(raw>=0?'+':'')+`$${Math.abs(raw).toFixed(2)}`:'—';
     const pnlCls=raw>0.00001?'pos':raw<-0.00001?'neg':'';
     const openedStr=r.opened_at?new Date((r.opened_at||0)*1000).toLocaleTimeString():'-';
@@ -3005,7 +3023,8 @@ function openSheet(focus){
   if(pnlEl){
     const px=qbPanel.lastClose??0;const side=String(pos?.side||rec.side||'buy').toLowerCase();
     const qty=Number(pos?.qty??rec.qty??1);const entry=Number(pos?.avg??rec.entry??px);
-    const raw=side==='buy'?(px-entry)*qty:(entry-px)*qty;
+    const cs=getContractSize(pos?.symbol||qbPanel.currentSymbol||'');
+    const raw=side==='buy'?(px-entry)*qty*cs:(entry-px)*qty*cs;
     pnlEl.textContent=(raw>=0?'+':'')+`$${Math.abs(raw).toFixed(2)}`;
     pnlEl.className='sheet-pos-pnl'+(raw>0.00001?' pos':raw<-0.00001?' neg':'');
   }
@@ -3235,7 +3254,8 @@ function _syncTradingPanel(){
     const panel=allPanels.find(x=>String(x.id)===String(pos._pid));
     const px=panel?.lastClose??0;
     const entry=Number(pos.avg??0);
-    const raw=side==='buy'?(px-entry)*Number(pos.qty??1):(entry-px)*Number(pos.qty??1);
+    const cs=getContractSize(pos.symbol||'');
+    const raw=side==='buy'?(px-entry)*Number(pos.qty??1)*cs:(entry-px)*Number(pos.qty??1)*cs;
     const pnlClass=raw>0.00001?'pos':raw<-0.00001?'neg':'';
     const slStr=pos.sl!=null?`SL ${Number(pos.sl).toFixed(p)}`:null;
     const tpStr=pos.tp!=null?`TP ${Number(pos.tp).toFixed(p)}`:null;
@@ -3272,7 +3292,8 @@ function _patchTradingPanelPnL(){
     if(!item||item.getAttribute('data-id')!==String(pos.id)){_syncTradingPanel();return;}
     const side=String(pos.side||'buy').toLowerCase();
     const px=panel?.lastClose??0;
-    const raw=side==='buy'?(px-Number(pos.avg??0))*Number(pos.qty??1):(Number(pos.avg??0)-px)*Number(pos.qty??1);
+    const cs=getContractSize(pos.symbol||'');
+    const raw=side==='buy'?(px-Number(pos.avg??0))*Number(pos.qty??1)*cs:(Number(pos.avg??0)-px)*Number(pos.qty??1)*cs;
     const pnlEl=item.querySelector('.trd-pos-item-pnl');
     if(pnlEl){pnlEl.textContent=(raw>=0?'+':'')+`$${Math.abs(raw).toFixed(2)}`;pnlEl.className=`trd-pos-item-pnl ${raw>0.00001?'pos':raw<-0.00001?'neg':''}`;}
   }
@@ -3828,7 +3849,8 @@ setInterval(()=>{
     const side=String(pos.side||'buy').toLowerCase();
     const entry=Number(pos.avg??pos.entry??0);
     const qty=Number(pos.qty||1);
-    const raw=side==='buy'?(px-entry)*qty:(entry-px)*qty;
+    const cs=getContractSize(pos.symbol||'');
+    const raw=side==='buy'?(px-entry)*qty*cs:(entry-px)*qty*cs;
     const cell=tr.querySelector('.btm-td-pnl');
     if(!cell)continue;
     cell.textContent=(raw>=0?'+':'')+`$${Math.abs(raw).toFixed(2)}`;
