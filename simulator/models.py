@@ -1819,3 +1819,123 @@ class FundedPayoutRequest(models.Model):
 
     def __str__(self):
         return f"FundedPayoutRequest #{self.pk} {self.user} ${self.trader_cut} [{self.status}]"
+
+
+# ─────────────────────────────────────────────
+# Instrument Catalog (Bloque A — foundation only)
+#
+# Central, DB-backed registry of tradeable instruments. This model does NOT
+# replace market_data/symbol_specs.py yet — that remains the single source of
+# truth consumed by consumers.py, spread_engine.py, risk_engine.py, and
+# exposure_engine.py. Instrument exists so the catalog can eventually be
+# admin-managed; wiring it into the runtime is a separate, future block.
+# ─────────────────────────────────────────────
+
+class Instrument(models.Model):
+    """Catalog entry describing one tradeable instrument's static specification."""
+
+    ASSET_FOREX  = 'forex'
+    ASSET_METAL  = 'metal'
+    ASSET_ENERGY = 'energy'
+    ASSET_CRYPTO = 'crypto'
+    ASSET_INDEX  = 'index'
+    ASSET_CLASS_CHOICES = [
+        (ASSET_FOREX,  'Forex'),
+        (ASSET_METAL,  'Metal'),
+        (ASSET_ENERGY, 'Energy'),
+        (ASSET_CRYPTO, 'Crypto'),
+        (ASSET_INDEX,  'Index'),
+    ]
+
+    SPREAD_PIPS    = 'pips'
+    SPREAD_POINTS  = 'points'
+    SPREAD_PERCENT = 'percent'
+    SPREAD_UNIT_CHOICES = [
+        (SPREAD_PIPS,    'Pips'),
+        (SPREAD_POINTS,  'Points'),
+        (SPREAD_PERCENT, 'Percent'),
+    ]
+
+    PROVIDER_BINANCE = 'binance'
+    PROVIDER_KRAKEN  = 'kraken'
+    PROVIDER_FINNHUB = 'finnhub'
+    PROVIDER_SIM     = 'sim'
+    MARKET_DATA_PROVIDER_CHOICES = [
+        (PROVIDER_BINANCE, 'Binance'),
+        (PROVIDER_KRAKEN,  'Kraken'),
+        (PROVIDER_FINNHUB, 'Finnhub'),
+        (PROVIDER_SIM,     'Simulated'),
+    ]
+
+    MARGIN_LEVERAGE = 'leverage'
+    MARGIN_PERCENT  = 'percent'
+    MARGIN_MODE_CHOICES = [
+        (MARGIN_LEVERAGE, 'Leverage-based'),
+        (MARGIN_PERCENT,  'Fixed percentage'),
+    ]
+
+    PNL_STANDARD = 'STANDARD'
+    PNL_INVERSE  = 'INVERSE'
+    PNL_MODE_CHOICES = [
+        (PNL_STANDARD, 'Standard (quote currency = account currency)'),
+        (PNL_INVERSE,  'Inverse (quote currency differs, requires conversion)'),
+    ]
+
+    # ── Identity ──────────────────────────────────────────────────────────
+    symbol       = models.CharField(max_length=12, unique=True, db_index=True,
+                                     help_text="Compact ticker, e.g. 'EURUSD', 'BTCUSD'.")
+    display_name = models.CharField(max_length=32,
+                                     help_text="Human-readable form, e.g. 'EUR/USD'.")
+    asset_class  = models.CharField(max_length=16, choices=ASSET_CLASS_CHOICES, db_index=True)
+
+    base_currency  = models.CharField(max_length=8)
+    quote_currency = models.CharField(max_length=8, default='USD')
+
+    # ── Pricing ───────────────────────────────────────────────────────────
+    pip_size       = models.DecimalField(max_digits=14, decimal_places=6, default=Decimal("0.0001"))
+    tick_size      = models.DecimalField(max_digits=14, decimal_places=6, default=Decimal("0.00001"))
+    price_decimals = models.PositiveSmallIntegerField(default=5)
+
+    # ── Contract definition ──────────────────────────────────────────────
+    lot_step      = models.DecimalField(max_digits=10, decimal_places=4, default=Decimal("0.01"))
+    min_lot       = models.DecimalField(max_digits=10, decimal_places=4, default=Decimal("0.01"))
+    max_lot       = models.DecimalField(max_digits=10, decimal_places=4, default=Decimal("100.00"))
+    contract_size = models.DecimalField(max_digits=16, decimal_places=4, default=Decimal("100000.0000"))
+
+    # ── Execution costs ───────────────────────────────────────────────────
+    default_spread      = models.DecimalField(max_digits=10, decimal_places=4, default=Decimal("1.0000"),
+                                               help_text="Typical spread, expressed in spread_unit.")
+    spread_unit          = models.CharField(max_length=8, choices=SPREAD_UNIT_CHOICES, default=SPREAD_PIPS)
+    commission_per_lot   = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
+    commission_pct        = models.DecimalField(max_digits=9, decimal_places=6, default=Decimal("0.000000"))
+
+    # ── Margin ────────────────────────────────────────────────────────────
+    max_leverage = models.PositiveIntegerField(default=100)
+    margin_mode  = models.CharField(max_length=16, choices=MARGIN_MODE_CHOICES, default=MARGIN_LEVERAGE)
+    pnl_mode     = models.CharField(max_length=16, choices=PNL_MODE_CHOICES, default=PNL_STANDARD)
+
+    # ── Market-data routing ──────────────────────────────────────────────
+    market_data_provider = models.CharField(max_length=16, choices=MARKET_DATA_PROVIDER_CHOICES,
+                                              default=PROVIDER_SIM)
+    provider_symbol       = models.CharField(max_length=32, blank=True, default='',
+                                              help_text="Provider-specific symbol, e.g. 'FX:EURUSD', 'BTCUSDT'.")
+
+    # ── Trading gate ──────────────────────────────────────────────────────
+    trading_enabled = models.BooleanField(default=False, db_index=True)
+    session         = models.CharField(max_length=32, blank=True, default='',
+                                        help_text="Trading session hours, e.g. '24/5', '24/7'.")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['asset_class', 'symbol']
+        verbose_name        = "Instrument"
+        verbose_name_plural = "Instruments"
+        indexes = [
+            models.Index(fields=['asset_class', 'trading_enabled'], name='instr_class_enabled_idx'),
+        ]
+
+    def __str__(self):
+        state = 'enabled' if self.trading_enabled else 'disabled'
+        return f"{self.symbol} ({self.display_name}) [{self.asset_class}/{state}]"

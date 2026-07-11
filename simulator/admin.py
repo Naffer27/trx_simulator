@@ -17,7 +17,7 @@ from .models import (
     BrokerSnapshot, SymbolExposure, TraderClassExposure,
     AuditLog,
     CalendarEvent, Referral, Bonus, BrokerDocument, ExpertAdvisor,
-    BrokerLedger, BrokerSpreadConfig,
+    BrokerLedger, BrokerSpreadConfig, Instrument,
     BrokerEquitySnapshot, BrokerRevenueSnapshot,
     ChallengeProduct, ChallengeEnrollment, FundedConfig,
     KYCProfile, SupportTicket,
@@ -1720,6 +1720,45 @@ class BrokerSpreadConfigAdmin(admin.ModelAdmin):
     ordering       = ('symbol',)
 
 
+@admin.register(Instrument)
+class InstrumentAdmin(admin.ModelAdmin):
+    list_display = (
+        'symbol', 'display_name', 'asset_class', 'trading_enabled',
+        'market_data_provider', 'max_leverage', 'default_spread', 'spread_unit',
+    )
+    list_filter    = ('asset_class', 'trading_enabled', 'market_data_provider')
+    search_fields  = ('symbol', 'display_name')
+    ordering       = ('asset_class', 'symbol')
+    readonly_fields = ('created_at', 'updated_at')
+    fieldsets = (
+        ('Identity', {
+            'fields': ('symbol', 'display_name', 'asset_class', 'base_currency', 'quote_currency'),
+        }),
+        ('Pricing', {
+            'fields': ('pip_size', 'tick_size', 'price_decimals'),
+        }),
+        ('Contract', {
+            'fields': ('lot_step', 'min_lot', 'max_lot', 'contract_size'),
+        }),
+        ('Execution Costs', {
+            'fields': ('default_spread', 'spread_unit', 'commission_per_lot', 'commission_pct'),
+        }),
+        ('Margin & PnL', {
+            'fields': ('max_leverage', 'margin_mode', 'pnl_mode'),
+        }),
+        ('Market Data Routing', {
+            'fields': ('market_data_provider', 'provider_symbol'),
+        }),
+        ('Trading Gate', {
+            'fields': ('trading_enabled', 'session'),
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',),
+        }),
+    )
+
+
 @admin.register(BrokerLedger)
 class BrokerLedgerAdmin(admin.ModelAdmin):
     list_display   = ('id', 'revenue_type', 'amount', 'source_account', 'symbol', 'created_at')
@@ -2863,6 +2902,7 @@ class MoneyBrokerAdminSite(admin.AdminSite):
             "brokerrevenuesnapshot",
             "brokerspreadconfig",
             "brokerdocument",
+            "instrument",
         ]),
         ("GROWTH", "growth", [
             "referral",
