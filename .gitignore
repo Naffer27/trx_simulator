@@ -11,6 +11,11 @@ db.sqlite3
 
 # secretos
 .env
+*.pem
+*.key
+credentials.json
+*.dump
+*.sql.gz
 
 # compilados / generados
 staticfiles/

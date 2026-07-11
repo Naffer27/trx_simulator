@@ -84,11 +84,15 @@ Editar `Instrument` vía Django admin (spread, leverage, provider, `trading_enab
 
 ---
 
-## 4. ⚠ Hallazgo de seguridad (fuera del alcance original, reportado por separado)
+## 4. ⚠ Hallazgo de seguridad — remediado parcialmente en MD-1b
 
-`test_ws_finnhub.js` contiene un **API token de Finnhub hardcodeado en texto plano**, presente desde el *commit inicial* del repositorio (`69e8b4f`, 2026-01-04) — por lo tanto está en el historial de git de forma permanente, no solo en el working tree actual. Este documento **no reproduce el valor** del token (regla explícita del bloque: no copiar secretos). Se reporta la ubicación y el commit para que el token se rote fuera de este flujo de documentación.
+`test_ws_finnhub.js` contenía un **API token de Finnhub hardcodeado en texto plano**, presente desde el *commit inicial* del repositorio (`69e8b4f`, 2026-01-04). Este documento nunca reprodujo el valor (regla explícita del bloque: no copiar secretos).
 
-No se tomó ninguna acción sobre este archivo en MD-1 — corresponde a una decisión explícita del usuario (rotar la key, y decidir si se reescribe historial de git o se acepta el token como inválido tras rotarlo).
+**Estado tras MD-1b (Secret & Security Cleanup):**
+
+- El archivo se movió a `scripts/manual/test_ws_finnhub.js` y se reescribió para leer `FINNHUB_API_KEY` desde el entorno (`process.env.FINNHUB_API_KEY`), fallando de forma explícita si no está definida. El literal ya no existe en el working tree.
+- El literal **sigue presente en el historial de git** (commit `69e8b4f` en adelante) — mover/reescribir el archivo actual no purga el historial. Ver plan de remediación Nivel B en el reporte de MD-1b.
+- Acción pendiente del usuario, fuera del alcance de este repo: **rotar/revocar la key en el dashboard de Finnhub**. Sin eso, el token histórico sigue siendo válido independientemente de qué se haga con el código.
 
 ---
 
