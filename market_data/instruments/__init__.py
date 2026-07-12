@@ -24,6 +24,7 @@ from .bridges import (
     provider_mappings_for_instrument,
 )
 from .profiles import InstrumentProfile
+from .routing import RouterPolicyConfig, build_route_plan, default_policy_for_asset_class
 
 __all__ = [
     "InstrumentProfile",
@@ -35,4 +36,7 @@ __all__ = [
     "DriftReport",
     "FieldDifference",
     "InstrumentLike",
+    "RouterPolicyConfig",
+    "build_route_plan",
+    "default_policy_for_asset_class",
 ]
