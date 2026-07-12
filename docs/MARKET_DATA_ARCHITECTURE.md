@@ -231,3 +231,27 @@ Resuelve una confusión estructural que F10 no distinguía: **proveedor caído**
 - `FOREX_24_5`/`METALS_23_5` usan una ventana UTC fija, sin el ajuste real que el mercado forex tiene por DST de Nueva York/Londres (aproximación documentada, no exacta).
 - El mapeo `asset_class→calendar_id` y el campo `trading_calendar_id` de F06 conviven sin reconciliarse — ver nota de diseño arriba.
 - `energy` no tiene calendario real — cualquier instrumento futuro de esa clase queda en `UNKNOWN` (`HALT_NEW_ORDERS`) hasta que se modele explícitamente.
+
+---
+
+## 12. Runtime Instrument Catalog (FOUNDATION-12)
+
+No conecta nada al runtime — es la capa de indirección que hace posible una futura migración gradual sin tocar `FeedManager` cuando llegue el momento. `SymbolSpec` sigue siendo la única autoridad; `feeds.py` no se tocó en este bloque (primera vez desde F08 que ese archivo queda completamente intacto).
+
+**El problema que resuelve:** hoy, todo el runtime (`feeds.py` y lo que dependa de él) importa `market_data.symbol_specs.get_spec()` directamente. Si algún día `SymbolSpec` deja de ser la fuente (decisión MD-5 pendiente desde F06), habría que tocar cada call site. `get_runtime_instrument(symbol)` es el único punto que un futuro call site debería usar en su lugar — cambiar de dónde saca los datos internamente, en una Foundation futura, no requeriría tocar ningún llamador.
+
+**Diseño elegido:** dos paquetes con responsabilidades separadas, seguidas del mismo patrón de aislamiento establecido en F03–F11:
+- `market_data/catalog/` (`service.py` + `__init__.py`) — puro, sin Django, sin DB, sin `simulator` (verificado por test de aislamiento estático, igual que shadow/runtime_router/sessions). `get_runtime_instrument(symbol) -> InstrumentProfile` siempre construye desde `SymbolSpec` vía el bridge ya existente de F06 (`profile_from_symbol_spec`) — cero lógica nueva de conversión. `compare_runtime_instrument(symbol, alternate_profile)` reutiliza `compare_profiles`/`DriftReport` de F06 tal cual, sin reinventar clasificación de drift.
+- `simulator/runtime_instrument_catalog.py` — el único lugar autorizado a unir "el nuevo facade" con "la DB", porque `market_data/catalog/` no puede importar `simulator.models.Instrument` sin romper la dirección de dependencia establecida en todo el proyecto (`simulator` → `market_data`, nunca al revés).
+
+**Decisión deliberada — `get_runtime_instrument()` SÍ puede lanzar:** a diferencia de `evaluate_shadow_route`/`select_runtime_provider`/`evaluate_market_session_for_symbol` (que nunca lanzan, por ser límites de un feed en vivo), `get_runtime_instrument()` propaga `KeyError` para un símbolo desconocido — exactamente lo que `get_spec()` ya hace hoy. Tragar ese error habría sido un cambio de comportamiento real frente a los call sites actuales, justo lo que este bloque promete no hacer.
+
+**Comparación y detección de drift:** `simulator/runtime_instrument_catalog.py::check_runtime_catalog_drift(symbol)` — busca la fila `Instrument` correspondiente (normalizando símbolo compacto↔canónico), construye su perfil vía `profile_from_instrument`/`provider_mappings_for_instrument` (F06), y compara contra `get_runtime_instrument(symbol)`. Probado contra los datos reales sembrados: `EUR/USD` sin drift, `BTCUSD` con el mismo warning de `display_name` ya conocido desde F06b (`BTCUSD` vs `BTC/USD`) — confirma consistencia total con hallazgos previos usando el nuevo facade.
+
+**Feature flag:** `MARKET_DATA_CATALOG_DRIFT_CHECK_ENABLED` (default `False`). A diferencia de `MARKET_DATA_SHADOW_MODE`/`MARKET_DATA_ROUTER_ENABLED` (que su propio bloque conectó a `feeds.py` de inmediato), este flag **no tiene consumidor en el runtime todavía** — por instrucción explícita de este bloque de no tocar `FeedManager`. Existe, está probado (`assertNumQueries(0)` cuando está apagado — cero acceso a DB), y queda listo para que una Foundation futura lo conecte en caliente sin inventar plumbing nuevo.
+
+**Logging:** `event=market_data_runtime_catalog_drift` con `symbol`/`critical`/`warning`/`fields` — `WARNING` si hay drift crítico, `INFO` si solo hay warnings, silencio total si no hay drift. Sin secretos.
+
+**Confirmación — cero cambio de comportamiento:** `test_returns_the_same_profile_the_existing_bridge_would` prueba que `get_runtime_instrument()` devuelve exactamente lo que `profile_from_symbol_spec(get_spec(...))` ya devolvía — no es una reimplementación, es un alias con intención arquitectónica. `git status --porcelain` confirma `feeds.py`, `consumers.py`, `risk_engine.py`, `spread_engine.py`, `exposure_engine.py`, `tasks.py`, `dashboard.html`, `symbol_specs.py` sin tocar; sin migraciones; sin símbolos nuevos activados.
+
+**Próximo paso (no en este bloque):** cuando una Foundation futura decida que `FeedManager` debe llamar `get_runtime_instrument(symbol)` en vez de `get_spec(symbol)` directamente, ese cambio queda aislado a los call sites de `feeds.py` — el facade y la infraestructura de comparación ya existen y están probados.

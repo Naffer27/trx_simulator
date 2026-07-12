@@ -412,6 +412,16 @@ if MARKET_DATA_ROUTER_ENABLED:
         sorted(MARKET_DATA_ROUTER_SYMBOLS),
     )
 
+# FOUNDATION-12 — Runtime Instrument Catalog. Not wired into any live
+# request path in this block — no loop, provider, trading rule, price, or
+# payload changes as a result. Reserved for a future Foundation's in-band
+# drift check via simulator/runtime_instrument_catalog.py
+# ::check_runtime_catalog_drift(). Observability only, never controls
+# anything — SymbolSpec remains the sole runtime authority regardless.
+MARKET_DATA_CATALOG_DRIFT_CHECK_ENABLED = os.getenv(
+    "MARKET_DATA_CATALOG_DRIFT_CHECK_ENABLED", "False",
+).strip().lower() in {"1", "true", "yes"}
+
 # Login / redirecciones
 LOGIN_URL = "simulator:login"
 LOGIN_REDIRECT_URL = "simulator:dashboard"
