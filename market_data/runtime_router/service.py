@@ -81,4 +81,6 @@ def _select_runtime_provider_inner(symbol: str, evaluated_at: int) -> RuntimeSel
         used_new_router=True,
         fallback_to_legacy=False,
         error_code=None,
+        order_policy=decision.order_policy,
+        degraded=decision.degraded,
     )

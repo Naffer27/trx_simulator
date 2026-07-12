@@ -313,6 +313,14 @@ class FeedManager:
         self._prices[symbol] = round((bid + ask) / 2, dec)
         # Write to Redis so cross-process readers (Celery daemon) can access prices.
         await _write_price_cache(symbol, bid, ask)
+        # FOUNDATION-13 — records only a timestamp (no bid/ask/mid) in the
+        # observability store, gated by MARKET_DATA_OBSERVABILITY_ENABLED.
+        if self._observability_enabled():
+            try:
+                from market_data.observability import record_tick
+                record_tick(symbol)
+            except Exception as exc:
+                log.debug("[observability] tick recording failed for %s (non-fatal): %r", symbol, exc)
         await cl.group_send(
             self.group_for(symbol),
             {
@@ -393,6 +401,16 @@ class FeedManager:
         except Exception:
             return False
 
+    def _observability_enabled(self) -> bool:
+        """FOUNDATION-13 flag gate for market_data/observability/ recording
+        hooks — independent of _should_use_new_router(), applies to every
+        symbol (legacy or router-controlled). Never raises."""
+        try:
+            from django.conf import settings
+            return bool(getattr(settings, "MARKET_DATA_OBSERVABILITY_ENABLED", False))
+        except Exception:
+            return False
+
     async def _try_live_via_new_router(self, symbol: str, channel_layer) -> bool:
         """
         Called only when _should_use_new_router(symbol) is True. Builds a
@@ -425,6 +443,12 @@ class FeedManager:
             session.next_open_at.isoformat() if session.next_open_at else None,
             session.next_close_at.isoformat() if session.next_close_at else None,
         )
+        if self._observability_enabled():
+            try:
+                from market_data.observability import record_session_state
+                record_session_state(symbol, session.state)
+            except Exception as exc:
+                log.debug("[observability] session recording failed for %s (non-fatal): %r", symbol, exc)
         if session.state != MarketSessionState.OPEN:
             # Market closed (or unknown) — do not attempt a provider, do not
             # penalize any breaker. Let _feed_loop's existing sim fallback
@@ -455,6 +479,21 @@ class FeedManager:
 
         record_selection(symbol, decision.selected_provider_id, decision.reason_code)
 
+        if self._observability_enabled():
+            try:
+                from market_data.observability import record_selection as _record_observability_selection
+                _record_observability_selection(
+                    symbol,
+                    provider_id=decision.selected_provider_id,
+                    provider_symbol=decision.selected_provider_symbol,
+                    source_state=decision.source_state,
+                    order_policy=decision.order_policy,
+                    degraded=decision.degraded,
+                    reason_code=decision.reason_code,
+                )
+            except Exception as exc:
+                log.debug("[observability] selection recording failed for %s (non-fatal): %r", symbol, exc)
+
         provider_id = decision.selected_provider_id
         if provider_id is None:
             # A valid, successful decision: no live provider available.
@@ -471,9 +510,21 @@ class FeedManager:
         # belt-and-suspenders, since these run inside a live feed loop.
         def _on_success() -> None:
             record_provider_success(symbol, provider_id)
+            if self._observability_enabled():
+                try:
+                    from market_data.observability import record_first_tick
+                    record_first_tick(symbol, provider_id)
+                except Exception as obs_exc:
+                    log.debug("[observability] first-tick recording failed for %s (non-fatal): %r", symbol, obs_exc)
 
         def _on_failure(exc: Exception) -> None:
             record_provider_failure(symbol, provider_id, error_code=repr(exc))
+            if self._observability_enabled():
+                try:
+                    from market_data.observability import record_terminal_failure
+                    record_terminal_failure(symbol, provider_id, error_code=repr(exc))
+                except Exception as obs_exc:
+                    log.debug("[observability] terminal-failure recording failed for %s (non-fatal): %r", symbol, obs_exc)
 
         # Explicit, testable provider -> existing-loop dispatch. Never
         # execute anything the router didn't name here.

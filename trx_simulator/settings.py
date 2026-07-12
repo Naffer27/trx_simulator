@@ -422,6 +422,18 @@ MARKET_DATA_CATALOG_DRIFT_CHECK_ENABLED = os.getenv(
     "MARKET_DATA_CATALOG_DRIFT_CHECK_ENABLED", "False",
 ).strip().lower() in {"1", "true", "yes"}
 
+# FOUNDATION-13 — Market Data Observability. Gates only the recording hooks
+# in market_data/feeds.py that feed market_data/observability/'s
+# per-process store (tick timestamps, provider selection, failover counts,
+# terminal failures). When False, feeds.py calls none of them — zero new
+# code executes on the live feed path. Reading a snapshot (management
+# command / future internal endpoint) always works regardless of this flag;
+# it will simply show no recorded state. Must stay False until approved.
+# See market_data/observability/ and docs/MARKET_DATA_ARCHITECTURE.md.
+MARKET_DATA_OBSERVABILITY_ENABLED = os.getenv(
+    "MARKET_DATA_OBSERVABILITY_ENABLED", "False",
+).strip().lower() in {"1", "true", "yes"}
+
 # Login / redirecciones
 LOGIN_URL = "simulator:login"
 LOGIN_REDIRECT_URL = "simulator:dashboard"
