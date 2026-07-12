@@ -23,6 +23,7 @@ from market_data.instruments.bridges import (
     profile_from_instrument,
     profile_from_symbol_spec,
     provider_mapping_from_instrument,
+    provider_mappings_for_instrument,
 )
 from market_data.providers.mappings import ProviderSymbolMapping
 from market_data.symbol_specs import SymbolSpec, get_spec
@@ -56,18 +57,27 @@ class ProfileFromSymbolSpecTests(unittest.TestCase):
         self.assertTrue(profile.trading_enabled)
         self.assertAlmostEqual(profile.default_spread, 1.5, places=6)
 
-    def test_usd_jpy_registry_entry_defaults_quote_currency_to_usd(self):
-        # Documents a real, pre-existing data-quality gap this bridge surfaces
-        # rather than papers over: market_data/symbol_specs.py never sets
-        # quote_currency="JPY" for USD/JPY (it's left at the dataclass default,
-        # "USD"), so pnl_mode derives as STANDARD here even though
-        # seed_instruments.py correctly seeds PNL_INVERSE for USDJPY. See
-        # simulator/tests/test_audit_instrument_profiles.py for the drift this
-        # produces against the real seeded catalog.
-        spec = get_spec("USD/JPY")
-        self.assertEqual(spec.quote_currency, "USD")  # not "JPY" — the gap itself
-        profile = profile_from_symbol_spec(spec)
-        self.assertEqual(profile.pnl_mode, "STANDARD")
+    def test_usd_jpy_usd_cad_usd_chf_have_correct_quote_currency_and_inverse_pnl(self):
+        # FOUNDATION-06b fix: market_data/symbol_specs.py used to leave
+        # quote_currency at its "USD" default for these three pairs (a real
+        # gap FOUNDATION-06's audit tool caught — see
+        # simulator/tests/test_audit_instrument_profiles.py for the drift
+        # that produced against the real seeded catalog before the fix).
+        # base=USD is correct for all three (split on "/"); quote is the
+        # pair's second leg, which now matches real forex convention.
+        cases = {
+            "USD/JPY": "JPY",
+            "USD/CAD": "CAD",
+            "USD/CHF": "CHF",
+        }
+        for symbol, expected_quote in cases.items():
+            with self.subTest(symbol=symbol):
+                spec = get_spec(symbol)
+                self.assertEqual(spec.quote_currency, expected_quote)
+                profile = profile_from_symbol_spec(spec)
+                self.assertEqual(profile.base_currency, "USD")
+                self.assertEqual(profile.quote_currency, expected_quote)
+                self.assertEqual(profile.pnl_mode, "INVERSE")
 
     def test_inverse_pnl_derivation_rule_in_isolation(self):
         # The derivation rule itself (quote_currency != "USD" -> INVERSE) is
@@ -167,6 +177,62 @@ class ProviderMappingFromInstrumentTests(unittest.TestCase):
         self.assertFalse(mappings[0].enabled)
 
 
+class ProviderMappingsForInstrumentTests(unittest.TestCase):
+    """provider_mappings_for_instrument() — FOUNDATION-06b: adds the known
+    Kraken secondary for BTCUSD/ETHUSD on top of the DB's own single
+    provider mapping, without any Instrument model change."""
+
+    def test_btcusd_gets_binance_primary_and_kraken_secondary(self):
+        stub = make_instrument_stub(
+            symbol="BTCUSD", market_data_provider="binance", provider_symbol="BTCUSDT",
+        )
+        mappings = provider_mappings_for_instrument(stub)
+        self.assertEqual(len(mappings), 2)
+        by_provider = {m.provider_id: m for m in mappings}
+        self.assertEqual(set(by_provider), {"binance", "kraken"})
+        self.assertEqual(by_provider["binance"].priority, 0)
+        self.assertEqual(by_provider["kraken"].priority, 1)
+        self.assertEqual(by_provider["kraken"].provider_symbol, "XBT/USD")
+        self.assertEqual(by_provider["kraken"].canonical_symbol, "BTCUSD")
+
+    def test_ethusd_gets_binance_primary_and_kraken_secondary(self):
+        stub = make_instrument_stub(
+            symbol="ETHUSD", market_data_provider="binance", provider_symbol="ETHUSDT",
+        )
+        mappings = provider_mappings_for_instrument(stub)
+        by_provider = {m.provider_id: m for m in mappings}
+        self.assertEqual(set(by_provider), {"binance", "kraken"})
+        self.assertEqual(by_provider["kraken"].provider_symbol, "ETH/USD")
+        self.assertEqual(by_provider["kraken"].priority, 1)
+
+    def test_secondary_enabled_matches_trading_enabled(self):
+        stub = make_instrument_stub(
+            symbol="BTCUSD", market_data_provider="binance", provider_symbol="BTCUSDT",
+            trading_enabled=False,
+        )
+        mappings = provider_mappings_for_instrument(stub)
+        self.assertTrue(all(not m.enabled for m in mappings))
+
+    def test_symbol_without_known_secondary_is_unaffected(self):
+        # EUR/USD has no overlay entry — behaves identically to the raw,
+        # single-provider function (proving the overlay doesn't leak into
+        # unrelated symbols).
+        stub = make_instrument_stub()  # EURUSD / finnhub
+        self.assertEqual(
+            provider_mappings_for_instrument(stub),
+            provider_mapping_from_instrument(stub),
+        )
+
+    def test_raw_single_provider_function_still_shows_the_model_limitation(self):
+        # provider_mapping_from_instrument() (no overlay) is intentionally left
+        # unchanged — it still honestly reports only what Instrument's own
+        # columns can hold, documenting the real model limitation.
+        stub = make_instrument_stub(
+            symbol="BTCUSD", market_data_provider="binance", provider_symbol="BTCUSDT",
+        )
+        self.assertEqual(len(provider_mapping_from_instrument(stub)), 1)
+
+
 class CompareProfilesTests(unittest.TestCase):
     def test_identical_profiles_have_no_differences(self):
         runtime = profile_from_symbol_spec(get_spec("EUR/USD"))
@@ -255,6 +321,31 @@ class NoNetworkOrDjangoDependencyTests(unittest.TestCase):
                     forbidden_hits,
                     f"{path.name} imports forbidden module(s): {sorted(forbidden_hits)}",
                 )
+
+
+class RuntimeFilesNotConnectedTests(unittest.TestCase):
+    """FOUNDATION-06b: confirms no runtime module imports market_data.instruments —
+    this block only corrects metadata, it does not wire the bridge into trading."""
+
+    _RUNTIME_FILES = (
+        "market_data/feeds.py",
+        "simulator/consumers.py",
+        "simulator/risk_engine.py",
+        "simulator/spread_engine.py",
+        "simulator/exposure_engine.py",
+        "simulator/tasks.py",
+        "simulator/templates/simulator/dashboard.html",
+    )
+
+    def test_no_runtime_file_references_the_instruments_bridge(self):
+        repo_root = pathlib.Path(instruments_pkg.__file__).resolve().parents[2]
+        for rel_path in self._RUNTIME_FILES:
+            path = repo_root / rel_path
+            with self.subTest(file=rel_path):
+                self.assertTrue(path.exists(), f"expected {rel_path} to exist")
+                source = path.read_text()
+                self.assertNotIn("market_data.instruments", source)
+                self.assertNotIn("market_data/instruments", source)
 
 
 if __name__ == "__main__":

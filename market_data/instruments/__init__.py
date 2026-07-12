@@ -21,6 +21,7 @@ from .bridges import (
     profile_from_instrument,
     profile_from_symbol_spec,
     provider_mapping_from_instrument,
+    provider_mappings_for_instrument,
 )
 from .profiles import InstrumentProfile
 
@@ -29,6 +30,7 @@ __all__ = [
     "profile_from_symbol_spec",
     "profile_from_instrument",
     "provider_mapping_from_instrument",
+    "provider_mappings_for_instrument",
     "compare_profiles",
     "DriftReport",
     "FieldDifference",

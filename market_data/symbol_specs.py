@@ -105,6 +105,7 @@ _reg(SymbolSpec(
     commission_pct=0.0,
     max_leverage=500,
     finnhub_symbol="FX:USDJPY",
+    quote_currency="JPY",   # was left at the "USD" default — base=USD/quote=JPY is inverse-PnL (FOUNDATION-06b)
 ))
 
 _reg(SymbolSpec(
@@ -127,6 +128,7 @@ _reg(SymbolSpec(
     base_price=1.37000, sim_drift=0.0008,
     spread=0.00020, commission_pct=0.0, max_leverage=500,
     finnhub_symbol="FX:USDCAD", enabled=False,
+    quote_currency="CAD",   # was left at the "USD" default (FOUNDATION-06b)
 ))
 
 _reg(SymbolSpec(
@@ -136,6 +138,7 @@ _reg(SymbolSpec(
     base_price=0.90000, sim_drift=0.0008,
     spread=0.00018, commission_pct=0.0, max_leverage=500,
     finnhub_symbol="FX:USDCHF", enabled=False,
+    quote_currency="CHF",   # was left at the "USD" default (FOUNDATION-06b)
 ))
 
 _reg(SymbolSpec(

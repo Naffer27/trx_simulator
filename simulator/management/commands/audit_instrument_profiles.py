@@ -16,7 +16,7 @@ Usage:
 from django.core.management.base import BaseCommand
 
 from market_data.instruments import compare_profiles, profile_from_instrument, profile_from_symbol_spec
-from market_data.instruments.bridges import provider_mapping_from_instrument
+from market_data.instruments.bridges import provider_mappings_for_instrument
 from market_data.symbol_specs import get_all_specs
 from simulator.models import Instrument
 
@@ -42,7 +42,7 @@ class Command(BaseCommand):
 
         db_profiles = {}
         for instrument in Instrument.objects.all():  # read-only — no .save()/.update() anywhere below
-            mappings = provider_mapping_from_instrument(instrument)
+            mappings = provider_mappings_for_instrument(instrument)
             profile = profile_from_instrument(instrument, provider_mappings=mappings)
             db_profiles[profile.canonical_symbol] = profile
 

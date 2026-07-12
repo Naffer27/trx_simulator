@@ -158,6 +158,57 @@ def provider_mapping_from_instrument(instrument: InstrumentLike) -> tuple[Provid
     )
 
 
+# ─── Known secondary providers (FOUNDATION-06b) ─────────────────────────────
+#
+# simulator.models.Instrument has exactly one (market_data_provider,
+# provider_symbol) pair — it cannot yet encode a fallback provider.
+# market_data/symbol_specs.py's BTCUSD/ETHUSD entries genuinely have both
+# Binance (primary, live in feeds.py::_try_live) and Kraken (secondary
+# fallback, same function) — provider_mapping_from_instrument() alone can
+# only ever see the primary, which made the audit report a false CRITICAL
+# provider_mappings drift for both symbols.
+#
+# This is a single, explicit, declarative overlay — not a model change, not
+# a second hardcoded instrument list (it only carries the one fact the
+# Instrument model can't yet hold: the secondary provider symbol) — and it
+# is a real, verified fact about production routing, not an invented one.
+# It is a stopgap: the correct long-term fix is a real one-to-many
+# Instrument -> provider mapping table, out of scope here (tracked as a
+# follow-up, not built in this block).
+_KNOWN_SECONDARY_PROVIDERS: dict[str, tuple[str, str]] = {
+    # canonical_symbol: (provider_id, provider_symbol)
+    "BTCUSD": ("kraken", "XBT/USD"),
+    "ETHUSD": ("kraken", "ETH/USD"),
+}
+
+
+def provider_mappings_for_instrument(instrument: InstrumentLike) -> tuple[ProviderSymbolMapping, ...]:
+    """
+    Full provider mapping set for an Instrument row: its own primary mapping
+    (provider_mapping_from_instrument) plus any known secondary from the
+    overlay above, at the next priority slot. Use this (not the raw
+    single-provider function) when building a DB-side InstrumentProfile for
+    comparison against the runtime — it reflects what is actually true about
+    production routing, not just what one DB column can currently hold.
+    """
+    primary = provider_mapping_from_instrument(instrument)
+    canonical_symbol = normalize_symbol(instrument.symbol)
+    secondary_spec = _KNOWN_SECONDARY_PROVIDERS.get(canonical_symbol)
+    if secondary_spec is None:
+        return primary
+
+    provider_id, provider_symbol = secondary_spec
+    secondary = ProviderSymbolMapping(
+        canonical_symbol=canonical_symbol,
+        provider_id=provider_id,
+        provider_symbol=provider_symbol,
+        priority=len(primary),
+        enabled=bool(getattr(instrument, "trading_enabled", False)),
+        required_capabilities=frozenset(),
+    )
+    return primary + (secondary,)
+
+
 def profile_from_instrument(
     instrument: InstrumentLike,
     *,

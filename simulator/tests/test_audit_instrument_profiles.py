@@ -103,23 +103,46 @@ class MatchAndDriftTests(TestCase):
         self.assertEqual(exit_code2, 1)
         self.assertIn("critical drift", err2)
 
-    def test_real_seed_data_has_known_pnl_mode_drift_for_usd_jpy(self):
-        # Documents a genuine, pre-existing gap this tool is designed to catch:
-        # seed_instruments.py correctly seeds USDJPY with PNL_INVERSE, but
-        # market_data/symbol_specs.py never sets quote_currency="JPY" for
-        # USD/JPY (defaults to "USD" — see
+    def test_usd_jpy_usd_cad_usd_chf_match_after_foundation_06b_fix(self):
+        # FOUNDATION-06 found real pnl_mode/quote_currency drift for these
+        # three pairs (market_data/symbol_specs.py left quote_currency at its
+        # "USD" default). FOUNDATION-06b fixed it at the source — see
         # market_data/tests/test_instrument_bridges.py::
-        # test_usd_jpy_registry_entry_defaults_quote_currency_to_usd), so the
-        # runtime-derived profile disagrees with the DB catalog on pnl_mode.
-        # This is not something this block fixes — symbol_specs.py is
-        # explicitly out of scope for FOUNDATION-06 — it's exactly the kind
-        # of drift this audit command exists to surface.
+        # test_usd_jpy_usd_cad_usd_chf_have_correct_quote_currency_and_inverse_pnl.
+        # This proves the real seeded catalog now agrees with the runtime.
         call_command("seed_instruments", stdout=StringIO())
         out, _err, exit_code = run_audit()
         self.assertEqual(exit_code, 0)
-        jpy_section = out.split("USD/JPY")[1].split("\n")[0]
-        self.assertIn("DRIFT", jpy_section)
-        self.assertIn("pnl_mode", out)
+        for symbol in ("USD/JPY", "USD/CAD", "USD/CHF"):
+            with self.subTest(symbol=symbol):
+                section = out.split(symbol)[1].split("\n")[0]
+                self.assertIn("MATCH", section)
+                self.assertNotIn("DRIFT", section)
+
+    def test_btcusd_ethusd_have_zero_critical_drift_after_secondary_overlay(self):
+        # FOUNDATION-06 found a false CRITICAL provider_mappings drift for
+        # BTCUSD/ETHUSD (DB only encodes Binance; runtime also has Kraken
+        # fallback). FOUNDATION-06b resolved it via the declarative
+        # provider_mappings_for_instrument() overlay (market_data/instruments/
+        # bridges.py) — no Instrument model change. A cosmetic display_name
+        # warning (BTCUSD vs BTC/USD) is expected to remain — that's real,
+        # low-severity drift, not something this fix hides.
+        call_command("seed_instruments", stdout=StringIO())
+        out, _err, exit_code = run_audit()
+        self.assertEqual(exit_code, 0)
+        for symbol in ("BTCUSD", "ETHUSD"):
+            with self.subTest(symbol=symbol):
+                # Row tokens after stripping the symbol itself: [STATUS, CRITICAL, WARNING]
+                status, critical, _warning = out.split(symbol)[1].split("\n")[0].split()
+                self.assertEqual(status, "DRIFT")       # display_name warning keeps status DRIFT
+                self.assertEqual(critical, "0")          # but zero critical drift
+
+    def test_real_seed_catalog_has_zero_critical_drift(self):
+        call_command("seed_instruments", stdout=StringIO())
+        out, err, exit_code = run_audit("--strict")
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(err, "")
+        self.assertNotIn("[critical]", out)
 
     def test_display_name_only_drift_does_not_fail_strict(self):
         make_instrument(
