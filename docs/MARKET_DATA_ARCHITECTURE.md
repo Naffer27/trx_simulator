@@ -197,3 +197,37 @@ Cierra el límite documentado en F09: ahora el `ProviderRouter` que controla la 
 **Limitación multi-worker — documentada, no resuelta aquí:** el estado vive en la memoria de **un proceso Python**. Un deploy ASGI multi-worker (varios procesos Daphne) tendría un circuit breaker independiente por worker, no uno compartido — la siguiente fase es estado compartido (Redis o un servicio de market-data dedicado), no activación global inmediata. Ver FOUNDATION-02 §3.4.
 
 **Canary:** `MARKET_DATA_ROUTER_SYMBOLS` sigue conteniendo solo `BTCUSD` como ejemplo documentado — ninguna ampliación de la allowlist ocurre en este bloque. **Rollback instantáneo:** `MARKET_DATA_ROUTER_ENABLED=False`.
+
+---
+
+## 11. Market Sessions & Market Status (FOUNDATION-11)
+
+Resuelve una confusión estructural que F10 no distinguía: **proveedor caído** vs **mercado cerrado**. Antes de este bloque, si Binance rechazaba una suscripción de un instrumento de índice fuera de horario, el circuit breaker lo habría contado como un fallo real. Ahora, para símbolos de la allowlist, `FeedManager` primero pregunta "¿está abierto el mercado?" — y si no, **ni siquiera intenta** un proveedor.
+
+**Provider failure vs market closed — la distinción exacta:** un *provider failure* es "el proveedor no entregó datos cuando debería haberlo hecho" (cuenta para el circuit breaker). Un *market closed* es "nadie está entregando datos porque el mercado no está operando" (nunca debe contar). `market_data/sessions/` responde la segunda pregunta de forma completamente independiente del estado de `ProviderRouter` — no comparten ningún dato.
+
+**Calendarios iniciales (`market_data/sessions/calendars.py`), todos aproximaciones documentadas, sin proveedor de holidays externo:**
+- `CRYPTO_24_7` — siempre `OPEN`.
+- `FOREX_24_5` — `OPEN` domingo 22:00 UTC → viernes 22:00 UTC; `WEEKEND` el resto. Ventana fija, sin ajuste por DST de Nueva York (documentado como aproximación).
+- `METALS_23_5` — misma ventana semanal que forex, más un hueco diario de `MAINTENANCE` 21:00–22:00 UTC (aprox. del cierre de settlement diario real).
+- `US_INDICES_CFD` — horario real en `America/New_York` (`zoneinfo`, consciente de DST): `PRE_MARKET` 04:00–09:30, `OPEN` 09:30–16:00, `AFTER_HOURS` 16:00–20:00, `CLOSED` el resto, `WEEKEND` sáb/dom. `HOLIDAY` existe como valor de estado pero **este calendario nunca lo produce** — sin vendor de feriados, un feriado real de NYSE se vería incorrectamente como `OPEN`/`CLOSED` según el reloj.
+- `ALWAYS_CLOSED` — siempre `CLOSED` (utilidad, no asignado a ningún asset_class hoy).
+- `UNKNOWN` — siempre `UNKNOWN` + `HALT_NEW_ORDERS`.
+
+**Mapeo `asset_class → calendar_id`** (`market_data/sessions/models.py::DEFAULT_CALENDAR_BY_ASSET_CLASS`, única tabla declarativa — cero hardcodes por símbolo): `crypto→CRYPTO_24_7`, `forex→FOREX_24_5`, `metal→METALS_23_5`, `index→US_INDICES_CFD`, `energy→UNKNOWN` (sin instrumento de energía registrado todavía). **Nota de diseño deliberada:** este mapeo se deriva de `InstrumentProfile.asset_class`, **no** del campo `trading_calendar_id` que ya existía desde F06 (ese campo hoy solo contiene el string libre `"24/7"`/`"24/5"`, metadata descriptiva de F06, no un identificador de calendario real). Reconciliar ambos campos queda fuera de alcance — no se tocó el bridge de F06 para no romper su contrato ya probado.
+
+**order_policy por estado:** `OPEN→OPEN_NORMAL`. `PRE_MARKET`/`AFTER_HOURS→CLOSE_ONLY` (horario extendido real existe pero sin datos reales de esa franja todavía — se permite gestionar posiciones existentes, no abrir nuevas). `WEEKEND`/`HOLIDAY`/`MAINTENANCE`/`CLOSED→MARKET_CLOSED` (mercado genuinamente no operando, esperado — no una degradación). `UNKNOWN→HALT_NEW_ORDERS` (no estamos seguros de que el mercado esté cerrado, así que restringimos por incertidumbre, no por afirmación).
+
+**Evaluador puro:** `evaluate_market_session(profile, *, now)` — `now` es un `datetime` timezone-aware **obligatorio**, sin default a reloj real (igual que `ProviderRouter.decide()`). Nunca lanza — cualquier fallo interno (calendario no reconocido, `now` naive) degrada a `UNKNOWN + HALT_NEW_ORDERS + EVALUATION_ERROR`. `evaluate_market_session_for_symbol(symbol, *, now=None)` es el wrapper de borde (symbol→spec→profile→evaluate) con reloj real por defecto, mismo patrón que `evaluate_shadow_route`/`select_runtime_provider`.
+
+**Integración con FeedManager — punto exacto:** dentro de `_try_live_via_new_router()`, **antes** de llamar a `select_runtime_provider()`. Si `state != OPEN`, retorna `False` de inmediato — exactamente el mismo resultado que "sin proveedor disponible" — sin construir ningún `ProviderRoutePlan`, sin llamar `decide()`, sin tocar ningún circuit breaker. El fallback sintético existente de `_feed_loop`/`_sim_loop` sigue dando continuidad sin cambios. Para `BTCUSD` (el único canary activo hoy), el calendario es `CRYPTO_24_7` — siempre `OPEN` — así que esta verificación es un no-op transparente y no cambia ningún comportamiento observado en F09/F10.
+
+**Logging:** `event=market_data_market_session` con `symbol`/`calendar_id`/`state`/`order_policy`/`reason_code`/`next_open_at`/`next_close_at`, emitido en cada llamada a `_try_live_via_new_router()` para un símbolo de la allowlist — antes de cualquier log de selección de proveedor. Sin secretos.
+
+**Alcance allowlist:** ningún símbolo fuera de `MARKET_DATA_ROUTER_SYMBOLS`, y nada si `MARKET_DATA_ROUTER_ENABLED=False`, evalúa sesión — verificado explícitamente por test (`evaluate_market_session_for_symbol` ni siquiera se invoca). **Rollback:** `MARKET_DATA_ROUTER_ENABLED=False`, sin cambios.
+
+**Limitaciones:**
+- Sin proveedor de feriados externo — `HOLIDAY` es un valor de estado alcanzable por diseño, pero ningún calendario de este bloque lo produce todavía.
+- `FOREX_24_5`/`METALS_23_5` usan una ventana UTC fija, sin el ajuste real que el mercado forex tiene por DST de Nueva York/Londres (aproximación documentada, no exacta).
+- El mapeo `asset_class→calendar_id` y el campo `trading_calendar_id` de F06 conviven sin reconciliarse — ver nota de diseño arriba.
+- `energy` no tiene calendario real — cualquier instrumento futuro de esa clase queda en `UNKNOWN` (`HALT_NEW_ORDERS`) hasta que se modele explícitamente.

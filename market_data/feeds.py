@@ -405,7 +405,33 @@ class FeedManager:
         _try_live_legacy(). Covers a router selection failure, an
         unrecognized provider_id, and a real connection failure in the
         dispatched loop uniformly — all become the same outcome.
+
+        FOUNDATION-11: before asking the router to pick a provider, check
+        whether the market is even open. If it isn't, this returns False
+        immediately — same outcome as "no live provider" — without ever
+        calling select_runtime_provider() or touching the circuit breaker.
+        A closed market during off-hours is not a provider failure; it must
+        never be recorded as one.
         """
+        from market_data.sessions import MarketSessionState
+        from market_data.sessions.service import evaluate_market_session_for_symbol
+
+        session = evaluate_market_session_for_symbol(symbol)
+        log.info(
+            "event=market_data_market_session symbol=%s calendar_id=%s state=%s "
+            "order_policy=%s reason_code=%s next_open_at=%s next_close_at=%s",
+            session.canonical_symbol, session.calendar_id.value, session.state.value,
+            session.order_policy.value, session.reason_code.value,
+            session.next_open_at.isoformat() if session.next_open_at else None,
+            session.next_close_at.isoformat() if session.next_close_at else None,
+        )
+        if session.state != MarketSessionState.OPEN:
+            # Market closed (or unknown) — do not attempt a provider, do not
+            # penalize any breaker. Let _feed_loop's existing sim fallback
+            # provide continuity, exactly as it already does for "no
+            # provider selected".
+            return False
+
         from market_data.runtime_router.service import select_runtime_provider
         from market_data.runtime_router.state import (
             record_provider_failure,
