@@ -168,6 +168,32 @@ Primera vez que el `ProviderRouter` nuevo **controla de verdad** una decisión d
 
 **Fallback a legacy — regla dura, sin excepciones:** cualquier error en el camino nuevo (fallo al construir el plan, proveedor no reconocido, o el loop despachado lanzando una excepción real de conexión) se loguea (`event=market_data_router_selection_error`) y ejecuta `_try_live_legacy()` completo, desde cero, para ese símbolo. Una decisión válida de "sin proveedor en vivo" (`selected_provider_id=None`, típicamente `SIMULATION_FALLBACK`) **no** es un error — deja que el fallback sintético existente de `_feed_loop`/`_sim_loop` actúe exactamente igual que hoy, sin ejecutar legacy de nuevo.
 
-**Estado del router — misma limitación que shadow mode (F08):** la selección inicial en este bloque usa un `ProviderRouter` sano/nuevo en cada llamada. **F09 controla solo la selección inicial; F10 conectará éxito/fallo real de los loops al circuit breaker** (para que una caída real de Binance en pleno stream, no solo al reconectar, dispare failover real a Kraken vía el router, no solo vía la lógica hardcodeada de `_try_live_legacy`).
+**Estado del router — misma limitación que shadow mode (F08), resuelta en F10:** en este bloque (F09), la selección inicial usaba un `ProviderRouter` sano/nuevo en cada llamada — F09 controlaba solo la selección inicial. **FOUNDATION-10 (§10 abajo) conecta el éxito/fallo real de los loops al circuit breaker**, reemplazando este límite.
 
 **Cómo revertir:** `MARKET_DATA_ROUTER_ENABLED=False` (o vaciar `MARKET_DATA_ROUTER_SYMBOLS`) — vuelve al 100% legacy sin tocar código, sin reiniciar en frío ninguna otra parte del sistema.
+
+---
+
+## 10. Real Failure Feedback & Canary Failover (FOUNDATION-10)
+
+Cierra el límite documentado en F09: ahora el `ProviderRouter` que controla la selección para símbolos de la allowlist **recibe resultados reales** de los loops (`_binance_loop`/`_kraken_loop`/`_finnhub_loop`), no solo un circuit breaker sano/nuevo en cada llamada.
+
+**Diseño de estado:** `market_data/runtime_router/state.py` — un `ProviderRouter` **singleton por proceso** (`get_router()`, patrón idéntico a `get_feed_manager()`), que sobrevive entre decisiones. Expone `record_provider_success(symbol, provider_id, now)`, `record_provider_failure(symbol, provider_id, error_code, now)`, `evaluate_recovery(symbol, provider_id, now)` y `get_circuit_breaker_state(symbol, provider_id)` — ninguno lanza excepción (mismo patrón defensivo que el resto del paquete). `select_runtime_provider()` (F09) ahora consulta este mismo singleton en vez de crear un `ProviderRouter()` nuevo por llamada.
+
+**Punto exacto de feedback — dos hooks opcionales, cero reescritura de loops:** `_binance_loop`/`_kraken_loop`/`_finnhub_loop` ganaron dos parámetros keyword-only, `on_first_tick` y `on_terminal_failure`, con default `None` en **todo** call site existente (legacy incluido) — comportamiento idéntico si no se pasan. `_try_live_via_new_router()` es el único lugar que los construye y los pasa al despachar.
+
+**Política success/failure/cancel:**
+- **SUCCESS** se registra exactamente una vez por sesión de conexión, en el primer tick válido transmitido (`_broadcast()` ya ejecutado) — nunca por abrir el socket, nunca por cada tick subsecuente (un flag local `tick_reported` lo garantiza).
+- **FAILURE** se registra exactamente una vez, solo cuando el loop agota sus propios reintentos internos (`MAX_FAILURES=3`, lógica de backoff sin tocar) y está a punto de relanzar la excepción hacia arriba — no por cada intento de reconexión interno, no por cada mensaje malformado (que ya caían dentro del mismo contador interno existente, sin cambios).
+- **CancelledError nunca cuenta como fallo** — se captura y relanza en su propio `except` antes de llegar al bloque que invoca `on_terminal_failure`, exactamente igual que hacía el código legacy.
+- Ambos callbacks están envueltos en su propio `try/except` dentro del loop — un bug en el feedback jamás puede tumbar el feed real.
+
+**Orquestación de failover:** no hizo falta código nuevo de reintento. `_feed_loop`'s ciclo externo ya vuelve a invocar `_try_live()` tras cada intento fallido; como el estado del router ahora persiste, cada nueva llamada a `select_runtime_provider()` ve el circuit breaker real y decide en consecuencia — Binance abierto → Kraken elegido, sin duplicar ningún loop ni backoff.
+
+**Recovery:** cuando el cooldown vence, `decide()` (ya existente desde F05) transiciona OPEN→HALF_OPEN internamente y selecciona el proveedor recuperándose como *probe* (`reason_code=HALF_OPEN_PROBE`). El test de integración confirma explícitamente que **una sola sesión exitosa no cierra el breaker** cuando la política exige más de una (`half_open_successes_required=2` para crypto) — no se falsificó con ticks ilimitados de una sola sesión.
+
+**Logging:** `event=market_data_router_state_transition` (cambio real de `CircuitBreakerState.health`, con `from_state`/`to_state`/`consecutive_failures`/`error_code`) y `event=market_data_router_failover` (cuando el proveedor *seleccionado* cambia entre dos decisiones consecutivas — no se emite en la primera selección de un símbolo). Ninguno incluye secretos ni payloads completos.
+
+**Limitación multi-worker — documentada, no resuelta aquí:** el estado vive en la memoria de **un proceso Python**. Un deploy ASGI multi-worker (varios procesos Daphne) tendría un circuit breaker independiente por worker, no uno compartido — la siguiente fase es estado compartido (Redis o un servicio de market-data dedicado), no activación global inmediata. Ver FOUNDATION-02 §3.4.
+
+**Canary:** `MARKET_DATA_ROUTER_SYMBOLS` sigue conteniendo solo `BTCUSD` como ejemplo documentado — ninguna ampliación de la allowlist ocurre en este bloque. **Rollback instantáneo:** `MARKET_DATA_ROUTER_ENABLED=False`.

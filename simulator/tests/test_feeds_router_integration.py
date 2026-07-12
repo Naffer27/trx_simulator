@@ -1,5 +1,6 @@
 """
-simulator/tests/test_feeds_router_integration.py — FOUNDATION-09.
+simulator/tests/test_feeds_router_integration.py — FOUNDATION-09 (updated
+FOUNDATION-10).
 
 Covers the controlled router integration in market_data/feeds.py::
 FeedManager._try_live() / _try_live_via_new_router() / _try_live_legacy():
@@ -17,6 +18,7 @@ from market_data.contracts import SourceState
 from market_data.feeds import FeedManager
 from market_data.router.models import ReasonCode
 from market_data.runtime_router.models import RuntimeSelectionResult
+from market_data.runtime_router.state import reset_router_state
 
 
 def make_result(**overrides):
@@ -29,7 +31,17 @@ def make_result(**overrides):
     return RuntimeSelectionResult(**defaults)
 
 
-class FeatureFlagAndAllowlistGateTests(SimpleTestCase):
+class _RouterStateIsolatedTestCase(SimpleTestCase):
+    """FOUNDATION-10: market_data.runtime_router.state tracks
+    last-selected-provider globally (for failover-change detection) — reset
+    it before every test so none of these tests see state left over from
+    another test in the same process."""
+
+    def setUp(self):
+        reset_router_state()
+
+
+class FeatureFlagAndAllowlistGateTests(_RouterStateIsolatedTestCase):
     @override_settings(MARKET_DATA_ROUTER_ENABLED=False)
     def test_flag_false_uses_legacy_and_never_invokes_router(self):
         fm = FeedManager()
@@ -57,7 +69,7 @@ class FeatureFlagAndAllowlistGateTests(SimpleTestCase):
         self.assertEqual(settings.MARKET_DATA_ROUTER_SYMBOLS, frozenset())
 
 
-class RouterControlledDispatchTests(SimpleTestCase):
+class RouterControlledDispatchTests(_RouterStateIsolatedTestCase):
     @override_settings(MARKET_DATA_ROUTER_ENABLED=True, MARKET_DATA_ROUTER_SYMBOLS=frozenset({"BTCUSD"}))
     def test_binance_selection_dispatches_to_binance_loop(self):
         fm = FeedManager()
@@ -70,7 +82,7 @@ class RouterControlledDispatchTests(SimpleTestCase):
             channel_layer = MagicMock()
             result = _run(fm._try_live("BTCUSD", channel_layer))
 
-        mock_binance.assert_called_once_with("BTCUSD", "BTCUSDT", channel_layer)
+        _assert_dispatched_with(self, mock_binance, "BTCUSD", "BTCUSDT", channel_layer)
         mock_kraken.assert_not_called()
         mock_finnhub.assert_not_called()
         self.assertTrue(result)
@@ -86,7 +98,7 @@ class RouterControlledDispatchTests(SimpleTestCase):
             channel_layer = MagicMock()
             result = _run(fm._try_live("BTCUSD", channel_layer))
 
-        mock_kraken.assert_called_once_with("BTCUSD", "XBT/USD", channel_layer)
+        _assert_dispatched_with(self, mock_kraken, "BTCUSD", "XBT/USD", channel_layer)
         mock_binance.assert_not_called()
         self.assertTrue(result)
 
@@ -100,7 +112,7 @@ class RouterControlledDispatchTests(SimpleTestCase):
             channel_layer = MagicMock()
             result = _run(fm._try_live("BTCUSD", channel_layer))
 
-        mock_finnhub.assert_called_once_with("BTCUSD", channel_layer)
+        _assert_dispatched_with(self, mock_finnhub, "BTCUSD", channel_layer)
         self.assertTrue(result)
 
     @override_settings(MARKET_DATA_ROUTER_ENABLED=True, MARKET_DATA_ROUTER_SYMBOLS=frozenset({"BTCUSD"}))
@@ -125,7 +137,7 @@ class RouterControlledDispatchTests(SimpleTestCase):
         self.assertFalse(result)  # exactly what legacy would return for "nothing live"
 
 
-class FallbackToLegacyTests(SimpleTestCase):
+class FallbackToLegacyTests(_RouterStateIsolatedTestCase):
     @override_settings(MARKET_DATA_ROUTER_ENABLED=True, MARKET_DATA_ROUTER_SYMBOLS=frozenset({"BTCUSD"}))
     def test_router_reported_failure_falls_back_to_legacy(self):
         fm = FeedManager()
@@ -179,7 +191,7 @@ class FallbackToLegacyTests(SimpleTestCase):
         mock_legacy.assert_called_once_with("BTCUSD", channel_layer)
 
 
-class LoggingTests(SimpleTestCase):
+class LoggingTests(_RouterStateIsolatedTestCase):
     @override_settings(MARKET_DATA_ROUTER_ENABLED=True, MARKET_DATA_ROUTER_SYMBOLS=frozenset({"BTCUSD"}))
     def test_structured_selection_log_emitted(self):
         fm = FeedManager()
@@ -232,3 +244,20 @@ class EnvTemplatesDocumentedTests(SimpleTestCase):
 def _run(coro):
     import asyncio
     return asyncio.run(coro)
+
+
+def _assert_dispatched_with(testcase, mock_loop, *expected_positional):
+    """
+    FOUNDATION-10: dispatch now also passes on_first_tick/on_terminal_failure
+    keyword callbacks (see FeedManager._try_live_via_new_router). Asserts the
+    real positional args (symbol, provider-specific symbol if any, channel_layer)
+    match exactly, and that both feedback callbacks were passed and are callable
+    — without asserting exact function identity, since they're locals defined
+    fresh on every call.
+    """
+    mock_loop.assert_called_once()
+    call = mock_loop.call_args
+    testcase.assertEqual(call.args, expected_positional)
+    testcase.assertEqual(set(call.kwargs), {"on_first_tick", "on_terminal_failure"})
+    testcase.assertTrue(callable(call.kwargs["on_first_tick"]))
+    testcase.assertTrue(callable(call.kwargs["on_terminal_failure"]))

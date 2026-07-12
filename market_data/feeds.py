@@ -21,6 +21,7 @@ import time
 import urllib.request
 import urllib.error
 from concurrent.futures import ThreadPoolExecutor
+from typing import Callable, Optional
 
 try:
     import websockets
@@ -406,6 +407,11 @@ class FeedManager:
         dispatched loop uniformly — all become the same outcome.
         """
         from market_data.runtime_router.service import select_runtime_provider
+        from market_data.runtime_router.state import (
+            record_provider_failure,
+            record_provider_success,
+            record_selection,
+        )
 
         decision = select_runtime_provider(symbol)
 
@@ -421,18 +427,43 @@ class FeedManager:
         if decision.fallback_to_legacy:
             raise RuntimeError(f"router could not produce a decision: error_code={decision.error_code!r}")
 
+        record_selection(symbol, decision.selected_provider_id, decision.reason_code)
+
         provider_id = decision.selected_provider_id
         if provider_id is None:
             # A valid, successful decision: no live provider available.
             # Let _feed_loop's existing sim fallback take over, unchanged.
             return False
 
+        # FOUNDATION-10: feedback hooks — record_provider_success fires once,
+        # on the first valid tick (not on socket connect); record_provider_failure
+        # fires once, only when the dispatched loop gives up for a real error
+        # (never for CancelledError — that's handled by the caller's own
+        # except asyncio.CancelledError: raise, which this dispatch never
+        # intercepts). Both are already exception-safe on their own (see
+        # market_data/runtime_router/state.py) — the loops wrap the calls too,
+        # belt-and-suspenders, since these run inside a live feed loop.
+        def _on_success() -> None:
+            record_provider_success(symbol, provider_id)
+
+        def _on_failure(exc: Exception) -> None:
+            record_provider_failure(symbol, provider_id, error_code=repr(exc))
+
         # Explicit, testable provider -> existing-loop dispatch. Never
         # execute anything the router didn't name here.
         dispatch = {
-            "binance": lambda: self._binance_loop(symbol, decision.selected_provider_symbol, channel_layer),
-            "kraken": lambda: self._kraken_loop(symbol, decision.selected_provider_symbol, channel_layer),
-            "finnhub": lambda: self._finnhub_loop(symbol, channel_layer),
+            "binance": lambda: self._binance_loop(
+                symbol, decision.selected_provider_symbol, channel_layer,
+                on_first_tick=_on_success, on_terminal_failure=_on_failure,
+            ),
+            "kraken": lambda: self._kraken_loop(
+                symbol, decision.selected_provider_symbol, channel_layer,
+                on_first_tick=_on_success, on_terminal_failure=_on_failure,
+            ),
+            "finnhub": lambda: self._finnhub_loop(
+                symbol, channel_layer,
+                on_first_tick=_on_success, on_terminal_failure=_on_failure,
+            ),
         }
         loop_call = dispatch.get(provider_id)
         if loop_call is None:
@@ -520,7 +551,23 @@ class FeedManager:
 
     # ── live feed loops ──
 
-    async def _binance_loop(self, symbol: str, mapped: str, channel_layer) -> None:
+    async def _binance_loop(
+        self, symbol: str, mapped: str, channel_layer, *,
+        on_first_tick: Optional[Callable[[], None]] = None,
+        on_terminal_failure: Optional[Callable[[Exception], None]] = None,
+    ) -> None:
+        """
+        FOUNDATION-10: on_first_tick/on_terminal_failure are optional
+        feedback hooks for the new router's circuit breaker — None for
+        every legacy call site, which leaves this method's connection,
+        retry, and backoff logic completely unchanged. on_first_tick fires
+        once, the first time a valid bid/ask is broadcast in this
+        invocation (not on socket connect). on_terminal_failure fires
+        once, only when this method is about to give up and re-raise after
+        MAX_FAILURES reconnect attempts — never for asyncio.CancelledError.
+        Both are wrapped so a bug in feedback recording can never affect
+        the real feed.
+        """
         url = (
             f"wss://stream.binance.com:9443/stream"
             f"?streams={mapped}@bookTicker/{mapped}@kline_1m"
@@ -528,6 +575,7 @@ class FeedManager:
         log.info("[feed] Binance loop for %s (%s)", symbol, mapped)
         consecutive_failures = 0
         MAX_FAILURES = 3
+        tick_reported = False
         while True:
             try:
                 async with websockets.connect(
@@ -545,6 +593,12 @@ class FeedManager:
                             a = float(data.get("a") or 0.0)
                             if a > b > 0:
                                 await self._broadcast(symbol, channel_layer, b, a, int(time.time()))
+                                if not tick_reported and on_first_tick is not None:
+                                    tick_reported = True
+                                    try:
+                                        on_first_tick()
+                                    except Exception as cb_exc:
+                                        log.debug("[feed] on_first_tick callback failed for %s: %r", symbol, cb_exc)
                         elif stream.endswith("@kline_1m"):
                             k = data.get("k") or {}
                             open_ms = int(k.get("t") or 0)
@@ -567,6 +621,11 @@ class FeedManager:
                         "[feed] Binance giving up for %s after %d failures",
                         symbol, consecutive_failures,
                     )
+                    if on_terminal_failure is not None:
+                        try:
+                            on_terminal_failure(exc)
+                        except Exception as cb_exc:
+                            log.debug("[feed] on_terminal_failure callback failed for %s: %r", symbol, cb_exc)
                     raise
                 log.error(
                     "[feed] Binance error %s: %r — reconnect in 3s (%d/%d)",
@@ -574,16 +633,24 @@ class FeedManager:
                 )
                 await asyncio.sleep(3)
 
-    async def _kraken_loop(self, symbol: str, kr_pair: str, channel_layer) -> None:
+    async def _kraken_loop(
+        self, symbol: str, kr_pair: str, channel_layer, *,
+        on_first_tick: Optional[Callable[[], None]] = None,
+        on_terminal_failure: Optional[Callable[[Exception], None]] = None,
+    ) -> None:
         """
         Kraken WS v1 — provides both ticker (bid/ask) and ohlc-1 (1m candles).
         Used as fallback when Binance WS is unavailable.
         Candles are broadcast via _broadcast_kline so candle_kline() picks them up.
+
+        FOUNDATION-10: see _binance_loop's docstring for on_first_tick /
+        on_terminal_failure semantics — identical contract here.
         """
         url = "wss://ws.kraken.com"
         log.info("[feed] Kraken loop for %s (%s)", symbol, kr_pair)
         consecutive_failures = 0
         MAX_FAILURES = 3
+        tick_reported = False
 
         while True:
             try:
@@ -617,6 +684,12 @@ class FeedManager:
                             ask = float(data["a"][0])
                             if ask > bid > 0:
                                 await self._broadcast(symbol, channel_layer, bid, ask, int(time.time()))
+                                if not tick_reported and on_first_tick is not None:
+                                    tick_reported = True
+                                    try:
+                                        on_first_tick()
+                                    except Exception as cb_exc:
+                                        log.debug("[feed] on_first_tick callback failed for %s: %r", symbol, cb_exc)
 
                         elif channel_name.startswith("ohlc"):
                             # row: [time, etime, open, high, low, close, vwap, volume, count]
@@ -639,17 +712,29 @@ class FeedManager:
                 consecutive_failures += 1
                 if consecutive_failures >= MAX_FAILURES:
                     log.warning("[feed] Kraken giving up for %s after %d failures", symbol, consecutive_failures)
+                    if on_terminal_failure is not None:
+                        try:
+                            on_terminal_failure(exc)
+                        except Exception as cb_exc:
+                            log.debug("[feed] on_terminal_failure callback failed for %s: %r", symbol, cb_exc)
                     raise
                 log.error("[feed] Kraken error %s: %r — reconnect in 3s (%d/%d)", symbol, exc, consecutive_failures, MAX_FAILURES)
                 await asyncio.sleep(3)
 
-    async def _finnhub_loop(self, symbol: str, channel_layer) -> None:
+    async def _finnhub_loop(
+        self, symbol: str, channel_layer, *,
+        on_first_tick: Optional[Callable[[], None]] = None,
+        on_terminal_failure: Optional[Callable[[Exception], None]] = None,
+    ) -> None:
+        """FOUNDATION-10: see _binance_loop's docstring for on_first_tick /
+        on_terminal_failure semantics — identical contract here."""
         finnhub_sym = _finnhub_sym(symbol)
         url = f"wss://ws.finnhub.io?token={FINNHUB_API_KEY}"
         _, dec = _step_dec(symbol)
         log.info("[feed] Finnhub loop for %s (%s)", symbol, finnhub_sym)
         consecutive_failures = 0
         MAX_FAILURES = 3
+        tick_reported = False
         while True:
             try:
                 async with websockets.connect(
@@ -672,6 +757,12 @@ class FeedManager:
                             ask = round(px + spr / 2, dec)
                             ts  = int((t.get("t") or time.time() * 1000) / 1000)
                             await self._broadcast(symbol, channel_layer, bid, ask, ts)
+                            if not tick_reported and on_first_tick is not None:
+                                tick_reported = True
+                                try:
+                                    on_first_tick()
+                                except Exception as cb_exc:
+                                    log.debug("[feed] on_first_tick callback failed for %s: %r", symbol, cb_exc)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -681,6 +772,11 @@ class FeedManager:
                         "[feed] Finnhub giving up for %s after %d failures",
                         symbol, consecutive_failures,
                     )
+                    if on_terminal_failure is not None:
+                        try:
+                            on_terminal_failure(exc)
+                        except Exception as cb_exc:
+                            log.debug("[feed] on_terminal_failure callback failed for %s: %r", symbol, cb_exc)
                     raise
                 log.error(
                     "[feed] Finnhub error %s: %r — reconnect in 3s (%d/%d)",

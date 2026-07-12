@@ -1,10 +1,14 @@
 """
-market_data/tests/test_runtime_router.py — FOUNDATION-09.
+market_data/tests/test_runtime_router.py — FOUNDATION-09 (updated FOUNDATION-10).
 
 select_runtime_provider() and RuntimeSelectionResult. Pure unittest, no
 Django dependency — this service has zero runtime wiring itself (that
 wiring lives in market_data/feeds.py, tested separately in
-simulator/tests/test_feeds_router_integration.py).
+simulator/tests/test_feeds_router_integration.py and
+simulator/tests/test_router_failure_feedback.py).
+
+Persistent circuit breaker state (market_data/runtime_router/state.py) is
+covered in market_data/tests/test_runtime_router_state.py.
 """
 
 import ast
@@ -18,9 +22,16 @@ from market_data.contracts import SourceState
 from market_data.router.models import ReasonCode
 from market_data.runtime_router.models import RuntimeSelectionResult
 from market_data.runtime_router.service import select_runtime_provider
+from market_data.runtime_router.state import reset_router_state
 
 
 class SelectRuntimeProviderTests(unittest.TestCase):
+    def setUp(self):
+        # FOUNDATION-10: select_runtime_provider() now reads a process-wide
+        # router singleton — reset it so tests never see state left over
+        # from another test (in this file or elsewhere in the same run).
+        reset_router_state()
+
     def test_btcusd_selects_binance(self):
         result = select_runtime_provider("BTCUSD", now=0)
         self.assertIsInstance(result, RuntimeSelectionResult)
@@ -54,7 +65,7 @@ class SelectRuntimeProviderTests(unittest.TestCase):
 
     def test_build_failure_falls_back_to_legacy_not_raised(self):
         with patch(
-            "market_data.runtime_router.service.build_route_plan",
+            "market_data.runtime_router.service.build_plan_for_symbol",
             side_effect=RuntimeError("forced failure for this test"),
         ):
             result = select_runtime_provider("BTCUSD", now=0)  # must not raise

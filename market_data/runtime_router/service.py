@@ -1,6 +1,6 @@
 """
 market_data/runtime_router/service.py — runtime provider selection
-(FOUNDATION-09).
+(FOUNDATION-09, updated FOUNDATION-10).
 
 Runs SymbolSpec -> InstrumentProfile -> ProviderRoutePlan ->
 ProviderRouter.decide() to pick which provider FeedManager should try for
@@ -19,14 +19,12 @@ gated by market_data/feeds.py (settings.MARKET_DATA_ROUTER_ENABLED +
 MARKET_DATA_ROUTER_SYMBOLS) — this module has no opinion on that; given a
 symbol, it always attempts a decision.
 
-Known limitation (documented, not solved in this block — see
-docs/MARKET_DATA_ARCHITECTURE.md): the ProviderRouter instance used here is
-fresh on every call, so it does not yet receive real connection
-success/failure from FeedManager's loops. Every decision reflects a
-healthy/CLOSED circuit breaker. F09 controls only the *initial* provider
-selection; wiring real success/failure into the circuit breaker (so a
-symbol that's genuinely failing on Binance actually fails over to Kraken
-mid-stream) is FOUNDATION-10.
+FOUNDATION-10: decisions now come from the process-wide ProviderRouter
+singleton in market_data/runtime_router/state.py, not a fresh instance per
+call — so a decision here reflects real circuit breaker state fed by
+market_data/feeds.py's loops via state.record_provider_success()/
+record_provider_failure(). See state.py's module docstring for the
+multi-worker limitation this still carries.
 """
 
 from __future__ import annotations
@@ -34,12 +32,10 @@ from __future__ import annotations
 import time
 from typing import Optional
 
-from market_data.instruments.bridges import profile_from_symbol_spec
-from market_data.instruments.routing import build_route_plan
-from market_data.router.router import ProviderRouter
 from market_data.symbol_specs import get_spec
 
 from .models import RuntimeSelectionResult
+from .state import build_plan_for_symbol, get_router
 
 
 def _fallback(symbol: str, error_code: str) -> RuntimeSelectionResult:
@@ -71,9 +67,8 @@ def _select_runtime_provider_inner(symbol: str, evaluated_at: int) -> RuntimeSel
         return _fallback(symbol, f"unknown_symbol: {symbol!r}")
 
     try:
-        profile = profile_from_symbol_spec(spec)
-        plan = build_route_plan(profile)
-        decision = ProviderRouter().decide(plan, now=evaluated_at)
+        plan = build_plan_for_symbol(spec.symbol)
+        decision = get_router().decide(plan, now=evaluated_at)
     except Exception as exc:
         return _fallback(spec.symbol, f"route_plan_build_failed: {exc!r}")
 
