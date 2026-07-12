@@ -168,11 +168,38 @@ class FeedManager:
     def _ensure_running(self, symbol: str, channel_layer) -> None:
         task = self._tasks.get(symbol)
         if task is None or task.done():
+            self._maybe_run_shadow_evaluation(symbol)
             self._tasks[symbol] = asyncio.create_task(
                 self._feed_loop(symbol, channel_layer),
                 name=f"feed_{symbol}",
             )
             log.info("[feed] started task for %s", symbol)
+
+    def _maybe_run_shadow_evaluation(self, symbol: str) -> None:
+        """
+        FOUNDATION-08 — observational only, gated by settings.MARKET_DATA_
+        SHADOW_MODE (default False). Runs at most once per cold start of a
+        symbol's feed task (same guard as the real task creation just below,
+        never per-tick). Any failure here is swallowed — the real feed task
+        is created unconditionally right after this returns, whether it
+        succeeded, was skipped, or raised. See market_data/shadow/.
+        """
+        try:
+            from django.conf import settings
+            if not getattr(settings, "MARKET_DATA_SHADOW_MODE", False):
+                return
+            from market_data.shadow.service import evaluate_shadow_route
+            result = evaluate_shadow_route(symbol)
+            log.info(
+                "event=market_data_shadow_decision symbol=%s legacy_provider=%s "
+                "shadow_provider=%s agrees=%s reason_code=%s degraded=%s error_code=%s",
+                symbol, result.legacy_expected_provider, result.shadow_selected_provider,
+                result.agrees_with_legacy,
+                result.reason_code.value if result.reason_code else None,
+                result.degraded, result.error_code,
+            )
+        except Exception as exc:
+            log.debug("[shadow] evaluation failed for %s (non-fatal, legacy unaffected): %r", symbol, exc)
 
     def _stop(self, symbol: str) -> None:
         task = self._tasks.pop(symbol, None)

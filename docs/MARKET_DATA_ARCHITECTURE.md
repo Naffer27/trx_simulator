@@ -133,3 +133,17 @@ Definida en el documento de arquitectura aprobado:
 - No se tocó `.env` ni ningún valor de configuración real.
 - No se instalaron paquetes ni se corrieron migraciones.
 - `/Users/naffermoreno/Desktop/treasury_engine` no fue referenciado ni tocado.
+
+---
+
+## 8. Provider Router Shadow Mode (FOUNDATION-08)
+
+Corre la cadena nueva — `SymbolSpec → InstrumentProfile → ProviderRoutePlan → ProviderRouter.decide()` (`market_data/shadow/`) — en paralelo al runtime real, solo para observar. **Es puramente observacional: no controla suscripciones, precios, failover ni operaciones.** `FeedManager._try_live()` sigue siendo la única autoridad; el shadow mode nunca decide nada por sí mismo.
+
+**Cómo activarlo:** variable de entorno `MARKET_DATA_SHADOW_MODE=True` (default `False` en local/staging/producción — no se debe activar sin aprobación explícita posterior a este bloque). Con la flag en `False`, `market_data/shadow/` ni siquiera se importa desde `feeds.py`.
+
+**Punto de integración:** `FeedManager._ensure_running()`, justo antes de crear la tarea real del feed — se dispara una sola vez por arranque en frío de un símbolo (cuando no hay tarea corriendo o terminó), nunca por tick. Envuelto en `try/except` total: cualquier fallo del shadow mode se traga y se loguea en `DEBUG`; la tarea real del feed se crea siempre, sin condicionarse al resultado.
+
+**Cómo interpretar agreement/disagreement:** cada evaluación compara `legacy_expected_provider` (una réplica declarativa del orden real de `_try_live()`: Binance si hay `exchange_symbol` → Kraken si hay `kraken_symbol` → Finnhub si hay `FINNHUB_API_KEY` y el símbolo tiene `"/"` → ninguno) contra `shadow_selected_provider` (lo que decide `ProviderRouter.decide()` sobre el `ProviderRoutePlan` construido desde el mismo `SymbolSpec`). `agrees_with_legacy=True` cuando coinciden. Una discrepancia **no implica un bug** — por ejemplo, un símbolo con `enabled=False` pero `finnhub_symbol` configurado (USD/CAD, USD/CHF, NZD/USD) mostrará `legacy_expected_provider="finnhub"` pero `shadow_selected_provider=None` (simulation-only), porque `legacy_expected_provider()` replica solo las tres condiciones declarativas pedidas, sin considerar el gate de `enabled`/`allowed_symbols()` que en la práctica nunca deja que `_try_live()` se ejecute para un símbolo deshabilitado. Es señal real y esperada, no ruido.
+
+**Limitación actual, documentada deliberadamente:** el `ProviderRouter` que usa el shadow mode se instancia nuevo en cada evaluación — no recibe los fallos reales de `FeedManager` (los reintentos WS, los `consecutive_failures` de `_binance_loop`/`_kraken_loop`/`_finnhub_loop`). Por lo tanto, toda decisión de shadow parte de un circuit breaker sano/`CLOSED`. Este bloque prueba que la tubería completa encadena correctamente — no reproduce el comportamiento real del circuit breaker bajo fallos en vivo. Sincronizar el estado del breaker de shadow con los fallos reales del `FeedManager` queda fuera de alcance de FOUNDATION-08.

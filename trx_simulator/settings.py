@@ -378,6 +378,20 @@ if LOAD_TEST_MODE:
         "This MUST be False in production."
     )
 
+# FOUNDATION-08 — Provider Router Shadow Mode. Observational only: evaluates
+# SymbolSpec -> InstrumentProfile -> ProviderRoutePlan -> ProviderRouter
+# .decide() alongside the live feed and logs agreement/disagreement with
+# legacy — never controls subscriptions, prices, or failover. Must stay
+# False in local/staging/production until explicitly approved to flip.
+# See market_data/shadow/ and docs/MARKET_DATA_ARCHITECTURE.md.
+MARKET_DATA_SHADOW_MODE = os.getenv("MARKET_DATA_SHADOW_MODE", "False").strip().lower() in {"1", "true", "yes"}
+if MARKET_DATA_SHADOW_MODE:
+    import logging as _logging
+    _logging.getLogger("simulator.ws").info(
+        "[shadow] MARKET_DATA_SHADOW_MODE is ENABLED — observational only, "
+        "does not control provider selection, prices, or trading."
+    )
+
 # Login / redirecciones
 LOGIN_URL = "simulator:login"
 LOGIN_REDIRECT_URL = "simulator:dashboard"
