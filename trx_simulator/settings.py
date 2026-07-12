@@ -392,6 +392,26 @@ if MARKET_DATA_SHADOW_MODE:
         "does not control provider selection, prices, or trading."
     )
 
+# FOUNDATION-09 — Controlled Provider Router Integration. When ENABLED,
+# lets the new ProviderRouter control *initial* provider selection, but
+# only for symbols explicitly on MARKET_DATA_ROUTER_SYMBOLS — every other
+# symbol, and every symbol when this is False, runs the unmodified legacy
+# _try_live_legacy() path. Any error in the new router path falls back to
+# legacy immediately. Must stay False / empty in local/staging/production
+# until explicitly approved to flip. First authorized canary: BTCUSD only.
+# See market_data/runtime_router/ and docs/MARKET_DATA_ARCHITECTURE.md.
+MARKET_DATA_ROUTER_ENABLED = os.getenv("MARKET_DATA_ROUTER_ENABLED", "False").strip().lower() in {"1", "true", "yes"}
+MARKET_DATA_ROUTER_SYMBOLS = frozenset(
+    s.strip() for s in os.getenv("MARKET_DATA_ROUTER_SYMBOLS", "").split(",") if s.strip()
+)
+if MARKET_DATA_ROUTER_ENABLED:
+    import logging as _logging
+    _logging.getLogger("simulator.ws").info(
+        "[router] MARKET_DATA_ROUTER_ENABLED is ENABLED for symbols=%s — "
+        "controls only initial provider selection, falls back to legacy on any error.",
+        sorted(MARKET_DATA_ROUTER_SYMBOLS),
+    )
+
 # Login / redirecciones
 LOGIN_URL = "simulator:login"
 LOGIN_REDIRECT_URL = "simulator:dashboard"

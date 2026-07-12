@@ -147,3 +147,27 @@ Corre la cadena nueva — `SymbolSpec → InstrumentProfile → ProviderRoutePla
 **Cómo interpretar agreement/disagreement:** cada evaluación compara `legacy_expected_provider` (una réplica declarativa del orden real de `_try_live()`: Binance si hay `exchange_symbol` → Kraken si hay `kraken_symbol` → Finnhub si hay `FINNHUB_API_KEY` y el símbolo tiene `"/"` → ninguno) contra `shadow_selected_provider` (lo que decide `ProviderRouter.decide()` sobre el `ProviderRoutePlan` construido desde el mismo `SymbolSpec`). `agrees_with_legacy=True` cuando coinciden. Una discrepancia **no implica un bug** — por ejemplo, un símbolo con `enabled=False` pero `finnhub_symbol` configurado (USD/CAD, USD/CHF, NZD/USD) mostrará `legacy_expected_provider="finnhub"` pero `shadow_selected_provider=None` (simulation-only), porque `legacy_expected_provider()` replica solo las tres condiciones declarativas pedidas, sin considerar el gate de `enabled`/`allowed_symbols()` que en la práctica nunca deja que `_try_live()` se ejecute para un símbolo deshabilitado. Es señal real y esperada, no ruido.
 
 **Limitación actual, documentada deliberadamente:** el `ProviderRouter` que usa el shadow mode se instancia nuevo en cada evaluación — no recibe los fallos reales de `FeedManager` (los reintentos WS, los `consecutive_failures` de `_binance_loop`/`_kraken_loop`/`_finnhub_loop`). Por lo tanto, toda decisión de shadow parte de un circuit breaker sano/`CLOSED`. Este bloque prueba que la tubería completa encadena correctamente — no reproduce el comportamiento real del circuit breaker bajo fallos en vivo. Sincronizar el estado del breaker de shadow con los fallos reales del `FeedManager` queda fuera de alcance de FOUNDATION-08.
+
+---
+
+## 9. Controlled Provider Router Integration (FOUNDATION-09)
+
+Primera vez que el `ProviderRouter` nuevo **controla de verdad** una decisión de proveedor en el runtime — pero solo la selección **inicial**, y solo para símbolos explícitamente autorizados. Todo lo demás sigue exactamente igual que antes de este bloque.
+
+**Flags:** `MARKET_DATA_ROUTER_ENABLED` (bool, default `False`) + `MARKET_DATA_ROUTER_SYMBOLS` (lista separada por comas, default vacía). Ambas condiciones deben cumplirse para que un símbolo use el router nuevo:
+- `ENABLED=False` → 100% legacy, siempre, para todos los símbolos.
+- `ENABLED=True` pero símbolo fuera de la lista → legacy, sin excepción.
+- `ENABLED=True` + símbolo en la lista → el router decide la selección inicial.
+
+**Primer canary autorizado: `BTCUSD` solamente.** Cualquier ampliación de la allowlist es una decisión posterior explícita, no algo que este bloque habilite por sí mismo — el default en `.env.example`/`deploy/.env.staging.template` queda vacío, no con `BTCUSD` precargado.
+
+**Punto de integración:** `FeedManager._try_live()` — se dividió en tres métodos, ninguno de los tres reescribe `_binance_loop`/`_kraken_loop`/`_finnhub_loop`:
+- `_try_live()`: despachador delgado — decide si usa el router nuevo (`_should_use_new_router`) o corre legacy directo.
+- `_try_live_via_new_router()`: construye la decisión vía `market_data.runtime_router.select_runtime_provider()` y despacha explícitamente al loop existente correspondiente (`binance→_binance_loop`, `kraken→_kraken_loop`, `finnhub→_finnhub_loop`). Un `provider_id` no reconocido, o cualquier excepción en el camino (incluida una falla real de conexión del loop despachado), se propaga hacia arriba deliberadamente.
+- `_try_live_legacy()`: copia exacta del `_try_live` original — Binance → Kraken → Finnhub hardcodeado. Es lo que corre siempre que el flag está apagado, el símbolo no está en la lista, o el camino nuevo falla por cualquier motivo.
+
+**Fallback a legacy — regla dura, sin excepciones:** cualquier error en el camino nuevo (fallo al construir el plan, proveedor no reconocido, o el loop despachado lanzando una excepción real de conexión) se loguea (`event=market_data_router_selection_error`) y ejecuta `_try_live_legacy()` completo, desde cero, para ese símbolo. Una decisión válida de "sin proveedor en vivo" (`selected_provider_id=None`, típicamente `SIMULATION_FALLBACK`) **no** es un error — deja que el fallback sintético existente de `_feed_loop`/`_sim_loop` actúe exactamente igual que hoy, sin ejecutar legacy de nuevo.
+
+**Estado del router — misma limitación que shadow mode (F08):** la selección inicial en este bloque usa un `ProviderRouter` sano/nuevo en cada llamada. **F09 controla solo la selección inicial; F10 conectará éxito/fallo real de los loops al circuit breaker** (para que una caída real de Binance en pleno stream, no solo al reconectar, dispare failover real a Kraken vía el router, no solo vía la lógica hardcodeada de `_try_live_legacy`).
+
+**Cómo revertir:** `MARKET_DATA_ROUTER_ENABLED=False` (o vaciar `MARKET_DATA_ROUTER_SYMBOLS`) — vuelve al 100% legacy sin tocar código, sin reiniciar en frío ninguna otra parte del sistema.

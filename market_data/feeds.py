@@ -356,6 +356,98 @@ class FeedManager:
         """
         Try Binance then Finnhub. Returns True if a live feed ran (even briefly).
         Exceptions from failed providers are caught here.
+
+        FOUNDATION-09: for symbols on settings.MARKET_DATA_ROUTER_SYMBOLS
+        with settings.MARKET_DATA_ROUTER_ENABLED=True, the initial provider
+        choice is delegated to the new ProviderRouter pipeline instead of
+        this method's own hardcoded order — see _try_live_via_new_router().
+        Any failure in that path (selection error, unrecognized provider,
+        or the dispatched loop itself failing) falls back to running the
+        complete, unmodified legacy body below. Every other symbol, and
+        every symbol when the flag is off, never touches that path at all.
+        """
+        if self._should_use_new_router(symbol):
+            try:
+                return await self._try_live_via_new_router(symbol, channel_layer)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.error(
+                    "event=market_data_router_selection_error symbol=%s error=%r "
+                    "— falling back to legacy _try_live",
+                    symbol, exc,
+                )
+
+        return await self._try_live_legacy(symbol, channel_layer)
+
+    def _should_use_new_router(self, symbol: str) -> bool:
+        """Flag + allowlist gate. Never raises — any settings-access problem
+        is treated as "no", same as the flag being off."""
+        try:
+            from django.conf import settings
+            if not getattr(settings, "MARKET_DATA_ROUTER_ENABLED", False):
+                return False
+            allowlist = getattr(settings, "MARKET_DATA_ROUTER_SYMBOLS", frozenset())
+            return symbol in allowlist
+        except Exception:
+            return False
+
+    async def _try_live_via_new_router(self, symbol: str, channel_layer) -> bool:
+        """
+        Called only when _should_use_new_router(symbol) is True. Builds a
+        fresh selection via market_data.runtime_router and dispatches to
+        the SAME existing loop methods legacy uses below — no new
+        connection, retry, or backoff logic.
+
+        Raising here is the intended way to signal "give up on the router
+        path" to the caller, which catches everything and falls back to
+        _try_live_legacy(). Covers a router selection failure, an
+        unrecognized provider_id, and a real connection failure in the
+        dispatched loop uniformly — all become the same outcome.
+        """
+        from market_data.runtime_router.service import select_runtime_provider
+
+        decision = select_runtime_provider(symbol)
+
+        log.info(
+            "event=market_data_router_selection symbol=%s selected_provider=%s "
+            "used_new_router=%s fallback_to_legacy=%s reason_code=%s error_code=%s",
+            decision.symbol, decision.selected_provider_id, decision.used_new_router,
+            decision.fallback_to_legacy,
+            decision.reason_code.value if decision.reason_code else None,
+            decision.error_code,
+        )
+
+        if decision.fallback_to_legacy:
+            raise RuntimeError(f"router could not produce a decision: error_code={decision.error_code!r}")
+
+        provider_id = decision.selected_provider_id
+        if provider_id is None:
+            # A valid, successful decision: no live provider available.
+            # Let _feed_loop's existing sim fallback take over, unchanged.
+            return False
+
+        # Explicit, testable provider -> existing-loop dispatch. Never
+        # execute anything the router didn't name here.
+        dispatch = {
+            "binance": lambda: self._binance_loop(symbol, decision.selected_provider_symbol, channel_layer),
+            "kraken": lambda: self._kraken_loop(symbol, decision.selected_provider_symbol, channel_layer),
+            "finnhub": lambda: self._finnhub_loop(symbol, channel_layer),
+        }
+        loop_call = dispatch.get(provider_id)
+        if loop_call is None:
+            raise RuntimeError(f"router selected unrecognized provider_id={provider_id!r}")
+
+        await loop_call()
+        return True
+
+    async def _try_live_legacy(self, symbol: str, channel_layer) -> bool:
+        """
+        Original _try_live logic — Binance -> Kraken -> Finnhub, hardcoded
+        order. Untouched by FOUNDATION-09: this is what every symbol runs
+        when the router flag is off, and what any symbol runs when it's
+        not on the allowlist, and what an allowlisted symbol falls back to
+        on any router-path failure.
         """
         mapped = _binance_sym(symbol)
 
