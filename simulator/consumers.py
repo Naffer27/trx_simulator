@@ -13,6 +13,7 @@ from market_data.symbol_specs import get_spec, allowed_symbols, kline_symbols
 from .models import TradingAccount, Position, Trade, LedgerEntry, BrokerLedger
 from .spread_engine import broker_price, calculate_spread_revenue, _get_config as _get_spread_config
 from .observability import security_log
+from . import pricing_context as pricing_ctx
 
 log = logging.getLogger("simulator.ws")
 
@@ -288,6 +289,15 @@ class TradingConsumer(AsyncWebsocketConsumer):
         self._price_state = {}   # mid price por símbolo
         self._bid_state   = {}   # bid (sell/close-buy) por símbolo
         self._ask_state   = {}   # ask (buy/close-sell) por símbolo
+        # SPREAD-02 — raw (pre-markup) tick state, retained only long enough
+        # to be captured into a pricing_context at the next open/close.
+        self._raw_bid_state    = {}
+        self._raw_ask_state    = {}
+        self._pricing_ts_state = {}
+        # SPREAD-02b — the BrokerSpreadConfig/provider snapshot that
+        # actually produced THIS tick's executable bid/ask, captured once
+        # per tick in price_tick() — never re-read later at order time.
+        self._pricing_snapshot_state = {}
         self._order_seq = 1
         self._positions = []
         self._agg = {}
@@ -492,9 +502,20 @@ class TradingConsumer(AsyncWebsocketConsumer):
         mid     = event["mid"]
         ts      = event["time"]
 
-        bid, ask = broker_price(symbol, raw_bid, raw_ask,
-                               markup_pips=float(self.account.get("spread_pips", 0.0) or 0.0))
+        markup_pips = float(self.account.get("spread_pips", 0.0) or 0.0)
+        bid, ask = broker_price(symbol, raw_bid, raw_ask, markup_pips=markup_pips)
         self.set_state(symbol, bid, ask, mid)
+        # SPREAD-02 — retain the raw (pre-markup) tick for pricing-context
+        # capture at the next open/close. Does not affect broker_price(),
+        # the broadcast tick, or anything sent to the client.
+        self._raw_bid_state[symbol]    = raw_bid
+        self._raw_ask_state[symbol]    = raw_ask
+        self._pricing_ts_state[symbol] = ts
+        # SPREAD-02b — snapshot the exact BrokerSpreadConfig/provider state
+        # that produced THIS tick's bid/ask, right now — this is the only
+        # place allowed to read either; _capture_pricing_context() only
+        # ever reads this snapshot back, it never re-queries.
+        self._pricing_snapshot_state[symbol] = pricing_ctx.tick_pricing_snapshot(symbol, markup_pips)
         await self.send_json({"type": "tick", "symbol": symbol, "bid": bid, "ask": ask, "time": ts})
         await self._on_tick(symbol, mid, volume=0.0, ts=ts)
         await self._check_tp_sl(symbol, bid, ask)
@@ -692,6 +713,45 @@ class TradingConsumer(AsyncWebsocketConsumer):
         """Fill price when CLOSING: buy closes at bid, sell closes at ask."""
         return self.get_bid(symbol) if side == "buy" else self.get_ask(symbol)
 
+    def _capture_pricing_context(self, symbol: str, *, profile: str) -> dict:
+        """SPREAD-02 — assembles the pricing context for an open/close at
+        *symbol* from state already sitting in memory: raw/executable
+        bid-ask, and the BrokerSpreadConfig/provider snapshot price_tick()
+        already captured for this symbol's LAST tick (self._pricing_snapshot_state).
+
+        Deliberately does NOT call spread_pips_for()/provider_state_for()
+        here — doing so would re-read BrokerSpreadConfig/F13 observability
+        at order time, which can have changed since the tick that actually
+        produced executable_bid/executable_ask, mislabeling an
+        already-executed price with a config that never produced it (see
+        tick_pricing_snapshot()'s docstring). If no tick was ever seen for
+        this symbol, the snapshot is simply empty — base/markup/provider
+        stay None, never fabricated from a fresh read.
+
+        Never raises and never affects execution — a failure here yields a
+        minimal context dict, never an exception propagated to the caller."""
+        try:
+            snapshot = self._pricing_snapshot_state.get(symbol) or {}
+            provider_id = snapshot.get("provider_id")
+            return pricing_ctx.build_pricing_context(
+                raw_bid=self._raw_bid_state.get(symbol),
+                raw_ask=self._raw_ask_state.get(symbol),
+                executable_bid=self._bid_state.get(symbol),
+                executable_ask=self._ask_state.get(symbol),
+                base_spread_pips=snapshot.get("base_spread_pips"),
+                account_markup_pips=snapshot.get("account_markup_pips"),
+                provider_id=provider_id,
+                source_state=snapshot.get("source_state"),
+                router_provider=provider_id,
+                pricing_timestamp=self._pricing_ts_state.get(symbol),
+                pricing_profile=profile,
+            )
+        except Exception as exc:
+            log.debug("[pricing_context] capture failed for %s profile=%s (non-fatal): %r",
+                      symbol, profile, exc)
+            return {"schema_version": pricing_ctx.SCHEMA_VERSION,
+                    "pricing_profile": pricing_ctx.PROFILE_CAPTURE_FAILED}
+
     # ---------------- Órdenes / Cuenta ----------------
     async def _order_new(self, data: dict):
         sym  = data.get("symbol", self.symbol)
@@ -802,9 +862,12 @@ class TradingConsumer(AsyncWebsocketConsumer):
         commission  = self.commission_for(sym, qty, px_exec)
         new_balance = self.account["balance"] - commission
 
+        pricing_context = self._capture_pricing_context(sym, profile=pricing_ctx.PROFILE_WS_OPEN)
+
         try:
             result = await self._db_open_position_atomic(
-                sym, side, qty, px_exec, sl, tp, commission, new_balance
+                sym, side, qty, px_exec, sl, tp, commission, new_balance,
+                pricing_context=pricing_context,
             )
         except Exception as exc:
             log.error("[order_new] DB open failed for %s %s: %s", side, sym, exc, exc_info=True)
@@ -895,10 +958,13 @@ class TradingConsumer(AsyncWebsocketConsumer):
         log.info("[close] MATCH pos id=%r sym=%r side=%r close_px=%s realized=%.4f",
                  found_pos["id"], sym, found_pos["side"], close_px, realized)
 
+        pricing_context_close = self._capture_pricing_context(sym, profile=pricing_ctx.PROFILE_WS_CLOSE)
+
         # Step C — DB transaction FIRST (Phase 1B: DB-first close)
         try:
             result = await self._db_close_position_atomic(
-                found_pos, close_px, "manual", realized, new_balance, new_equity
+                found_pos, close_px, "manual", realized, new_balance, new_equity,
+                pricing_context_close=pricing_context_close,
             )
         except Exception as exc:
             log.error("[close] DB close failed for pos id=%r: %s", found_pos["id"], exc, exc_info=True)
@@ -1140,9 +1206,11 @@ class TradingConsumer(AsyncWebsocketConsumer):
             fp_p = self._unrealized_pnl_for(p, cpx)
             remaining_floating = total_floating_snapshot - accum_floating_closed - fp_p
             new_equity = round(new_balance + remaining_floating, 2)
+            pricing_context_close = self._capture_pricing_context(sym, profile=pricing_ctx.PROFILE_WS_STOPOUT)
             try:
                 result = await self._db_close_position_atomic(
-                    p, cpx, "stopout", realized, new_balance, new_equity
+                    p, cpx, "stopout", realized, new_balance, new_equity,
+                    pricing_context_close=pricing_context_close,
                 )
                 running_balance = result["new_balance"]
                 accum_floating_closed += fp_p
@@ -1234,9 +1302,11 @@ class TradingConsumer(AsyncWebsocketConsumer):
             fp_p = self._unrealized_pnl_for(p, cpx)
             remaining_floating = total_floating_snapshot - accum_floating_closed - fp_p
             new_equity = round(new_balance + remaining_floating, 2)
+            pricing_context_close = self._capture_pricing_context(sym, profile=pricing_ctx.PROFILE_WS_MARGIN_CALL)
             try:
                 result = await self._db_close_position_atomic(
-                    p, cpx, "margin_call", realized, new_balance, new_equity
+                    p, cpx, "margin_call", realized, new_balance, new_equity,
+                    pricing_context_close=pricing_context_close,
                 )
                 running_balance = result["new_balance"]
                 accum_floating_closed += fp_p
@@ -1331,9 +1401,12 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 remaining_floating = total_floating_snapshot - accum_floating_closed - fp_p
                 new_equity  = round(new_balance + remaining_floating, 2)
                 reason = "tp" if tp_hit else "sl"
+                _profile = pricing_ctx.PROFILE_WS_TP if tp_hit else pricing_ctx.PROFILE_WS_SL
+                pricing_context_close = self._capture_pricing_context(symbol, profile=_profile)
                 try:
                     result = await self._db_close_position_atomic(
-                        p, close_px, reason, realized, new_balance, new_equity
+                        p, close_px, reason, realized, new_balance, new_equity,
+                        pricing_context_close=pricing_context_close,
                     )
                     running_balance = result["new_balance"]
                     accum_floating_closed += fp_p
@@ -1587,7 +1660,8 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def _db_open_position_atomic(self, symbol: str, side: str, qty: float, price: float,
-                                  sl, tp, commission: float, new_balance: float) -> dict:
+                                  sl, tp, commission: float, new_balance: float,
+                                  pricing_context: dict | None = None) -> dict:
         """DB-first order open (Phase 1A).
 
         Atomically: create/merge Position, record commission LedgerEntry, update
@@ -1596,6 +1670,12 @@ class TradingConsumer(AsyncWebsocketConsumer):
         Returns {"position_id": int, "merged": bool}.
         If _db_account_id is None (demo session) returns {"position_id": None, "merged": False}
         so the caller falls back to _order_seq as a local id.
+
+        pricing_context (SPREAD-02): stored on the newly-created Position only.
+        On a netting merge into an existing Position, the ORIGINAL position's
+        pricing_context is left untouched — an averaged fill has no single
+        "the" raw/executable price, so preserving the first fill's context is
+        more honest than fabricating one for the merge.
         """
         if not self._db_account_id:
             return {"position_id": None, "merged": False}
@@ -1640,6 +1720,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
                     avg_price=Decimal(str(price)),
                     sl=Decimal(str(sl)) if sl is not None else None,
                     tp=Decimal(str(tp)) if tp is not None else None,
+                    pricing_context=pricing_context,
                 )
                 position_id = pos.id
                 merged = False
@@ -1720,7 +1801,8 @@ class TradingConsumer(AsyncWebsocketConsumer):
     @database_sync_to_async
     def _db_close_position_atomic(self, pos_mem: dict, close_px: float, reason: str,
                                    realized_pnl: float, new_balance: float,
-                                   new_equity: float) -> dict:
+                                   new_equity: float,
+                                   pricing_context_close: dict | None = None) -> dict:
         """DB-first order close (Phase 1B).
 
         Atomically: find+lock Position, create Trade, record LedgerEntry EV_REALIZED,
@@ -1728,6 +1810,11 @@ class TradingConsumer(AsyncWebsocketConsumer):
         All committed before any memory mutation in the caller.
 
         Returns final DB state dict. Raises on failure — caller leaves memory untouched.
+
+        pricing_context_close (SPREAD-02): the Trade's pricing_context_open is
+        copied verbatim from the locked Position row's pricing_context — never
+        recomputed here, so a BrokerSpreadConfig change between open and close
+        cannot retroactively alter what was captured at open.
         """
         if not self._db_account_id:
             # Demo/anonymous session — skip DB, return current values for memory mutation.
@@ -1794,6 +1881,8 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 profit_loss=Decimal(str(realized_pnl)),
                 opened_at=datetime.fromtimestamp(int(pos_mem.get("opened_at", time.time())), tz=dt_timezone.utc),
                 closed_at=timezone.now(),
+                pricing_context_open=pos.pricing_context,
+                pricing_context_close=pricing_context_close,
             )
 
             # 3. Record LedgerEntry EV_REALIZED (balance_after = post-close balance).

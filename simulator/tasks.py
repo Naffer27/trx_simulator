@@ -385,6 +385,7 @@ def _close_position_sync(
     realized_pnl: float,
     new_balance: float,
     new_equity: float,
+    pricing_context: dict | None = None,
 ) -> dict:
     """
     Atomic DB-first position close for sync (Celery) callers.
@@ -392,6 +393,10 @@ def _close_position_sync(
       - select_for_update prevents duplicate closes
       - already_closed=True returned (no Trade/LedgerEntry) if position gone
       - raises on unexpected DB error (caller logs and skips)
+
+    pricing_context (SPREAD-02): the Trade's pricing_context_open is copied
+    verbatim from the locked Position row's pricing_context — never
+    recomputed here. pricing_context is stored as pricing_context_close.
     """
     from decimal import Decimal
     from datetime import datetime as _dt, timezone as _dt_tz
@@ -454,6 +459,8 @@ def _close_position_sync(
             profit_loss   = Decimal(str(realized_pnl)),
             opened_at     = _dt.fromtimestamp(int(pos_mem.get("opened_at", _time.time())), tz=_dt_tz.utc),
             closed_at     = _django_tz.now(),
+            pricing_context_open  = pos.pricing_context,
+            pricing_context_close = pricing_context,
         )
 
         LedgerEntry.objects.create(
@@ -519,6 +526,52 @@ def _close_position_sync(
         "violations":     [v.violation_type for v in violations],
         "trade_id":       trade.id,
     }
+
+
+def _daemon_pricing_context(symbol: str, bid: float, ask: float, *, profile: str) -> dict:
+    """
+    SPREAD-02 — pricing context for a daemon-driven close (stopout,
+    margin-call, or SL/TP evaluated offline in scan_positions_task).
+
+    The daemon reads bid/ask straight from the Redis price cache (raw
+    FeedManager output — see market_data/feeds.py's _write_price_cache)
+    and uses them directly as close_px — it never calls broker_price().
+    So this context must say, explicitly and honestly, that no spread
+    participated in the fill: executable_bid/executable_ask are set equal
+    to the raw values actually used, and base_spread_pips/
+    account_markup_pips/effective_spread_pips are hardcoded to 0.0 —
+    NOT a BrokerSpreadConfig/account-snapshot read. Reporting a configured-
+    but-unapplied pips value here would misrepresent what actually produced
+    close_px; see docs/PRICING_CONTEXT.md.
+
+    provider_id/source_state are still read best-effort from F13
+    observability — they describe the tick's origin, independent of
+    whether any markup was applied to it.
+
+    Never raises.
+    """
+    try:
+        from . import pricing_context as _pc
+
+        provider_id, source_state = _pc.provider_state_for(symbol)
+        return _pc.build_pricing_context(
+            raw_bid=bid,
+            raw_ask=ask,
+            executable_bid=bid,
+            executable_ask=ask,
+            base_spread_pips=0.0,
+            account_markup_pips=0.0,
+            provider_id=provider_id,
+            source_state=source_state,
+            router_provider=provider_id,
+            pricing_timestamp=None,
+            pricing_profile=profile,
+        )
+    except Exception as exc:
+        logger.debug("[pricing_context] daemon capture failed for %s profile=%s (non-fatal): %r",
+                     symbol, profile, exc)
+        from . import pricing_context as _pc
+        return {"schema_version": _pc.SCHEMA_VERSION, "pricing_profile": _pc.PROFILE_CAPTURE_FAILED}
 
 
 # ──────────────────────────────────────────────────────
@@ -647,9 +700,17 @@ def _daemon_close_all(
             "opened_at": pos.opened_at.timestamp() if pos.opened_at else _time.time(),
         }
 
+        # SPREAD-02 — daemon closes do NOT apply broker_price() markup (this
+        # block does not change that behavior): executable == raw here,
+        # honestly reflecting what was actually used for close_px_r.
+        # base/account markup are still captured for audit even though not
+        # applied — see docs/PRICING_CONTEXT.md.
+        pricing_context = _daemon_pricing_context(pos.symbol, bid, ask, profile=reason)
+
         try:
             result = _close_position_sync(
-                pos_mem, account_id, close_px_r, reason, realized, new_balance, new_equity
+                pos_mem, account_id, close_px_r, reason, realized, new_balance, new_equity,
+                pricing_context=pricing_context,
             )
         except Exception as exc:
             logger.error("[daemon/%s] close failed pos=%s: %s", reason, pos.id, exc, exc_info=True)
@@ -916,9 +977,14 @@ def scan_positions_task(self) -> dict:
                 "opened_at": pos.opened_at.timestamp() if pos.opened_at else _time.time(),
             }
 
+            # SPREAD-02 — see _daemon_pricing_context docstring: executable
+            # == raw here, no markup applied by this path (unchanged).
+            pricing_context = _daemon_pricing_context(pos.symbol, bid, ask, profile=reason)
+
             try:
                 result = _close_position_sync(
-                    pos_mem, account_id, close_px_r, reason, realized, new_balance, new_equity
+                    pos_mem, account_id, close_px_r, reason, realized, new_balance, new_equity,
+                    pricing_context=pricing_context,
                 )
             except Exception as exc:
                 logger.error("[daemon] close failed pos=%s: %s", pos.id, exc, exc_info=True)

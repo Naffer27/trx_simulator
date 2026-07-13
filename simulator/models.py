@@ -263,6 +263,12 @@ class Position(models.Model):
     external_id = models.CharField(max_length=64, null=True, blank=True)    # id externo (LP/exchange)
     opened_at = models.DateTimeField(auto_now_add=True)
 
+    # SPREAD-02 — pricing context captured at open (simulator/pricing_context.py).
+    # null = not captured (historical rows, or an execution path this block
+    # doesn't cover — see docs). Copied verbatim into Trade.pricing_context_open
+    # at close time; never recomputed.
+    pricing_context = models.JSONField(null=True, blank=True)
+
     class Meta:
         indexes = [
             models.Index(fields=['account', 'symbol']),
@@ -335,6 +341,15 @@ class Trade(models.Model):
 
     opened_at = models.DateTimeField(default=timezone.now)
     closed_at = models.DateTimeField(null=True, blank=True)
+
+    # SPREAD-02 — pricing context (simulator/pricing_context.py). open is a
+    # verbatim copy of Position.pricing_context taken at close time (never
+    # recomputed, so a later BrokerSpreadConfig change can't retroactively
+    # alter it); close is captured fresh with the tick used for exit_price.
+    # null on both = this Trade was created by a path SPREAD-02 doesn't
+    # cover (see docs/PRICING_CONTEXT.md) or is a historical row.
+    pricing_context_open  = models.JSONField(null=True, blank=True)
+    pricing_context_close = models.JSONField(null=True, blank=True)
 
     class Meta:
         indexes = [
