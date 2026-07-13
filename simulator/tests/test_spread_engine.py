@@ -1,30 +1,43 @@
 """
-simulator/tests/test_spread_engine.py — Bloque 3
+simulator/tests/test_spread_engine.py — Bloque 3, updated SPREAD-03 FASE A.
 
 Cubre: broker_price y calculate_spread_revenue en spread_engine.py
 
 Convenciones:
-  - El módulo spread_engine tiene un _cache dict a nivel de módulo con TTL de 30s.
-    Se limpia en setUp()/tearDown() de cada clase para que tests no se contaminen
-    entre sí ni contra el TTL real.
+  - SPREAD-03: BrokerSpreadConfig ya no se lee con un query lazy por
+    llamada — broker_price() lee simulator.spread_config_cache, un cache
+    async-safe process-wide que solo se llena explícitamente vía
+    refresh_cache_sync() (ver simulator/spread_config_cache.py y
+    simulator/tests/test_spread_config_cache.py). Cada test que necesita
+    una config debe: crear la fila (make_spread_config) y LUEGO llamar
+    refresh_cache_sync() explícitamente — ya no hay refresco automático al
+    leer.
   - Los valores esperados se derivan de los specs REALES del registro (symbol_specs.py):
       EUR/USD: pip_size=0.0001, price_decimals=5, contract_size=100_000
       BTCUSD : pip_size=1.0,    price_decimals=2, contract_size=1.0
   - broker_price devuelve floats → assertAlmostEqual con places=5 (forex) o places=2 (crypto).
   - calculate_spread_revenue devuelve float → comparación directa con round().
 """
-import simulator.spread_engine as _spread_mod
 from django.test import TestCase
 from decimal import Decimal
 
+from simulator.spread_config_cache import refresh_cache_sync, reset_for_tests
 from simulator.spread_engine import broker_price, calculate_spread_revenue
 
 from .factories import make_spread_config
 
 
 def _clear_cache():
-    """Clear the module-level spread config cache."""
-    _spread_mod._cache.clear()
+    """Reset the spread config cache to a cold state."""
+    reset_for_tests()
+
+
+def _seed_and_warm(**kwargs):
+    """Create a BrokerSpreadConfig row and load it into the cache — the
+    two steps SPREAD-03 requires to be explicit and separate."""
+    cfg = make_spread_config(**kwargs)
+    refresh_cache_sync()
+    return cfg
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -45,7 +58,7 @@ class TestBrokerPriceWithConfig(TestCase):
         EUR/USD: spread_pips=2 → extra = 2 × 0.0001 / 2 = 0.0001 per side.
         bid baja 0.0001, ask sube 0.0001.
         """
-        make_spread_config(symbol="EUR/USD", spread_pips=Decimal("2.00"))
+        _seed_and_warm(symbol="EUR/USD", spread_pips=Decimal("2.00"))
 
         bid, ask = 1.10000, 1.10100
         client_bid, client_ask = broker_price("EUR/USD", bid, ask)
@@ -59,7 +72,7 @@ class TestBrokerPriceWithConfig(TestCase):
         El mid-price NO cambia: (client_bid + client_ask) / 2 ≈ (bid + ask) / 2.
         Solo el spread se amplía simétricamente.
         """
-        make_spread_config(symbol="EUR/USD", spread_pips=Decimal("2.00"))
+        _seed_and_warm(symbol="EUR/USD", spread_pips=Decimal("2.00"))
 
         bid, ask = 1.10000, 1.10100
         client_bid, client_ask = broker_price("EUR/USD", bid, ask)
@@ -73,7 +86,7 @@ class TestBrokerPriceWithConfig(TestCase):
         BTCUSD: pip_size=1.0 → 15-pip spread = $15 total, $7.5 per side.
         client_bid = raw_bid − 7.5 ; client_ask = raw_ask + 7.5
         """
-        make_spread_config(symbol="BTCUSD", spread_pips=Decimal("15.00"))
+        _seed_and_warm(symbol="BTCUSD", spread_pips=Decimal("15.00"))
 
         bid, ask = 82000.00, 82015.00
         client_bid, client_ask = broker_price("BTCUSD", bid, ask)
@@ -87,7 +100,7 @@ class TestBrokerPriceWithConfig(TestCase):
         normalize_symbol('EURUSD') → 'EUR/USD' (canonical form).
         La config se crea como 'EUR/USD' (normalizada por BrokerSpreadConfig.save()).
         """
-        make_spread_config(symbol="EUR/USD", spread_pips=Decimal("2.00"))
+        _seed_and_warm(symbol="EUR/USD", spread_pips=Decimal("2.00"))
 
         bid, ask = 1.10000, 1.10100
         result_slash  = broker_price("EUR/USD", bid, ask)
@@ -97,7 +110,7 @@ class TestBrokerPriceWithConfig(TestCase):
 
     def test_disabled_config_passthrough(self):
         """BrokerSpreadConfig con enabled=False → passthrough, sin markup."""
-        make_spread_config(symbol="EUR/USD", spread_pips=Decimal("5.00"), enabled=False)
+        _seed_and_warm(symbol="EUR/USD", spread_pips=Decimal("5.00"), enabled=False)
 
         bid, ask = 1.10000, 1.10100
         client_bid, client_ask = broker_price("EUR/USD", bid, ask)
@@ -216,7 +229,7 @@ class TestBrokerPriceMarkup(TestCase):
 
     def test_old_account_zero_markup_unchanged_vs_config_only(self):
         """Old account (NULL snapshot) → markup_pips=0.0 → identical to legacy call."""
-        make_spread_config(symbol="EUR/USD", spread_pips=Decimal("2.00"))
+        _seed_and_warm(symbol="EUR/USD", spread_pips=Decimal("2.00"))
         bid, ask = 1.10000, 1.10100
 
         legacy  = broker_price("EUR/USD", bid, ask)
@@ -229,7 +242,7 @@ class TestBrokerPriceMarkup(TestCase):
         ECN product: markup_pips=0.0, BrokerSpreadConfig=2 pips.
         effective = 2 pips → only base spread applied, no extra.
         """
-        make_spread_config(symbol="EUR/USD", spread_pips=Decimal("2.00"))
+        _seed_and_warm(symbol="EUR/USD", spread_pips=Decimal("2.00"))
         bid, ask = 1.10000, 1.10100
 
         client_bid, client_ask = broker_price("EUR/USD", bid, ask, markup_pips=0.0)
@@ -243,7 +256,7 @@ class TestBrokerPriceMarkup(TestCase):
         Standard product: markup_pips=1.0 over 2-pip base → effective=3 pips.
         extra = 3 × 0.0001 / 2 = 0.00015 per side.
         """
-        make_spread_config(symbol="EUR/USD", spread_pips=Decimal("2.00"))
+        _seed_and_warm(symbol="EUR/USD", spread_pips=Decimal("2.00"))
         bid, ask = 1.10000, 1.10100
 
         client_bid, client_ask = broker_price("EUR/USD", bid, ask, markup_pips=1.0)
@@ -279,7 +292,7 @@ class TestBrokerPriceMarkup(TestCase):
         BTCUSD pip_size=1.0: markup_pips=1.2 → extra = 1.2 × 1.0 / 2 = $0.60 per side.
         With BrokerSpreadConfig=15 pips: effective=16.2 → extra = 16.2 × 1.0 / 2 = $8.10.
         """
-        make_spread_config(symbol="BTCUSD", spread_pips=Decimal("15.00"))
+        _seed_and_warm(symbol="BTCUSD", spread_pips=Decimal("15.00"))
         bid, ask = 82000.00, 82015.00
 
         client_bid, client_ask = broker_price("BTCUSD", bid, ask, markup_pips=1.2)
@@ -299,7 +312,7 @@ class TestBrokerPriceMarkup(TestCase):
 
     def test_mid_price_preserved_with_markup(self):
         """Markup widens spread symmetrically; mid-price is unchanged."""
-        make_spread_config(symbol="EUR/USD", spread_pips=Decimal("2.00"))
+        _seed_and_warm(symbol="EUR/USD", spread_pips=Decimal("2.00"))
         bid, ask = 1.10000, 1.10100
 
         client_bid, client_ask = broker_price("EUR/USD", bid, ask, markup_pips=1.0)

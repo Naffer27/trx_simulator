@@ -1,5 +1,6 @@
 """
-simulator/tests/test_pricing_context_forensic_invariants.py — SPREAD-02b.
+simulator/tests/test_pricing_context_forensic_invariants.py — SPREAD-02b,
+updated SPREAD-03 FASE A.
 
 Two forensic invariants requested after review of the first SPREAD-02 pass:
 
@@ -15,27 +16,20 @@ INVARIANTE 2 — daemon honesto. The Celery daemon never calls broker_price()
 explicitly: executable == raw, base/account/effective spread == 0.0 (not a
 BrokerSpreadConfig read), even when a BrokerSpreadConfig row exists.
 
-A THIRD finding surfaced while verifying invariant 1 (documented, NOT
-fixed — fixing it would require touching broker_price()/spread_engine.py,
-explicitly out of scope for this block): price_tick() calls broker_price()
-— and, necessarily, this block's own tick_pricing_snapshot() — directly
-(synchronously) from an async method. Django raises SynchronousOnlyOperation
-for ORM access done that way (DJANGO_ALLOW_ASYNC_UNSAFE is not set
-anywhere in this project), and spread_engine._get_config()'s broad
-`except Exception` swallows it, always returning cfg=None. In practice
-this means the BrokerSpreadConfig base spread has likely never actually
-applied via the live WebSocket price_tick() path — only account-level
-markup (a plain dict read, no DB) reliably applies there. See
-PreExistingAsyncUnsafeBrokerSpreadConfigReadTests below: this is a
-pre-existing, independent bug this block surfaces but does not fix.
-Because of it, this block's own captured base_spread_pips will correctly
-read None from the live async path today — an honest reflection of what
-actually happened to the executed price, not a defect in the capture
-mechanism itself. Tests below that need a *working* BrokerSpreadConfig
-read call tick_pricing_snapshot()/broker_price() synchronously (no event
-loop) — exactly matching how price_tick() would behave if that separate
-bug were ever fixed — to validate the snapshot-freeze mechanism on its own
-terms, isolated from that unrelated defect.
+UPDATE (SPREAD-03 FASE A): verifying invariant 1 originally surfaced a
+THIRD, independent bug — price_tick() calling broker_price() (and this
+block's own tick_pricing_snapshot()) synchronously from an async method
+raised Django's SynchronousOnlyOperation on every DB read, silently
+swallowed, always returning passthrough. SPREAD-03 FASE A fixed this at
+the root: BrokerSpreadConfig is now read from
+simulator.spread_config_cache, a process-wide, async-safe, explicitly-
+refreshed in-memory cache (see simulator/spread_config_cache.py and
+simulator/tests/test_spread_config_cache.py for the fix itself and its
+dedicated tests). Because of that fix, the invariant-1 tests below now
+exercise the REAL price_tick() coroutine directly (previously they had to
+call tick_pricing_snapshot()/broker_price() synchronously to work around
+the bug) — this file's AsyncSafeBrokerSpreadConfigReadTests class replaces
+the old "documents the bug" class with tests proving the fix.
 """
 import asyncio
 from decimal import Decimal
@@ -46,6 +40,7 @@ from django.test import TestCase
 from market_data.symbol_specs import get_spec
 from simulator.consumers import TradingConsumer
 from simulator.models import BrokerSpreadConfig, Position, Trade
+from simulator.spread_config_cache import refresh_cache_sync, reset_for_tests
 from simulator.spread_engine import broker_price
 from simulator.tasks import _daemon_pricing_context, scan_positions_task
 from simulator import pricing_context as pc
@@ -85,74 +80,58 @@ def _tick(bid: float, ask: float, ts: int = 1_700_000_000) -> dict:
 
 
 class TickSnapshotIsExactInvariantTests(TestCase):
-    """INVARIANTE 1.
-
-    Snapshot capture is exercised synchronously (calling
-    tick_pricing_snapshot()/broker_price() directly, not through
-    price_tick()'s coroutine) — this is deliberate: it isolates "does the
-    freeze-at-tick mechanism work" from the separate, pre-existing
-    async-unsafe DB read bug documented at module level and in
-    PreExistingAsyncUnsafeBrokerSpreadConfigReadTests below. A dedicated
-    test further down proves the two mechanisms compose correctly even
-    though the underlying async read is currently broken.
-    """
+    """INVARIANTE 1 — exercised through the REAL async price_tick()
+    coroutine now that SPREAD-03 FASE A makes BrokerSpreadConfig reads
+    async-safe. The cache is warmed explicitly via refresh_cache_sync()
+    (sync, safe outside the event loop) before each tick — exactly what
+    ensure_background_refresh_started() does in production at connect()."""
 
     def setUp(self):
-        from simulator import spread_engine as _spread_mod
-        _spread_mod._cache.clear()
+        reset_for_tests()
 
     def tearDown(self):
-        from simulator import spread_engine as _spread_mod
-        _spread_mod._cache.clear()
+        reset_for_tests()
 
     def test_config_change_after_tick_does_not_alter_captured_context(self):
         """1) tick llega con config X. 2) se calculan executable prices.
         3) BrokerSpreadConfig cambia a Y antes de abrir. 4) la orden debe
         guardar X, porque X produjo el precio ejecutado."""
         make_spread_config(symbol="EUR/USD", spread_pips=Decimal("2.00"), enabled=True)
+        refresh_cache_sync()
         c = _bare_consumer()
-        markup_pips = 0.0
-        raw_bid, raw_ask = 1.09990, 1.10010
 
-        # Step 1 & 2 — tick arrives under config X=2.00; capture + executable
-        # computed together, exactly as price_tick() does internally.
-        snapshot_at_tick = pc.tick_pricing_snapshot("EUR/USD", markup_pips)
-        bid, ask = broker_price("EUR/USD", raw_bid, raw_ask, markup_pips=markup_pips)
-        c._pricing_snapshot_state["EUR/USD"] = snapshot_at_tick
-        c._raw_bid_state["EUR/USD"] = raw_bid
-        c._raw_ask_state["EUR/USD"] = raw_ask
-        c._bid_state["EUR/USD"] = bid
-        c._ask_state["EUR/USD"] = ask
-        self.assertEqual(snapshot_at_tick["base_spread_pips"], 2.0)
+        # Step 1 & 2 — tick arrives under config X=2.00; price_tick() computes
+        # and freezes both the executable price and the snapshot together.
+        _run(c.price_tick(_tick(bid=1.09990, ask=1.10010)))
+        self.assertEqual(c._pricing_snapshot_state["EUR/USD"]["base_spread_pips"], 2.0)
+        executable_bid_at_tick = c._bid_state["EUR/USD"]
+        executable_ask_at_tick = c._ask_state["EUR/USD"]
 
-        # Step 3 — config changes to Y=9.00 (e.g. an admin edit) before the order.
+        # Step 3 — config changes to Y=9.00 (e.g. an admin edit), and the
+        # cache is refreshed (simulating the next periodic refresh cycle)
+        # BEFORE the order — this must still not leak into the captured context.
         BrokerSpreadConfig.objects.filter(symbol="EUR/USD").update(spread_pips=Decimal("9.00"))
-        from simulator import spread_engine as _spread_mod
-        _spread_mod._cache.clear()  # force the next live read (if any) to see Y
+        refresh_cache_sync()
+        self.assertEqual(pc.spread_pips_for("EUR/USD", 0.0)[0], 9.0)  # cache really sees Y now
 
         # Step 4 — capture at "order time": must still show X, not Y.
         ctx = c._capture_pricing_context("EUR/USD", profile=pc.PROFILE_WS_OPEN)
         self.assertEqual(ctx["base_spread_pips"], 2.0)
         self.assertNotEqual(ctx["base_spread_pips"], 9.0)
         self.assertEqual(ctx["effective_spread_pips"], 2.0)
-        self.assertEqual(ctx["executable_bid"], bid)
-        self.assertEqual(ctx["executable_ask"], ask)
+        self.assertEqual(ctx["executable_bid"], executable_bid_at_tick)
+        self.assertEqual(ctx["executable_ask"], executable_ask_at_tick)
 
     def test_executable_price_is_mathematically_coherent_with_effective_pips(self):
         """executable_bid = raw_bid - effective_pips*pip_size/2 (mismo redondeo
         que broker_price()); simétrico para ask."""
         make_spread_config(symbol="EUR/USD", spread_pips=Decimal("1.50"), enabled=True)
+        refresh_cache_sync()
         c = _bare_consumer()
-        markup_pips = 0.50  # account markup on top of the 1.50 base
-        raw_bid, raw_ask = 1.09990, 1.10010
+        c.account["spread_pips"] = 0.50  # account markup on top of the 1.50 base
 
-        snapshot = pc.tick_pricing_snapshot("EUR/USD", markup_pips)
-        bid, ask = broker_price("EUR/USD", raw_bid, raw_ask, markup_pips=markup_pips)
-        c._pricing_snapshot_state["EUR/USD"] = snapshot
-        c._raw_bid_state["EUR/USD"] = raw_bid
-        c._raw_ask_state["EUR/USD"] = raw_ask
-        c._bid_state["EUR/USD"] = bid
-        c._ask_state["EUR/USD"] = ask
+        raw_bid, raw_ask = 1.09990, 1.10010
+        _run(c.price_tick(_tick(bid=raw_bid, ask=raw_ask)))
 
         ctx = c._capture_pricing_context("EUR/USD", profile=pc.PROFILE_WS_OPEN)
         spec = get_spec("EUR/USD")
@@ -174,17 +153,12 @@ class TickSnapshotIsExactInvariantTests(TestCase):
         price_tick) is allowed to."""
         from unittest.mock import patch
         c = _bare_consumer()
-        c._pricing_snapshot_state["EUR/USD"] = pc.tick_pricing_snapshot("EUR/USD", 0.0)
-        c._raw_bid_state["EUR/USD"] = 1.0999
-        c._raw_ask_state["EUR/USD"] = 1.1001
+        _run(c.price_tick(_tick(bid=1.0999, ask=1.1001)))
         with patch("simulator.pricing_context.spread_pips_for") as mock_read:
             c._capture_pricing_context("EUR/USD", profile=pc.PROFILE_WS_CLOSE)
         mock_read.assert_not_called()
 
     def test_price_tick_stores_snapshot_alongside_raw_and_executable(self):
-        """End-to-end through the real price_tick() coroutine — account
-        markup only (no BrokerSpreadConfig row), which is DB-free and so
-        unaffected by the separate async-unsafe issue documented below."""
         c = _bare_consumer()
         c.account["spread_pips"] = 0.75
         _run(c.price_tick(_tick(bid=1.09990, ask=1.10010)))
@@ -192,11 +166,13 @@ class TickSnapshotIsExactInvariantTests(TestCase):
         self.assertEqual(snapshot["account_markup_pips"], 0.75)
         self.assertEqual(c._raw_bid_state["EUR/USD"], 1.09990)
         ctx = c._capture_pricing_context("EUR/USD", profile=pc.PROFILE_WS_OPEN)
-        self.assertEqual(ctx["effective_spread_pips"], 0.75)  # base=None → 0 + markup
+        self.assertEqual(ctx["effective_spread_pips"], 0.75)  # no config row → base=None → 0 + markup
 
 
 class DaemonHonestPricingInvariantTests(TestCase):
-    """INVARIANTE 2."""
+    """INVARIANTE 2 — unaffected by SPREAD-03 FASE A: the daemon path never
+    called spread_pips_for()/BrokerSpreadConfig at all (SPREAD-02b fix),
+    so it has nothing to do with the async-safe cache."""
 
     def test_daemon_context_has_zeroed_spread_even_with_config_present(self):
         """A BrokerSpreadConfig row exists with a real value — the daemon
@@ -254,47 +230,70 @@ class DaemonHonestPricingInvariantTests(TestCase):
         self.assertEqual(close_ctx["pricing_profile"], pc.PROFILE_DAEMON_TP)
 
 
-class PreExistingAsyncUnsafeBrokerSpreadConfigReadTests(TestCase):
-    """Discovered while verifying invariant 1 — pre-existing, independent
-    of SPREAD-02, NOT fixed here (would require modifying broker_price()/
-    spread_engine.py, explicitly out of scope for this block). Documented
-    so the finding is not silently lost; see module docstring.
-    """
+class AsyncSafeBrokerSpreadConfigReadTests(TestCase):
+    """SPREAD-03 FASE A fix, proven directly: broker_price() and
+    tick_pricing_snapshot(), called from a REAL running asyncio event loop
+    (asyncio.run, exactly how Daphne runs TradingConsumer coroutines), now
+    correctly apply/observe BrokerSpreadConfig — once the cache has been
+    warmed via refresh_cache_sync() (sync, called outside the loop here;
+    in production, via ensure_background_refresh_started() at connect()).
+    No DJANGO_ALLOW_ASYNC_UNSAFE, no ORM call inside the coroutine."""
 
     def setUp(self):
-        from simulator import spread_engine as _spread_mod
-        _spread_mod._cache.clear()
+        reset_for_tests()
 
     def tearDown(self):
-        from simulator import spread_engine as _spread_mod
-        _spread_mod._cache.clear()
+        reset_for_tests()
 
-    def test_broker_price_silently_ignores_broker_spread_config_from_async_context(self):
-        """Pre-existing bug, reproduced with pre-existing, untouched code
-        (spread_engine.broker_price) — not something this block introduced."""
+    def test_broker_price_applies_broker_spread_config_from_async_context(self):
         make_spread_config(symbol="EUR/USD", spread_pips=Decimal("2.00"), enabled=True)
+        refresh_cache_sync()
 
         async def _call():
             return broker_price("EUR/USD", 1.09990, 1.10010, markup_pips=0.0)
 
         bid, ask = _run(_call())
-        # Passthrough — the 2.00-pip config never actually applied, because
-        # the DB read inside it raised SynchronousOnlyOperation and was
-        # silently swallowed by _get_config()'s broad except Exception.
-        self.assertEqual(bid, 1.09990)
-        self.assertEqual(ask, 1.10010)
+        # extra = 2.00 * 0.0001 / 2 = 0.0001 per side — no longer passthrough.
+        self.assertAlmostEqual(bid, 1.09990 - 0.0001, places=5)
+        self.assertAlmostEqual(ask, 1.10010 + 0.0001, places=5)
 
-    def test_tick_pricing_snapshot_matches_that_same_swallowed_read(self):
-        """This block's own capture stays coherent with the ACTUAL (buggy)
-        executable price it did not create — not a corrected value. Fixing
-        the read in isolation (without fixing broker_price() itself) would
-        make the captured base_spread_pips describe a markup that was
-        never really applied to executable_bid/executable_ask — which
-        would break, not satisfy, the mathematical-coherence requirement."""
+    def test_tick_pricing_snapshot_sees_the_same_warmed_config(self):
         make_spread_config(symbol="EUR/USD", spread_pips=Decimal("2.00"), enabled=True)
+        refresh_cache_sync()
 
         async def _call():
             return pc.tick_pricing_snapshot("EUR/USD", 0.0)
 
         snapshot = _run(_call())
-        self.assertIsNone(snapshot["base_spread_pips"])
+        self.assertEqual(snapshot["base_spread_pips"], 2.0)
+
+    def test_cold_cache_before_any_refresh_is_a_safe_passthrough_not_an_exception(self):
+        """Before the first refresh ever runs (e.g. the very first tick of
+        a freshly-started process, before connect()'s warm-up completes),
+        reads must degrade safely — never raise, never block."""
+        make_spread_config(symbol="EUR/USD", spread_pips=Decimal("2.00"), enabled=True)
+        # Deliberately do NOT call refresh_cache_sync() — cold cache.
+
+        async def _call():
+            return broker_price("EUR/USD", 1.09990, 1.10010, markup_pips=0.0)
+
+        bid, ask = _run(_call())
+        self.assertEqual(bid, 1.09990)
+        self.assertEqual(ask, 1.10010)
+
+    def test_zero_orm_calls_inside_the_event_loop(self):
+        """Structural guarantee: broker_price(), called from within a
+        running event loop, must not touch the DB at all — not even a
+        failed/caught attempt."""
+        from unittest.mock import patch
+        make_spread_config(symbol="EUR/USD", spread_pips=Decimal("2.00"), enabled=True)
+        refresh_cache_sync()
+
+        async def _call():
+            with patch("simulator.models.BrokerSpreadConfig.objects") as mock_manager:
+                result = broker_price("EUR/USD", 1.09990, 1.10010, markup_pips=0.0)
+                mock_manager.filter.assert_not_called()
+                return result
+
+        bid, ask = _run(_call())
+        self.assertAlmostEqual(bid, 1.09990 - 0.0001, places=5)

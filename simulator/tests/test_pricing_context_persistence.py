@@ -124,8 +124,6 @@ class CloseCopiesOpenContextVerbatimTests(TestCase):
         # Simulate an admin changing the config AFTER open, BEFORE close.
         from simulator.models import BrokerSpreadConfig
         BrokerSpreadConfig.objects.filter(symbol="EUR/USD").update(spread_pips=Decimal("9.00"))
-        from simulator import spread_engine as _spread_mod
-        _spread_mod._cache.clear()  # force a fresh read reflecting the changed config
 
         close_ctx = pc.build_pricing_context(
             base_spread_pips=9.0, account_markup_pips=0.0, pricing_profile=pc.PROFILE_WS_CLOSE,

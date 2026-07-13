@@ -5,7 +5,7 @@ from django.shortcuts import render, redirect
 from django.core.serializers.json import DjangoJSONEncoder
 from django.contrib.auth import authenticate, login as auth_login, logout
 from django.views.decorators.csrf import csrf_exempt
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponse
 from django.contrib.auth.decorators import login_required
 from django.core.mail import send_mail
 from django.conf import settings
@@ -119,31 +119,15 @@ def landing_view(request):
     return render(request, 'simulator/landing.html')
 
 
-# ===== Configuración de mercado (simulada) =====
-# Prices come from the symbol registry — single source of truth.
-SYMBOL_BASE_PRICES = {
-    sym: Decimal(str(_get_sym_spec(sym).base_price))
-    for sym in _allowed_symbols()
-}
-_DEFAULT_BASE = Decimal("1.17000")
-
-SPREAD = Decimal("0.00020")
-SLIPPAGE = Decimal("0.00010")
-
-
-def get_base_price(symbol: str) -> Decimal:
-    return SYMBOL_BASE_PRICES.get(symbol, _DEFAULT_BASE)
-
-
-def apply_spread_and_slippage(base_price, side):
-    if side.upper() == "BUY":
-        px = base_price + (SPREAD / 2)
-    else:
-        px = base_price - (SPREAD / 2)
-
-    slip = Decimal(str(random.uniform(float(-SLIPPAGE), float(SLIPPAGE))))
-    px = px + slip
-    return px.quantize(Decimal('0.00001'))
+# SPREAD-03 FASE B: the legacy SYMBOL_BASE_PRICES / SPREAD / SLIPPAGE /
+# get_base_price() / apply_spread_and_slippage() pricing helpers that used
+# to live here were removed — they were a second, independent pricing
+# engine (frozen base price, one hardcoded spread/slippage magnitude for
+# every symbol regardless of asset class) used only by the now-retired
+# trading_dashboard POST branch and api_orden below. See
+# docs/PRICING_CONTEXT.md and the SPREAD-01 audit for the full history.
+# The only real order-entry pipeline is the WebSocket flow in
+# simulator/consumers.py (spread_engine.broker_price() + commission_for()).
 
 
 # -----------------------
@@ -270,71 +254,24 @@ def trading_dashboard(request, account_id=None):
         return redirect("simulator:accounts")
 
     if request.method == 'POST':
-        trade_type  = request.POST.get('trade_type', 'BUY').upper()
-        symbol      = request.POST.get('symbol', 'EUR/USD')
-        lot_size    = Decimal(request.POST.get('volume', '0.01'))
-
-        stop_loss   = request.POST.get('stop_loss')
-        take_profit = request.POST.get('take_profit')
-        stop_loss   = Decimal(stop_loss) if stop_loss else None
-        take_profit = Decimal(take_profit) if take_profit else None
-
-        entry_price = apply_spread_and_slippage(get_base_price(symbol), trade_type)
-
-        pos = Position.objects.create(
-            account=account,
-            symbol=symbol,
-            side=trade_type,
-            qty=lot_size,
-            avg_price=entry_price,
-            sl=stop_loss,
-            tp=take_profit,
+        # SPREAD-03 FASE B — retired. This branch used to create Position/
+        # Trade rows directly with its own pricing (apply_spread_and_slippage:
+        # a hardcoded global spread+slippage magnitude for every symbol,
+        # wrong for non-EUR/USD-like instruments, and a PnL calc missing
+        # contract_size entirely) — bypassing spread_engine.broker_price(),
+        # commission_for(), risk_engine, and BrokerLedger completely. See
+        # docs/PRICING_CONTEXT.md / SPREAD-01 audit for the full finding.
+        # Confirmed zero real consumers before retiring: no
+        # <form method="post"> anywhere in dashboard.html, no test coverage
+        # (every existing dashboard test only ever does GET). The live
+        # dashboard trades exclusively via the WebSocket order:new/
+        # order:close flow in simulator/consumers.py. GET (rendering the
+        # dashboard itself) is completely unaffected — see below.
+        return HttpResponse(
+            "Esta ruta de envío de órdenes por HTTP fue retirada. "
+            "Usa el panel de trading (conexión en tiempo real) para operar.",
+            status=410,
         )
-
-        closed = False
-        pnl = Decimal('0.00')
-        exit_price = None
-
-        if stop_loss and ((trade_type == "BUY" and entry_price <= stop_loss) or (trade_type == "SELL" and entry_price >= stop_loss)):
-            exit_price = stop_loss
-            closed = True
-        elif take_profit and ((trade_type == "BUY" and entry_price >= take_profit) or (trade_type == "SELL" and entry_price <= take_profit)):
-            exit_price = take_profit
-            closed = True
-
-        if closed:
-            direction = Decimal('1') if trade_type == "BUY" else Decimal('-1')
-            pnl = (exit_price - entry_price) * lot_size * direction
-            pnl = pnl.quantize(Decimal('0.01'))
-
-            Trade.objects.create(
-                account=account,
-                symbol=symbol,
-                trade_type=trade_type,
-                lot_size=lot_size,
-                entry_price=entry_price,
-                exit_price=exit_price,
-                stop_loss=stop_loss,
-                take_profit=take_profit,
-                profit_loss=pnl,
-                opened_at=pos.opened_at,
-                closed_at=timezone.now(),
-            )
-
-            new_balance = account.balance + pnl
-            LedgerEntry.objects.create(
-                account=account,
-                event_type=LedgerEntry.EV_REALIZED,
-                amount=pnl,
-                balance_after=new_balance,
-                meta={"symbol": symbol, "side": trade_type, "lots": str(lot_size)}
-            )
-            account.balance = new_balance
-            account.equity = new_balance
-            account.save()
-            pos.delete()
-
-        return redirect('simulator:dashboard')
 
     trades = Trade.objects.filter(account=account).order_by('-opened_at')[:10]
     open_trades = Trade.objects.filter(account=account).values(
@@ -660,80 +597,23 @@ def trading_dashboard(request, account_id=None):
 @csrf_exempt
 @login_required
 def api_orden(request):
-    if request.method == 'POST':
-        data = json.loads(request.body)
-
-        side        = data.get('tipo', 'BUY').upper()
-        symbol      = data.get('symbol', 'EUR/USD')
-        lot_size    = Decimal(data.get('lot_size', '0.01'))
-        stop_loss   = Decimal(data['stop_loss']) if data.get('stop_loss') else None
-        take_profit = Decimal(data['take_profit']) if data.get('take_profit') else None
-
-        acc_id = request.session.get("account_id")
-        account = TradingAccount.objects.filter(pk=acc_id, user=request.user).first()
-        if not account:
-            return JsonResponse({'error': 'No hay cuenta activa'}, status=403)
-
-        entry_price = apply_spread_and_slippage(get_base_price(symbol), side)
-
-        pos = Position.objects.create(
-            account=account,
-            symbol=symbol,
-            side=side,
-            qty=lot_size,
-            avg_price=entry_price,
-            sl=stop_loss,
-            tp=take_profit,
-        )
-
-        closed = False
-        pnl = Decimal('0.00')
-        exit_price = None
-
-        if stop_loss and ((side == "BUY" and entry_price <= stop_loss) or (side == "SELL" and entry_price >= stop_loss)):
-            exit_price = stop_loss
-            closed = True
-        elif take_profit and ((side == "BUY" and entry_price >= take_profit) or (side == "SELL" and entry_price <= take_profit)):
-            exit_price = take_profit
-            closed = True
-
-        if closed:
-            direction = Decimal('1') if side == "BUY" else Decimal('-1')
-            pnl = (exit_price - entry_price) * Decimal('100000') * direction
-            pnl = pnl.quantize(Decimal('0.01'))
-
-            Trade.objects.create(
-                account=account,
-                symbol=symbol,
-                trade_type=side,
-                lot_size=lot_size,
-                entry_price=entry_price,
-                exit_price=exit_price,
-                stop_loss=stop_loss,
-                take_profit=take_profit,
-                profit_loss=pnl,
-                opened_at=pos.opened_at,
-                closed_at=timezone.now(),
-            )
-
-            new_balance = account.balance + pnl
-            LedgerEntry.objects.create(
-                account=account,
-                event_type=LedgerEntry.EV_REALIZED,
-                amount=pnl,
-                balance_after=new_balance,
-                meta={"symbol": symbol, "side": side, "lots": str(lot_size)}
-            )
-            account.balance = new_balance
-            account.equity = new_balance
-            account.save()
-            pos.delete()
-
-            return JsonResponse({'ok': True, 'closed': True, 'pnl': float(pnl)})
-
-        return JsonResponse({'ok': True, 'closed': False, 'entry_price': float(entry_price)})
-
-    return JsonResponse({'error': 'Método no permitido'}, status=405)
+    """
+    SPREAD-03 FASE B — retired. This endpoint used to create Position/Trade
+    rows directly with its own pricing (apply_spread_and_slippage, plus a
+    contract_size=100_000 hardcoded for every symbol — wrong for crypto/
+    indices) — bypassing spread_engine.broker_price(), commission_for(),
+    risk_engine, and BrokerLedger entirely. See docs/PRICING_CONTEXT.md /
+    SPREAD-01 audit for the full finding. Confirmed zero real consumers
+    before retiring: no fetch()/XHR call to this URL anywhere in the
+    templates, no test coverage. The live dashboard trades exclusively via
+    the WebSocket order:new/order:close flow in simulator/consumers.py.
+    """
+    return JsonResponse(
+        {"error": "endpoint_retired",
+         "message": "Esta ruta de órdenes fue retirada. Usa el panel de trading "
+                     "(conexión en tiempo real) para operar."},
+        status=410,
+    )
 
 
 # -----------------------

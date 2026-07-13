@@ -283,6 +283,16 @@ class TradingConsumer(AsyncWebsocketConsumer):
             )
         await self._ws_counter(1)
 
+        # SPREAD-03 — idempotent: starts the one process-wide, async-safe
+        # BrokerSpreadConfig refresh loop on the first connection only; a
+        # cheap no-op on every connection after that. Must never block or
+        # fail the handshake — see simulator/spread_config_cache.py.
+        try:
+            from .spread_config_cache import ensure_background_refresh_started
+            await ensure_background_refresh_started()
+        except Exception as exc:
+            log.debug("[connect] spread config cache warm-up failed (non-fatal): %r", exc)
+
         # --- Estado inicial (memoria) ---
         self.symbol = "EUR/USD"
         self.timeframe = normalize_tf(q_tf_raw or "1m")

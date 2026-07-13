@@ -92,15 +92,17 @@ class BuildPricingContextTests(SimpleTestCase):
 
 class SpreadPipsForTests(TestCase):
     def setUp(self):
-        from simulator import spread_engine as _spread_mod
-        _spread_mod._cache.clear()
+        from simulator.spread_config_cache import reset_for_tests
+        reset_for_tests()
 
     def tearDown(self):
-        from simulator import spread_engine as _spread_mod
-        _spread_mod._cache.clear()
+        from simulator.spread_config_cache import reset_for_tests
+        reset_for_tests()
 
     def test_reads_broker_spread_config_base_pips(self):
+        from simulator.spread_config_cache import refresh_cache_sync
         make_spread_config(symbol="EUR/USD", spread_pips=Decimal("2.00"), enabled=True)
+        refresh_cache_sync()
         base, markup = pc.spread_pips_for("EUR/USD", 0.5)
         self.assertEqual(base, 2.0)
         self.assertEqual(markup, 0.5)
@@ -111,7 +113,9 @@ class SpreadPipsForTests(TestCase):
         self.assertEqual(markup, 1.0)
 
     def test_disabled_config_returns_none_base(self):
+        from simulator.spread_config_cache import refresh_cache_sync
         make_spread_config(symbol="EUR/USD", spread_pips=Decimal("2.00"), enabled=False)
+        refresh_cache_sync()
         base, _ = pc.spread_pips_for("EUR/USD", 0.0)
         self.assertIsNone(base)
 

@@ -1,44 +1,34 @@
 """
-simulator/spread_engine.py — Phase 3A
+simulator/spread_engine.py — Phase 3A, made async-safe in SPREAD-03 FASE A.
 Broker spread engine: applies per-symbol price markup to raw market bid/ask.
 
-Architecture note:
-  _get_config() caches DB lookups (TTL=30s) so hot-path tick processing
-  (potentially 1 call per second per connected consumer) is not DB-bound.
-  A sub-millisecond sync DB call occurs at most once per 30 s per symbol.
+Architecture note (SPREAD-03): _get_config() is now a PURE, DB-free read
+from simulator.spread_config_cache — the process-wide, async-safe cache.
+It performs zero ORM access itself, so broker_price() is safe to call
+directly from TradingConsumer.price_tick() (an `async def` method) — the
+old per-call lazy DB read raised SynchronousOnlyOperation from that
+context and silently returned None every time (see
+simulator/spread_config_cache.py's module docstring for the full
+diagnosis, and simulator/tests/test_spread_config_cache.py for the tests
+proving both the old bug and the fix).
 """
-import time as _t
 import logging
 
 from market_data.symbol_specs import normalize_symbol
 
 logger = logging.getLogger("simulator.spread")
 
-# Module-level TTL cache: canonical_symbol -> (BrokerSpreadConfig | None, monotonic_timestamp)
-_cache: dict = {}
-_CACHE_TTL = 30.0  # seconds
-
 
 def _get_config(symbol: str):
     """
-    Return BrokerSpreadConfig for symbol (enabled=True) or None.
-    Normalizes symbol to canonical form before lookup so 'EURUSD' and
-    'EUR/USD' resolve to the same cache entry and DB row.
-    Cached for _CACHE_TTL seconds. Never raises.
+    Return the cached BrokerSpreadConfig snapshot for symbol (enabled=True)
+    or None. Normalizes symbol to canonical form so 'EURUSD' and 'EUR/USD'
+    resolve to the same cache entry. Zero DB access — see
+    simulator/spread_config_cache.py for how and when the cache is
+    populated (never here, never per-call). Never raises.
     """
-    symbol = normalize_symbol(symbol)
-    now = _t.monotonic()
-    entry = _cache.get(symbol)
-    if entry and (now - entry[1]) < _CACHE_TTL:
-        return entry[0]
-    try:
-        from .models import BrokerSpreadConfig
-        cfg = BrokerSpreadConfig.objects.filter(symbol=symbol, enabled=True).first()
-    except Exception as exc:
-        logger.debug("[spread] config lookup failed for %s: %s", symbol, exc)
-        cfg = None
-    _cache[symbol] = (cfg, now)
-    return cfg
+    from .spread_config_cache import get_cached_config
+    return get_cached_config(normalize_symbol(symbol))
 
 
 def broker_price(symbol: str, bid: float, ask: float,
