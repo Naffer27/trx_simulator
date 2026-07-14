@@ -694,6 +694,17 @@ class TradingAccountAdmin(admin.ModelAdmin):
                         qs = qs.filter(symbol=symbol)
                     positions = list(qs)
                     account_currency = getattr(account, "currency", "USD") or "USD"
+
+                    # ACCOUNT-02 — lock the account fresh HERE (Position → Account,
+                    # matching consumers.py's lock order) and accumulate
+                    # balance_after from THIS locked read, never from the `account`
+                    # object this view fetched earlier in the request (which could
+                    # be stale relative to a close a live WS connection just made).
+                    locked_account = (
+                        TradingAccount.objects.select_for_update().filter(pk=account.pk).first()
+                    )
+                    running_balance = float(locked_account.balance) if locked_account else float(account.balance or 0)
+
                     for pos in positions:
                         exit_px = px if px is not None else float(pos.avg_price)
                         # MARGIN-02 — was missing BOTH contract_size and
@@ -712,18 +723,20 @@ class TradingAccountAdmin(admin.ModelAdmin):
                             take_profit=pos.tp, profit_loss=Decimal(str(pnl)),
                             opened_at=pos.opened_at, closed_at=now(),
                         )
-                        bal_after = float(account.balance or 0) + pnl
+                        running_balance += pnl
                         LedgerEntry.objects.create(
                             account=account, event_type=LedgerEntry.EV_REALIZED,
-                            amount=Decimal(str(pnl)), balance_after=Decimal(str(bal_after)),
+                            amount=Decimal(str(pnl)), balance_after=Decimal(str(running_balance)),
                             meta={"reason": "admin_force_close", "symbol": pos.symbol},
                         )
-                        account.balance = Decimal(str(bal_after))
-                        account.equity  = Decimal(str(bal_after))
-                        account.save(update_fields=["balance", "equity"])
                         pos.delete()
                         total_closed += 1
                         total_pnl += pnl
+
+                    if locked_account:
+                        locked_account.balance = Decimal(str(running_balance))
+                        locked_account.equity  = Decimal(str(running_balance))
+                        locked_account.save(update_fields=["balance", "equity"])
                 msg = (f"Cerradas {total_closed} posición(es). PnL total: ${total_pnl:+.2f}"
                        if total_closed else "No hay posiciones que coincidan.")
                 (messages.success if total_closed else messages.info)(request, msg)

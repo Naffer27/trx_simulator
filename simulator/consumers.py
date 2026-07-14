@@ -1209,13 +1209,28 @@ class TradingConsumer(AsyncWebsocketConsumer):
     async def _recalc_account_and_push(self):
         self.account["pnl_unreal"] = round(self._unrealized_pnl_total(), 2)
         self.account["margin_used"] = round(self._margin_used_total(), 2)
-        self.account["equity"] = round(self.account["balance"] + self.account["pnl_unreal"], 2)
-        free_margin = round(self.account["equity"] - self.account["margin_used"], 2)
 
+        # ACCOUNT-02 — refresh self.account["balance"] from the DB (never
+        # write it) on the same throttled cadence the old buggy sync used,
+        # BEFORE computing equity — so a sibling panel's realized close is
+        # picked up here instead of this connection continuing to compute
+        # equity off its own stale balance. See _db_sync_account_balances()
+        # for the full rationale. Any failure here keeps self.account["balance"]
+        # exactly as it was — never fabricated, never reverted.
         now = time.time()
         if self._db_account_id and (now - self._last_db_sync) > 1.2:
-            await self._db_sync_account_balances()
+            try:
+                fresh_balance = await self._db_sync_account_balances()
+            except Exception as exc:
+                log.error("[account] balance refresh failed for account=%s — keeping previous state: %r",
+                          self._db_account_id, exc, exc_info=True)
+                fresh_balance = None
+            if fresh_balance is not None:
+                self.account["balance"] = fresh_balance
             self._last_db_sync = now
+
+        self.account["equity"] = round(self.account["balance"] + self.account["pnl_unreal"], 2)
+        free_margin = round(self.account["equity"] - self.account["margin_used"], 2)
 
         # Real-time stopout — only check if account is currently active
         if self.account.get("status") == "Activo" and self._positions:
@@ -1657,6 +1672,15 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def _db_suspend_account(self, reason: str) -> None:
+        """ACCOUNT-02 — only ever sets status. balance/equity are NOT
+        written here: by the time this is called (after _do_stopout's
+        position-closing loop), every real balance change already
+        persisted correctly via _db_close_position_atomic's own
+        fresh-locked-read write. Re-writing balance/equity from
+        self.account here added no value and reintroduced exactly the
+        same possibly-stale-memory risk this block eliminates elsewhere —
+        removed rather than "frozen fresh", since there is nothing left
+        for this function to legitimately compute."""
         if not self._db_account_id:
             return
         from django.db import transaction
@@ -1669,9 +1693,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
             )
             if account:
                 account.status  = "Suspendido"
-                account.balance = Decimal(str(self.account["balance"]))
-                account.equity  = Decimal(str(self.account["equity"]))
-                account.save(update_fields=["status", "balance", "equity"])
+                account.save(update_fields=["status"])
                 LedgerEntry.objects.create(
                     account=account,
                     event_type=LedgerEntry.EV_ADJUST,
@@ -1799,10 +1821,44 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def _db_sync_account_balances(self):
-        if not self._db_account_id: return
-        TradingAccount.objects.filter(id=self._db_account_id).update(
-            balance=self.account["balance"], equity=self.account["equity"]
-        )
+        """ACCOUNT-02 — replaces the old unconditional
+        `.update(balance=self.account["balance"], ...)`, which was the
+        confirmed root cause of a real lost-update: this method runs on
+        every tick (throttled to ~1.2s) for EVERY WebSocket connection of
+        an account, and each connection's self.account["balance"] is only
+        as fresh as whatever THIS connection itself last processed. A
+        sibling panel that opened/closed nothing new could silently
+        overwrite another panel's just-realized profit back to a stale
+        value — reproduced exactly in the ACCOUNT-01 audit (183.82 ->
+        190.82 -> reverted to 183.82).
+
+        balance is realized cash and authoritative in the DB — mutated
+        ONLY by real accounting events (close, commission, deposit,
+        withdrawal, audited admin adjustment), each already committing
+        atomically from a fresh select_for_update() read (see
+        _db_close_position_atomic, _db_open_position_atomic). This
+        function never writes balance. It READS the fresh balance
+        (read-only) and persists ONLY the derived, non-authoritative
+        equity = fresh_balance + this connection's own floating PnL —
+        safe to overwrite periodically since equity is a display/snapshot
+        value, never an input to further balance arithmetic.
+
+        Returns the fresh balance (float) so the caller can refresh
+        self.account["balance"] before building any account:update
+        payload — or None if there is no DB-backed account, or on any
+        failure (never fabricates a value; caller must keep the previous
+        state on None).
+        """
+        if not self._db_account_id:
+            return None
+        from decimal import Decimal
+        account = TradingAccount.objects.filter(id=self._db_account_id).only("balance").first()
+        if account is None:
+            return None
+        fresh_balance = float(account.balance)
+        equity = round(fresh_balance + float(self.account.get("pnl_unreal", 0.0) or 0.0), 2)
+        TradingAccount.objects.filter(id=self._db_account_id).update(equity=Decimal(str(equity)))
+        return fresh_balance
 
     @database_sync_to_async
     def _db_mirror_open_or_update(self, order_id, symbol, side, qty, price, sl, tp, commission):
@@ -2013,26 +2069,48 @@ class TradingConsumer(AsyncWebsocketConsumer):
                     "already_closed": True,
                 }
 
-            # 2. Create Trade record.
+            # ACCOUNT-02 — lock TradingAccount NOW (lock order Position → Account,
+            # matching _db_open_position_atomic) and derive balance_after from a
+            # FRESH, locked read + realized_pnl — never from new_balance/self.account,
+            # which the CALLER computed before this lock and which may already be
+            # stale (a sibling WebSocket for the same account can have opened/closed
+            # something this connection never learned about). realized_pnl itself is
+            # never stale — it's derived purely from the closing position's own
+            # entry/exit/qty via pnl_engine, independent of account state.
+            #
+            # remaining_floating (the floating PnL of OTHER still-open positions in
+            # this same batch, e.g. mid-stopout) is NOT derivable from a fresh DB
+            # read — but new_equity - new_balance cancels out whatever stale
+            # starting balance the caller used, leaving exactly that pure,
+            # staleness-independent quantity.
+            _ZERO = Decimal("0")
+            _nb = new_balance if isinstance(new_balance, Decimal) else Decimal(str(new_balance))
+            _ne = new_equity  if isinstance(new_equity,  Decimal) else Decimal(str(new_equity))
+            _remaining_floating = _ne - _nb
+
+            _acct_row = (
+                TradingAccount.objects
+                .select_for_update()
+                .filter(id=self._db_account_id)
+                .first()
+            )
+            _fresh_balance_after = (
+                _acct_row.balance + Decimal(str(realized_pnl)) if _acct_row is not None else _nb
+            )
+
             trade_type = str(pos_mem.get("side", "")).upper()
             if trade_type not in ("BUY", "SELL"):
                 trade_type = "BUY"
 
             # Guard: prevent writing a negative balance to DB (extreme loss / gap risk).
-            # Normalize float params to Decimal once; all subsequent comparisons stay
-            # Decimal-native to avoid float→Decimal round-trips that can silently drop
-            # sub-cent precision (e.g. round(1e-9, 8) == 0.0 loses the shortfall).
-            _ZERO         = Decimal("0")
-            _nb           = new_balance if isinstance(new_balance, Decimal) else Decimal(str(new_balance))
-            _ne           = new_equity  if isinstance(new_equity,  Decimal) else Decimal(str(new_equity))
-            _safe_balance = max(_nb, _ZERO)
-            _safe_equity  = max(_ne, _ZERO)
-            _shortfall    = abs(min(_nb, _ZERO))
+            _safe_balance = max(_fresh_balance_after, _ZERO)
+            _safe_equity  = max(_safe_balance + _remaining_floating, _ZERO)
+            _shortfall    = abs(min(_fresh_balance_after, _ZERO))
             if _shortfall > _ZERO:
                 log.critical(
                     "[db_close] NEGATIVE BALANCE PREVENTED: account=%s realized=%.4f "
                     "computed_balance=%s shortfall=%s — clamping to 0",
-                    self._db_account_id, realized_pnl, _nb, _shortfall,
+                    self._db_account_id, realized_pnl, _fresh_balance_after, _shortfall,
                 )
 
             # MARGIN-02 — audit-only recompute of the SAME pure function
@@ -2083,7 +2161,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
                     meta          = {
                         "reason":                    "negative_balance_guard",
                         "shortfall":                 float(_shortfall),           # float for JSON
-                        "original_computed_balance": float(_nb),                  # float for JSON
+                        "original_computed_balance": float(_fresh_balance_after),   # float for JSON
                         "realized_pnl":              realized_pnl,
                     },
                 )
@@ -2092,13 +2170,10 @@ class TradingConsumer(AsyncWebsocketConsumer):
             if pos:
                 pos.delete()
 
-            # 5. Update TradingAccount balance + equity (with lock for consistency).
-            account = (
-                TradingAccount.objects
-                .select_for_update()
-                .filter(id=self._db_account_id)
-                .first()
-            )
+            # 5. Update TradingAccount balance + equity — _acct_row was already
+            # locked above (before Trade/LedgerEntry creation), so this reuses
+            # that same locked row instead of a second fetch.
+            account = _acct_row
             if account:
                 account.balance = _safe_balance
                 account.equity  = _safe_equity

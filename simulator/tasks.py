@@ -425,27 +425,44 @@ def _close_position_sync(
                 "trade_id":       None,
             }
 
+        # ACCOUNT-02 — lock TradingAccount now (lock order Position → Account) and
+        # derive balance_after from a FRESH, locked read + realized_pnl — never
+        # from new_balance (a parameter the caller computed by accumulating
+        # running_balance across this batch, starting from account.balance read
+        # at the TOP of the daemon scan — which a concurrent WS close on the same
+        # account could have already changed by the time this write happens).
+        # remaining_floating (other still-open positions' floating PnL in this
+        # same batch) is staleness-independent: new_equity - new_balance cancels
+        # out whatever starting balance the caller used. See
+        # TradingConsumer._db_close_position_atomic for the identical pattern.
+        _ZERO = Decimal("0")
+        _nb = new_balance if isinstance(new_balance, Decimal) else Decimal(str(new_balance))
+        _ne = new_equity  if isinstance(new_equity,  Decimal) else Decimal(str(new_equity))
+        _remaining_floating = _ne - _nb
+
+        _acct_row = (
+            TradingAccount.objects
+            .select_for_update()
+            .filter(id=account_id)
+            .first()
+        )
+        _fresh_balance_after = (
+            _acct_row.balance + Decimal(str(realized_pnl)) if _acct_row is not None else _nb
+        )
+
         trade_type = str(pos_mem.get("side", "")).upper()
         if trade_type not in ("BUY", "SELL"):
             trade_type = "BUY"
 
         # Guard: prevent writing a negative balance to DB (extreme loss / gap risk).
-        # In normal operation the margin guard ensures new_balance >= 0 before any
-        # position is opened.  This is a last-resort defensive layer.
-        # Normalize float params to Decimal once; all subsequent comparisons stay
-        # Decimal-native to avoid float→Decimal round-trips that can silently drop
-        # sub-cent precision (e.g. round(1e-9, 8) == 0.0 loses the shortfall).
-        _ZERO         = Decimal("0")
-        _nb           = new_balance if isinstance(new_balance, Decimal) else Decimal(str(new_balance))
-        _ne           = new_equity  if isinstance(new_equity,  Decimal) else Decimal(str(new_equity))
-        _safe_balance = max(_nb, _ZERO)
-        _safe_equity  = max(_ne, _ZERO)
-        _shortfall    = abs(min(_nb, _ZERO))
+        _safe_balance = max(_fresh_balance_after, _ZERO)
+        _safe_equity  = max(_safe_balance + _remaining_floating, _ZERO)
+        _shortfall    = abs(min(_fresh_balance_after, _ZERO))
         if _shortfall > _ZERO:
             logger.critical(
                 "[close_sync] NEGATIVE BALANCE PREVENTED: account=%s realized=%.4f "
                 "computed_balance=%s shortfall=%s — clamping to 0",
-                account_id, realized_pnl, _nb, _shortfall,
+                account_id, realized_pnl, _fresh_balance_after, _shortfall,
             )
 
         # MARGIN-02 — audit-only recompute of the SAME pure function already
@@ -495,19 +512,16 @@ def _close_position_sync(
                 meta          = {
                     "reason":                    "negative_balance_guard",
                     "shortfall":                 float(_shortfall),           # float for JSON
-                    "original_computed_balance": float(_nb),                  # float for JSON
+                    "original_computed_balance": float(_fresh_balance_after),  # float for JSON
                     "realized_pnl":              realized_pnl,
                 },
             )
 
         pos.delete()
 
-        account = (
-            TradingAccount.objects
-            .select_for_update()
-            .filter(id=account_id)
-            .first()
-        )
+        # _acct_row was already locked above (before Trade/LedgerEntry creation) —
+        # reuse it instead of a second fetch.
+        account = _acct_row
         if account:
             account.balance = _safe_balance
             account.equity  = _safe_equity
