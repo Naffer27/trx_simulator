@@ -66,7 +66,7 @@ def _bare_consumer() -> TradingConsumer:
     c._positions = []
     c._daily_realized_pnl = 0.0
     c._daily_pnl_date = None
-    c.account = {"balance": 10000.0, "spread_pips": 0.0}
+    c.account = {"balance": 10000.0, "spread_pips": 0.0, "commercial_pricing_fields": {}}
     c.send_json = AsyncMock()
     c._on_tick = AsyncMock()
     c._check_tp_sl = AsyncMock()
@@ -128,7 +128,7 @@ class TickSnapshotIsExactInvariantTests(TestCase):
         make_spread_config(symbol="EUR/USD", spread_pips=Decimal("1.50"), enabled=True)
         refresh_cache_sync()
         c = _bare_consumer()
-        c.account["spread_pips"] = 0.50  # account markup on top of the 1.50 base
+        c.account["commercial_pricing_fields"] = {"spread_markup_pips": 0.50}  # markup on top of the 1.50 base
 
         raw_bid, raw_ask = 1.09990, 1.10010
         _run(c.price_tick(_tick(bid=raw_bid, ask=raw_ask)))
@@ -160,7 +160,7 @@ class TickSnapshotIsExactInvariantTests(TestCase):
 
     def test_price_tick_stores_snapshot_alongside_raw_and_executable(self):
         c = _bare_consumer()
-        c.account["spread_pips"] = 0.75
+        c.account["commercial_pricing_fields"] = {"spread_markup_pips": 0.75}
         _run(c.price_tick(_tick(bid=1.09990, ask=1.10010)))
         snapshot = c._pricing_snapshot_state["EUR/USD"]
         self.assertEqual(snapshot["account_markup_pips"], 0.75)
@@ -258,11 +258,14 @@ class AsyncSafeBrokerSpreadConfigReadTests(TestCase):
         self.assertAlmostEqual(ask, 1.10010 + 0.0001, places=5)
 
     def test_tick_pricing_snapshot_sees_the_same_warmed_config(self):
+        from simulator.commercial_pricing import build_commercial_pricing_profile
+
         make_spread_config(symbol="EUR/USD", spread_pips=Decimal("2.00"), enabled=True)
         refresh_cache_sync()
+        profile = build_commercial_pricing_profile({}, "EUR/USD")
 
         async def _call():
-            return pc.tick_pricing_snapshot("EUR/USD", 0.0)
+            return pc.tick_pricing_snapshot("EUR/USD", profile)
 
         snapshot = _run(_call())
         self.assertEqual(snapshot["base_spread_pips"], 2.0)

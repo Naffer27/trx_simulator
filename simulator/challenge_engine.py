@@ -38,6 +38,21 @@ _ZERO = Decimal("0")
 _HUNDRED = Decimal("100")
 _PENNY = Decimal("0.01")
 
+
+def _commercial_snapshot_kwargs(product) -> dict:
+    """SPREAD-04 — the commercial pricing snapshot every CHALLENGE/FUNDED
+    TradingAccount gets frozen with at creation (Phase 1, Phase 2, and
+    Funded all call this — same product, same computation, never
+    duplicated). See simulator/commercial_pricing.py."""
+    from .commercial_pricing import commercial_pricing_fields_from_challenge_product
+
+    fields = commercial_pricing_fields_from_challenge_product(product)
+    return {
+        "commercial_profile_snapshot": fields,
+        "spread_pips_snapshot": product.spread_markup_pips,
+        "commission_per_lot_snapshot": product.commission_per_lot,
+    }
+
 # Public result constants
 IN_PROGRESS = "IN_PROGRESS"
 PASSED = "PASSED"
@@ -184,6 +199,7 @@ def activate_challenge_enrollment(enrollment: ChallengeEnrollment) -> TradingAcc
             max_drawdown=max_dd_abs,
             leverage=50,
             status=TradingAccount.STATUS_ACTIVE,
+            **_commercial_snapshot_kwargs(product),
         )
 
         RiskRule.objects.create(
@@ -312,6 +328,7 @@ def advance_to_phase2(enrollment: ChallengeEnrollment) -> TradingAccount:
             max_drawdown=max_dd_abs,
             leverage=50,
             status=TradingAccount.STATUS_ACTIVE,
+            **_commercial_snapshot_kwargs(product),
         )
 
         RiskRule.objects.create(
@@ -373,6 +390,7 @@ def advance_to_funded(enrollment: ChallengeEnrollment) -> TradingAccount:
             max_drawdown=max_dd_abs,
             leverage=50,
             status=TradingAccount.STATUS_ACTIVE,
+            **_commercial_snapshot_kwargs(product),
         )
 
         RiskRule.objects.create(

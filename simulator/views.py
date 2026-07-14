@@ -923,6 +923,10 @@ def create_account_view(request):
 
             # Freeze product rules as immutable snapshots on the account.
             # Uses .update() to bypass TradingAccount.save() balance logic.
+            # SPREAD-04: commercial_profile_snapshot is the SAME computation
+            # simulator.commercial_pricing's resolver would use as its own
+            # AccountProduct fallback — frozen here so it never has to.
+            from .commercial_pricing import commercial_pricing_fields_from_account_product
             TradingAccount.objects.filter(pk=account.pk).update(
                 account_product=product,
                 product_code_snapshot=product.code,
@@ -934,6 +938,7 @@ def create_account_view(request):
                 max_lot_size_snapshot=product.max_lot_size,
                 margin_call_level_snapshot=product.margin_call_level,
                 stopout_level_snapshot=product.stopout_level,
+                commercial_profile_snapshot=commercial_pricing_fields_from_account_product(product),
             )
             account.refresh_from_db()
 

@@ -57,14 +57,28 @@ class GetCachedConfigTests(TestCase):
         sc.refresh_cache_sync()
         self.assertIsNone(sc.get_cached_config("GBP/USD"))
 
-    def test_min_max_spread_carried_but_never_enforced_here(self):
-        """SPREAD-01: min_spread/max_spread have always been decorative —
-        this block does not activate them, only carries them through."""
-        make_spread_config(symbol="EUR/USD", spread_pips=Decimal("2.00"))
+    def test_bounds_disabled_by_default_snapshot_min_max_are_none(self):
+        """Opt-in correction: even though the row itself may carry numeric
+        min_spread/max_spread, spread_bounds_enabled defaults to False, so
+        the cached snapshot surfaces None for both — never enforced unless
+        an admin explicitly opts in."""
+        make_spread_config(symbol="EUR/USD", spread_pips=Decimal("2.00"),
+                            min_spread=Decimal("0.50"), max_spread=Decimal("5.00"))
         sc.refresh_cache_sync()
         snap = sc.get_cached_config("EUR/USD")
-        self.assertEqual(snap.min_spread, 0.50)  # factory default
-        self.assertEqual(snap.max_spread, 5.00)  # factory default
+        self.assertIsNone(snap.min_spread)
+        self.assertIsNone(snap.max_spread)
+        self.assertFalse(snap.bounds_enabled)
+
+    def test_bounds_enabled_snapshot_carries_real_min_max(self):
+        make_spread_config(symbol="EUR/USD", spread_pips=Decimal("2.00"),
+                            min_spread=Decimal("0.50"), max_spread=Decimal("5.00"),
+                            bounds_enabled=True)
+        sc.refresh_cache_sync()
+        snap = sc.get_cached_config("EUR/USD")
+        self.assertEqual(snap.min_spread, 0.50)
+        self.assertEqual(snap.max_spread, 5.00)
+        self.assertTrue(snap.bounds_enabled)
 
     def test_read_performs_zero_orm_queries(self):
         make_spread_config(symbol="EUR/USD", spread_pips=Decimal("2.00"))

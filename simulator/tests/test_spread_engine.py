@@ -85,6 +85,11 @@ class TestBrokerPriceWithConfig(TestCase):
         """
         BTCUSD: pip_size=1.0 → 15-pip spread = $15 total, $7.5 per side.
         client_bid = raw_bid − 7.5 ; client_ask = raw_ask + 7.5
+
+        No bounds configured — floor/ceiling are opt-in (spread_bounds_enabled
+        defaults to False), so a realistic 15-pip crypto spread is never
+        silently narrowed. Clamp behavior itself has its own dedicated tests
+        in test_spread_bounds_optin.py.
         """
         _seed_and_warm(symbol="BTCUSD", spread_pips=Decimal("15.00"))
 
@@ -291,6 +296,8 @@ class TestBrokerPriceMarkup(TestCase):
         """
         BTCUSD pip_size=1.0: markup_pips=1.2 → extra = 1.2 × 1.0 / 2 = $0.60 per side.
         With BrokerSpreadConfig=15 pips: effective=16.2 → extra = 16.2 × 1.0 / 2 = $8.10.
+
+        No bounds configured — see test_btcusd_spread_in_usd above.
         """
         _seed_and_warm(symbol="BTCUSD", spread_pips=Decimal("15.00"))
         bid, ask = 82000.00, 82015.00

@@ -1,5 +1,5 @@
 """
-simulator/pricing_context.py — SPREAD-02.
+simulator/pricing_context.py — SPREAD-02, extended SPREAD-04.
 
 Versioned, framework-light contract for the pricing context captured
 alongside each real execution (open/close). Used identically by the async
@@ -9,20 +9,26 @@ can drift from the other.
 
 This module does not decide any price, spread, or commission — it only
 reads and packages values that are already computed elsewhere
-(FeedManager ticks, BrokerSpreadConfig, account snapshot, F13's
-observability store). No formula here duplicates broker_price() or
-commission_for(); spread_pips_for() reads the exact same
-BrokerSpreadConfig row and account markup those already read, it does not
-recompute anything new.
+(FeedManager ticks, BrokerSpreadConfig via spread_engine, the resolved
+commercial pricing profile via commercial_pricing.py, F13's observability
+store). No formula here duplicates broker_price(), commission_for(), or
+commercial_pricing's resolver.
 
 schema_version exists so a future block can change this shape without a
 reader silently misinterpreting an old row — always branch on it before
-trusting field names/semantics.
+trusting field names/semantics. Bumped to 2 in SPREAD-04 (added profile_id,
+min_spread_pips, max_spread_pips, effective_spread_pips_pre_clamp). Bumped
+to 3 in the pre-commit floor/ceiling opt-in correction (added
+spread_bound_applied — explicit "none applied / within bounds / floor /
+ceiling" instead of requiring a reader to infer it from comparing
+pre-clamp and post-clamp values).
 
-Convention (SPREAD-02): effective_spread_pips is the total round-trip
-markup used by spread_engine.broker_price() (base_spread_pips +
-account_markup_pips), split in half between bid and ask — the same
-convention broker_price() itself uses. It is NOT "per side".
+Convention: effective_spread_pips is the total round-trip markup ACTUALLY
+applied by spread_engine.broker_price() — i.e. AFTER SPREAD-04's floor/
+ceiling clamp — split in half between bid and ask (broker_price()'s own
+convention, not "per side"). effective_spread_pips_pre_clamp is
+base_spread_pips + account_markup_pips BEFORE that clamp; the two are
+equal whenever no floor/ceiling applied.
 
 Never raises. Every public function here degrades to a safe, documented
 default instead of propagating — pricing-context capture must never block
@@ -38,7 +44,13 @@ from typing import Optional
 
 logger = logging.getLogger("simulator.pricing")
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
+
+# spread_bound_applied values.
+BOUND_NONE_CONFIGURED = None       # no min/max at all — bounds inactive or unset
+BOUND_WITHIN_BOUNDS    = "within_bounds"  # min/max configured but pre-clamp already inside range
+BOUND_FLOOR            = "floor"
+BOUND_CEILING          = "ceiling"
 
 # Execution-trigger labels — one per production close/open path this block
 # covers. Kept as plain strings (not an enum) so daemon "reason" values
@@ -67,6 +79,11 @@ class PricingContext:
     base_spread_pips: Optional[float]
     account_markup_pips: Optional[float]
     effective_spread_pips: Optional[float]
+    effective_spread_pips_pre_clamp: Optional[float]
+    min_spread_pips: Optional[float]
+    max_spread_pips: Optional[float]
+    spread_bound_applied: Optional[str]
+    profile_id: Optional[str]
     provider_id: Optional[str]
     source_state: Optional[str]
     router_provider: Optional[str]
@@ -94,6 +111,9 @@ def build_pricing_context(
     executable_ask=None,
     base_spread_pips=None,
     account_markup_pips=None,
+    min_spread_pips=None,
+    max_spread_pips=None,
+    profile_id: Optional[str] = None,
     provider_id: Optional[str] = None,
     source_state: Optional[str] = None,
     router_provider: Optional[str] = None,
@@ -105,10 +125,11 @@ def build_pricing_context(
     that knows the shape — every caller uses this instead of hand-building
     the dict, so the schema can never drift between call sites.
 
-    effective_spread_pips = base_spread_pips + account_markup_pips (the
-    same total broker_price() applies) — computed here, not re-derived
-    from prices, so it stays correct even when one of the two inputs is
-    unavailable (None + 1.5 = 1.5, not None).
+    effective_spread_pips_pre_clamp = base_spread_pips + account_markup_pips.
+    effective_spread_pips = that value clamped to [min_spread_pips,
+    max_spread_pips] via spread_engine.compute_effective_spread_pips() —
+    the SAME function broker_price() itself calls, so the value recorded
+    here can never disagree with the spread actually applied to the fill.
 
     Never raises: any failure degrades to a minimal, clearly-marked
     dict rather than propagating into an open/close/daemon cycle.
@@ -116,9 +137,23 @@ def build_pricing_context(
     try:
         base = _safe_float(base_spread_pips)
         markup = _safe_float(account_markup_pips)
-        effective: Optional[float] = None
+        min_pips = _safe_float(min_spread_pips)
+        max_pips = _safe_float(max_spread_pips)
+
+        pre_clamp: Optional[float] = None
+        post_clamp: Optional[float] = None
         if base is not None or markup is not None:
-            effective = (base or 0.0) + (markup or 0.0)
+            from .spread_engine import compute_effective_spread_pips
+            pre_clamp, post_clamp = compute_effective_spread_pips(
+                base or 0.0, markup or 0.0, min_pips, max_pips,
+            )
+
+        bound_applied: Optional[str] = None
+        if min_pips is not None or max_pips is not None:
+            if pre_clamp is not None and post_clamp is not None and pre_clamp != post_clamp:
+                bound_applied = BOUND_FLOOR if (min_pips is not None and post_clamp == min_pips) else BOUND_CEILING
+            else:
+                bound_applied = BOUND_WITHIN_BOUNDS
 
         ctx = PricingContext(
             schema_version=SCHEMA_VERSION,
@@ -128,7 +163,12 @@ def build_pricing_context(
             executable_ask=_safe_float(executable_ask),
             base_spread_pips=base,
             account_markup_pips=markup,
-            effective_spread_pips=effective,
+            effective_spread_pips=post_clamp,
+            effective_spread_pips_pre_clamp=pre_clamp,
+            min_spread_pips=min_pips,
+            max_spread_pips=max_pips,
+            spread_bound_applied=bound_applied,
+            profile_id=profile_id,
             provider_id=provider_id,
             source_state=source_state,
             router_provider=router_provider,
@@ -147,9 +187,9 @@ def spread_pips_for(symbol: str, account_markup_pips) -> tuple[Optional[float], 
     """
     Reads BrokerSpreadConfig.spread_pips for *symbol* (the exact same
     cached accessor spread_engine.broker_price()/_db_open_position_atomic
-    already use for BrokerLedger.REV_SPREAD — same 30s TTL cache, no new
-    DB load) and pairs it with the account's own markup. Does not apply
-    or change either value — read-only capture.
+    already use for BrokerLedger.REV_SPREAD — same async-safe cache, no new
+    DB load) and pairs it with the given markup. Does not apply or change
+    either value — read-only capture.
 
     Returns (base_spread_pips, account_markup_pips) as floats/None.
     Never raises.
@@ -167,32 +207,45 @@ def spread_pips_for(symbol: str, account_markup_pips) -> tuple[Optional[float], 
         return None, _safe_float(account_markup_pips)
 
 
-def tick_pricing_snapshot(symbol: str, account_markup_pips) -> dict:
+def tick_pricing_snapshot(symbol: str, profile) -> dict:
     """
-    SPREAD-02b — the ONE place allowed to read BrokerSpreadConfig/F13
-    observability for pricing-context purposes. Must be called immediately
-    adjacent to broker_price() inside price_tick(), never later at order
-    time: both BrokerSpreadConfig and the observability store can change
-    between a tick and the order that eventually uses it, and only the
-    values active AT THE TICK actually produced that tick's
-    executable_bid/executable_ask. Re-reading either at order time would
-    silently mislabel an already-executed price with a config that never
-    produced it.
+    SPREAD-02b/SPREAD-04 — the ONE place allowed to read BrokerSpreadConfig/
+    F13 observability for pricing-context purposes. Must be called
+    immediately adjacent to broker_price() inside price_tick(), never
+    later at order time: BrokerSpreadConfig and the observability store
+    can both change between a tick and the order that eventually uses it,
+    and only the values active AT THE TICK actually produced that tick's
+    executable_bid/executable_ask. Re-reading at order time would silently
+    mislabel an already-executed price with data that never produced it.
 
-    Returns {"base_spread_pips", "account_markup_pips", "provider_id",
-    "source_state"} — the caller stores this dict verbatim per symbol and
+    profile is the ALREADY-RESOLVED commercial_pricing.CommercialPricingProfile
+    for (account, symbol) — resolved once by the caller (price_tick() needs
+    it anyway, to pass markup/min/max into broker_price()'s clamp), never
+    re-resolved here. This function only adds base_spread_pips (symbol-level,
+    not part of the commercial profile — read straight from
+    BrokerSpreadConfig) and F13 observability, both DB-free reads.
+
+    Returns {"base_spread_pips", "account_markup_pips", "profile_id",
+    "min_spread_pips", "max_spread_pips", "provider_id", "source_state"} —
+    the caller stores this dict verbatim per symbol and
     _capture_pricing_context() reads it back later, never re-querying.
-    Composed entirely from spread_pips_for()/provider_state_for(), both
-    already never-raising — this function cannot raise either.
+    Never raises.
     """
-    base, markup = spread_pips_for(symbol, account_markup_pips)
-    provider_id, source_state = provider_state_for(symbol)
-    return {
-        "base_spread_pips": base,
-        "account_markup_pips": markup,
-        "provider_id": provider_id,
-        "source_state": source_state,
-    }
+    try:
+        base, _ = spread_pips_for(symbol, None)
+        provider_id, source_state = provider_state_for(symbol)
+        return {
+            "base_spread_pips": base,
+            "account_markup_pips": profile.spread_markup_pips,
+            "profile_id": profile.profile_id,
+            "min_spread_pips": profile.min_spread_pips,
+            "max_spread_pips": profile.max_spread_pips,
+            "provider_id": provider_id,
+            "source_state": source_state,
+        }
+    except Exception as exc:
+        logger.debug("[pricing_context] tick_pricing_snapshot failed for %s (non-fatal): %r", symbol, exc)
+        return {}
 
 
 def provider_state_for(symbol: str) -> tuple[Optional[str], Optional[str]]:

@@ -113,18 +113,32 @@ def make_spread_config(
     symbol: str = "EUR/USD",
     spread_pips: Decimal = Decimal("2.00"),
     enabled: bool = True,
+    min_spread: Decimal | None = None,
+    max_spread: Decimal | None = None,
+    bounds_enabled: bool = False,
 ) -> "BrokerSpreadConfig":
     """
     Create a BrokerSpreadConfig. Symbol is auto-normalized by the model's save()
     (e.g. 'EURUSD' → 'EUR/USD'), so tests can pass either form.
+
+    min_spread/max_spread are null (no floor/ceiling) unless passed
+    explicitly. bounds_enabled defaults to False — matching the model's
+    own default — meaning even an explicit min_spread/max_spread has no
+    effect on broker_price()/build_commercial_pricing_profile() unless
+    the caller also passes bounds_enabled=True. This is the opt-in design
+    from the pre-commit floor/ceiling correction: a symbol's spread is
+    never silently clamped just because a row happens to carry min/max
+    values.
     """
     from simulator.models import BrokerSpreadConfig
 
-    return BrokerSpreadConfig.objects.create(
-        symbol=symbol,
-        spread_pips=spread_pips,
-        enabled=enabled,
-    )
+    kwargs = dict(symbol=symbol, spread_pips=spread_pips, enabled=enabled,
+                   spread_bounds_enabled=bounds_enabled)
+    if min_spread is not None:
+        kwargs["min_spread"] = min_spread
+    if max_spread is not None:
+        kwargs["max_spread"] = max_spread
+    return BrokerSpreadConfig.objects.create(**kwargs)
 
 
 def make_deposit(
@@ -229,8 +243,12 @@ def make_position(
 def make_account_product(
     name: str | None = None,
     product_type: str = AccountProduct.TYPE_RETAIL,
+    family: str = AccountProduct.FAMILY_REAL,
     min_deposit: Decimal = Decimal("100.00"),
+    default_balance: Decimal = Decimal("0.00"),
     max_leverage: int = 50,
+    typical_spread_pips: Decimal = Decimal("0.00"),
+    commission_per_lot: Decimal = Decimal("0.00"),
     commission_pct: Decimal = Decimal("0.0000"),
     spread_markup: Decimal = Decimal("0.0000"),
     features: dict | None = None,
@@ -242,8 +260,12 @@ def make_account_product(
     return AccountProduct.objects.create(
         name=name,
         product_type=product_type,
+        family=family,
         min_deposit=Decimal(str(min_deposit)),
+        default_balance=Decimal(str(default_balance)),
         max_leverage=max_leverage,
+        typical_spread_pips=Decimal(str(typical_spread_pips)),
+        commission_per_lot=Decimal(str(commission_per_lot)),
         commission_pct=Decimal(str(commission_pct)),
         spread_markup=Decimal(str(spread_markup)),
         features=features if features is not None else {},
@@ -271,6 +293,11 @@ def make_challenge_product(
     max_open_positions: int = 30,
     is_active: bool = True,
     external_code: str | None = None,
+    spread_markup_pips: Decimal = Decimal("0.00"),
+    commission_per_lot: Decimal = Decimal("0.00"),
+    commission_pct: Decimal = Decimal("0.0000"),
+    min_spread_pips: Decimal | None = None,
+    max_spread_pips: Decimal | None = None,
 ) -> ChallengeProduct:
     """Create a ChallengeProduct with sensible defaults for the 10K tier."""
     if name is None:
@@ -295,6 +322,11 @@ def make_challenge_product(
         max_open_positions=max_open_positions,
         is_active=is_active,
         external_code=external_code,
+        spread_markup_pips=Decimal(str(spread_markup_pips)),
+        commission_per_lot=Decimal(str(commission_per_lot)),
+        commission_pct=Decimal(str(commission_pct)),
+        min_spread_pips=Decimal(str(min_spread_pips)) if min_spread_pips is not None else None,
+        max_spread_pips=Decimal(str(max_spread_pips)) if max_spread_pips is not None else None,
     )
 
 

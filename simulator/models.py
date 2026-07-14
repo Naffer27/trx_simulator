@@ -110,6 +110,12 @@ class TradingAccount(models.Model):
     margin_call_level_snapshot  = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
     stopout_level_snapshot      = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
 
+    # SPREAD-04 — full commercial pricing policy frozen at creation time
+    # (see simulator/commercial_pricing.py). null = pre-SPREAD-04 account;
+    # the resolver falls back to reconstructing an equivalent profile from
+    # the flat *_snapshot fields above, never a destructive backfill.
+    commercial_profile_snapshot = models.JSONField(null=True, blank=True)
+
     STATUS_ACTIVE    = 'Activo'
     STATUS_SUSPENDED = 'Suspendido'
     STATUS_VIOLATED  = 'Violado'
@@ -413,17 +419,38 @@ class BrokerSpreadConfig(models.Model):
         default=False,
         help_text="Reserved for future dynamic/session spread logic.",
     )
-    min_spread  = models.DecimalField(max_digits=8, decimal_places=2, default=Decimal("0.50"))
-    max_spread  = models.DecimalField(max_digits=8, decimal_places=2, default=Decimal("5.00"))
+    spread_bounds_enabled = models.BooleanField(
+        default=False,
+        help_text=(
+            "min_spread/max_spread below are IGNORED unless this is on. "
+            "Defaults to off so no existing or historical row silently "
+            "clamps a symbol's spread — an admin must opt in explicitly."
+        ),
+    )
+    min_spread  = models.DecimalField(
+        max_digits=8, decimal_places=2, null=True, blank=True,
+        help_text="Floor in pips. Null = no floor. Applied only when spread_bounds_enabled is on.",
+    )
+    max_spread  = models.DecimalField(
+        max_digits=8, decimal_places=2, null=True, blank=True,
+        help_text="Ceiling in pips. Null = no ceiling. Applied only when spread_bounds_enabled is on.",
+    )
     enabled     = models.BooleanField(default=True, db_index=True)
     created_at  = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ["symbol"]
 
+    def clean(self):
+        super().clean()
+        if self.min_spread is not None and self.max_spread is not None and self.min_spread > self.max_spread:
+            from django.core.exceptions import ValidationError
+            raise ValidationError("min_spread must be <= max_spread.")
+
     def save(self, *args, **kwargs):
         from market_data.symbol_specs import normalize_symbol
         self.symbol = normalize_symbol(self.symbol)
+        self.clean()
         super().save(*args, **kwargs)
 
     def __str__(self):
@@ -710,6 +737,18 @@ class ChallengeProduct(models.Model):
     profit_split_pct   = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('80.00'))
     max_lot_size       = models.DecimalField(max_digits=8, decimal_places=2, default=Decimal('5.00'))
     max_open_positions = models.PositiveIntegerField(default=30)
+
+    # ── Commercial pricing policy (SPREAD-04) ───────────────────────────────
+    # Applies to every TradingAccount created from this product (Phase 1,
+    # Phase 2, and the eventual Funded account) — see
+    # simulator/commercial_pricing.py. min/max_spread_pips are an OPTIONAL
+    # per-product override of BrokerSpreadConfig's per-symbol floor/ceiling;
+    # null = no override, use the symbol's own BrokerSpreadConfig row.
+    spread_markup_pips = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal('0.00'))
+    commission_per_lot = models.DecimalField(max_digits=8, decimal_places=2, default=Decimal('0.00'))
+    commission_pct     = models.DecimalField(max_digits=5, decimal_places=4, default=Decimal('0.0000'))
+    min_spread_pips    = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
+    max_spread_pips    = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
 
     is_active  = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)

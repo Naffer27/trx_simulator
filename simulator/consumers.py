@@ -329,11 +329,18 @@ class TradingConsumer(AsyncWebsocketConsumer):
             # Phase 6B — product rule defaults (overwritten by hydration if snapshot set)
             "product_name":       "",
             "commission_per_lot": 0.0,
+            "commission_pct":     0.0,
             "spread_pips":        0.0,
             "allowed_symbols":    None,
             "max_lot_size":       None,
             "margin_call_level":  100.0,
             "stopout_level":      50.0,
+            # SPREAD-04 — account-level commercial pricing fields, resolved
+            # once at hydrate time by commercial_pricing.resolve_commercial_
+            # pricing_fields(); {} for guest/anonymous sessions (no DB
+            # account to resolve against) — build_commercial_pricing_profile()
+            # treats an empty dict as an explicit legacy_fallback profile.
+            "commercial_pricing_fields": {},
         }
         self._daily_realized_pnl = 0.0
         self._daily_pnl_date = None
@@ -512,8 +519,17 @@ class TradingConsumer(AsyncWebsocketConsumer):
         mid     = event["mid"]
         ts      = event["time"]
 
-        markup_pips = float(self.account.get("spread_pips", 0.0) or 0.0)
-        bid, ask = broker_price(symbol, raw_bid, raw_ask, markup_pips=markup_pips)
+        # SPREAD-04 — one resolution of the commercial pricing profile per
+        # tick, DB-free (spread_config_cache + the account-level fields
+        # already cached at hydrate time). Both broker_price()'s clamp and
+        # the pricing-context snapshot below use this SAME resolved profile,
+        # so the price actually applied and the audit record can never
+        # disagree.
+        profile = self._resolve_commercial_pricing_profile(symbol)
+        bid, ask = broker_price(
+            symbol, raw_bid, raw_ask, markup_pips=profile.spread_markup_pips,
+            min_spread_override=profile.min_spread_pips, max_spread_override=profile.max_spread_pips,
+        )
         self.set_state(symbol, bid, ask, mid)
         # SPREAD-02 — retain the raw (pre-markup) tick for pricing-context
         # capture at the next open/close. Does not affect broker_price(),
@@ -521,11 +537,12 @@ class TradingConsumer(AsyncWebsocketConsumer):
         self._raw_bid_state[symbol]    = raw_bid
         self._raw_ask_state[symbol]    = raw_ask
         self._pricing_ts_state[symbol] = ts
-        # SPREAD-02b — snapshot the exact BrokerSpreadConfig/provider state
-        # that produced THIS tick's bid/ask, right now — this is the only
-        # place allowed to read either; _capture_pricing_context() only
-        # ever reads this snapshot back, it never re-queries.
-        self._pricing_snapshot_state[symbol] = pricing_ctx.tick_pricing_snapshot(symbol, markup_pips)
+        # SPREAD-02b — snapshot the exact BrokerSpreadConfig/commercial
+        # profile/provider state that produced THIS tick's bid/ask, right
+        # now — this is the only place allowed to read any of them;
+        # _capture_pricing_context() only ever reads this snapshot back, it
+        # never re-queries.
+        self._pricing_snapshot_state[symbol] = pricing_ctx.tick_pricing_snapshot(symbol, profile)
         await self.send_json({"type": "tick", "symbol": symbol, "bid": bid, "ask": ask, "time": ts})
         await self._on_tick(symbol, mid, volume=0.0, ts=ts)
         await self._check_tp_sl(symbol, bid, ask)
@@ -750,6 +767,9 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 executable_ask=self._ask_state.get(symbol),
                 base_spread_pips=snapshot.get("base_spread_pips"),
                 account_markup_pips=snapshot.get("account_markup_pips"),
+                min_spread_pips=snapshot.get("min_spread_pips"),
+                max_spread_pips=snapshot.get("max_spread_pips"),
+                profile_id=snapshot.get("profile_id"),
                 provider_id=provider_id,
                 source_state=snapshot.get("source_state"),
                 router_provider=provider_id,
@@ -1029,15 +1049,37 @@ class TradingConsumer(AsyncWebsocketConsumer):
         return evaluate_position_risk(account, symbol, lot_size, equity, margin_used, leverage)
 
     # ---------------- Cuenta / PnL ----------------
+    def _resolve_commercial_pricing_profile(self, symbol: str):
+        """SPREAD-04 — combines the account-level commercial pricing fields
+        already resolved once at hydrate time (self.account["commercial_
+        pricing_fields"]) with the symbol's live BrokerSpreadConfig
+        floor/ceiling. Pure, DB-free — safe to call every tick."""
+        from . import commercial_pricing
+        return commercial_pricing.build_commercial_pricing_profile(
+            self.account.get("commercial_pricing_fields") or {}, symbol,
+        )
+
     def commission_for(self, symbol: str, qty: float, price: float) -> float:
-        # Phase 6B: prefer per-lot snapshot if set (qty is already in lots).
-        # Falls back to spec.commission_pct for old accounts with no snapshot.
-        cpl = self.account.get("commission_per_lot", 0.0) or 0.0
-        if cpl > 0:
-            return round(qty * cpl, 2)
-        spec = get_spec(symbol)
-        notional = qty * price * spec.contract_size
-        return max(0.0, notional * spec.commission_pct)
+        """SPREAD-04: decided entirely from the resolved commercial pricing
+        profile — per-lot if configured, else pct if configured, else an
+        explicit zero when the profile says so. Only a profile with
+        source=legacy_fallback (no snapshot, no product, no challenge
+        relation resolvable — see commercial_pricing.py) falls back to
+        spec.commission_pct, matching the original pre-SPREAD-04 behavior
+        for accounts with no resolvable commercial policy at all."""
+        from . import commercial_pricing
+        profile = self._resolve_commercial_pricing_profile(symbol)
+        if profile.commission_per_lot > 0:
+            return round(qty * profile.commission_per_lot, 2)
+        if profile.commission_pct > 0:
+            spec = get_spec(symbol)
+            notional = qty * price * spec.contract_size
+            return max(0.0, notional * profile.commission_pct)
+        if profile.source == commercial_pricing.SOURCE_LEGACY_FALLBACK:
+            spec = get_spec(symbol)
+            notional = qty * price * spec.contract_size
+            return max(0.0, notional * spec.commission_pct)
+        return 0.0
 
     def min_qty_for(self, symbol: str) -> float:
         return get_spec(symbol).min_lot
@@ -1479,11 +1521,15 @@ class TradingConsumer(AsyncWebsocketConsumer):
         # Phase 6B — product rule snapshots (None = not set, fallback to spec/default)
         self.account["product_name"]      = acc.get("product_name", "")
         self.account["commission_per_lot"] = acc.get("commission_per_lot", 0.0)
+        self.account["commission_pct"]     = acc.get("commission_pct", 0.0)
         self.account["spread_pips"]        = acc.get("spread_pips", 0.0)
         self.account["allowed_symbols"]    = acc.get("allowed_symbols", None)
         self.account["max_lot_size"]       = acc.get("max_lot_size", None)
         self.account["margin_call_level"]  = acc.get("margin_call_level", 100.0)
         self.account["stopout_level"]      = acc.get("stopout_level", 50.0)
+        # SPREAD-04 — cached once here; commission_for()/price_tick() read
+        # it back, never re-resolving (no DB per-tick).
+        self.account["commercial_pricing_fields"] = acc.get("commercial_pricing_fields", {})
         log.info("[hydrate] balance=%.2f equity=%.2f status=%s tier=%s product=%r comm_per_lot=%.2f",
                  self.account["balance"], self.account["equity"],
                  self.account["status"], self.account["tier"],
@@ -1559,6 +1605,13 @@ class TradingConsumer(AsyncWebsocketConsumer):
     def _db_read_account(self, acc_id: int):
         try:
             obj = TradingAccount.objects.get(id=acc_id)
+            # SPREAD-04 — single commercial pricing resolver for every
+            # account type (see simulator/commercial_pricing.py); replaces
+            # the direct obj.spread_pips_snapshot/commission_per_lot_snapshot
+            # reads that never resolved anything for CHALLENGE/FUNDED
+            # accounts (they never had a snapshot written at all).
+            from .commercial_pricing import resolve_commercial_pricing_fields
+            commercial_fields = resolve_commercial_pricing_fields(obj)
             return {
                 "id":              obj.id,
                 "account_type":    obj.account_type,
@@ -1571,14 +1624,19 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 "status":          obj.status,
                 "tier":            obj.tier or "",
                 "profit_target":   float(obj.profit_target) if obj.profit_target is not None else 0.0,
-                # Phase 6B — product snapshots
+                # Phase 6B — product snapshots (risk/eligibility, unrelated to commercial pricing)
                 "product_name":          obj.product_name_snapshot or "",
-                "commission_per_lot":    float(obj.commission_per_lot_snapshot or 0),
-                "spread_pips":           float(obj.spread_pips_snapshot or 0),
                 "allowed_symbols":       obj.allowed_symbols_snapshot,
                 "max_lot_size":          float(obj.max_lot_size_snapshot) if obj.max_lot_size_snapshot is not None else None,
                 "margin_call_level":     float(obj.margin_call_level_snapshot or 100),
                 "stopout_level":         float(obj.stopout_level_snapshot or 50),
+                # SPREAD-04 — commercial pricing: account-level fields resolved
+                # once here (a sync DB context); commission_for()/price_tick()
+                # read them back from self.account, never re-resolving.
+                "commission_per_lot":       commercial_fields.get("commission_per_lot", 0.0),
+                "commission_pct":           commercial_fields.get("commission_pct", 0.0),
+                "spread_pips":              commercial_fields.get("spread_markup_pips", 0.0),
+                "commercial_pricing_fields": commercial_fields,
             }
         except TradingAccount.DoesNotExist:
             return None

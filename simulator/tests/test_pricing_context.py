@@ -29,8 +29,9 @@ class BuildPricingContextTests(SimpleTestCase):
         expected = {
             "schema_version", "raw_bid", "raw_ask", "executable_bid", "executable_ask",
             "base_spread_pips", "account_markup_pips", "effective_spread_pips",
-            "provider_id", "source_state", "router_provider",
-            "pricing_timestamp", "pricing_profile",
+            "effective_spread_pips_pre_clamp", "min_spread_pips", "max_spread_pips",
+            "spread_bound_applied", "profile_id", "provider_id", "source_state",
+            "router_provider", "pricing_timestamp", "pricing_profile",
         }
         self.assertEqual(set(ctx.keys()), expected)
 

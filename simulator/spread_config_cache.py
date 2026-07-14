@@ -43,9 +43,16 @@ listing every allowed symbol with no enabled config row, so the passthrough
 is observable instead of silent — it does not block or change the
 fallback itself.
 
-min_spread/max_spread are carried in the cached snapshot for forward
-compatibility but are NOT enforced anywhere yet (unchanged from before —
-see SPREAD-01 finding: these fields have always been decorative).
+min_spread/max_spread are carried in the cached snapshot ONLY when the
+row's spread_bounds_enabled flag is True — otherwise both are surfaced as
+None, exactly as if unset. This is the single gating point for the
+opt-in floor/ceiling correction made just before SPREAD-04's commit: the
+model's min_spread/max_spread had economic defaults (0.50/5.00) that,
+once spread_engine/commercial_pricing started reading them, would have
+silently narrowed real spreads (e.g. BTCUSD's 15-pip base) for every row
+that never had an admin explicitly configure bounds. Gating here means
+broker_price()/build_commercial_pricing_profile() need no awareness of
+the flag at all — they already treat None as "no clamp".
 """
 
 from __future__ import annotations
@@ -66,8 +73,9 @@ REFRESH_INTERVAL_SECONDS = 30.0  # matches the previous per-call cache's TTL
 class SpreadConfigSnapshot:
     symbol: str
     spread_pips: float
-    min_spread: float
-    max_spread: float
+    min_spread: Optional[float]
+    max_spread: Optional[float]
+    bounds_enabled: bool
     enabled: bool
 
 
@@ -114,8 +122,9 @@ def refresh_cache_sync() -> int:
             row.symbol: SpreadConfigSnapshot(
                 symbol=row.symbol,
                 spread_pips=float(row.spread_pips),
-                min_spread=float(row.min_spread),
-                max_spread=float(row.max_spread),
+                min_spread=(float(row.min_spread) if (row.spread_bounds_enabled and row.min_spread is not None) else None),
+                max_spread=(float(row.max_spread) if (row.spread_bounds_enabled and row.max_spread is not None) else None),
+                bounds_enabled=row.spread_bounds_enabled,
                 enabled=row.enabled,
             )
             for row in BrokerSpreadConfig.objects.filter(enabled=True)

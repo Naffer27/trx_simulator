@@ -19,7 +19,7 @@ from .models import (
     CalendarEvent, Referral, Bonus, BrokerDocument, ExpertAdvisor,
     BrokerLedger, BrokerSpreadConfig, Instrument,
     BrokerEquitySnapshot, BrokerRevenueSnapshot,
-    ChallengeProduct, ChallengeEnrollment, FundedConfig,
+    AccountProduct, ChallengeProduct, ChallengeEnrollment, FundedConfig,
     KYCProfile, SupportTicket,
     FundedPayoutRequest,
 )
@@ -1712,11 +1712,18 @@ class ExpertAdvisorAdmin(admin.ModelAdmin):
 
 @admin.register(BrokerSpreadConfig)
 class BrokerSpreadConfigAdmin(admin.ModelAdmin):
-    list_display   = ('symbol', 'spread_pips', 'enabled', 'is_dynamic', 'min_spread', 'max_spread', 'created_at')
-    list_filter    = ('enabled', 'is_dynamic')
+    list_display   = (
+        'symbol', 'spread_pips', 'enabled', 'is_dynamic',
+        'spread_bounds_enabled', 'min_spread', 'max_spread', 'created_at',
+    )
+    list_filter    = ('enabled', 'is_dynamic', 'spread_bounds_enabled')
     search_fields  = ('symbol',)
-    list_editable  = ('spread_pips', 'enabled')
+    list_editable  = ('spread_pips', 'enabled', 'spread_bounds_enabled')
     readonly_fields = ('created_at',)
+    fields = (
+        'symbol', 'spread_pips', 'enabled', 'is_dynamic',
+        'spread_bounds_enabled', 'min_spread', 'max_spread', 'created_at',
+    )
     ordering       = ('symbol',)
 
 
@@ -2499,7 +2506,9 @@ def evaluate_enrollments_now(modeladmin, request, queryset):
 
 @admin.register(ChallengeProduct)
 class ChallengeProductAdmin(admin.ModelAdmin):
-    list_display  = ("name", "tier", "price_usd", "account_size", "phases_summary", "profit_split_pct", "is_active", "created_at")
+    list_display  = ("name", "tier", "price_usd", "account_size", "phases_summary",
+                      "profit_split_pct", "spread_markup_pips", "commission_per_lot",
+                      "is_active", "created_at")
     list_filter   = ("is_active", "tier")
     search_fields = ("name",)
     readonly_fields = ("created_at",)
@@ -2526,6 +2535,18 @@ class ChallengeProductAdmin(admin.ModelAdmin):
             "fields": ("p2_profit_target_pct", "p2_max_drawdown_pct", "p2_max_daily_loss_pct",
                        "p2_min_trading_days", "p2_max_duration_days"),
         }),
+        ("Commercial Pricing (SPREAD-04)", {
+            "fields": ("spread_markup_pips", "commission_per_lot", "commission_pct",
+                       "min_spread_pips", "max_spread_pips"),
+            "description": (
+                "Applied to every TradingAccount created from this product "
+                "(Phase 1, Phase 2, and Funded) — frozen at creation time, "
+                "editing this afterward never retroactively changes existing "
+                "accounts. min/max_spread_pips optionally override the "
+                "symbol's own BrokerSpreadConfig floor/ceiling; leave blank "
+                "to use the symbol's default."
+            ),
+        }),
     )
 
     @admin.display(description="Phases")
@@ -2535,6 +2556,54 @@ class ChallengeProductAdmin(admin.ModelAdmin):
             obj.p1_profit_target_pct,
             obj.p2_profit_target_pct,
         )
+
+
+@admin.register(AccountProduct)
+class AccountProductAdmin(admin.ModelAdmin):
+    """SPREAD-04 — previously not registered at all; AccountProduct rows
+    could only be created/edited via seed_account_products.py or direct DB
+    access. Registered here so commercial pricing (typical_spread_pips/
+    commission_per_lot/commission_pct, already existing fields) is
+    admin-editable like ChallengeProduct's."""
+
+    list_display  = ("name", "code", "product_type", "family", "typical_spread_pips",
+                      "commission_per_lot", "commission_pct", "is_active", "is_popular", "created_at")
+    list_filter   = ("family", "product_type", "is_active", "is_popular")
+    search_fields = ("name", "code")
+    readonly_fields = ("created_at",)
+
+    def has_add_permission(self, request):
+        return request.user.is_superuser
+
+    def has_change_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+    fieldsets = (
+        (None, {
+            "fields": ("name", "code", "product_type", "family", "platform_label",
+                       "description", "is_active", "created_at"),
+        }),
+        ("Economics", {
+            "fields": ("min_deposit", "default_balance", "max_leverage",
+                       "typical_spread_pips", "commission_per_lot", "commission_pct",
+                       "spread_markup"),
+            "description": (
+                "Applied to every TradingAccount created from this product — "
+                "frozen at creation time (see simulator/commercial_pricing.py); "
+                "editing this afterward never retroactively changes existing "
+                "accounts."
+            ),
+        }),
+        ("Risk Parameters", {
+            "fields": ("allowed_symbols", "max_lot_size", "margin_call_level", "stopout_level"),
+        }),
+        ("Display", {
+            "fields": ("features", "is_popular", "sort_order"),
+        }),
+    )
 
 
 @admin.register(ChallengeEnrollment)
