@@ -412,7 +412,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
             await self.send_json({"type": "history", "symbol": new_sym, "data": hist})
             await self._send_bridge_candle(new_sym, self.timeframe)
             await self.send_json({"type": "ack", "action": "symbol_changed", "symbol": new_sym})
-            await self.send_json({"type": "positions", "items": self._positions_snapshot()})
+            await self._refresh_and_send_positions()
 
         elif act == "change_timeframe":
             tf = normalize_tf(data.get("timeframe", self.timeframe))
@@ -496,7 +496,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
             "realized_pnl": realized,
             "ts":           event.get("ts", int(time.time())),
         })
-        await self.send_json({"type": "positions", "items": self._positions_snapshot()})
+        await self._refresh_and_send_positions()
 
         # Stopout / margin-call UI notifications (additive — only for daemon-initiated paths)
         if new_status == "Suspendido":
@@ -841,7 +841,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
         if not ok:
             await self.send_json({"type":"error","code":reason,"message":reason})
             await self._recalc_account_and_push()
-            await self.send_json({"type":"positions","items":self._positions_snapshot()})
+            await self._refresh_and_send_positions()
             return
 
         # Phase 6B.1 — per-product margin guard (snapshot-based, pure, no DB)
@@ -947,7 +947,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
                               "commission":commission,"ts":int(time.time())})
 
         await self._recalc_account_and_push()
-        await self.send_json({"type":"positions","items":self._positions_snapshot()})
+        await self._refresh_and_send_positions()
 
     async def _order_update(self, data: dict):
         pid = data.get("id")
@@ -971,7 +971,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
             log.warning("[order_update] no position matched pid=%r sym=%r — SL/TP update ignored", pid, sym)
 
         if found:
-            await self.send_json({"type":"positions","items":self._positions_snapshot()})
+            await self._refresh_and_send_positions()
         else:
             await self.send_json({"type":"warn","message":"order_update_not_found"})
 
@@ -1048,7 +1048,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
                               "qty": found_pos["qty"], "avg": found_pos["avg"],
                               "close_px": close_px, "reason": "manual",
                               "realized_pnl": realized, "ts": int(time.time())})
-        await self.send_json({"type": "positions", "items": self._positions_snapshot()})
+        await self._refresh_and_send_positions()
 
     # ---------------- Risk Preview ----------------
     async def _handle_risk_preview(self, data: dict):
@@ -1346,7 +1346,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
         # Notify client
         for c in closed_items:
             await self.send_json({"type": "order_close", **c})
-        await self.send_json({"type": "positions", "items": []})
+        await self._refresh_and_send_positions()
         await self.send_json({
             "type": "account:suspended",
             "status": "Suspendido",
@@ -1434,7 +1434,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
         for c in closed_items:
             await self.send_json({"type": "order_close", **c})
-        await self.send_json({"type": "positions", "items": []})
+        await self._refresh_and_send_positions()
         await self.send_json({
             "type": "account:margin_call",
             "reason": "margin_level_below_stopout",
@@ -1529,11 +1529,51 @@ class TradingConsumer(AsyncWebsocketConsumer):
             self._positions = remaining
             await self._recalc_account_and_push()
             for c in closed: await self.send_json({"type":"order_close", **c})
-            await self.send_json({"type":"positions","items":self._positions_snapshot()})
+            await self._refresh_and_send_positions()
 
     # ---------------- DB helpers (best-effort) ----------------
-    async def send_positions_snapshot(self):
-        items = await self._db_fetch_open_positions()
+    async def _refresh_and_send_positions(self):
+        """MULTIPANEL-01 — the ONE place allowed to emit a full 'positions'
+        snapshot. Every panel is its own WebSocket connection with its own
+        TradingConsumer instance and its own self._positions, hydrated once
+        at connect() time and never synced with sibling connections for the
+        same account (no group_send exists for manual order events). A
+        connection that opens/closes/edits a position, or merely switches
+        symbol, could otherwise emit its own possibly-incomplete in-memory
+        view — the frontend then propagates that snapshot to every panel,
+        silently discarding positions opened through OTHER panels (the
+        confirmed root cause of the multipanel "position disappears" bug).
+
+        The DB is the single source of truth: this always re-hydrates
+        self._positions from Position.objects (account-wide, via the
+        existing _db_fetch_open_positions()) immediately before building
+        and sending the snapshot — never trusts whatever this connection's
+        memory happened to accumulate on its own.
+
+        Demo/guest sessions (no _db_account_id, hence no DB-backed
+        account) are the one exception: self._positions is the ONLY
+        source of truth for them (positions never persist to DB), so this
+        skips the re-fetch entirely and sends the in-memory state as-is —
+        re-fetching would incorrectly wipe it to [] every time.
+
+        On DB failure: never wipes self._positions to [] and never sends a
+        fabricated empty snapshot — logs the error, sends the last known
+        (possibly stale but non-fabricated) state, and leaves the socket
+        open. A stale-but-real snapshot is safer than inventing "no
+        positions" for an account that may well have some.
+        """
+        if not self._db_account_id:
+            await self.send_json({"type": "positions", "items": self._positions_snapshot()})
+            return
+
+        try:
+            items = await self._db_fetch_open_positions()
+        except Exception as exc:
+            log.error("[positions] refresh failed for account=%s — keeping previous state: %r",
+                      self._db_account_id, exc, exc_info=True)
+            await self.send_json({"type": "positions", "items": self._positions_snapshot()})
+            return
+
         self._positions = [
             {
                 "id": it["id"], "symbol": it["symbol"], "side": it["side"].lower(),
@@ -1543,9 +1583,13 @@ class TradingConsumer(AsyncWebsocketConsumer):
             }
             for it in items
         ]
-        log.info("[positions_snapshot] sending %d position(s) ids=%s",
-                 len(self._positions), [p["id"] for p in self._positions])
+        log.info("[positions] refreshed account=%s: %d position(s) ids=%s",
+                 self._db_account_id, len(self._positions), [p["id"] for p in self._positions])
         await self.send_json({"type": "positions", "items": self._positions_snapshot()})
+
+    async def send_positions_snapshot(self):
+        """Backwards-compatible name — delegates to the canonical helper."""
+        await self._refresh_and_send_positions()
 
     async def _maybe_hydrate_from_db(self):
         if not self._db_account_id:
