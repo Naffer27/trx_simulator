@@ -14,6 +14,7 @@ from .models import TradingAccount, Position, Trade, LedgerEntry, BrokerLedger
 from .spread_engine import broker_price, calculate_spread_revenue, _get_config as _get_spread_config
 from .observability import security_log
 from . import pricing_context as pricing_ctx
+from . import dynamic_spread
 
 log = logging.getLogger("simulator.ws")
 
@@ -526,9 +527,18 @@ class TradingConsumer(AsyncWebsocketConsumer):
         # so the price actually applied and the audit record can never
         # disagree.
         profile = self._resolve_commercial_pricing_profile(symbol)
+        # SPREAD-05 — one resolution of the dynamic-spread inputs per tick,
+        # DB-free (spread_config_cache + pure session/observability reads).
+        # Passed to BOTH broker_price() (to price the fill when the
+        # symbol's BrokerSpreadConfig.is_dynamic is True) and
+        # tick_pricing_snapshot() (to freeze the identical decision for the
+        # audit trail) — same "resolve once, reuse twice" pattern as
+        # `profile` above.
+        dynamic_inputs = dynamic_spread.build_dynamic_inputs(symbol, profile, ts)
         bid, ask = broker_price(
             symbol, raw_bid, raw_ask, markup_pips=profile.spread_markup_pips,
             min_spread_override=profile.min_spread_pips, max_spread_override=profile.max_spread_pips,
+            dynamic_inputs=dynamic_inputs,
         )
         self.set_state(symbol, bid, ask, mid)
         # SPREAD-02 — retain the raw (pre-markup) tick for pricing-context
@@ -542,7 +552,9 @@ class TradingConsumer(AsyncWebsocketConsumer):
         # now — this is the only place allowed to read any of them;
         # _capture_pricing_context() only ever reads this snapshot back, it
         # never re-queries.
-        self._pricing_snapshot_state[symbol] = pricing_ctx.tick_pricing_snapshot(symbol, profile)
+        self._pricing_snapshot_state[symbol] = pricing_ctx.tick_pricing_snapshot(
+            symbol, profile, dynamic_inputs=dynamic_inputs,
+        )
         await self.send_json({"type": "tick", "symbol": symbol, "bid": bid, "ask": ask, "time": ts})
         await self._on_tick(symbol, mid, volume=0.0, ts=ts)
         await self._check_tp_sl(symbol, bid, ask)
@@ -769,6 +781,17 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 account_markup_pips=snapshot.get("account_markup_pips"),
                 min_spread_pips=snapshot.get("min_spread_pips"),
                 max_spread_pips=snapshot.get("max_spread_pips"),
+                effective_before_bounds=snapshot.get("effective_before_bounds"),
+                effective_after_bounds=snapshot.get("effective_after_bounds"),
+                dynamic_spread_enabled=snapshot.get("dynamic_spread_enabled"),
+                session_multiplier=snapshot.get("session_multiplier"),
+                source_multiplier=snapshot.get("source_multiplier"),
+                stale_multiplier=snapshot.get("stale_multiplier"),
+                volatility_multiplier=snapshot.get("volatility_multiplier"),
+                liquidity_multiplier=snapshot.get("liquidity_multiplier"),
+                manual_multiplier=snapshot.get("manual_multiplier"),
+                reason_codes=snapshot.get("reason_codes"),
+                decision_id=snapshot.get("decision_id"),
                 profile_id=snapshot.get("profile_id"),
                 provider_id=provider_id,
                 source_state=snapshot.get("source_state"),

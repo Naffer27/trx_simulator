@@ -1714,14 +1714,16 @@ class ExpertAdvisorAdmin(admin.ModelAdmin):
 class BrokerSpreadConfigAdmin(admin.ModelAdmin):
     list_display   = (
         'symbol', 'spread_pips', 'enabled', 'is_dynamic',
+        'manual_multiplier', 'manual_expires_at',
         'spread_bounds_enabled', 'min_spread', 'max_spread', 'created_at',
     )
     list_filter    = ('enabled', 'is_dynamic', 'spread_bounds_enabled')
     search_fields  = ('symbol',)
-    list_editable  = ('spread_pips', 'enabled', 'spread_bounds_enabled')
+    list_editable  = ('spread_pips', 'enabled', 'is_dynamic', 'spread_bounds_enabled')
     readonly_fields = ('created_at',)
     fields = (
         'symbol', 'spread_pips', 'enabled', 'is_dynamic',
+        'manual_multiplier', 'manual_reason', 'manual_expires_at',
         'spread_bounds_enabled', 'min_spread', 'max_spread', 'created_at',
     )
     ordering       = ('symbol',)

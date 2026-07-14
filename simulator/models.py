@@ -417,7 +417,29 @@ class BrokerSpreadConfig(models.Model):
     )
     is_dynamic  = models.BooleanField(
         default=False,
-        help_text="Reserved for future dynamic/session spread logic.",
+        help_text=(
+            "SPREAD-05 opt-in: when on, effective spread is computed by the "
+            "Dynamic Spread Engine (session/source/staleness/volatility/"
+            "liquidity/manual multipliers on top of spread_pips+markup). "
+            "When off (default), behavior is identical to SPREAD-04 — this "
+            "flag alone controls the dynamic path, no separate flag needed."
+        ),
+    )
+    manual_multiplier = models.DecimalField(
+        max_digits=6, decimal_places=3, default=Decimal("1.000"),
+        help_text=(
+            "Manual override multiplier applied on top of the dynamic chain. "
+            "Only has any effect when is_dynamic=True, the value is > 0, and "
+            "manual_expires_at (if set) has not passed. 1.000 = no override."
+        ),
+    )
+    manual_reason = models.CharField(
+        max_length=200, blank=True, default="",
+        help_text="Free-text audit note for why manual_multiplier was set. Never affects pricing.",
+    )
+    manual_expires_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="When set and in the past, manual_multiplier is treated as 1.000 (expired).",
     )
     spread_bounds_enabled = models.BooleanField(
         default=False,

@@ -53,6 +53,16 @@ silently narrowed real spreads (e.g. BTCUSD's 15-pip base) for every row
 that never had an admin explicitly configure bounds. Gating here means
 broker_price()/build_commercial_pricing_profile() need no awareness of
 the flag at all — they already treat None as "no clamp".
+
+SPREAD-05: the snapshot also carries is_dynamic and the raw manual
+override fields (manual_multiplier, manual_reason, manual_expires_at) —
+read verbatim, no interpretation here. simulator.dynamic_spread is the
+only module allowed to decide whether/how they apply (expiry check,
+validity check, multiplier math) — this cache stays a dumb transport
+layer, same separation of concerns as min_spread/max_spread above.
+manual_expires_at is converted from a Django DateTimeField (tz-aware
+datetime) to epoch seconds here, once, so downstream pure functions never
+need a Django/timezone dependency.
 """
 
 from __future__ import annotations
@@ -77,6 +87,10 @@ class SpreadConfigSnapshot:
     max_spread: Optional[float]
     bounds_enabled: bool
     enabled: bool
+    is_dynamic: bool
+    manual_multiplier: Optional[float]
+    manual_reason: str
+    manual_expires_at: Optional[float]  # epoch seconds, or None
 
 
 _cache: dict[str, SpreadConfigSnapshot] = {}
@@ -126,6 +140,10 @@ def refresh_cache_sync() -> int:
                 max_spread=(float(row.max_spread) if (row.spread_bounds_enabled and row.max_spread is not None) else None),
                 bounds_enabled=row.spread_bounds_enabled,
                 enabled=row.enabled,
+                is_dynamic=row.is_dynamic,
+                manual_multiplier=(float(row.manual_multiplier) if row.manual_multiplier is not None else None),
+                manual_reason=row.manual_reason or "",
+                manual_expires_at=(row.manual_expires_at.timestamp() if row.manual_expires_at is not None else None),
             )
             for row in BrokerSpreadConfig.objects.filter(enabled=True)
         }

@@ -21,7 +21,19 @@ min_spread_pips, max_spread_pips, effective_spread_pips_pre_clamp). Bumped
 to 3 in the pre-commit floor/ceiling opt-in correction (added
 spread_bound_applied — explicit "none applied / within bounds / floor /
 ceiling" instead of requiring a reader to infer it from comparing
-pre-clamp and post-clamp values).
+pre-clamp and post-clamp values). Bumped to 4 in SPREAD-05 (added
+dynamic_spread_enabled, session_multiplier, source_multiplier,
+stale_multiplier, volatility_multiplier, liquidity_multiplier,
+manual_multiplier, reason_codes, decision_id — the full Dynamic Spread
+Engine decision, present only when is_dynamic=True produced one; None on
+every static-path row, including all rows captured before this block).
+
+SPREAD-05: effective_spread_pips_pre_clamp's meaning generalizes from
+"base_spread_pips + account_markup_pips" to "that value after the dynamic
+multiplier chain, before the floor/ceiling clamp" — the two are identical
+whenever dynamic_spread_enabled is False or every multiplier is neutral
+(1.0), so no existing reader's interpretation of a static-path row
+changes. See simulator/dynamic_spread.py for the multiplier chain itself.
 
 Convention: effective_spread_pips is the total round-trip markup ACTUALLY
 applied by spread_engine.broker_price() — i.e. AFTER SPREAD-04's floor/
@@ -44,7 +56,7 @@ from typing import Optional
 
 logger = logging.getLogger("simulator.pricing")
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # spread_bound_applied values.
 BOUND_NONE_CONFIGURED = None       # no min/max at all — bounds inactive or unset
@@ -83,6 +95,15 @@ class PricingContext:
     min_spread_pips: Optional[float]
     max_spread_pips: Optional[float]
     spread_bound_applied: Optional[str]
+    dynamic_spread_enabled: Optional[bool]
+    session_multiplier: Optional[float]
+    source_multiplier: Optional[float]
+    stale_multiplier: Optional[float]
+    volatility_multiplier: Optional[float]
+    liquidity_multiplier: Optional[float]
+    manual_multiplier: Optional[float]
+    reason_codes: Optional[tuple]
+    decision_id: Optional[str]
     profile_id: Optional[str]
     provider_id: Optional[str]
     source_state: Optional[str]
@@ -91,7 +112,10 @@ class PricingContext:
     pricing_profile: str
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        if d.get("reason_codes") is not None:
+            d["reason_codes"] = list(d["reason_codes"])
+        return d
 
 
 def _safe_float(value) -> Optional[float]:
@@ -113,6 +137,17 @@ def build_pricing_context(
     account_markup_pips=None,
     min_spread_pips=None,
     max_spread_pips=None,
+    effective_before_bounds=None,
+    effective_after_bounds=None,
+    dynamic_spread_enabled: Optional[bool] = None,
+    session_multiplier: Optional[float] = None,
+    source_multiplier: Optional[float] = None,
+    stale_multiplier: Optional[float] = None,
+    volatility_multiplier: Optional[float] = None,
+    liquidity_multiplier: Optional[float] = None,
+    manual_multiplier: Optional[float] = None,
+    reason_codes=None,
+    decision_id: Optional[str] = None,
     profile_id: Optional[str] = None,
     provider_id: Optional[str] = None,
     source_state: Optional[str] = None,
@@ -125,11 +160,20 @@ def build_pricing_context(
     that knows the shape — every caller uses this instead of hand-building
     the dict, so the schema can never drift between call sites.
 
+    Static path (default, unchanged since SPREAD-04):
     effective_spread_pips_pre_clamp = base_spread_pips + account_markup_pips.
     effective_spread_pips = that value clamped to [min_spread_pips,
     max_spread_pips] via spread_engine.compute_effective_spread_pips() —
     the SAME function broker_price() itself calls, so the value recorded
     here can never disagree with the spread actually applied to the fill.
+
+    Dynamic path (SPREAD-05): when the caller already has a
+    dynamic_spread.DynamicSpreadDecision (built once at tick time — see
+    tick_pricing_snapshot()), it passes effective_before_bounds/
+    effective_after_bounds directly, and this function uses them verbatim
+    instead of recomputing via compute_effective_spread_pips() — the exact
+    SPREAD-02 invariant (freeze the tick's own numbers, never recompute
+    from a source that could have moved between tick and capture).
 
     Never raises: any failure degrades to a minimal, clearly-marked
     dict rather than propagating into an open/close/daemon cycle.
@@ -140,9 +184,9 @@ def build_pricing_context(
         min_pips = _safe_float(min_spread_pips)
         max_pips = _safe_float(max_spread_pips)
 
-        pre_clamp: Optional[float] = None
-        post_clamp: Optional[float] = None
-        if base is not None or markup is not None:
+        pre_clamp: Optional[float] = _safe_float(effective_before_bounds)
+        post_clamp: Optional[float] = _safe_float(effective_after_bounds)
+        if pre_clamp is None and post_clamp is None and (base is not None or markup is not None):
             from .spread_engine import compute_effective_spread_pips
             pre_clamp, post_clamp = compute_effective_spread_pips(
                 base or 0.0, markup or 0.0, min_pips, max_pips,
@@ -168,6 +212,15 @@ def build_pricing_context(
             min_spread_pips=min_pips,
             max_spread_pips=max_pips,
             spread_bound_applied=bound_applied,
+            dynamic_spread_enabled=dynamic_spread_enabled,
+            session_multiplier=_safe_float(session_multiplier),
+            source_multiplier=_safe_float(source_multiplier),
+            stale_multiplier=_safe_float(stale_multiplier),
+            volatility_multiplier=_safe_float(volatility_multiplier),
+            liquidity_multiplier=_safe_float(liquidity_multiplier),
+            manual_multiplier=_safe_float(manual_multiplier),
+            reason_codes=(tuple(reason_codes) if reason_codes is not None else None),
+            decision_id=decision_id,
             profile_id=profile_id,
             provider_id=provider_id,
             source_state=source_state,
@@ -207,16 +260,17 @@ def spread_pips_for(symbol: str, account_markup_pips) -> tuple[Optional[float], 
         return None, _safe_float(account_markup_pips)
 
 
-def tick_pricing_snapshot(symbol: str, profile) -> dict:
+def tick_pricing_snapshot(symbol: str, profile, dynamic_inputs=None) -> dict:
     """
-    SPREAD-02b/SPREAD-04 — the ONE place allowed to read BrokerSpreadConfig/
-    F13 observability for pricing-context purposes. Must be called
-    immediately adjacent to broker_price() inside price_tick(), never
-    later at order time: BrokerSpreadConfig and the observability store
-    can both change between a tick and the order that eventually uses it,
-    and only the values active AT THE TICK actually produced that tick's
-    executable_bid/executable_ask. Re-reading at order time would silently
-    mislabel an already-executed price with data that never produced it.
+    SPREAD-02b/SPREAD-04/SPREAD-05 — the ONE place allowed to read
+    BrokerSpreadConfig/F13 observability for pricing-context purposes.
+    Must be called immediately adjacent to broker_price() inside
+    price_tick(), never later at order time: BrokerSpreadConfig and the
+    observability store can both change between a tick and the order that
+    eventually uses it, and only the values active AT THE TICK actually
+    produced that tick's executable_bid/executable_ask. Re-reading at
+    order time would silently mislabel an already-executed price with
+    data that never produced it.
 
     profile is the ALREADY-RESOLVED commercial_pricing.CommercialPricingProfile
     for (account, symbol) — resolved once by the caller (price_tick() needs
@@ -225,16 +279,30 @@ def tick_pricing_snapshot(symbol: str, profile) -> dict:
     not part of the commercial profile — read straight from
     BrokerSpreadConfig) and F13 observability, both DB-free reads.
 
-    Returns {"base_spread_pips", "account_markup_pips", "profile_id",
-    "min_spread_pips", "max_spread_pips", "provider_id", "source_state"} —
-    the caller stores this dict verbatim per symbol and
+    dynamic_inputs (SPREAD-05) — the SAME dynamic_spread.DynamicSpreadInputs
+    price_tick() already built for broker_price() (see
+    dynamic_spread.build_dynamic_inputs()), passed through unchanged. This
+    function evaluates it via dynamic_spread.evaluate_dynamic_spread() — a
+    pure function of that already-frozen object — so the decision recorded
+    here is bit-identical to the one broker_price() used to price the fill,
+    without threading a computed decision object across two call sites.
+    None (the default) skips the dynamic engine entirely, exactly as
+    before this block.
+
+    Returns a dict with base_spread_pips/account_markup_pips/profile_id/
+    min_spread_pips/max_spread_pips/provider_id/source_state (unchanged
+    keys) plus, only when dynamic_inputs is given, effective_before_bounds/
+    effective_after_bounds/dynamic_spread_enabled/session_multiplier/
+    source_multiplier/stale_multiplier/volatility_multiplier/
+    liquidity_multiplier/manual_multiplier/reason_codes/decision_id. The
+    caller stores this dict verbatim per symbol and
     _capture_pricing_context() reads it back later, never re-querying.
     Never raises.
     """
     try:
         base, _ = spread_pips_for(symbol, None)
         provider_id, source_state = provider_state_for(symbol)
-        return {
+        snapshot = {
             "base_spread_pips": base,
             "account_markup_pips": profile.spread_markup_pips,
             "profile_id": profile.profile_id,
@@ -243,6 +311,23 @@ def tick_pricing_snapshot(symbol: str, profile) -> dict:
             "provider_id": provider_id,
             "source_state": source_state,
         }
+        if dynamic_inputs is not None:
+            from .dynamic_spread import evaluate_dynamic_spread
+            decision = evaluate_dynamic_spread(dynamic_inputs)
+            snapshot.update({
+                "effective_before_bounds": decision.effective_before_bounds,
+                "effective_after_bounds": decision.effective_after_bounds,
+                "dynamic_spread_enabled": decision.dynamic_spread_enabled,
+                "session_multiplier": decision.session_multiplier,
+                "source_multiplier": decision.source_multiplier,
+                "stale_multiplier": decision.stale_multiplier,
+                "volatility_multiplier": decision.volatility_multiplier,
+                "liquidity_multiplier": decision.liquidity_multiplier,
+                "manual_multiplier": decision.manual_multiplier,
+                "reason_codes": list(decision.reason_codes),
+                "decision_id": decision.decision_id,
+            })
+        return snapshot
     except Exception as exc:
         logger.debug("[pricing_context] tick_pricing_snapshot failed for %s (non-fatal): %r", symbol, exc)
         return {}

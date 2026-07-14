@@ -116,6 +116,10 @@ def make_spread_config(
     min_spread: Decimal | None = None,
     max_spread: Decimal | None = None,
     bounds_enabled: bool = False,
+    is_dynamic: bool = False,
+    manual_multiplier: Decimal | None = None,
+    manual_reason: str = "",
+    manual_expires_at=None,
 ) -> "BrokerSpreadConfig":
     """
     Create a BrokerSpreadConfig. Symbol is auto-normalized by the model's save()
@@ -129,15 +133,24 @@ def make_spread_config(
     from the pre-commit floor/ceiling correction: a symbol's spread is
     never silently clamped just because a row happens to carry min/max
     values.
+
+    is_dynamic defaults to False (SPREAD-05's opt-in, unchanged from
+    SPREAD-04 behavior). manual_multiplier defaults to the model's own
+    1.000 (no override) unless passed explicitly.
     """
     from simulator.models import BrokerSpreadConfig
 
     kwargs = dict(symbol=symbol, spread_pips=spread_pips, enabled=enabled,
-                   spread_bounds_enabled=bounds_enabled)
+                   spread_bounds_enabled=bounds_enabled, is_dynamic=is_dynamic,
+                   manual_reason=manual_reason)
     if min_spread is not None:
         kwargs["min_spread"] = min_spread
     if max_spread is not None:
         kwargs["max_spread"] = max_spread
+    if manual_multiplier is not None:
+        kwargs["manual_multiplier"] = manual_multiplier
+    if manual_expires_at is not None:
+        kwargs["manual_expires_at"] = manual_expires_at
     return BrokerSpreadConfig.objects.create(**kwargs)
 
 

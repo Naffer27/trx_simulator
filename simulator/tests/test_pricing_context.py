@@ -30,7 +30,10 @@ class BuildPricingContextTests(SimpleTestCase):
             "schema_version", "raw_bid", "raw_ask", "executable_bid", "executable_ask",
             "base_spread_pips", "account_markup_pips", "effective_spread_pips",
             "effective_spread_pips_pre_clamp", "min_spread_pips", "max_spread_pips",
-            "spread_bound_applied", "profile_id", "provider_id", "source_state",
+            "spread_bound_applied", "dynamic_spread_enabled", "session_multiplier",
+            "source_multiplier", "stale_multiplier", "volatility_multiplier",
+            "liquidity_multiplier", "manual_multiplier", "reason_codes", "decision_id",
+            "profile_id", "provider_id", "source_state",
             "router_provider", "pricing_timestamp", "pricing_profile",
         }
         self.assertEqual(set(ctx.keys()), expected)
