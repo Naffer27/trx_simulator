@@ -357,6 +357,14 @@ class Trade(models.Model):
     pricing_context_open  = models.JSONField(null=True, blank=True)
     pricing_context_close = models.JSONField(null=True, blank=True)
 
+    # MARGIN-02 — quote-currency -> account-currency PnL conversion audit.
+    # Deliberately separate from pricing_context_close: that field is about
+    # the FILL (bid/ask, spread, provider) at close time; this one is about
+    # how profit_loss (already in account currency) was derived from the
+    # instrument's own quote-currency PnL. See simulator/pnl_engine.py.
+    # null = pre-MARGIN-02 row, or a path this block doesn't cover.
+    pnl_conversion = models.JSONField(null=True, blank=True)
+
     class Meta:
         indexes = [
             models.Index(fields=["account", "closed_at"], name="trade_acc_closed_idx"),

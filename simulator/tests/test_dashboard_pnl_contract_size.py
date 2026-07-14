@@ -120,31 +120,44 @@ class DashboardPnLContractSizeTests(TestCase):
             self.assertNotIn(f'data-sym="{sym}"', html)
 
     # ── Per-position PnL sites use contract size ─────────────────────────
+    # MARGIN-02: every site below now delegates to computePositionPnL()/
+    # computeRawPnL() (simulator/pnl_engine.py's client-side mirror) instead
+    # of inlining `getContractSize(...)*cs` — those two shared helpers are
+    # themselves verified (once) to multiply by contract size in
+    # test_shared_pnl_helpers_use_contract_size below, so every call site
+    # inherits that guarantee without repeating the formula.
+
+    def test_shared_pnl_helpers_use_contract_size(self):
+        html = self._html()
+        start = html.index("function computeRawPnL")
+        end = html.index("\n}", start)
+        block = html[start:end]
+        self.assertIn("getContractSize(", block)
+        self.assertIn("*cs", block)
 
     def test_render_global_positions_uses_contract_size(self):
         html = self._html()
         self.assertIn("function renderGlobalPositions", html)
-        self.assertIn("getContractSize(r.symbol", html)
+        self.assertIn("computePositionPnL(r, px)", html)
 
     def test_trading_tab_position_list_uses_contract_size(self):
         html = self._html()
-        self.assertIn("getContractSize(pos.symbol", html)
+        self.assertIn("computePositionPnL(pos, px)", html)
 
     def test_patch_trading_panel_pnl_uses_contract_size(self):
         html = self._html()
         start = html.index("function _patchTradingPanelPnL")
         end = html.index("\n}", start)
         block = html[start:end]
-        self.assertIn("getContractSize(pos.symbol", block)
-        self.assertIn("*cs", block)
+        self.assertIn("computePositionPnL(pos, px)", block)
 
     def test_quick_close_sheet_uses_contract_size(self):
         html = self._html()
         start = html.index("function openSheet(focus)")
         end = html.index("\n}", start)
         block = html[start:end]
-        self.assertIn("getContractSize(", block)
-        self.assertIn("*cs", block)
+        self.assertIn("computePositionPnL(pos, px)", block)
+        self.assertIn("computeRawPnL(", block)
 
     def test_no_bare_price_delta_times_qty_without_contract_size(self):
         """Guards against regressing back to `(px-entry)*qty` without `*cs`."""

@@ -693,12 +693,17 @@ class TradingAccountAdmin(admin.ModelAdmin):
                     if symbol:
                         qs = qs.filter(symbol=symbol)
                     positions = list(qs)
+                    account_currency = getattr(account, "currency", "USD") or "USD"
                     for pos in positions:
                         exit_px = px if px is not None else float(pos.avg_price)
-                        # PnL: BUY profits when exit > entry, SELL profits when exit < entry
-                        pnl = ((exit_px - float(pos.avg_price)) * float(pos.qty)
-                               if pos.side == "BUY"
-                               else (float(pos.avg_price) - exit_px) * float(pos.qty))
+                        # MARGIN-02 — was missing BOTH contract_size and
+                        # currency conversion; delegates to pnl_engine now,
+                        # same as every other real close path.
+                        from .pnl_engine import position_pnl_float
+                        pnl = position_pnl_float(
+                            pos.side, float(pos.avg_price), exit_px, float(pos.qty), pos.symbol,
+                            account_currency=account_currency,
+                        )
                         Trade.objects.create(
                             account=account, symbol=pos.symbol,
                             trade_type=pos.side,          # record original side, consistent with WS consumer

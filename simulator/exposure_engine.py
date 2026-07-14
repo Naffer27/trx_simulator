@@ -155,7 +155,13 @@ def compute_live_analytics() -> dict:
 
     # ── 3. Per-position notional + UPnL ──
     # Notional = qty * price * contract_size (correct for all instrument classes)
-    # UPnL     = direction * (current - entry) * qty * contract_size
+    # UPnL     = pnl_engine.position_pnl_float(), converted to the position's
+    #            own account currency (MARGIN-02 — this bucket is USD-labeled
+    #            ("long_usd"/"short_usd"); a quote-currency instrument like
+    #            USD/JPY previously contributed an unconverted, ~155x-wrong
+    #            number here, same root cause as consumers.py/tasks.py).
+
+    from . import pnl_engine
 
     sym_buckets: dict[str, dict]   = {}
     cls_buckets: dict[str, dict]   = {}
@@ -168,10 +174,12 @@ def compute_live_analytics() -> dict:
         price     = prices.get(sym, 1.0)
         qty       = float(pos.qty)
         entry     = float(pos.avg_price)
-        direction = 1 if pos.side == "BUY" else -1
         cs        = _contract_size(sym)
         notional  = qty * price * cs
-        upnl      = direction * (price - entry) * qty * cs
+        account_currency = getattr(pos.account, "currency", "USD") or "USD"
+        upnl = pnl_engine.position_pnl_float(
+            pos.side, entry, price, qty, sym, account_currency=account_currency,
+        )
 
         # Trader intelligence
         score   = getattr(pos.account, "trader_score", None)

@@ -187,9 +187,21 @@ class SimulatedTrader(threading.Thread):
         return Decimal(str(round(max(0.01, raw), 2)))  # min 0.01, 2dp for Trade.lot_size
 
     def _simulate_pnl(
-        self, entry: float, side: str, symbol: str, qty: float
+        self, entry: float, side: str, symbol: str, qty: float, account_currency: str = "USD",
     ) -> tuple[float, float]:
-        """Return (close_price, realized_pnl) based on profile win_rate."""
+        """Return (close_price, realized_pnl) based on profile win_rate.
+
+        Only the CLOSE PRICE is this simulation's own logic (a synthetic
+        win/loss roll) — the PnL itself is delegated to
+        simulator.pnl_engine.position_pnl_float() (MARGIN-02), never
+        recomputed here. Before this fix, this function's own inline
+        formula was missing BOTH contract_size AND currency conversion —
+        wrong for every non-1:1-contract-size symbol (all of forex) and
+        doubly wrong for USD/JPY specifically, despite already branching
+        on `symbol.endswith("/JPY")` for its delta range. This writes real
+        Trade/Position/TradingAccount.balance rows (via `manage.py
+        populate_broker`), read by risk_engine/intelligence_engine/
+        exposure_engine — not a display-only path."""
         wins = self._rng.random() < self.cfg["win_rate"]
 
         if symbol in ("BTCUSD", "ETHUSD"):
@@ -205,7 +217,10 @@ class SimulatedTrader(threading.Thread):
             close = entry - delta if wins else entry + delta
 
         close = max(close, entry * 0.75)  # sanity floor (prevent negative prices)
-        pnl = ((close - entry) if side == "BUY" else (entry - close)) * qty
+
+        from . import pnl_engine
+        pnl = pnl_engine.position_pnl_float(side, entry, close, qty, symbol, account_currency=account_currency)
+
         dec = 2 if symbol in ("BTCUSD", "ETHUSD") else 5
         return round(close, dec), round(pnl, 2)
 
@@ -276,7 +291,9 @@ class SimulatedTrader(threading.Thread):
         qty    = float(pos.qty)
         symbol = pos.symbol
 
-        close_px, pnl = self._simulate_pnl(entry, side, symbol, qty)
+        close_px, pnl = self._simulate_pnl(
+            entry, side, symbol, qty, account_currency=getattr(account, "currency", "USD") or "USD",
+        )
 
         with transaction.atomic():
             acc = TradingAccount.objects.select_for_update().get(id=account.id)

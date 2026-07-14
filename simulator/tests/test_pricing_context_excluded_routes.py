@@ -91,7 +91,7 @@ class PopulationEngineExcludedTests(TestCase):
         trader._cur_lot = Decimal("0.01")
         trader._rng = random.Random(0)
 
-        def _fake_simulate_pnl(entry, side, symbol, qty):
+        def _fake_simulate_pnl(entry, side, symbol, qty, account_currency="USD"):
             return 1.10500, 50.0
 
         trader._simulate_pnl = _fake_simulate_pnl

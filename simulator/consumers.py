@@ -15,6 +15,7 @@ from .spread_engine import broker_price, calculate_spread_revenue, _get_config a
 from .observability import security_log
 from . import pricing_context as pricing_ctx
 from . import dynamic_spread
+from . import pnl_engine
 
 log = logging.getLogger("simulator.ws")
 
@@ -321,6 +322,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
             "pnl_unreal":    0.0,
             "margin_used":   0.0,
             "leverage":      50,
+            "currency":      "USD",
             "netting_mode":  False,
             "status":        "Activo",
             "account_type":  "CHALLENGE",
@@ -1142,7 +1144,24 @@ class TradingConsumer(AsyncWebsocketConsumer):
                                 "qty":qty,"avg":round(fill_px,dec),"sl":sl,"tp":tp,
                                 "opened_at":int(time.time())})
 
-    def _positions_snapshot(self): return [dict(p) for p in self._positions]
+    def _positions_snapshot(self):
+        """MARGIN-02 — includes backend-authoritative pnl (account currency,
+        via the same pnl_engine every close/equity path uses) per position,
+        so the frontend does not need its own PnL formula to be correct for
+        USD/JPY. Never fails the whole snapshot on one bad position — a
+        per-position pnl_engine error degrades that item's "pnl" to None,
+        never a fabricated number."""
+        out = []
+        for p in self._positions:
+            d = dict(p)
+            try:
+                px = self.close_price(p["symbol"], p["side"])
+                d["pnl"] = round(self._unrealized_pnl_for(p, px), 2)
+            except Exception as exc:
+                log.debug("[positions_snapshot] pnl calc failed for pos=%s: %r", p.get("id"), exc)
+                d["pnl"] = None
+            out.append(d)
+        return out
 
     def _unrealized_pnl_total(self):
         total = 0.0
@@ -1152,10 +1171,20 @@ class TradingConsumer(AsyncWebsocketConsumer):
         return total
 
     def _unrealized_pnl_for(self, pos, close_px):
-        spec = get_spec(pos["symbol"])
-        if pos["side"] == "buy":
-            return (close_px - pos["avg"]) * pos["qty"] * spec.contract_size
-        return (pos["avg"] - close_px) * pos["qty"] * spec.contract_size
+        """MARGIN-02 — the SINGLE PnL formula for every WS path: unrealized
+        total, realized-on-close (via _realized_pnl_for's alias below —
+        manual close, TP, SL, stop-out, liquidation), Trade.profit_loss.
+        Delegates to pnl_engine.position_pnl_float(), which converts the
+        instrument's quote-currency PnL into the account's currency
+        (self.account["currency"], hydrated from TradingAccount.currency —
+        every real account today is USD, verified in the MARGIN-01/02
+        audit). Previously this multiplied contract_size straight through
+        without converting — correct for quote_currency==USD instruments,
+        silently ~155x wrong for USD/JPY (quote=JPY)."""
+        return pnl_engine.position_pnl_float(
+            pos["side"], pos["avg"], close_px, pos["qty"], pos["symbol"],
+            account_currency=self.account.get("currency", "USD"),
+        )
 
     def _realized_pnl_for(self, pos, close_price): return self._unrealized_pnl_for(pos, close_price)
 
@@ -1532,6 +1561,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
         self.account["equity"]       = float(acc.get("equity",       self.account["equity"]))
         self.account["peak_balance"] = float(acc.get("peak_balance", self.account["balance"]))
         self.account["leverage"]     = int(acc.get("leverage",       self.account["leverage"]))
+        self.account["currency"]     = acc.get("currency", self.account["currency"])
         self.account["netting_mode"] = bool(acc.get("netting_mode",  self.account["netting_mode"]))
         self.account["status"]          = acc.get("status", "Activo")
         self.account["tier"]            = acc.get("tier", "")
@@ -1643,6 +1673,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 "peak_balance":    obj.peak_balance,
                 "initial_balance": obj.initial_balance,
                 "leverage":        getattr(obj, "leverage", 50),
+                "currency":        getattr(obj, "currency", "USD"),
                 "netting_mode":    getattr(obj, "netting_mode", False),
                 "status":          obj.status,
                 "tier":            obj.tier or "",
@@ -1960,6 +1991,18 @@ class TradingConsumer(AsyncWebsocketConsumer):
                     self._db_account_id, realized_pnl, _nb, _shortfall,
                 )
 
+            # MARGIN-02 — audit-only recompute of the SAME pure function
+            # already used to derive realized_pnl (pos_mem's avg/qty/symbol
+            # + close_px + account currency, all frozen inputs) — never a
+            # second, independently-timed source. See simulator/pnl_engine.py.
+            _closed_at = timezone.now()
+            _pnl_result = pnl_engine.calculate_position_pnl(
+                pos_mem["side"], pos_mem["avg"], close_px, pos_mem["qty"], pos_mem["symbol"],
+                account_currency=self.account.get("currency", "USD"),
+            )
+            _pnl_conversion = _pnl_result.to_dict()
+            _pnl_conversion["conversion_timestamp"] = _closed_at.timestamp()
+
             trade = Trade.objects.create(
                 account_id=self._db_account_id,
                 symbol=pos_mem["symbol"],
@@ -1971,9 +2014,10 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 take_profit=Decimal(str(pos_mem["tp"])) if pos_mem.get("tp") is not None else None,
                 profit_loss=Decimal(str(realized_pnl)),
                 opened_at=datetime.fromtimestamp(int(pos_mem.get("opened_at", time.time())), tz=dt_timezone.utc),
-                closed_at=timezone.now(),
+                closed_at=_closed_at,
                 pricing_context_open=pos.pricing_context,
                 pricing_context_close=pricing_context_close,
+                pnl_conversion=_pnl_conversion,
             )
 
             # 3. Record LedgerEntry EV_REALIZED (balance_after = post-close balance).

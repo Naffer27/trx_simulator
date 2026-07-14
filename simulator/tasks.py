@@ -386,6 +386,7 @@ def _close_position_sync(
     new_balance: float,
     new_equity: float,
     pricing_context: dict | None = None,
+    account_currency: str = "USD",
 ) -> dict:
     """
     Atomic DB-first position close for sync (Celery) callers.
@@ -447,6 +448,18 @@ def _close_position_sync(
                 account_id, realized_pnl, _nb, _shortfall,
             )
 
+        # MARGIN-02 — audit-only recompute of the SAME pure function already
+        # used to derive realized_pnl (same frozen inputs), mirroring
+        # TradingConsumer._db_close_position_atomic. See simulator/pnl_engine.py.
+        from . import pnl_engine as _pnl_engine
+        _closed_at = _django_tz.now()
+        _pnl_result = _pnl_engine.calculate_position_pnl(
+            pos_mem["side"], pos_mem["avg"], close_px, pos_mem["qty"], pos_mem["symbol"],
+            account_currency=account_currency,
+        )
+        _pnl_conversion = _pnl_result.to_dict()
+        _pnl_conversion["conversion_timestamp"] = _closed_at.timestamp()
+
         trade = Trade.objects.create(
             account_id    = account_id,
             symbol        = pos_mem["symbol"],
@@ -458,9 +471,10 @@ def _close_position_sync(
             take_profit   = Decimal(str(pos_mem["tp"]))   if pos_mem.get("tp") is not None else None,
             profit_loss   = Decimal(str(realized_pnl)),
             opened_at     = _dt.fromtimestamp(int(pos_mem.get("opened_at", _time.time())), tz=_dt_tz.utc),
-            closed_at     = _django_tz.now(),
+            closed_at     = _closed_at,
             pricing_context_open  = pos.pricing_context,
             pricing_context_close = pricing_context,
+            pnl_conversion         = _pnl_conversion,
         )
 
         LedgerEntry.objects.create(
@@ -587,10 +601,12 @@ def _compute_offline_equity_margin(pos_list: list, prices: dict, account) -> tup
       pos_fp_map: dict[pos.id -> floating PnL at current bid/ask]
     """
     from market_data.symbol_specs import get_spec
+    from . import pnl_engine
 
-    account_lev    = max(1, int(account.leverage))
-    total_floating = 0.0
-    margin_used    = 0.0
+    account_lev      = max(1, int(account.leverage))
+    account_currency = getattr(account, "currency", "USD") or "USD"
+    total_floating   = 0.0
+    margin_used      = 0.0
     pos_fp_map: dict = {}
 
     for pos in pos_list:
@@ -600,8 +616,12 @@ def _compute_offline_equity_margin(pos_list: list, prices: dict, account) -> tup
         qty      = float(pos.qty)
         close_px = bid if pos.side == "BUY" else ask
 
-        fp = ((close_px - avg) * qty * spec.contract_size if pos.side == "BUY"
-              else (avg - close_px) * qty * spec.contract_size)
+        # MARGIN-02 — same conversion as consumers.py::_unrealized_pnl_for();
+        # see simulator/pnl_engine.py for the fix (quote-currency PnL was
+        # never converted to account_currency before this block).
+        fp = pnl_engine.position_pnl_float(
+            pos.side, avg, close_px, qty, pos.symbol, account_currency=account_currency,
+        )
 
         total_floating     += fp
         pos_fp_map[pos.id]  = fp
@@ -663,8 +683,10 @@ def _daemon_close_all(
     """
     import time as _time
     from market_data.symbol_specs import get_spec
+    from . import pnl_engine
 
     running_balance       = float(account.balance)
+    account_currency      = getattr(account, "currency", "USD") or "USD"
     accum_floating_closed = 0.0
     close_records: list   = []
 
@@ -676,10 +698,11 @@ def _daemon_close_all(
         avg        = float(pos.avg_price)
         qty        = float(pos.qty)
 
-        if pos.side == "BUY":
-            realized = (close_px_r - avg) * qty * spec.contract_size
-        else:
-            realized = (avg - close_px_r) * qty * spec.contract_size
+        # MARGIN-02 — see simulator/pnl_engine.py; same conversion as the
+        # WS path, so the daemon's realized PnL can never diverge from it.
+        realized = pnl_engine.position_pnl_float(
+            pos.side, avg, close_px_r, qty, pos.symbol, account_currency=account_currency,
+        )
         realized = round(realized, 8)
 
         new_balance = running_balance + realized
@@ -710,7 +733,7 @@ def _daemon_close_all(
         try:
             result = _close_position_sync(
                 pos_mem, account_id, close_px_r, reason, realized, new_balance, new_equity,
-                pricing_context=pricing_context,
+                pricing_context=pricing_context, account_currency=account_currency,
             )
         except Exception as exc:
             logger.error("[daemon/%s] close failed pos=%s: %s", reason, pos.id, exc, exc_info=True)
@@ -957,10 +980,13 @@ def scan_positions_task(self) -> dict:
             dec    = spec.price_decimals
             close_px_r = round(close_px, dec)
 
-            if side == "BUY":
-                realized = (close_px_r - float(pos.avg_price)) * float(pos.qty) * spec.contract_size
-            else:
-                realized = (float(pos.avg_price) - close_px_r) * float(pos.qty) * spec.contract_size
+            # MARGIN-02 — see simulator/pnl_engine.py; same formula as
+            # every other close path (WS and the Step 5 daemon block above).
+            from . import pnl_engine as _pnl_engine
+            realized = _pnl_engine.position_pnl_float(
+                side, float(pos.avg_price), close_px_r, float(pos.qty), pos.symbol,
+                account_currency=getattr(account, "currency", "USD") or "USD",
+            )
             realized = round(realized, 8)
 
             new_balance = running_balance + realized
@@ -985,6 +1011,7 @@ def scan_positions_task(self) -> dict:
                 result = _close_position_sync(
                     pos_mem, account_id, close_px_r, reason, realized, new_balance, new_equity,
                     pricing_context=pricing_context,
+                    account_currency=getattr(account, "currency", "USD") or "USD",
                 )
             except Exception as exc:
                 logger.error("[daemon] close failed pos=%s: %s", pos.id, exc, exc_info=True)

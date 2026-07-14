@@ -1796,6 +1796,38 @@ const CONTRACT_SIZE = {
   "XAU/USD": 100,
 };
 function getContractSize(sym){ return CONTRACT_SIZE[sym] ?? 1; }
+
+/* ── MARGIN-02 — per-position PnL ──────────────────────────────────
+   Backend is authoritative: the "positions" WS message now includes a
+   pre-computed pos.pnl (account currency, via simulator/pnl_engine.py —
+   the same engine used for equity/close/Trade.profit_loss). This is the
+   ONLY thing that must be correct for USD/JPY, whose quote currency
+   (JPY) differs from the account currency (USD, the only account
+   currency this system has today).
+   The client-side fallback below only runs if pos.pnl is absent (e.g. a
+   stale cache from before this block) — it mirrors pnl_engine's two
+   supported conversion modes (no-conversion, base==account inverse) and
+   never invents a rate for anything else. */
+const QUOTE_CURRENCY = {
+  "EUR/USD": "USD", "GBP/USD": "USD", "USD/JPY": "JPY", "AUD/USD": "USD",
+  "BTCUSD": "USD", "ETHUSD": "USD", "XAU/USD": "USD",
+};
+const ACCOUNT_CURRENCY_FALLBACK = "USD"; // every TradingAccount in this system is USD today
+/* Conversion-aware raw calc — used only when no backend pos.pnl is
+   available (e.g. chart-line labels, which aren't backed by a positions
+   snapshot entry). Mirrors pnl_engine.py's two supported modes. */
+function computeRawPnL(symbol, side, entry, qty, px){
+  const cs=getContractSize(symbol||'');
+  const raw=String(side||'buy').toLowerCase()==='buy'?(px-entry)*qty*cs:(entry-px)*qty*cs;
+  const quoteCcy=QUOTE_CURRENCY[symbol||'']||'USD';
+  if(quoteCcy===ACCOUNT_CURRENCY_FALLBACK) return raw;
+  // base_account_inverse: the instrument's own price IS the conversion rate.
+  return px>0 ? raw/px : raw;
+}
+function computePositionPnL(pos, px){
+  if(pos.pnl!=null && isFinite(Number(pos.pnl))) return Number(pos.pnl);
+  return computeRawPnL(pos.symbol, pos.side, Number(pos.avg??0), Number(pos.qty??1), px);
+}
 function normalizeLot(sym, v){
   const s=LOT_SPECS[sym]||{step:0.01,min:0.01,dec:2};
   const val=Math.max(s.min, Math.min(100, parseFloat(v)||s.min));
@@ -2479,8 +2511,7 @@ class TradingPanel {
     for(const [id,rec] of this.linesById.entries()){
       if(!rec.plEntry||String(id).startsWith('tmp-'))continue;
       const qty=rec.qty||1;
-      const cs=getContractSize(this.currentSymbol||'');
-      const raw=rec.side==='buy'?(px-rec.entry)*qty*cs:(rec.entry-px)*qty*cs;
+      const raw=computeRawPnL(this.currentSymbol, rec.side, rec.entry, qty, px);
       const sign=raw>=0?'+':'';
       const label=`${rec.side==='buy'?'BUY':'SELL'} ${sign}$${Math.abs(raw).toFixed(2)}`;
       rec.plEntry.applyOptions({title:label});
@@ -2810,8 +2841,7 @@ function renderGlobalPositions(){
     const entry=Number(r.avg??r.entry??0);
     const srcPanel=allPanels.find(x=>String(x.id)===String(r._pid));
     const px=srcPanel?.lastClose??0;
-    const cs=getContractSize(r.symbol||'');
-    const raw=side==='buy'?(px-entry)*qty*cs:(entry-px)*qty*cs;
+    const raw=computePositionPnL(r, px);
     const pnlStr=px>0?(raw>=0?'+':'')+`$${Math.abs(raw).toFixed(2)}`:'—';
     const pnlCls=raw>0.00001?'pos':raw<-0.00001?'neg':'';
     const openedStr=r.opened_at?new Date((r.opened_at||0)*1000).toLocaleTimeString():'-';
@@ -3021,10 +3051,8 @@ function openSheet(focus){
   if(symEl)symEl.textContent=qbPanel.currentSymbol.replace('/','');
   if(sqEl){const side=String(pos?.side||rec.side||'').toUpperCase();const qty=Number(pos?.qty??rec.qty??0).toFixed(2);sqEl.textContent=`${side} ${qty} lotes`;}
   if(pnlEl){
-    const px=qbPanel.lastClose??0;const side=String(pos?.side||rec.side||'buy').toLowerCase();
-    const qty=Number(pos?.qty??rec.qty??1);const entry=Number(pos?.avg??rec.entry??px);
-    const cs=getContractSize(pos?.symbol||qbPanel.currentSymbol||'');
-    const raw=side==='buy'?(px-entry)*qty*cs:(entry-px)*qty*cs;
+    const px=qbPanel.lastClose??0;
+    const raw=pos?computePositionPnL(pos, px):computeRawPnL(qbPanel.currentSymbol, rec.side, rec.entry, rec.qty??1, px);
     pnlEl.textContent=(raw>=0?'+':'')+`$${Math.abs(raw).toFixed(2)}`;
     pnlEl.className='sheet-pos-pnl'+(raw>0.00001?' pos':raw<-0.00001?' neg':'');
   }
@@ -3254,8 +3282,7 @@ function _syncTradingPanel(){
     const panel=allPanels.find(x=>String(x.id)===String(pos._pid));
     const px=panel?.lastClose??0;
     const entry=Number(pos.avg??0);
-    const cs=getContractSize(pos.symbol||'');
-    const raw=side==='buy'?(px-entry)*Number(pos.qty??1)*cs:(entry-px)*Number(pos.qty??1)*cs;
+    const raw=computePositionPnL(pos, px);
     const pnlClass=raw>0.00001?'pos':raw<-0.00001?'neg':'';
     const slStr=pos.sl!=null?`SL ${Number(pos.sl).toFixed(p)}`:null;
     const tpStr=pos.tp!=null?`TP ${Number(pos.tp).toFixed(p)}`:null;
@@ -3290,10 +3317,8 @@ function _patchTradingPanelPnL(){
   for(const {pos,panel} of all){
     const item=items[i++];
     if(!item||item.getAttribute('data-id')!==String(pos.id)){_syncTradingPanel();return;}
-    const side=String(pos.side||'buy').toLowerCase();
     const px=panel?.lastClose??0;
-    const cs=getContractSize(pos.symbol||'');
-    const raw=side==='buy'?(px-Number(pos.avg??0))*Number(pos.qty??1)*cs:(Number(pos.avg??0)-px)*Number(pos.qty??1)*cs;
+    const raw=computePositionPnL(pos, px);
     const pnlEl=item.querySelector('.trd-pos-item-pnl');
     if(pnlEl){pnlEl.textContent=(raw>=0?'+':'')+`$${Math.abs(raw).toFixed(2)}`;pnlEl.className=`trd-pos-item-pnl ${raw>0.00001?'pos':raw<-0.00001?'neg':''}`;}
   }
@@ -3846,11 +3871,7 @@ setInterval(()=>{
     const pos=srcPanel.positionsCache.find(x=>String(x.id)===String(posId));
     if(!pos)continue;
     const px=srcPanel.lastClose??0;if(!px)continue;
-    const side=String(pos.side||'buy').toLowerCase();
-    const entry=Number(pos.avg??pos.entry??0);
-    const qty=Number(pos.qty||1);
-    const cs=getContractSize(pos.symbol||'');
-    const raw=side==='buy'?(px-entry)*qty*cs:(entry-px)*qty*cs;
+    const raw=computePositionPnL(pos, px);
     const cell=tr.querySelector('.btm-td-pnl');
     if(!cell)continue;
     cell.textContent=(raw>=0?'+':'')+`$${Math.abs(raw).toFixed(2)}`;
