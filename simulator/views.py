@@ -723,8 +723,13 @@ def home_view(request):
 # -----------------------
 @login_required
 def history_view(request):
-    acc_id = request.session.get("account_id")
-    account = TradingAccount.objects.filter(pk=acc_id, user=request.user).first()
+    # ACCOUNT-03a — reuse the same resolution as /home/ and /dashboard/
+    # (session account_id, requires status='Activo', self-healing fallback
+    # to the user's most-recent active account) instead of a divergent
+    # inline lookup with no status filter and no fallback — previously the
+    # only surface that could show a suspended/violated account's history
+    # while dashboard/home had already silently switched away from it.
+    account = _resolve_account(request)
     if not account:
         return redirect("simulator:accounts")
 
