@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import random
+import threading
 import time
 import urllib.request
 import urllib.error
@@ -136,6 +137,26 @@ class FeedManager:
         self._prices: dict[str, float]        = {}
         self._bids:   dict[str, float]        = {}
         self._asks:   dict[str, float]        = {}
+        # PANEL-02 INVARIANTE-1 — wall-clock time of the last REAL price
+        # update per symbol, used by has_price()'s freshness check. Set
+        # ONLY on a genuine live/sim tick (_broadcast) or a successful REST
+        # resync (_resync_price's success branch) — deliberately NEVER set
+        # by _resync_price's fallback branch (a static, non-live price) or
+        # by any other code path, so a fallback-seeded _prices entry is
+        # always correctly treated as stale/absent by has_price(), never
+        # as fresh.
+        self._price_ts: dict[str, float] = {}
+        # PANEL-02 — guards all reads/writes of the four dicts above. This
+        # class's own feed tasks (_broadcast/_resync_price) run on the
+        # asyncio event loop thread, but has_price()/last_price()/
+        # last_bid()/last_ask() are also called synchronously from
+        # database_sync_to_async threadpool threads (the atomic order
+        # guard in consumers.py). Individual dict get/set calls are
+        # GIL-atomic in CPython, but a multi-field update (price+bid+ask+
+        # timestamp together in _broadcast) is not — without this lock a
+        # reader could observe a torn update (e.g. a fresh timestamp with
+        # a stale bid/ask, or vice versa).
+        self._lock = threading.Lock()
 
     # ── public API ──
 
@@ -144,13 +165,44 @@ class FeedManager:
         return "feed_" + symbol.replace("/", "_")
 
     def last_price(self, symbol: str) -> float:
-        return self._prices.get(symbol, _fallback_price(symbol))
+        with self._lock:
+            return self._prices.get(symbol, _fallback_price(symbol))
+
+    def has_price(self, symbol: str, max_age_seconds: float = _PRICE_CACHE_TTL) -> bool:
+        """PANEL-02 — True only if *symbol* has a REAL, live/cached bid+ask
+        in this process's shared feed cache AND it was last updated within
+        *max_age_seconds* (default: the same TTL the Redis cross-process
+        price cache uses, _PRICE_CACHE_TTL — reused rather than inventing a
+        second staleness threshold).
+
+        Presence alone is NOT sufficient: a stalled feed (no ticks for
+        minutes — provider down, symbol simply idle) leaves old values
+        sitting in _prices/_bids/_asks indefinitely; trusting those as
+        "the current price" for a financial risk decision (fresh_equity in
+        the atomic order guard) would silently understate a real, ongoing
+        loss. A fallback-seeded entry (_resync_price's except branch,
+        REST resync failed with nothing prior) is likewise never fresh —
+        it never receives a _price_ts entry, so it fails this check the
+        same way a stale one does. Used by the atomic order-open guard to
+        decide whether a position's floating PnL can be safely computed —
+        if not, the whole order is rejected (never a fabricated/zeroed
+        PnL) — see _db_open_position_atomic.
+        """
+        with self._lock:
+            if symbol not in self._prices:
+                return False
+            ts = self._price_ts.get(symbol)
+            if ts is None:
+                return False
+            return (time.time() - ts) <= max_age_seconds
 
     def last_bid(self, symbol: str) -> float:
-        return self._bids.get(symbol, _fallback_price(symbol) - _spread(symbol) / 2)
+        with self._lock:
+            return self._bids.get(symbol, _fallback_price(symbol) - _spread(symbol) / 2)
 
     def last_ask(self, symbol: str) -> float:
-        return self._asks.get(symbol, _fallback_price(symbol) + _spread(symbol) / 2)
+        with self._lock:
+            return self._asks.get(symbol, _fallback_price(symbol) + _spread(symbol) / 2)
 
     async def subscribe(self, symbol: str, channel_layer, channel_name: str) -> None:
         await channel_layer.group_add(self.group_for(symbol), channel_name)
@@ -207,9 +259,11 @@ class FeedManager:
         if task and not task.done():
             task.cancel()
             log.info("[feed] stopped task for %s (no subscribers)", symbol)
-        self._prices.pop(symbol, None)
-        self._bids.pop(symbol, None)
-        self._asks.pop(symbol, None)
+        with self._lock:
+            self._prices.pop(symbol, None)
+            self._bids.pop(symbol, None)
+            self._asks.pop(symbol, None)
+            self._price_ts.pop(symbol, None)
         self._counts.pop(symbol, None)
 
     async def _broadcast_kline(self, symbol: str, cl, bar: dict) -> None:
@@ -308,9 +362,12 @@ class FeedManager:
 
     async def _broadcast(self, symbol: str, cl, bid: float, ask: float, ts: int) -> None:
         _, dec = _step_dec(symbol)
-        self._bids[symbol]   = bid
-        self._asks[symbol]   = ask
-        self._prices[symbol] = round((bid + ask) / 2, dec)
+        mid = round((bid + ask) / 2, dec)
+        with self._lock:
+            self._bids[symbol]     = bid
+            self._asks[symbol]     = ask
+            self._prices[symbol]   = mid
+            self._price_ts[symbol] = time.time()
         # Write to Redis so cross-process readers (Celery daemon) can access prices.
         await _write_price_cache(symbol, bid, ask)
         # FOUNDATION-13 — records only a timestamp (no bid/ask/mid) in the
@@ -328,7 +385,7 @@ class FeedManager:
                 "symbol": symbol,
                 "bid":    bid,
                 "ask":    ask,
-                "mid":    self._prices[symbol],
+                "mid":    mid,
                 "time":   ts,
             },
         )
@@ -873,17 +930,26 @@ class FeedManager:
             _, dec = _step_dec(symbol)
             spr    = _spread(symbol)
             mid    = round(price, dec)
-            self._prices[symbol] = mid
-            self._bids[symbol]   = round(mid - spr / 2, dec)
-            self._asks[symbol]   = round(mid + spr / 2, dec)
+            with self._lock:
+                self._prices[symbol]   = mid
+                self._bids[symbol]     = round(mid - spr / 2, dec)
+                self._asks[symbol]     = round(mid + spr / 2, dec)
+                self._price_ts[symbol] = time.time()
             log.info("[feed] resynced %s → %.4f", symbol, mid)
         else:
-            # Keep whatever we have; only fall to hardcoded if nothing stored
-            if symbol not in self._prices:
-                self._prices[symbol] = _fallback_price(symbol)
+            # Keep whatever we have; only fall to hardcoded if nothing stored.
+            # Deliberately does NOT set _price_ts — a fallback price is a
+            # static per-symbol default, not a real quote; has_price() must
+            # never treat it as fresh (see has_price()'s docstring).
+            with self._lock:
+                seeded_fallback = symbol not in self._prices
+                if seeded_fallback:
+                    self._prices[symbol] = _fallback_price(symbol)
+                fallback_value = self._prices.get(symbol)
+            if seeded_fallback:
                 log.warning(
                     "[feed] REST resync failed for %s — using fallback %.2f",
-                    symbol, self._prices[symbol],
+                    symbol, fallback_value,
                 )
 
     async def _fetch_rest_price(self, symbol: str) -> float | None:

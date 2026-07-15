@@ -407,6 +407,24 @@ def _close_position_sync(
     from .models import Position, Trade, LedgerEntry, TradingAccount
 
     with _tx.atomic():
+        # 1. Lock the TradingAccount row FIRST — global lock order
+        # TradingAccount → Position (PANEL-02 INVARIANTE-2; see the
+        # matching note in consumers.py's module-level LOCK ORDER comment
+        # and TradingConsumer._db_close_position_atomic). Account is this
+        # account's real mutex, locked here regardless of position count,
+        # so the Position lookup below is guaranteed to observe every
+        # write any sibling WS/daemon transaction for this SAME account
+        # has already committed.
+        _acct_row = (
+            TradingAccount.objects
+            .select_for_update()
+            .filter(id=account_id)
+            .first()
+        )
+
+        # 2. NOW find and lock the target Position row — issued strictly
+        # AFTER the Account lock, so "already closed" reflects the true,
+        # currently-committed state.
         pos = (
             Position.objects
             .select_for_update()
@@ -425,27 +443,22 @@ def _close_position_sync(
                 "trade_id":       None,
             }
 
-        # ACCOUNT-02 — lock TradingAccount now (lock order Position → Account) and
-        # derive balance_after from a FRESH, locked read + realized_pnl — never
-        # from new_balance (a parameter the caller computed by accumulating
-        # running_balance across this batch, starting from account.balance read
-        # at the TOP of the daemon scan — which a concurrent WS close on the same
-        # account could have already changed by the time this write happens).
-        # remaining_floating (other still-open positions' floating PnL in this
-        # same batch) is staleness-independent: new_equity - new_balance cancels
-        # out whatever starting balance the caller used. See
-        # TradingConsumer._db_close_position_atomic for the identical pattern.
+        # ACCOUNT-02 — derive balance_after from the FRESH, locked
+        # _acct_row read + realized_pnl — never from new_balance (a
+        # parameter the caller computed by accumulating running_balance
+        # across this batch, starting from account.balance read at the
+        # TOP of the daemon scan — which a concurrent WS close on the same
+        # account could have already changed by the time this write
+        # happens). remaining_floating (other still-open positions'
+        # floating PnL in this same batch) is staleness-independent:
+        # new_equity - new_balance cancels out whatever starting balance
+        # the caller used. See TradingConsumer._db_close_position_atomic
+        # for the identical pattern.
         _ZERO = Decimal("0")
         _nb = new_balance if isinstance(new_balance, Decimal) else Decimal(str(new_balance))
         _ne = new_equity  if isinstance(new_equity,  Decimal) else Decimal(str(new_equity))
         _remaining_floating = _ne - _nb
 
-        _acct_row = (
-            TradingAccount.objects
-            .select_for_update()
-            .filter(id=account_id)
-            .first()
-        )
         _fresh_balance_after = (
             _acct_row.balance + Decimal(str(realized_pnl)) if _acct_row is not None else _nb
         )

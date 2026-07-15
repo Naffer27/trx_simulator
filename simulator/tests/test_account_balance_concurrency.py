@@ -56,12 +56,14 @@ def _run(coro):
 
 
 def _fake_consumer(account_id, balance, equity=None, pnl_unreal=0.0, currency="USD"):
+    from market_data.feeds import get_feed_manager
     c = TradingConsumer.__new__(TradingConsumer)
     c._db_account_id = account_id
     c.account = {
         "balance": balance, "equity": equity if equity is not None else balance,
         "pnl_unreal": pnl_unreal, "currency": currency,
     }
+    c._feed = get_feed_manager()
     return c
 
 
@@ -314,14 +316,18 @@ class CommissionChargedOnceTests(TransactionTestCase):
     """12) Comisión sigue descontándose una sola vez."""
 
     def test_commission_deducted_exactly_once_on_open(self):
-        account = make_account(balance=Decimal("1000.00"))
+        # PANEL-02 — balance bumped from 1 000 to 50 000 so the 1.0-lot
+        # EUR/USD open stays under the atomic guard's 10% per-trade margin
+        # cap (required_margin=$2200 → 4.4% of $50 000); the
+        # commission-charged-once invariant under test is unaffected.
+        account = make_account(balance=Decimal("50000.00"))
         result = _db_open_sync(
-            _fake_consumer(account.pk, balance=1000.00), "EUR/USD", "buy", 1.0, 1.10000,
-            None, None, commission=5.0, new_balance=995.0,
+            _fake_consumer(account.pk, balance=50000.00), "EUR/USD", "buy", 1.0, 1.10000,
+            None, None, commission=5.0, new_balance=49995.0,
         )
-        self.assertAlmostEqual(result["new_balance"], 995.0, places=2)
+        self.assertAlmostEqual(result["new_balance"], 49995.0, places=2)
         acc = TradingAccount.objects.get(pk=account.pk)
-        self.assertAlmostEqual(float(acc.balance), 995.0, places=2)
+        self.assertAlmostEqual(float(acc.balance), 49995.0, places=2)
         self.assertEqual(
             LedgerEntry.objects.filter(account=account, event_type=LedgerEntry.EV_COMMISSION).count(), 1,
         )

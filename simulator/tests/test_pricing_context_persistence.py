@@ -20,6 +20,7 @@ from decimal import Decimal
 
 from django.test import TestCase
 
+from market_data.feeds import get_feed_manager
 from simulator.consumers import TradingConsumer
 from simulator.models import Position, Trade, TradingAccount
 from simulator.tasks import _close_position_sync
@@ -34,8 +35,10 @@ _db_close_sync = TradingConsumer._db_close_position_atomic.__wrapped__
 class _FakeConsumer:
     """Minimal consumer stub — only the attributes _db_open/_close_position_atomic touch."""
     def __init__(self, account_id, netting_mode=False, spread_pips=0.0):
+        from market_data.feeds import get_feed_manager
         self._db_account_id = account_id
         self.account = {"netting_mode": netting_mode, "spread_pips": spread_pips}
+        self._feed = get_feed_manager()
 
 
 def _pos_mem(pos) -> dict:
@@ -50,7 +53,7 @@ def _pos_mem(pos) -> dict:
 
 class OpenCapturesPricingContextTests(TestCase):
     def test_position_stores_the_passed_context(self):
-        account = make_account(balance=Decimal("10000"))
+        account = make_account(balance=Decimal("50000"))
         consumer = _FakeConsumer(account.pk)
         ctx = pc.build_pricing_context(
             raw_bid=1.0999, raw_ask=1.1001, executable_bid=1.0997, executable_ask=1.1003,
@@ -58,34 +61,46 @@ class OpenCapturesPricingContextTests(TestCase):
         )
         result = _db_open_sync(
             consumer, "EUR/USD", "BUY", 1.0, 1.10000, None, None,
-            commission=0.0, new_balance=10000.0, pricing_context=ctx,
+            commission=0.0, new_balance=50000.0, pricing_context=ctx,
         )
         pos = Position.objects.get(pk=result["position_id"])
         self.assertEqual(pos.pricing_context["effective_spread_pips"], 1.5)
         self.assertEqual(pos.pricing_context["pricing_profile"], pc.PROFILE_WS_OPEN)
 
     def test_omitting_context_leaves_it_null(self):
-        account = make_account(balance=Decimal("10000"))
+        account = make_account(balance=Decimal("50000"))
         consumer = _FakeConsumer(account.pk)
         result = _db_open_sync(
             consumer, "EUR/USD", "BUY", 1.0, 1.10000, None, None,
-            commission=0.0, new_balance=10000.0,
+            commission=0.0, new_balance=50000.0,
         )
         pos = Position.objects.get(pk=result["position_id"])
         self.assertIsNone(pos.pricing_context)
 
     def test_netting_merge_does_not_overwrite_original_context(self):
-        account = make_account(balance=Decimal("10000"))
+        # PANEL-02 INVARIANTE-1 — the merge (2nd open) call re-derives
+        # fresh_equity from EVERY open position, including the one just
+        # created by the 1st open — needs a real cached price or the
+        # merge is correctly rejected as market_price_unavailable.
+        import time as _time
+        feed = get_feed_manager()
+        with feed._lock:
+            feed._bids["EUR/USD"] = 1.0999
+            feed._asks["EUR/USD"] = 1.1001
+            feed._prices["EUR/USD"] = 1.1000
+            feed._price_ts["EUR/USD"] = _time.time()
+
+        account = make_account(balance=Decimal("50000"))
         consumer = _FakeConsumer(account.pk, netting_mode=True)
         first_ctx = pc.build_pricing_context(raw_bid=1.0999, raw_ask=1.1001, pricing_profile="first")
         result1 = _db_open_sync(
             consumer, "EUR/USD", "BUY", 1.0, 1.10000, None, None,
-            commission=0.0, new_balance=10000.0, pricing_context=first_ctx,
+            commission=0.0, new_balance=50000.0, pricing_context=first_ctx,
         )
         second_ctx = pc.build_pricing_context(raw_bid=1.2, raw_ask=1.2002, pricing_profile="second")
         result2 = _db_open_sync(
             consumer, "EUR/USD", "BUY", 1.0, 1.20000, None, None,
-            commission=0.0, new_balance=10000.0, pricing_context=second_ctx,
+            commission=0.0, new_balance=50000.0, pricing_context=second_ctx,
         )
         self.assertEqual(result1["position_id"], result2["position_id"])  # merged into same row
         pos = Position.objects.get(pk=result2["position_id"])
@@ -94,7 +109,7 @@ class OpenCapturesPricingContextTests(TestCase):
 
 class CloseCopiesOpenContextVerbatimTests(TestCase):
     def setUp(self):
-        self.account = make_account(balance=Decimal("10000"))
+        self.account = make_account(balance=Decimal("50000"))
         self.open_ctx = pc.build_pricing_context(
             raw_bid=1.0999, raw_ask=1.1001, executable_bid=1.0997, executable_ask=1.1003,
             base_spread_pips=2.0, account_markup_pips=0.0, pricing_profile=pc.PROFILE_WS_OPEN,
@@ -164,7 +179,7 @@ class DaemonClosePersistenceTests(TestCase):
     """Same integrity guarantees, via the sync Celery path (_close_position_sync)."""
 
     def setUp(self):
-        self.account = make_account(balance=Decimal("10000"))
+        self.account = make_account(balance=Decimal("50000"))
         self.open_ctx = pc.build_pricing_context(
             raw_bid=82000.0, raw_ask=82015.0, base_spread_pips=15.0,
             pricing_profile=pc.PROFILE_WS_OPEN,
@@ -211,7 +226,7 @@ class NeverBlocksOperationTests(TestCase):
 
     def test_broken_provider_state_read_does_not_block_open(self):
         from unittest.mock import patch
-        account = make_account(balance=Decimal("10000"))
+        account = make_account(balance=Decimal("50000"))
         consumer = _FakeConsumer(account.pk)
         with patch("market_data.observability.get_symbol_state", side_effect=RuntimeError("boom")):
             base, markup = pc.spread_pips_for("EUR/USD", 0.0)
@@ -223,7 +238,7 @@ class NeverBlocksOperationTests(TestCase):
             )
         result = _db_open_sync(
             consumer, "EUR/USD", "BUY", 1.0, 1.10000, None, None,
-            commission=0.0, new_balance=10000.0, pricing_context=ctx,
+            commission=0.0, new_balance=50000.0, pricing_context=ctx,
         )
         pos = Position.objects.get(pk=result["position_id"])
         # Operation succeeded; prices were captured; provider metadata is null.
@@ -232,14 +247,14 @@ class NeverBlocksOperationTests(TestCase):
 
     def test_totally_broken_context_build_still_lets_open_succeed(self):
         from unittest.mock import patch
-        account = make_account(balance=Decimal("10000"))
+        account = make_account(balance=Decimal("50000"))
         consumer = _FakeConsumer(account.pk)
         with patch("simulator.pricing_context.PricingContext", side_effect=RuntimeError("boom")):
             ctx = pc.build_pricing_context(raw_bid=1.1, pricing_profile=pc.PROFILE_WS_OPEN)
         self.assertEqual(ctx["pricing_profile"], pc.PROFILE_CAPTURE_FAILED)
         result = _db_open_sync(
             consumer, "EUR/USD", "BUY", 1.0, 1.10000, None, None,
-            commission=0.0, new_balance=10000.0, pricing_context=ctx,
+            commission=0.0, new_balance=50000.0, pricing_context=ctx,
         )
         # Position still created successfully despite a totally broken capture.
         self.assertTrue(Position.objects.filter(pk=result["position_id"]).exists())
@@ -247,12 +262,12 @@ class NeverBlocksOperationTests(TestCase):
 
 class SchemaVersionTests(TestCase):
     def test_persisted_context_carries_schema_version(self):
-        account = make_account(balance=Decimal("10000"))
+        account = make_account(balance=Decimal("50000"))
         consumer = _FakeConsumer(account.pk)
         ctx = pc.build_pricing_context(raw_bid=1.1, pricing_profile=pc.PROFILE_WS_OPEN)
         result = _db_open_sync(
             consumer, "EUR/USD", "BUY", 1.0, 1.10000, None, None,
-            commission=0.0, new_balance=10000.0, pricing_context=ctx,
+            commission=0.0, new_balance=50000.0, pricing_context=ctx,
         )
         pos = Position.objects.get(pk=result["position_id"])
         self.assertEqual(pos.pricing_context["schema_version"], pc.SCHEMA_VERSION)
@@ -260,14 +275,14 @@ class SchemaVersionTests(TestCase):
 
 class HistoricalRowsCompatibilityTests(TestCase):
     def test_position_created_without_pricing_context_field_reads_none(self):
-        account = make_account(balance=Decimal("10000"))
+        account = make_account(balance=Decimal("50000"))
         pos = make_position(account=account, symbol="EUR/USD")
         pos.refresh_from_db()
         self.assertIsNone(pos.pricing_context)
 
     def test_trade_created_without_pricing_context_fields_reads_none(self):
         from .factories import make_trade
-        account = make_account(balance=Decimal("10000"))
+        account = make_account(balance=Decimal("50000"))
         trade = make_trade(account=account)
         trade.refresh_from_db()
         self.assertIsNone(trade.pricing_context_open)

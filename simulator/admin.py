@@ -689,21 +689,32 @@ class TradingAccountAdmin(admin.ModelAdmin):
                     px = None
                 total_closed, total_pnl = 0, 0.0
                 with db_tx.atomic():
-                    qs = Position.objects.select_for_update().filter(account=account)
-                    if symbol:
-                        qs = qs.filter(symbol=symbol)
-                    positions = list(qs)
-                    account_currency = getattr(account, "currency", "USD") or "USD"
-
-                    # ACCOUNT-02 — lock the account fresh HERE (Position → Account,
-                    # matching consumers.py's lock order) and accumulate
-                    # balance_after from THIS locked read, never from the `account`
-                    # object this view fetched earlier in the request (which could
-                    # be stale relative to a close a live WS connection just made).
+                    # PANEL-02 INVARIANTE-2 — global lock order is
+                    # TradingAccount → Position (see the "global
+                    # Position/TradingAccount lock order" note in
+                    # consumers.py). Lock the account FIRST — this is the
+                    # account's real mutex regardless of how many
+                    # positions currently exist — THEN lock the matching
+                    # Position rows, so the list below is guaranteed fresh
+                    # (reflects every write any concurrent WS/daemon
+                    # transaction for this SAME account already
+                    # committed), never a pre-lock/stale snapshot.
                     locked_account = (
                         TradingAccount.objects.select_for_update().filter(pk=account.pk).first()
                     )
                     running_balance = float(locked_account.balance) if locked_account else float(account.balance or 0)
+
+                    # .order_by("id") keeps multi-row lock acquisition
+                    # order deterministic (defensive — with Account as the
+                    # outer mutex, no two transactions ever hold
+                    # overlapping Position locks for this account
+                    # simultaneously, but this remains correct if that
+                    # ever changes).
+                    qs = Position.objects.select_for_update().filter(account=locked_account).order_by("id")
+                    if symbol:
+                        qs = qs.filter(symbol=symbol)
+                    positions = list(qs)
+                    account_currency = getattr(locked_account or account, "currency", "USD") or "USD"
 
                     for pos in positions:
                         exit_px = px if px is not None else float(pos.avg_price)
@@ -716,7 +727,7 @@ class TradingAccountAdmin(admin.ModelAdmin):
                             account_currency=account_currency,
                         )
                         Trade.objects.create(
-                            account=account, symbol=pos.symbol,
+                            account=locked_account or account, symbol=pos.symbol,
                             trade_type=pos.side,          # record original side, consistent with WS consumer
                             lot_size=pos.qty, entry_price=pos.avg_price,
                             exit_price=Decimal(str(exit_px)), stop_loss=pos.sl,
@@ -725,7 +736,7 @@ class TradingAccountAdmin(admin.ModelAdmin):
                         )
                         running_balance += pnl
                         LedgerEntry.objects.create(
-                            account=account, event_type=LedgerEntry.EV_REALIZED,
+                            account=locked_account or account, event_type=LedgerEntry.EV_REALIZED,
                             amount=Decimal(str(pnl)), balance_after=Decimal(str(running_balance)),
                             meta={"reason": "admin_force_close", "symbol": pos.symbol},
                         )

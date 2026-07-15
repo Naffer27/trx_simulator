@@ -135,7 +135,7 @@ def _gold_guard(qty, entry_px, equity, margin_used_now=0.0, account_leverage=100
     return _compute_pretrade_margin_guard(
         "XAU/USD", qty, entry_px, equity, margin_used_now,
         snap, spec.max_leverage, spec.contract_size,
-    )
+    )[:3]
 
 
 class TestGoldPretradeMarginGuard(SimpleTestCase):

@@ -79,13 +79,22 @@ def _compute_pretrade_margin_guard(
     account_snap: dict,
     spec_max_leverage: int,
     spec_contract_size: float,
-) -> tuple[bool, str, str]:
+) -> tuple[bool, str, str, dict]:
     """
     Pure pre-trade guard — no I/O, no DB, no side effects.
 
-    Returns (ok, code, user_message).
+    Returns (ok, code, user_message, details).
       ok=True  → order may proceed
       ok=False → order rejected; code and message sent to the frontend
+      details  → PANEL-02: always-populated numeric breakdown
+                 (required_margin, required_margin_pct,
+                 projected_total_margin, projected_total_margin_pct,
+                 max_total_margin_pct), whether the call passes or fails.
+                 This is the ONE place the margin percentages are
+                 computed — reused verbatim both by the fast pre-lock
+                 estimate (_order_new) and by the authoritative post-lock
+                 call inside _db_open_position_atomic()
+                 (_compute_atomic_open_guard). No formula is duplicated.
 
     Checks (in order):
       1. allowed_symbols_snapshot  — symbol whitelist
@@ -94,6 +103,22 @@ def _compute_pretrade_margin_guard(
       4. total margin after open % — (used + required) / equity ≤ 50 %
       5. margin_level projection   — equity / (used + required) ≥ margin_call_level_snapshot
     """
+    account_lev = max(1, int(account_snap.get("leverage", 50)))
+    effective_lev = max(1, min(account_lev, spec_max_leverage))
+    required_margin = abs(entry_px * qty * spec_contract_size) / effective_lev
+    equity_safe = max(float(equity), 0.01)
+    per_trade_pct = required_margin / equity_safe * 100.0
+    total_margin_after = float(margin_used_now) + required_margin
+    total_margin_pct = total_margin_after / equity_safe * 100.0
+
+    details = {
+        "required_margin": round(required_margin, 4),
+        "required_margin_pct": round(per_trade_pct, 2),
+        "projected_total_margin": round(total_margin_after, 4),
+        "projected_total_margin_pct": round(total_margin_pct, 2),
+        "max_total_margin_pct": _DEFAULT_MAX_TOTAL_MARGIN_PCT,
+    }
+
     # 1 — Symbol whitelist (None = all symbols allowed)
     allowed = account_snap.get("allowed_symbols")
     if allowed is not None and symbol not in allowed:
@@ -101,6 +126,7 @@ def _compute_pretrade_margin_guard(
             False,
             "symbol_not_allowed",
             "Orden rechazada: símbolo no permitido para esta cuenta.",
+            details,
         )
 
     # 2 — Product max lot size snapshot
@@ -113,15 +139,10 @@ def _compute_pretrade_margin_guard(
                 f"Orden rechazada: el tamaño es demasiado alto para esta cuenta. "
                 f"Máximo permitido: {float(max_lot):.3f} lotes. Prueba con un lote menor."
             ),
+            details,
         )
 
-    # 3 — Compute required margin
-    account_lev = max(1, int(account_snap.get("leverage", 50)))
-    effective_lev = max(1, min(account_lev, spec_max_leverage))
-    required_margin = abs(entry_px * qty * spec_contract_size) / effective_lev
-    equity = max(float(equity), 0.01)
-
-    per_trade_pct = required_margin / equity * 100.0
+    # 3 — Per-trade margin cap
     if per_trade_pct > _DEFAULT_MAX_MARGIN_PER_TRADE_PCT:
         _guard_log = logging.getLogger("simulator.guard")
         _guard_log.warning(
@@ -130,10 +151,10 @@ def _compute_pretrade_margin_guard(
             "free_margin=%.4f margin_level_after=%.2f per_trade_pct=%.2f%% "
             "max_per_trade=%.1f%% max_total=%.1f%% account_lev=%d spec_max_lev=%d "
             "effective_lev=%d",
-            symbol, qty, entry_px, equity, float(margin_used_now),
-            required_margin, float(margin_used_now) + required_margin,
-            equity - (float(margin_used_now) + required_margin),
-            equity / (float(margin_used_now) + required_margin) * 100.0 if (float(margin_used_now) + required_margin) > 0 else 0.0,
+            symbol, qty, entry_px, equity_safe, float(margin_used_now),
+            required_margin, total_margin_after,
+            equity_safe - total_margin_after,
+            equity_safe / total_margin_after * 100.0 if total_margin_after > 0 else 0.0,
             per_trade_pct,
             _DEFAULT_MAX_MARGIN_PER_TRADE_PCT, _DEFAULT_MAX_TOTAL_MARGIN_PCT,
             account_lev, spec_max_leverage, effective_lev,
@@ -147,11 +168,10 @@ def _compute_pretrade_margin_guard(
                 f"(límite: {_DEFAULT_MAX_MARGIN_PER_TRADE_PCT:.0f}%). "
                 "Prueba con un lote menor."
             ),
+            details,
         )
 
     # 4 — Total margin cap after this trade
-    total_margin_after = float(margin_used_now) + required_margin
-    total_margin_pct = total_margin_after / equity * 100.0
     if total_margin_pct > _DEFAULT_MAX_TOTAL_MARGIN_PCT:
         _guard_log = logging.getLogger("simulator.guard")
         _guard_log.warning(
@@ -159,9 +179,9 @@ def _compute_pretrade_margin_guard(
             "equity=%.2f margin_used_now=%.2f required_margin=%.4f margin_after=%.4f "
             "free_margin=%.4f per_trade_pct=%.2f%% total_margin_pct=%.2f%% "
             "max_total=%.1f%% account_lev=%d spec_max_lev=%d effective_lev=%d",
-            symbol, qty, entry_px, equity, float(margin_used_now),
+            symbol, qty, entry_px, equity_safe, float(margin_used_now),
             required_margin, total_margin_after,
-            equity - total_margin_after,
+            equity_safe - total_margin_after,
             per_trade_pct, total_margin_pct,
             _DEFAULT_MAX_TOTAL_MARGIN_PCT, account_lev, spec_max_leverage, effective_lev,
         )
@@ -174,12 +194,13 @@ def _compute_pretrade_margin_guard(
                 f"Margen total proyectado: {total_margin_pct:.1f}%. "
                 "Cierra posiciones o usa un lote menor."
             ),
+            details,
         )
 
     # 5 — Margin level projection vs margin_call_level_snapshot
     margin_call_level = float(account_snap.get("margin_call_level") or 100.0)
     if total_margin_after > 0:
-        margin_level_after = equity / total_margin_after * 100.0
+        margin_level_after = equity_safe / total_margin_after * 100.0
         if margin_level_after < margin_call_level:
             _guard_log = logging.getLogger("simulator.guard")
             _guard_log.warning(
@@ -187,9 +208,9 @@ def _compute_pretrade_margin_guard(
                 "equity=%.2f margin_used_now=%.2f required_margin=%.4f margin_after=%.4f "
                 "free_margin=%.4f margin_level_after=%.2f%% margin_call_level_snap=%.2f%% "
                 "account_lev=%d spec_max_lev=%d effective_lev=%d",
-                symbol, qty, entry_px, equity, float(margin_used_now),
+                symbol, qty, entry_px, equity_safe, float(margin_used_now),
                 required_margin, total_margin_after,
-                equity - total_margin_after,
+                equity_safe - total_margin_after,
                 margin_level_after, margin_call_level,
                 account_lev, spec_max_leverage, effective_lev,
             )
@@ -202,9 +223,198 @@ def _compute_pretrade_margin_guard(
                     f"por debajo del límite de tu cuenta ({margin_call_level:.0f}%). "
                     "Prueba con un lote menor."
                 ),
+                details,
             )
 
-    return True, "ok", ""
+    return True, "ok", "", details
+
+
+def _check_lot_size(qty: float, spec) -> tuple[bool, str]:
+    """Pure — min_lot/lot_step check shared by the fast pre-check
+    (_pretrade_check) and the authoritative atomic guard
+    (_compute_atomic_open_guard).
+
+    PANEL-02 — the lot_step remainder check is done as steps-from-nearest-
+    integer (qty/lot_step vs round(qty/lot_step)) rather than the original
+    `qty % lot_step > lot_step * 0.001`. This is a floating-point-safety
+    fix, not a rule change: binary floats can't represent lot_step values
+    like 0.01 exactly, so the raw modulo of a perfectly valid multiple
+    (e.g. 1.0 % 0.01) can land a full 99.9% of one lot_step above zero
+    (0.00999999999999998), false-rejecting the majority of whole-lot
+    quantities (1.0, 2.0, 5.0, 10.0, ...) as "lot_step_violation". This
+    was never exercised before PANEL-02: _pretrade_check (the only
+    existing caller) is a fast, non-authoritative pre-lock guard whose
+    rejection was never the final word, and _db_open_position_atomic
+    never validated lot size at all until now. Wiring a real lot_step
+    check into the authoritative path (FASE 2) exposed the bug — same
+    0.001-of-one-step tolerance as before, computed in a numerically
+    stable way; not a margin/PnL/spread/commission formula."""
+    if qty < spec.min_lot:
+        return False, "min_qty_violation"
+    steps = qty / spec.lot_step
+    if abs(steps - round(steps)) > 0.001:
+        return False, "lot_step_violation"
+    return True, "ok"
+
+
+def _compute_atomic_open_guard(
+    symbol: str,
+    qty: float,
+    entry_px: float,
+    account_status: str,
+    account_snap: dict,
+    spec,
+    fresh_equity: float,
+    fresh_margin_used: float,
+    is_new_position: bool,
+    fresh_open_count: int,
+    max_open_positions: int,
+) -> dict:
+    """
+    PANEL-02 — the single authoritative order-open validator. Called ONLY
+    from inside _db_open_position_atomic()'s transaction.atomic() block,
+    strictly AFTER select_for_update() has locked every open Position row
+    for this account and the TradingAccount row itself. Every numeric
+    input that can change between connections (fresh_equity,
+    fresh_margin_used, fresh_open_count, account_status) is a value read
+    fresh under that lock — never a value the caller computed beforehand
+    from its own (possibly stale, per-connection) in-memory state. The
+    pre-lock guard in _order_new (_pretrade_check /
+    _compute_pretrade_margin_guard) remains only as a fast, non-
+    authoritative early rejection — this function is the real authority.
+
+    account_snap's leverage/allowed_symbols/max_lot_size/margin_call_level
+    fields are frozen product snapshots (set once at account creation,
+    never mutated per-trade — see TradingAccount.*_snapshot fields) — so
+    trusting the caller's in-memory copy of THESE specific fields carries
+    none of the staleness risk that made margin_used/equity/position-count
+    unsafe to trust; they are not part of what this fix closes.
+
+    Reuses _compute_pretrade_margin_guard() verbatim for the symbol/lot/
+    margin-percentage math — no formula is duplicated or reimplemented;
+    only the account-status gate and the max_open_positions check (neither
+    of which _compute_pretrade_margin_guard covers) are layered around it.
+
+    Returns a structured dict, always with the full field set (ok,
+    error_code, message, required_margin, required_margin_pct,
+    projected_total_margin, projected_total_margin_pct,
+    max_total_margin_pct, current_open_positions, max_open_positions) —
+    populated whether the order passes or is rejected. Never raises.
+    """
+    from .risk_engine import BLOCKED_STATUSES
+
+    base = {
+        "current_open_positions": fresh_open_count,
+        "max_open_positions": max_open_positions,
+    }
+    _zero_margin_fields = {
+        "required_margin": 0.0, "required_margin_pct": 0.0,
+        "projected_total_margin": round(fresh_margin_used, 4),
+        "projected_total_margin_pct": 0.0,
+        "max_total_margin_pct": _DEFAULT_MAX_TOTAL_MARGIN_PCT,
+    }
+
+    # 0 — Account status gate — the freshest possible read: the very
+    # TradingAccount row this transaction just locked, not
+    # self.account["status"] cached from before the lock.
+    if account_status in BLOCKED_STATUSES:
+        return {
+            "ok": False, "error_code": "account_blocked",
+            "message": f"Cuenta {account_status} — operaciones bloqueadas",
+            **_zero_margin_fields, **base,
+        }
+
+    # 1 — Lot size (min/step) — pure, symbol-spec-based; not itself a
+    # source of staleness, included so this is a single, complete gate.
+    _ok, _code = _check_lot_size(qty, spec)
+    if not _ok:
+        _msgs = {
+            "min_qty_violation": "Orden rechazada: tamaño menor al mínimo permitido.",
+            "lot_step_violation": "Orden rechazada: el tamaño no es múltiplo del paso permitido.",
+        }
+        return {
+            "ok": False, "error_code": _code, "message": _msgs.get(_code, _code),
+            **_zero_margin_fields, **base,
+        }
+
+    # 2 — max_open_positions — only a genuinely NEW position row counts
+    # against the cap; a same-side netting merge does not increase the
+    # account's position count, so it must never be blocked by this cap.
+    if is_new_position and (fresh_open_count + 1) > max_open_positions:
+        return {
+            "ok": False, "error_code": "max_positions",
+            "message": f"Posiciones abiertas al límite ({max_open_positions})",
+            **_zero_margin_fields, **base,
+        }
+
+    # 3 — Symbol whitelist / product lot cap / per-trade margin / total
+    # margin / margin-call-level projection — delegated to the SAME
+    # function the fast pre-lock check uses, now fed fresh_equity/
+    # fresh_margin_used instead of connection-memory values.
+    guard_ok, guard_code, guard_msg, guard_details = _compute_pretrade_margin_guard(
+        symbol, qty, entry_px, fresh_equity, fresh_margin_used,
+        account_snap, spec.max_leverage, spec.contract_size,
+    )
+    return {
+        "ok": guard_ok,
+        "error_code": None if guard_ok else guard_code,
+        "message": "ok" if guard_ok else guard_msg,
+        **guard_details,
+        **base,
+    }
+
+
+# ── PANEL-02 INVARIANTE-2 — global TradingAccount/Position lock order ───────
+# Audited across every live path in this codebase that locks both models
+# with select_for_update() inside a single transaction. All of them lock
+# the TradingAccount row FIRST, then Position row(s):
+#   - TradingConsumer._db_open_position_atomic  — TradingAccount →
+#     Position(all open, this account, .order_by("id"))
+#   - TradingConsumer._db_close_position_atomic — TradingAccount →
+#     Position(single, by id)
+#   - tasks._close_position_sync (Celery daemon TP/SL/stopout/margin-call
+#     close)                     — TradingAccount → Position(single, by id)
+#   - admin.py force_close (dealing desk)        — TradingAccount →
+#     Position(all matching, .order_by("id"))
+#
+# This is a single, consistent, GLOBAL lock order — Account → Position —
+# not a per-function choice. Any new code that locks both models MUST
+# follow the same order; reversing it in even one path (Position → Account)
+# would create a classic lock-order-inversion deadlock against every path
+# above the moment two of them run concurrently on the same account.
+#
+# WHY ACCOUNT FIRST (not Position first, the original PANEL-02 design):
+# TradingAccount is the account's actual mutex — exactly one row exists
+# per account, always. Locking it first means a concurrent transaction
+# for the SAME account always blocks here, REGARDLESS of how many
+# Position rows currently exist. Locking Position first fails exactly at
+# zero positions: select_for_update() against an empty queryset locks
+# nothing, so two connections could each evaluate positions=[] before
+# either held any lock at all, then separately proceed to lock Account in
+# turn — the second one would still validate against its own STALE
+# (empty) snapshot taken before the first one's commit, even though it
+# technically "held a lock" by the time it wrote. Locking Account first
+# closes that gap: every subsequent Position query in the same
+# transaction is guaranteed to run AFTER any sibling transaction for this
+# account has either fully committed (visible now, Read Committed) or is
+# still blocked waiting for the very same Account lock (hasn't touched
+# anything yet — nothing to miss).
+#
+# Multi-row Position locks (_db_open_position_atomic, force_close) also
+# order by "id" ascending. With Account as the outer mutex, no two
+# transactions ever hold overlapping Position locks for the same account
+# simultaneously, so this specific ordering no longer prevents a live
+# deadlock scenario by itself — kept anyway for deterministic query
+# behavior and as a second line of defense if that invariant is ever
+# weakened. Structural verification (query order, independent of DB
+# backend) lives in simulator/tests/test_atomic_guard_lock_order.py.
+#
+# Dead code exclusion: TradingConsumer._db_mirror_close_position and
+# _db_mirror_open_or_update also touch Position/TradingAccount but have
+# ZERO call sites anywhere in this codebase (confirmed by repo-wide grep,
+# re-verified for this fix) — unreachable, not part of the audited order,
+# intentionally left untouched.
+# ──────────────────────────────────────────────────────────────────────────
 
 
 # ======================================================
@@ -848,7 +1058,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
         eq_now = self.account["balance"] + self._unrealized_pnl_total()
         mg_now = self._margin_used_total()
         _spec  = get_spec(sym)
-        _guard_ok, _guard_code, _guard_msg = _compute_pretrade_margin_guard(
+        _guard_ok, _guard_code, _guard_msg, _guard_details = _compute_pretrade_margin_guard(
             sym, qty, self.exec_price(sym, side), eq_now, mg_now,
             self.account, _spec.max_leverage, _spec.contract_size,
         )
@@ -928,6 +1138,20 @@ class TradingConsumer(AsyncWebsocketConsumer):
             log.error("[order_new] DB open failed for %s %s: %s", side, sym, exc, exc_info=True)
             await self.send_json({"type": "error", "code": "execution_failed",
                                   "message": "no_se_pudo_abrir_posicion"})
+            return
+
+        # PANEL-02 — _db_open_position_atomic() is now the authoritative
+        # gate (fresh, lock-protected margin/position-count/status check).
+        # A rejection here means NOTHING was written (no Position, no
+        # commission, no Trade/LedgerEntry/BrokerLedger) — mirror the
+        # fast pre-lock guard's rejection shape (error + return, no
+        # memory mutation, no recalc/refresh needed since nothing changed).
+        if not result.get("ok", True):
+            await self.send_json({
+                "type": "error",
+                "code": result.get("error_code", "order_rejected"),
+                "message": result.get("message", "orden_rechazada"),
+            })
             return
 
         # DB committed — safe to mutate memory now.
@@ -1111,10 +1335,9 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
     def _pretrade_check(self, symbol, side, qty):
         spec = get_spec(symbol)
-        if qty < spec.min_lot:
-            return False, "min_qty_violation"
-        if qty % spec.lot_step > spec.lot_step * 0.001:
-            return False, "lot_step_violation"
+        ok, code = _check_lot_size(qty, spec)
+        if not ok:
+            return False, code
         account_lev = max(1, int(self.account.get("leverage", 50)))
         lev = max(1, min(account_lev, spec.max_leverage))
         entry_px = self.exec_price(symbol, side)
@@ -1884,14 +2107,40 @@ class TradingConsumer(AsyncWebsocketConsumer):
     def _db_open_position_atomic(self, symbol: str, side: str, qty: float, price: float,
                                   sl, tp, commission: float, new_balance: float,
                                   pricing_context: dict | None = None) -> dict:
-        """DB-first order open (Phase 1A).
+        """DB-first order open (Phase 1A / PANEL-02).
 
-        Atomically: create/merge Position, record commission LedgerEntry, update
-        TradingAccount.balance — all in one transaction before any memory mutation.
+        Atomically: lock every open Position for this account + the account
+        row itself, re-derive margin/position-count/equity FRESH under that
+        lock, run the single authoritative validation
+        (_compute_atomic_open_guard), and ONLY IF it passes: create/merge
+        Position, record commission LedgerEntry/BrokerLedger, update
+        TradingAccount.balance — all in the same transaction, before any
+        memory mutation in the caller. If it fails, nothing is written —
+        no Position, no commission, no Trade/LedgerEntry/BrokerLedger.
 
-        Returns {"position_id": int, "merged": bool}.
-        If _db_account_id is None (demo session) returns {"position_id": None, "merged": False}
-        so the caller falls back to _order_seq as a local id.
+        PANEL-02 — this is now the REAL authority for margin/position-count/
+        account-status, closing a TOCTOU race: two connections of the same
+        account could previously both pass the fast, in-memory pre-lock
+        guard (consumers.py:_order_new, using THIS connection's own,
+        possibly stale, self.account/self._positions) and both proceed to
+        write, jointly exceeding the 10%/50% margin caps or
+        max_open_positions — reproduced empirically pre-fix (4 concurrent
+        opens + 1 pre-existing position reaching 70.67% total margin
+        against the account's own 50% cap). The pre-lock guard in
+        _order_new is kept ONLY as a fast, non-authoritative early
+        rejection (cheap UX feedback before touching the DB) — it is never
+        trusted for the final decision anymore.
+
+        Returns a structured dict — always includes "ok" plus the FASE-5
+        field set (error_code, message, required_margin, required_margin_pct,
+        projected_total_margin, projected_total_margin_pct,
+        max_total_margin_pct, current_open_positions, max_open_positions),
+        alongside "position_id"/"merged"/"new_balance". If _db_account_id is
+        None (demo session — no DB account to lock/validate against) returns
+        {"ok": True, "position_id": None, "merged": False} so the caller
+        falls back to _order_seq as a local id, unchanged from before — the
+        pre-lock guards remain the sole authority for demo sessions since
+        there is no DB account to validate under lock.
 
         pricing_context (SPREAD-02): stored on the newly-created Position only.
         On a netting merge into an existing Position, the ORIGINAL position's
@@ -1900,23 +2149,196 @@ class TradingConsumer(AsyncWebsocketConsumer):
         more honest than fabricating one for the merge.
         """
         if not self._db_account_id:
-            return {"position_id": None, "merged": False}
+            return {"position_id": None, "merged": False, "ok": True}
         from decimal import Decimal
         with transaction.atomic():
-            # Netting: look for an existing position on same symbol+side and lock it.
+            # 1. Lock the TradingAccount row FIRST — this is the account's
+            # real mutex (see the module-level LOCK ORDER note above this
+            # class: global order is TradingAccount → Position across
+            # EVERY live path). Locking Account first — even when the
+            # account currently has ZERO open positions — is what makes it
+            # an actual mutex: a concurrent transaction for the SAME
+            # account blocks here until this one commits, no matter how
+            # many Position rows exist right now. The earlier
+            # Position-first design failed to serialize exactly that empty
+            # case: select_for_update() locks zero rows when there is
+            # nothing to lock, so two connections could each read
+            # positions=[] before either held any lock at all, then each
+            # separately proceed to lock Account in turn — the second one
+            # would still validate against its own STALE (empty) snapshot
+            # taken before the first one's commit. Locking Account first
+            # closes that gap: by the time this transaction reads Position
+            # below, any sibling transaction for this account has either
+            # already committed (visible now) or is blocked waiting for
+            # this lock (hasn't happened yet — nothing to miss).
+            account = (
+                TradingAccount.objects
+                .select_for_update()
+                .filter(id=self._db_account_id)
+                .first()
+            )
+            if account is None:
+                return {
+                    "ok": False, "error_code": "account_not_found",
+                    "message": "Cuenta no encontrada",
+                    "position_id": None, "merged": False, "new_balance": new_balance,
+                    "required_margin": 0.0, "required_margin_pct": 0.0,
+                    "projected_total_margin": 0.0, "projected_total_margin_pct": 0.0,
+                    "max_total_margin_pct": _DEFAULT_MAX_TOTAL_MARGIN_PCT,
+                    "current_open_positions": 0, "max_open_positions": 0,
+                }
+
+            # 2. NOW lock every open Position for this account — issued
+            # and evaluated (list(...) forces immediate execution) STRICTLY
+            # AFTER the Account lock above is held, so this list is
+            # guaranteed fresh: it reflects every write any other
+            # transaction for this same account has already committed (see
+            # the reasoning in step 1). .order_by("id") keeps multi-row
+            # lock acquisition order deterministic — defensive: with
+            # Account as the outer mutex, no two transactions ever hold
+            # overlapping Position locks for the same account
+            # simultaneously, but this remains correct and costs nothing
+            # if that invariant is ever weakened. Verified via captured
+            # query order in test_atomic_guard_lock_order.py (Account
+            # query precedes Position query). This locked list is the
+            # fresh, authoritative source for position count,
+            # netting-merge-target lookup, and margin_used — never
+            # self._positions (this connection's own, possibly stale,
+            # in-memory mirror).
+            open_positions = list(
+                Position.objects.select_for_update()
+                .filter(account=account)
+                .order_by("id")
+            )
+
+            # 3. Netting merge target — same symbol+side, found within the
+            # ALREADY-LOCKED open_positions list (no second query).
+            # Hedging mode (netting_mode False) never merges — unchanged
+            # semantics. FASE 4 — a same-side merge does NOT create a new
+            # Position row, so it must not count against max_open_positions;
+            # its margin contribution is already linear (weighted-average
+            # notional == sum of the two legs' notional), so no separate
+            # "projected merged margin" formula is needed — the plain
+            # additive required_margin/fresh_margin_used sum below is
+            # already exact for both the merge and the new-position case.
             existing = None
             if self.account.get("netting_mode"):
-                existing = (
-                    Position.objects
-                    .select_for_update()
-                    .filter(
-                        account_id=self._db_account_id,
-                        symbol=symbol,
-                        side=side.upper(),
-                    )
-                    .first()
+                existing = next(
+                    (p for p in open_positions if p.symbol == symbol and p.side == side.upper()),
+                    None,
+                )
+            is_new_position = existing is None
+            fresh_open_count = len(open_positions)
+
+            # 4. Fresh margin_used — derived from the locked Position rows'
+            # own avg_price/qty (DB Decimal fields), never from
+            # self._positions/self._margin_used_total(). Same formula as
+            # _margin_used_total(), just fed DB-fresh data — no price
+            # dependency at all (margin uses each position's own entry
+            # price, not a live price).
+            account_lev = max(1, int(self.account.get("leverage", 50)))
+            fresh_margin_used = 0.0
+            for _p in open_positions:
+                _pspec = get_spec(_p.symbol)
+                _plev = max(1, min(account_lev, _pspec.max_leverage))
+                fresh_margin_used += (
+                    abs(float(_p.avg_price) * float(_p.qty) * _pspec.contract_size) / _plev
                 )
 
+            # 5. max_open_positions — fetched now (price-independent) so
+            # it's available in the structured response even if step 6
+            # below rejects the order for an unpriced/stale symbol.
+            from .risk_engine import get_or_create_risk_rule
+            _rule = get_or_create_risk_rule(account)
+
+            # 6. INVARIANTE 1 (PANEL-02 correction) — fresh_equity requires
+            # a REAL, fresh floating PnL for EVERY open position; a
+            # missing or stale price is NEVER treated as floating PnL=0.
+            # Zero is not conservative: a losing position with no
+            # available price would make fresh_equity look HIGHER than
+            # reality (real equity = balance + true_floating, which could
+            # be deeply negative), which could let an order through that a
+            # correct equity read would have rejected. The only safe
+            # options are "use a real, fresh price" or "refuse to decide"
+            # — never invent a number. If ANY open position's symbol has
+            # no live/cached price, or that price is older than
+            # FeedManager.has_price()'s freshness TTL, the ENTIRE order is
+            # rejected here — before fresh_equity is even computed — with
+            # nothing written (no Position, no commission, no Trade/
+            # LedgerEntry/BrokerLedger), same as any other rejection path.
+            _unpriced_symbols = [p.symbol for p in open_positions if not self._feed.has_price(p.symbol)]
+            if _unpriced_symbols:
+                log.warning(
+                    "[atomic_guard] account=%s REJECTED — no fresh price for open "
+                    "position symbol(s) %s; refusing to compute fresh_equity rather "
+                    "than assume floating PnL=0",
+                    self._db_account_id, _unpriced_symbols,
+                )
+                return {
+                    "ok": False, "error_code": "market_price_unavailable",
+                    "message": (
+                        "Orden rechazada: no se pudo verificar el estado de riesgo de la "
+                        "cuenta — precio no disponible o desactualizado para: "
+                        + ", ".join(_unpriced_symbols) + "."
+                    ),
+                    "position_id": None, "merged": False, "new_balance": float(account.balance),
+                    "required_margin": 0.0, "required_margin_pct": 0.0,
+                    "projected_total_margin": round(fresh_margin_used, 4),
+                    "projected_total_margin_pct": 0.0,
+                    "max_total_margin_pct": _DEFAULT_MAX_TOTAL_MARGIN_PCT,
+                    "current_open_positions": fresh_open_count,
+                    "max_open_positions": _rule.max_open_positions,
+                }
+
+            # 7. Fresh equity — PANEL-02 FASE 3: floating PnL of every open
+            # position, sourced from the shared, per-process FeedManager
+            # (self._feed) — the SAME cache _seed_price_state()/
+            # exec_price() already read from — never this connection's own
+            # _bid_state/_ask_state (only seeded for symbols THIS
+            # connection has viewed). Every position here is guaranteed
+            # freshly priced by step 6 above — no fallback/zero case
+            # remains to handle.
+            fresh_floating_pnl = 0.0
+            for _p in open_positions:
+                _close_px = (
+                    self._feed.last_bid(_p.symbol) if _p.side == "BUY"
+                    else self._feed.last_ask(_p.symbol)
+                )
+                fresh_floating_pnl += pnl_engine.position_pnl_float(
+                    _p.side.lower(), float(_p.avg_price), _close_px, float(_p.qty), _p.symbol,
+                    account_currency=account.currency,
+                )
+            fresh_equity = float(account.balance) + fresh_floating_pnl
+
+            # 8. Authoritative validation — the ONE place this order can be
+            # accepted or rejected. See _compute_atomic_open_guard's
+            # docstring for the full rationale.
+            _spec = get_spec(symbol)
+            _account_snap = {
+                "leverage":          self.account.get("leverage", 50),
+                "allowed_symbols":   self.account.get("allowed_symbols"),
+                "max_lot_size":      self.account.get("max_lot_size"),
+                "margin_call_level": self.account.get("margin_call_level"),
+            }
+            guard = _compute_atomic_open_guard(
+                symbol, qty, price, account.status, _account_snap, _spec,
+                fresh_equity, fresh_margin_used, is_new_position, fresh_open_count,
+                _rule.max_open_positions,
+            )
+            if not guard["ok"]:
+                # Rejected under lock — nothing is created, no commission
+                # charged, no Trade/LedgerEntry/BrokerLedger written. The
+                # transaction commits with zero writes (a no-op).
+                log.info(
+                    "[db_open] REJECTED account=%s symbol=%s side=%s qty=%s code=%s",
+                    self._db_account_id, symbol, side, qty, guard["error_code"],
+                )
+                return {
+                    "position_id": None, "merged": False, "new_balance": float(account.balance),
+                    **guard,
+                }
+
+            # 9. Passed — create/merge the Position exactly as before.
             if existing:
                 # Merge into the existing row — weighted average price.
                 new_qty = existing.qty + Decimal(str(qty))
@@ -1947,18 +2369,10 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 position_id = pos.id
                 merged = False
 
-            # Lock account before any balance write.
-            # Lock order: Position (above, netting only) → TradingAccount — mirrors
-            # the close path, preventing deadlocks under concurrent open+close.
-            _acct = (
-                TradingAccount.objects
-                .select_for_update()
-                .filter(id=self._db_account_id)
-                .first()
-            )
             _commission_d = Decimal(str(commission)) if commission and commission > 0 else Decimal("0")
-            # Authoritative balance: deduct commission from current DB value, not stale memory.
-            _auth_balance = (_acct.balance - _commission_d) if _acct else Decimal(str(new_balance))
+            # Authoritative balance: deduct commission from the already-locked
+            # account row, not stale memory.
+            _auth_balance = account.balance - _commission_d
 
             if _commission_d > 0:
                 trader_ledger = LedgerEntry.objects.create(
@@ -2012,13 +2426,16 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 except Exception as _sp_exc:
                     log.warning("[broker_ledger] spread insert failed pos=%s: %s", position_id, _sp_exc)
 
-            if _acct and _commission_d > 0:
-                _acct.balance = _auth_balance
-                _acct.save(update_fields=["balance"])
+            if _commission_d > 0:
+                account.balance = _auth_balance
+                account.save(update_fields=["balance"])
 
         log.info("[db_open] pos_id=%s symbol=%s side=%s qty=%s merged=%s balance=%.4f",
                  position_id, symbol, side, qty, merged, float(_auth_balance))
-        return {"position_id": position_id, "merged": merged, "new_balance": float(_auth_balance)}
+        return {
+            "position_id": position_id, "merged": merged, "new_balance": float(_auth_balance),
+            **guard,
+        }
 
     @database_sync_to_async
     def _db_close_position_atomic(self, pos_mem: dict, close_px: float, reason: str,
@@ -2050,7 +2467,30 @@ class TradingConsumer(AsyncWebsocketConsumer):
             }
         from decimal import Decimal
         with transaction.atomic():
-            # 1. Find and lock the Position row (prevents concurrent duplicate closes).
+            # 1. Lock the TradingAccount row FIRST — global lock order
+            # TradingAccount → Position (see the module-level LOCK ORDER
+            # note above this class). Account is this account's real
+            # mutex, locked here regardless of how many positions exist,
+            # so that step 2 below is guaranteed to observe every write
+            # any sibling WS/daemon transaction for this SAME account has
+            # already committed — see _db_open_position_atomic's step-1
+            # docstring for the full staleness-race rationale (identical
+            # here: locking Position first would let two closers each
+            # read a pre-lock "not yet closed" snapshot before either held
+            # any lock at all).
+            _acct_row = (
+                TradingAccount.objects
+                .select_for_update()
+                .filter(id=self._db_account_id)
+                .first()
+            )
+
+            # 2. NOW find and lock the target Position row — issued
+            # strictly AFTER the Account lock, so "already closed" reflects
+            # the true, currently-committed state: any sibling close that
+            # already ran on this position has either committed by now
+            # (pos is None below, correctly detected) or is blocked
+            # waiting for step 1's lock (hasn't touched this position yet).
             pos = (
                 Position.objects
                 .select_for_update()
@@ -2069,31 +2509,25 @@ class TradingConsumer(AsyncWebsocketConsumer):
                     "already_closed": True,
                 }
 
-            # ACCOUNT-02 — lock TradingAccount NOW (lock order Position → Account,
-            # matching _db_open_position_atomic) and derive balance_after from a
-            # FRESH, locked read + realized_pnl — never from new_balance/self.account,
-            # which the CALLER computed before this lock and which may already be
-            # stale (a sibling WebSocket for the same account can have opened/closed
-            # something this connection never learned about). realized_pnl itself is
-            # never stale — it's derived purely from the closing position's own
+            # ACCOUNT-02 — derive balance_after from the FRESH, locked
+            # _acct_row read + realized_pnl — never from new_balance/
+            # self.account, which the CALLER computed before this lock and
+            # which may already be stale (a sibling WebSocket for the same
+            # account can have opened/closed something this connection
+            # never learned about). realized_pnl itself is never stale —
+            # it's derived purely from the closing position's own
             # entry/exit/qty via pnl_engine, independent of account state.
             #
-            # remaining_floating (the floating PnL of OTHER still-open positions in
-            # this same batch, e.g. mid-stopout) is NOT derivable from a fresh DB
-            # read — but new_equity - new_balance cancels out whatever stale
-            # starting balance the caller used, leaving exactly that pure,
-            # staleness-independent quantity.
+            # remaining_floating (the floating PnL of OTHER still-open
+            # positions in this same batch, e.g. mid-stopout) is NOT
+            # derivable from a fresh DB read — but new_equity - new_balance
+            # cancels out whatever stale starting balance the caller used,
+            # leaving exactly that pure, staleness-independent quantity.
             _ZERO = Decimal("0")
             _nb = new_balance if isinstance(new_balance, Decimal) else Decimal(str(new_balance))
             _ne = new_equity  if isinstance(new_equity,  Decimal) else Decimal(str(new_equity))
             _remaining_floating = _ne - _nb
 
-            _acct_row = (
-                TradingAccount.objects
-                .select_for_update()
-                .filter(id=self._db_account_id)
-                .first()
-            )
             _fresh_balance_after = (
                 _acct_row.balance + Decimal(str(realized_pnl)) if _acct_row is not None else _nb
             )

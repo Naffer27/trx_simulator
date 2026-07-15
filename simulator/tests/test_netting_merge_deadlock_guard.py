@@ -12,6 +12,7 @@ from decimal import Decimal
 
 from django.test import TestCase
 
+from market_data.feeds import get_feed_manager
 from simulator.consumers import TradingConsumer
 from simulator.models import LedgerEntry, Position, Trade, TradingAccount
 from simulator.tasks import _close_position_sync
@@ -27,6 +28,7 @@ class _FakeConsumer:
     def __init__(self, account_id, netting_mode=False):
         self._db_account_id = account_id
         self.account = {"netting_mode": netting_mode, "spread_pips": 0.0}
+        self._feed = get_feed_manager()
 
 
 class TestNettingMergeDeadlockGuard(TestCase):
@@ -37,19 +39,26 @@ class TestNettingMergeDeadlockGuard(TestCase):
         pero el consumer en-memoria sigue en 10 000 (stale).
 
         Código anterior (UPDATE ciego):
-          stale_new_balance = 10 000 - 10 = 9 990
-          UPDATE account SET balance = 9 990  ← borra los +500 del PnL ya aplicado
+          stale_new_balance = 50 000 - 10 = 49 990
+          UPDATE account SET balance = 49 990  ← borra los +500 del PnL ya aplicado
 
         Código nuevo (select_for_update + valor de DB):
-          DB balance = 10 500, commission = 10
-          _auth_balance = 10 500 - 10 = 10 490
-          account.balance = 10 490  ✓
-        """
-        account = make_account(balance=Decimal("10000"))
-        # Simular que Celery actualizó el balance en DB a 10 500 (PnL de cierre previo)
-        TradingAccount.objects.filter(pk=account.pk).update(balance=Decimal("10500"))
+          DB balance = 50 500, commission = 10
+          _auth_balance = 50 500 - 10 = 50 490
+          account.balance = 50 490  ✓
 
-        stale_new_balance = 9990.0  # lo que el consumer stale calcularía: 10 000 - 10
+        PANEL-02 — balance bumped from 10 000 to 50 000 (same +500 stale/
+        fresh gap) so 1.0 lot EUR/USD stays under the atomic guard's 10%
+        per-trade margin cap (required_margin=$2160 → 4.28% of $50 500,
+        well under 10%) — the scenario under test (authoritative vs stale
+        balance source) is unchanged, only the fixture size, since the
+        guard now genuinely enforces margin where it previously did not.
+        """
+        account = make_account(balance=Decimal("50000"))
+        # Simular que Celery actualizó el balance en DB a 50 500 (PnL de cierre previo)
+        TradingAccount.objects.filter(pk=account.pk).update(balance=Decimal("50500"))
+
+        stale_new_balance = 49990.0  # lo que el consumer stale calcularía: 50 000 - 10
         consumer = _FakeConsumer(account.pk, netting_mode=False)
         result = _db_open_sync(
             consumer, "EUR/USD", "BUY", 1.0, 1.0800,
@@ -57,23 +66,29 @@ class TestNettingMergeDeadlockGuard(TestCase):
         )
 
         account.refresh_from_db()
-        self.assertEqual(account.balance, Decimal("10490"))
-        self.assertAlmostEqual(result["new_balance"], 10490.0, places=4)
+        self.assertEqual(account.balance, Decimal("50490"))
+        self.assertAlmostEqual(result["new_balance"], 50490.0, places=4)
 
         # LedgerEntry EV_COMMISSION también usa el valor autoritativo
         entry = LedgerEntry.objects.filter(
             account=account, event_type=LedgerEntry.EV_COMMISSION,
         ).first()
         self.assertIsNotNone(entry)
-        self.assertEqual(entry.balance_after, Decimal("10490"))
+        self.assertEqual(entry.balance_after, Decimal("50490"))
 
     def test_netting_merge_consolidates_same_side_position(self):
         """
         Netting mode: segundo BUY sobre el mismo símbolo fusiona en la posición existente.
         Una sola fila en Position con qty acumulada y avg_price ponderado.
         No se crea fila duplicada.
+
+        PANEL-02 — balance bumped from 10 000 to 50 000 so the combined
+        2.0-lot EUR/USD exposure stays under the atomic guard's margin
+        caps (merge does not increase position count, but margin is still
+        checked) — the merge-consolidation behavior under test is
+        unchanged.
         """
-        account = make_account(balance=Decimal("10000"))
+        account = make_account(balance=Decimal("50000"))
         existing = Position.objects.create(
             account=account, symbol="EUR/USD", side="BUY",
             qty=Decimal("1.0"), avg_price=Decimal("1.0800"),

@@ -42,6 +42,7 @@ from .factories import make_account, make_deposit, make_position, make_user, mak
 
 def _make_consumer(account):
     """Crea un TradingConsumer mínimo para tests sincrónicos."""
+    from market_data.feeds import get_feed_manager
     from simulator.consumers import TradingConsumer
     c = TradingConsumer.__new__(TradingConsumer)
     c._db_account_id = account.id
@@ -51,6 +52,7 @@ def _make_consumer(account):
         "netting_mode": False,
         "spread_pips":  0.0,
     }
+    c._feed = get_feed_manager()
     return c
 
 
@@ -95,7 +97,11 @@ class TestCommissionLedgerCoherence(TestCase):
     COMMISSION = 7.0   # float, como lo devuelve commission_for()
 
     def setUp(self):
-        self.account  = make_account(balance=Decimal("10000"))
+        # PANEL-02 — balance bumped from 10 000 to 50 000 so the fixture's
+        # 1.0-lot EUR/USD open stays under the atomic guard's 10% per-trade
+        # margin cap (required_margin=$2200 → 4.4% of $50 000); the
+        # commission/ledger invariants under test are unaffected.
+        self.account  = make_account(balance=Decimal("50000"))
         self.consumer = _make_consumer(self.account)
 
     def _open(self, commission=None):
@@ -257,7 +263,9 @@ class TestLedgerSequentialInvariant(TestCase):
         Secuencia: open (EV_COMMISSION) + close (EV_REALIZED).
         El último LedgerEntry.balance_after == account.balance.
         """
-        account  = make_account(balance=Decimal("10000"))
+        # PANEL-02 — balance bumped from 10 000 to 50 000 (same reason as
+        # TestCommissionLedgerCoherence.setUp above).
+        account  = make_account(balance=Decimal("50000"))
         pos      = make_position(
             account=account, symbol="EUR/USD",
             side="BUY", qty=Decimal("0.1"), avg_price=Decimal("1.10000"),
@@ -268,7 +276,7 @@ class TestLedgerSequentialInvariant(TestCase):
         async_to_sync(consumer._db_open_position_atomic)(
             symbol="EUR/USD", side="buy", qty=1.0,
             price=1.10000, sl=None, tp=None,
-            commission=7.0, new_balance=9993.0,
+            commission=7.0, new_balance=49993.0,
         )
 
         # Paso 2: cierre con PnL → EV_REALIZED

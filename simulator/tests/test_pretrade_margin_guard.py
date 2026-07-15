@@ -41,12 +41,16 @@ def _snap(**overrides) -> dict:
 
 
 def _guard(symbol, qty, entry_px, equity, margin_used_now=0.0, **snap_overrides):
+    """Returns (ok, code, msg) — PANEL-02 extended the underlying function's
+    return to a 4-tuple (..., details); this helper keeps every existing
+    call site in this file unchanged by dropping the new details dict.
+    See test_atomic_margin_and_position_guard.py for coverage of details."""
     spec = get_spec(symbol)
     snap = _snap(**snap_overrides)
     return _compute_pretrade_margin_guard(
         symbol, qty, entry_px, equity, margin_used_now,
         snap, spec.max_leverage, spec.contract_size,
-    )
+    )[:3]
 
 
 # ── BTCUSD — per-trade margin cap ─────────────────────────────────────────────
