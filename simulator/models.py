@@ -375,13 +375,23 @@ class Trade(models.Model):
 
 
 class BrokerLedger(models.Model):
-    """Broker-side revenue ledger. Additive only — records are never modified or deleted."""
+    """Broker-side ledger. Additive only — records are never modified or deleted.
+
+    Most entry types (COMMISSION, SPREAD, CHALLENGE_FEE, WITHDRAW_FEE) are
+    guaranteed non-negative broker revenue. COUNTERPARTY_PNL (BOOK-02) is
+    NOT revenue in that sense — it is the broker's directional B-Book
+    result for one closed Trade (broker_counterparty_pnl = -Trade.profit_loss),
+    and is negative exactly when the trader won. Callers that sum "amount"
+    across all revenue_type values to mean "money the broker is guaranteed
+    to keep" must exclude COUNTERPARTY_PNL or handle its sign explicitly.
+    """
 
     REV_COMMISSION   = 'COMMISSION'
     REV_SPREAD       = 'SPREAD'
     REV_CHALLENGE_FEE = 'CHALLENGE_FEE'
     REV_WITHDRAW_FEE = 'WITHDRAW_FEE'
     REV_ADJUSTMENT   = 'ADJUSTMENT'
+    REV_COUNTERPARTY_PNL = 'COUNTERPARTY_PNL'
 
     REVENUE_CHOICES = [
         (REV_COMMISSION,    'Commission'),
@@ -389,6 +399,7 @@ class BrokerLedger(models.Model):
         (REV_CHALLENGE_FEE, 'Challenge Fee'),
         (REV_WITHDRAW_FEE,  'Withdrawal Fee'),
         (REV_ADJUSTMENT,    'Adjustment'),
+        (REV_COUNTERPARTY_PNL, 'Counterparty PnL (B-Book)'),
     ]
 
     revenue_type   = models.CharField(max_length=16, choices=REVENUE_CHOICES, db_index=True)
@@ -411,6 +422,19 @@ class BrokerLedger(models.Model):
 
     class Meta:
         ordering = ['-created_at', '-id']
+        constraints = [
+            # BOOK-02 — at most one entry of a given revenue_type per source
+            # Trade (today only COUNTERPARTY_PNL ever sets source_trade; the
+            # compound key leaves room for COMMISSION/SPREAD to also link to
+            # source_trade later without colliding with this constraint).
+            # Excludes NULL source_trade (unrelated entries, e.g. WITHDRAW_FEE)
+            # from the uniqueness check — NULLs are never considered equal.
+            models.UniqueConstraint(
+                fields=['source_trade', 'revenue_type'],
+                condition=models.Q(source_trade__isnull=False),
+                name='uniq_brokerledger_source_trade_revenue_type',
+            ),
+        ]
 
     def __str__(self):
         return f"[{self.created_at:%Y-%m-%d %H:%M:%S}] {self.revenue_type} {self.amount}"

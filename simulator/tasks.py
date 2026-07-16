@@ -253,10 +253,15 @@ def take_revenue_snapshot_task(self) -> dict:
     since = prev.taken_at if prev else None
 
     # ── 2. Incremental BrokerLedger delta since last snapshot ─────────
+    # BOOK-02 — COUNTERPARTY_PNL is B-Book directional PnL (can be
+    # negative), not revenue. This snapshot's total_revenue/period_revenue
+    # predate that entry type and are documented as fee-only; excluding it
+    # here keeps that meaning unchanged instead of silently mixing PnL into
+    # a "revenue" figure. See simulator/broker_ledger.py.
     inc_qs = (
         BrokerLedger.objects.filter(created_at__gt=since)
         if since else BrokerLedger.objects.all()
-    )
+    ).exclude(revenue_type=BrokerLedger.REV_COUNTERPARTY_PNL)
     inc = inc_qs.aggregate(
         revenue    = Sum("amount"),
         commission = Sum("amount", filter=Q(revenue_type=BrokerLedger.REV_COMMISSION)),
@@ -515,6 +520,12 @@ def _close_position_sync(
             meta          = {"symbol": pos_mem["symbol"], "side": pos_mem["side"],
                              "reason": reason, "trade_id": trade.id},
         )
+
+        # BOOK-02 — broker's B-Book counterparty result for this same
+        # Trade, same transaction. See simulator/broker_ledger.py.
+        if _acct_row is not None:
+            from .broker_ledger import create_broker_counterparty_entry
+            create_broker_counterparty_entry(trade, _acct_row, realized_pnl, reason)
 
         if _shortfall > _ZERO:
             LedgerEntry.objects.create(

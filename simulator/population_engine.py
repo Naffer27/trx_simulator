@@ -300,7 +300,7 @@ class SimulatedTrader(threading.Thread):
             new_bal = float(acc.balance) + pnl
             new_peak = max(float(acc.peak_balance), new_bal)
 
-            Trade.objects.create(
+            sim_trade = Trade.objects.create(
                 account=acc,
                 symbol=symbol,
                 trade_type=side,
@@ -320,6 +320,13 @@ class SimulatedTrader(threading.Thread):
                 meta={"symbol": symbol, "side": side, "pnl": pnl,
                       "sim": True, "profile": self.profile_name},
             )
+
+            # BOOK-02 — broker's B-Book counterparty result for this same
+            # Trade, same transaction. Simulated accounts write real Trade/
+            # LedgerEntry rows (counted by intelligence_engine/exposure_engine
+            # like any other account), so they get a real counterparty entry too.
+            from .broker_ledger import create_broker_counterparty_entry
+            create_broker_counterparty_entry(sim_trade, acc, pnl, "population_sim")
 
             Position.objects.filter(id=pos.id).delete()
 

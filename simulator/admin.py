@@ -726,7 +726,7 @@ class TradingAccountAdmin(admin.ModelAdmin):
                             pos.side, float(pos.avg_price), exit_px, float(pos.qty), pos.symbol,
                             account_currency=account_currency,
                         )
-                        Trade.objects.create(
+                        force_close_trade = Trade.objects.create(
                             account=locked_account or account, symbol=pos.symbol,
                             trade_type=pos.side,          # record original side, consistent with WS consumer
                             lot_size=pos.qty, entry_price=pos.avg_price,
@@ -739,6 +739,12 @@ class TradingAccountAdmin(admin.ModelAdmin):
                             account=locked_account or account, event_type=LedgerEntry.EV_REALIZED,
                             amount=Decimal(str(pnl)), balance_after=Decimal(str(running_balance)),
                             meta={"reason": "admin_force_close", "symbol": pos.symbol},
+                        )
+                        # BOOK-02 — broker's B-Book counterparty result for
+                        # this same Trade, same transaction.
+                        from .broker_ledger import create_broker_counterparty_entry
+                        create_broker_counterparty_entry(
+                            force_close_trade, locked_account or account, pnl, "admin_force_close",
                         )
                         pos.delete()
                         total_closed += 1
@@ -1799,7 +1805,14 @@ class InstrumentAdmin(admin.ModelAdmin):
 
 @admin.register(BrokerLedger)
 class BrokerLedgerAdmin(admin.ModelAdmin):
-    list_display   = ('id', 'revenue_type', 'amount', 'source_account', 'symbol', 'created_at')
+    # BOOK-02 — source_trade added: the field existed before but was never
+    # populated by anything; COUNTERPARTY_PNL is the first entry type that
+    # sets it, so it's now worth surfacing in the list view. revenue_type
+    # already auto-lists COUNTERPARTY_PNL as a filter option (Django
+    # populates list_filter choices from the field's `choices`, not from
+    # distinct DB values) and `amount` already renders negative values
+    # correctly with no code change (plain Decimal field).
+    list_display   = ('id', 'revenue_type', 'amount', 'source_account', 'source_trade', 'symbol', 'created_at')
     list_filter    = ('revenue_type', 'created_at')
     search_fields  = ('symbol', 'source_account__id')
     readonly_fields = (
@@ -1844,7 +1857,12 @@ class BrokerLedgerAdmin(admin.ModelAdmin):
         f_from   = request.GET.get("date_from", "").strip()
         f_to     = request.GET.get("date_to", "").strip()
 
-        qs = BrokerLedger.objects.all()
+        # BOOK-02 — this dashboard predates COUNTERPARTY_PNL and is titled
+        # "Revenue": COUNTERPARTY_PNL is B-Book directional PnL (can be
+        # negative), not revenue, so it's excluded here to keep existing
+        # totals unchanged (it is NOT selectable via f_type on this view
+        # either — a dedicated counterparty PnL view is BOOK-03's job).
+        qs = BrokerLedger.objects.exclude(revenue_type=BrokerLedger.REV_COUNTERPARTY_PNL)
         if f_type:
             qs = qs.filter(revenue_type=f_type)
         if f_symbol:
@@ -1879,7 +1897,7 @@ class BrokerLedgerAdmin(admin.ModelAdmin):
         today_s   = now_dt.date().isoformat()
         week_ago  = (now_dt - datetime.timedelta(days=7)).date().isoformat()
         month_ago = (now_dt - datetime.timedelta(days=30)).date().isoformat()
-        _base     = BrokerLedger.objects.all()
+        _base     = BrokerLedger.objects.exclude(revenue_type=BrokerLedger.REV_COUNTERPARTY_PNL)
         period    = {
             "today": _f(_base.filter(created_at__date=today_s).aggregate(t=Sum("amount"))["t"]),
             "week":  _f(_base.filter(created_at__date__gte=week_ago).aggregate(t=Sum("amount"))["t"]),
@@ -1960,7 +1978,10 @@ class BrokerLedgerAdmin(admin.ModelAdmin):
             by_account      = by_account,
             daily           = daily,
             all_symbols     = all_symbols,
-            revenue_choices = BrokerLedger.REVENUE_CHOICES,
+            # BOOK-02 — COUNTERPARTY_PNL is excluded from this dashboard's
+            # queryset (see above); omit it from the filter dropdown too so
+            # there's no selectable option that always yields zero rows.
+            revenue_choices = [c for c in BrokerLedger.REVENUE_CHOICES if c[0] != BrokerLedger.REV_COUNTERPARTY_PNL],
             f_type          = f_type,
             f_symbol        = f_symbol,
             f_from          = f_from,
@@ -2069,7 +2090,11 @@ def _compute_control_data() -> dict:
             })
 
     # Q4 — indexed range scans, 5 aggregates in one pass each
-    bl = BrokerLedger.objects
+    # BOOK-02 — excludes COUNTERPARTY_PNL (B-Book directional PnL, can be
+    # negative) from this "revenue" base so t_today/t_week/top_symbols/
+    # top_accounts keep their pre-BOOK-02 meaning. A unified broker PnL
+    # view (fee revenue + counterparty result) is BOOK-03's job.
+    bl = BrokerLedger.objects.exclude(revenue_type=BrokerLedger.REV_COUNTERPARTY_PNL)
     today_agg = bl.filter(created_at__gte=today_start).aggregate(
         total     = Sum("amount"),
         spread    = Sum("amount", filter=Q(revenue_type=BrokerLedger.REV_SPREAD)),
@@ -2328,7 +2353,9 @@ class BrokerRevenueSnapshotAdmin(admin.ModelAdmin):
         curve_delta     = curve_end_val - curve_start_val
 
         # ── KPI cards ─────────────────────────────────────────────────
-        bl = BrokerLedger.objects
+        # BOOK-02 — excludes COUNTERPARTY_PNL (B-Book directional PnL, can
+        # be negative) so this "revenue" view keeps its pre-BOOK-02 meaning.
+        bl = BrokerLedger.objects.exclude(revenue_type=BrokerLedger.REV_COUNTERPARTY_PNL)
         t_today     = _f(bl.filter(created_at__date=today).aggregate(t=Sum("amount"))["t"])
         t_yesterday = _f(bl.filter(created_at__date=yesterday).aggregate(t=Sum("amount"))["t"])
         t_week      = _f(bl.filter(created_at__date__gte=week_ago).aggregate(t=Sum("amount"))["t"])

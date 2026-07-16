@@ -148,7 +148,14 @@ class OrderCloseVsDaemonConcurrentTests(TransactionTestCase):
         self.assertEqual(
             LedgerEntry.objects.filter(account=account, event_type=LedgerEntry.EV_REALIZED).count(), 1,
         )
-        self.assertEqual(BrokerLedger.objects.filter(source_account=account).count(), 0)
+        # BOOK-02 — the daemon's genuine close above legitimately writes one
+        # COUNTERPARTY_PNL row (trader +50 -> broker -50). The point of this
+        # assertion is that the stale _order_close() retry above does NOT
+        # create a second one — exactly 1 total, not 0 (0 predates BOOK-02).
+        broker_rows = list(BrokerLedger.objects.filter(source_account=account))
+        self.assertEqual(len(broker_rows), 1)
+        self.assertEqual(broker_rows[0].revenue_type, BrokerLedger.REV_COUNTERPARTY_PNL)
+        self.assertEqual(broker_rows[0].amount, Decimal("-50"))
         self.assertNotIn("order_close", _sent_types(consumer))
         self.assertEqual(consumer._positions, [])
 

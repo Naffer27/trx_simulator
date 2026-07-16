@@ -16,6 +16,7 @@ from .observability import security_log
 from . import pricing_context as pricing_ctx
 from . import dynamic_spread
 from . import pnl_engine
+from .broker_ledger import create_broker_counterparty_entry
 
 log = logging.getLogger("simulator.ws")
 
@@ -2811,6 +2812,11 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 meta={"symbol": pos_mem["symbol"], "side": pos_mem["side"],
                       "reason": reason, "trade_id": trade.id},
             )
+
+            # BOOK-02 — broker's B-Book counterparty result for this same
+            # Trade, same transaction. See simulator/broker_ledger.py.
+            if _acct_row is not None:
+                create_broker_counterparty_entry(trade, _acct_row, realized_pnl, reason)
 
             if _shortfall > _ZERO:
                 LedgerEntry.objects.create(
