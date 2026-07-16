@@ -1,5 +1,5 @@
 # simulator/consumers.py
-import os, json, asyncio, random, time, logging
+import os, json, asyncio, random, time, logging, math
 from datetime import datetime, timezone as dt_timezone
 from urllib.parse import parse_qs
 
@@ -255,6 +255,77 @@ def _check_lot_size(qty: float, spec) -> tuple[bool, str]:
     if abs(steps - round(steps)) > 0.001:
         return False, "lot_step_violation"
     return True, "ok"
+
+
+def _validate_sl_tp(side: str, sl, tp, exec_price: float) -> tuple[bool, str, str]:
+    """
+    PANEL-04 — server-side SL/TP validation for new orders. Pure, no I/O.
+    Never trusts the frontend: a crafted WS payload can send anything
+    (NaN, Infinity, a negative number, a value on the wrong side of the
+    executable price) regardless of what the <input type=number> element
+    would normally constrain in a real browser.
+
+    Rejects:
+      - a value that isn't a real number at all (fails float());
+      - non-finite values (NaN, +Infinity, -Infinity);
+      - zero or negative values — a price can never be <= 0;
+      - SL/TP on the WRONG SIDE of the executable price for the given
+        order side:
+          BUY  — sl must be strictly BELOW exec_price, tp strictly ABOVE.
+          SELL — sl must be strictly ABOVE exec_price, tp strictly BELOW.
+
+    Deliberately does NOT enforce any minimum distance from exec_price —
+    no such policy has been approved anywhere in this codebase (no
+    existing min-stop-distance constant, config field, or product rule).
+    Inventing one here would be a business decision this function has no
+    authority to make; a SL/TP that is merely "very close" to the
+    executable price is syntactically valid and accepted — only
+    non-finite/non-positive/wrong-direction values are rejected.
+
+    sl/tp are optional (None skips validation for that field). Returns
+    (ok, error_code, message) — error_code/message pairs are specific per
+    failure so the client can render a precise reason, never a generic
+    catch-all.
+    """
+    for label, value, code_prefix in (("sl", sl, "invalid_sl"), ("tp", tp, "invalid_tp")):
+        if value is None:
+            continue
+        try:
+            fval = float(value)
+        except (TypeError, ValueError):
+            return False, f"{code_prefix}_value", f"{label.upper()} inválido: no es un número."
+        if not math.isfinite(fval):
+            return False, f"{code_prefix}_value", f"{label.upper()} inválido: valor no finito."
+        if fval <= 0:
+            return False, f"{code_prefix}_value", f"{label.upper()} inválido: debe ser mayor que cero."
+
+    if sl is not None:
+        sl_f = float(sl)
+        if side == "buy" and sl_f >= exec_price:
+            return (
+                False, "invalid_sl_direction",
+                "Stop Loss inválido: para una orden BUY debe estar por debajo del precio de ejecución.",
+            )
+        if side == "sell" and sl_f <= exec_price:
+            return (
+                False, "invalid_sl_direction",
+                "Stop Loss inválido: para una orden SELL debe estar por encima del precio de ejecución.",
+            )
+
+    if tp is not None:
+        tp_f = float(tp)
+        if side == "buy" and tp_f <= exec_price:
+            return (
+                False, "invalid_tp_direction",
+                "Take Profit inválido: para una orden BUY debe estar por encima del precio de ejecución.",
+            )
+        if side == "sell" and tp_f >= exec_price:
+            return (
+                False, "invalid_tp_direction",
+                "Take Profit inválido: para una orden SELL debe estar por debajo del precio de ejecución.",
+            )
+
+    return True, "ok", "ok"
 
 
 def _compute_atomic_open_guard(
@@ -1044,6 +1115,19 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
         if side not in ("buy","sell") or qty <= 0:
             await self.send_json({"type":"error","code":"invalid_order","message":"orden_invalida"})
+            return
+
+        # PANEL-04 — server-side SL/TP validation. Never trust the
+        # frontend: a crafted WS payload can send NaN/Infinity/negative/
+        # wrong-direction values regardless of what the <input
+        # type=number> element normally constrains in a real browser. No
+        # minimum-distance policy is enforced — see _validate_sl_tp's
+        # docstring for why.
+        _sl_tp_ok, _sl_tp_code, _sl_tp_msg = _validate_sl_tp(
+            side, sl, tp, self.exec_price(sym, side),
+        )
+        if not _sl_tp_ok:
+            await self.send_json({"type": "error", "code": _sl_tp_code, "message": _sl_tp_msg})
             return
 
         # Fast in-memory check (margin, min qty)

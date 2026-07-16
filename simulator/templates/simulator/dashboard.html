@@ -1361,7 +1361,7 @@
 
         <!-- Volume -->
         <div class="rc-field-row">
-          <label class="rc-field-lbl">Volume (lots)</label>
+          <label class="rc-field-lbl" id="qtyLabel">Volume (lots)</label>
           <div class="rc-stepper">
             <button id="lotDec2" class="rc-step-btn" onclick="_adjustLot(-1)">−</button>
             <input id="qty" type="number" min="0.01" step="0.01" value="0.01" class="rc-stepper-val">
@@ -1780,6 +1780,12 @@ const LOT_SPECS = {
 function getLotStep(sym)    { return (LOT_SPECS[sym]||{step:0.01}).step; }
 function getLotMin(sym)     { return (LOT_SPECS[sym]||{min:0.01}).min; }
 function getLotDecimals(sym){ return (LOT_SPECS[sym]||{dec:2}).dec; }
+/* PANEL-04 — per-symbol qty label text only; does not touch backend units/formulas */
+function getQtyLabel(sym){
+  if(sym==='BTCUSD') return 'Volume (BTC)';
+  if(sym==='ETHUSD') return 'Volume (ETH)';
+  return 'Volume (Lots)';
+}
 
 /* ── Contract size per symbol (mirrors SymbolSpec.contract_size) ──
    Per-position PnL must multiply by this; account-level PnL already
@@ -1849,6 +1855,8 @@ function _updateQtyInputAttrs(sym){
     const cur=parseFloat(mebEl.value)||min;
     if(cur < min) mebEl.value=min.toFixed(dec);
   }
+  const qtyLabelEl=document.getElementById('qtyLabel');
+  if(qtyLabelEl) qtyLabelEl.textContent=getQtyLabel(sym);
 }
 
 /* Increment/decrement desktop lot stepper by ±1 step for the active symbol */
@@ -2098,7 +2106,13 @@ class TradingPanel {
     hideQB();
     // Reset lot to min for new symbol and update input attrs if this is the active panel
     this.mobileLot=getLotMin(this.currentSymbol);
-    if(this===activePanel)_updateQtyInputAttrs(this.currentSymbol);
+    if(this===activePanel){
+      _updateQtyInputAttrs(this.currentSymbol);
+      // PANEL-04 — SL/TP are price levels for the *previous* symbol's
+      // scale; they must never carry over to a different instrument.
+      const slEl=document.getElementById('sl'), tpEl=document.getElementById('tp');
+      if(slEl)slEl.value=''; if(tpEl)tpEl.value='';
+    }
     if(this.ws?.readyState===WebSocket.OPEN){
       this.ws.send(JSON.stringify({action:'change_symbol',symbol:this.currentSymbol}));
       this._loadHistory();
@@ -2183,6 +2197,12 @@ class TradingPanel {
       this.setStatus('disconnected — reconnecting…');clearInterval(this.hb);clearTimeout(this.reconnTimer);
       this.reconnTimer=setTimeout(()=>this.connect(),Math.min(5000,this.reconnDelay));
       this.reconnDelay=Math.min(5000,this.reconnDelay*1.7);this.connecting=false;
+      // PANEL-04 — a socket drop while our own order was in flight must
+      // release the buttons instead of leaving them stuck disabled.
+      if(orderTicketPanel===this&&orderTicketState==='sending'){
+        _resolveOrderTicket();
+        execToast('close','⚠️ Conexión perdida','Verifica tus posiciones');
+      }
     };
   }
 
@@ -2193,6 +2213,13 @@ class TradingPanel {
   _handleMsg(msg){
     if(msg.type==='info'||msg.type==='warn'){this.setStatus((msg.type==='info'?'ℹ️ ':'⚠️ ')+(msg.message||''));return;}
     if(msg.type==='error'){
+      // PANEL-04 — backend rejection resolves the order ticket state
+      // (accepted/rejected/etc. must never leave buttons stuck disabled).
+      // 'error' is a generic type used for many unrelated failures too
+      // (invalid_symbol on change_symbol, close_failed, ...) — only the
+      // panel that actually owns the in-flight ticket may resolve it, or
+      // an error on panel B would wrongly release panel A's pending order.
+      if(orderTicketPanel===this)_resolveOrderTicket();
       // Remove the most-recently queued pending tmp line — it's the rejected order
       if(this.pendingTmp.length){
         const rejected=this.pendingTmp.pop();
@@ -2216,10 +2243,16 @@ class TradingPanel {
       return;
     }
     if(msg.type==='risk_warning'){
+      // PANEL-04 — this pauses for user confirmation, it is not a final
+      // outcome: release the buttons now, confirmRiskOrder() re-arms
+      // 'sending' if the user goes ahead. Only the panel that owns the
+      // in-flight ticket may resolve it (see the 'error' branch above).
+      if(orderTicketPanel===this)_resolveOrderTicket();
       _showRiskConfirmModal(msg,this);
       return;
     }
     if(msg.type==='order_rejected'&&msg.code==='extreme_risk'){
+      if(orderTicketPanel===this)_resolveOrderTicket();
       showRiskAlert('🚫 RIESGO EXTREMO — Exposición '+msg.exposure_pct+'%. Reduce el tamaño de posición.',false);
       return;
     }
@@ -2281,6 +2314,9 @@ class TradingPanel {
       renderGlobalPositions();return;
     }
     if(msg.type==='order_ack'){
+      // Only the panel that owns the in-flight ticket may resolve it —
+      // see the 'error' branch above for why this can't be unconditional.
+      if(orderTicketPanel===this)_resolveOrderTicket();
       const side=(msg.side||'').toLowerCase();
       const px=msg.price??msg.fill_price??this.lastClose;
       const fmt=px!=null?Number(px).toFixed(priceFormatFor(this.currentSymbol).precision):null;
@@ -2667,26 +2703,72 @@ class TradingPanel {
   _hideDragBadge(){if(this.dragBadge)this.dragBadge.style.display='none';}
 
   sendOrder(side,qty,slV,tpV,riskConfirmed=false){
-    if(!this.ws||this.ws.readyState!==WebSocket.OPEN)return;
+    // PANEL-04 — idempotency guard: while a request is in flight the
+    // buttons are really disabled (see _setOrderTicketSending), but a
+    // queued/synthetic click could still call this directly — refuse it.
+    if(orderTicketState==='sending')return;
+    if(!this.ws||this.ws.readyState!==WebSocket.OPEN){
+      execToast('close','❌ Sin conexión','No se pudo enviar la orden — reconectando…');
+      return;
+    }
     if(!this.currentSymbol||this.lastClose==null){this.setStatus('⚠️ Wait for first tick');return;}
     const type=document.getElementById('ordType').value;
     const payload={action:'order:new',symbol:this.currentSymbol,side,type,qty,price:this.lastClose,sl:slV,tp:tpV};
     if(riskConfirmed)payload.risk_confirmed=true;
-    // Haptic + sending state
     try{navigator.vibrate&&navigator.vibrate(50);}catch(_){}
-    const _meb=document.getElementById('mobileExecBar');
-    const mobBtns=_meb?[..._meb.querySelectorAll('.mfp-sell,.mfp-buy')]:[];
-    const btns=[document.getElementById('btnSell'),document.getElementById('btnBuy'),document.getElementById('btnTopSell'),document.getElementById('btnTopBuy'),...mobBtns];
-    btns.forEach(b=>b&&b.classList.add('btn-sending'));
-    setTimeout(()=>btns.forEach(b=>b&&b.classList.remove('btn-sending')),800);
+    _setOrderTicketSending(this);
     execToast('send',side==='sell'?'Enviando SELL…':'Enviando BUY…','');
-    this.ws.send(JSON.stringify(payload));
+    try{
+      this.ws.send(JSON.stringify(payload));
+    }catch(e){
+      _resolveOrderTicket();
+      execToast('close','❌ Error de conexión','No se pudo enviar la orden');
+      return;
+    }
     const tmpId=`tmp-${Date.now()}`;
     this._drawLines(tmpId,{id:tmpId,symbol:this.currentSymbol,side,avg:this.lastClose,sl:slV,tp:tpV});
     this.selectedPosIds.clear();this.selectedPosIds.add(tmpId);this.lastSelectedId=tmpId;
     this._applyLineStyles();this.pendingTmp.push({tmpId,symbol:this.currentSymbol,side,avg:this.lastClose});
     setTimeout(()=>showQB(this,tmpId),50);
   }
+}
+
+/* ── PANEL-04 — Order ticket state machine ───────────────────────────
+   States: idle, sending, accepted, rejected, disconnected, timeout.
+   The order ticket (qty/sl/tp/BUY/SELL) is a single global form shared
+   by all panels, so its in-flight state is tracked globally too — only
+   one order can be in flight from this ticket at a time. accepted /
+   rejected / disconnected / timeout are all momentary: they drive a
+   toast/message and then the ticket returns to idle (buttons enabled). */
+let orderTicketState='idle';
+let orderTicketPanel=null;
+let orderTicketTimer=null;
+const ORDER_TICKET_TIMEOUT_MS=8000;
+
+function _orderTicketButtons(){
+  const meb=document.getElementById('mobileExecBar');
+  const mobBtns=meb?[...meb.querySelectorAll('.mfp-sell,.mfp-buy')]:[];
+  return [document.getElementById('btnSell'),document.getElementById('btnBuy'),document.getElementById('btnTopSell'),document.getElementById('btnTopBuy'),...mobBtns].filter(Boolean);
+}
+function _setOrderTicketSending(panel){
+  orderTicketState='sending';orderTicketPanel=panel;
+  _orderTicketButtons().forEach(b=>{b.disabled=true;b.classList.add('btn-sending');});
+  clearTimeout(orderTicketTimer);
+  orderTicketTimer=setTimeout(_onOrderTicketTimeout,ORDER_TICKET_TIMEOUT_MS);
+}
+function _resolveOrderTicket(){
+  if(orderTicketState==='idle')return;
+  orderTicketState='idle';orderTicketPanel=null;
+  clearTimeout(orderTicketTimer);orderTicketTimer=null;
+  _orderTicketButtons().forEach(b=>{b.disabled=false;b.classList.remove('btn-sending');});
+}
+function _onOrderTicketTimeout(){
+  if(orderTicketState!=='sending')return;
+  const panel=orderTicketPanel;
+  _resolveOrderTicket();
+  execToast('close','⚠️ Estado desconocido','Verifica tus posiciones');
+  // Refresh positions from backend — never auto-resend the order.
+  if(panel?.ws?.readyState===WebSocket.OPEN)panel.ws.send(JSON.stringify({action:'get_positions'}));
 }
 
 /* ── Panel management ── */
@@ -2703,6 +2785,11 @@ function setActive(panel){
   const dec=getLotDecimals(panel.currentSymbol);
   if(isMobile()){const _lv=document.getElementById('mebLotVal');if(_lv)_lv.value=(panel.mobileLot||getLotMin(panel.currentSymbol)).toFixed(dec);}
   _updateQtyInputAttrs(panel.currentSymbol);
+  // PANEL-04 — the order ticket is a single global form; switching which
+  // panel it applies to must not leak SL/TP price levels from the
+  // previous panel's symbol into the new one.
+  const slEl=document.getElementById('sl'), tpEl=document.getElementById('tp');
+  if(slEl)slEl.value=''; if(tpEl)tpEl.value='';
   const mhdrSymSel=document.getElementById('mhdrSymSel');
   if(mhdrSymSel)mhdrSymSel.value=panel.currentSymbol;
   _syncMhdrTFBadge(panel.currentTF||'15m');
