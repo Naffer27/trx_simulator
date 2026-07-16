@@ -1251,27 +1251,44 @@ class TradingConsumer(AsyncWebsocketConsumer):
                                   "message": "no_se_pudo_cerrar_posicion"})
             return  # memory untouched — position still open
 
-        # Step D — DB committed: safe to mutate memory now.
+        # Step D — DB committed: safe to mutate memory now. The position
+        # is gone from DB either way (this call really closed it, OR a
+        # concurrent connection/daemon already did) — remove it from
+        # memory unconditionally.
         self._positions = [p for p in self._positions if str(p.get("id")) != str(found_pos["id"])]
-        if not result.get("already_closed"):
-            # Normal close: apply the authoritative DB values.
-            self.account["balance"]      = result["new_balance"]
-            self.account["peak_balance"] = result["new_peak"]
-            self.account["status"]       = result["new_status"]
-        # already_closed=True: position was closed by a concurrent Celery SL/TP.
-        # The DB balance is already correct; do NOT overwrite it with the stale
-        # pre-computed value. The next account:update push from the daemon will
-        # sync in-memory state.
-        self._track_daily_pnl(realized)
+
+        # PANEL-03 — routed through the same already_closed guard every
+        # close path now shares (_handle_close_result); this preserves
+        # this function's own original behavior exactly for the real-close
+        # case (ACCOUNT-02) while also closing the one small gap it still
+        # had: previously _track_daily_pnl(realized) ran even when
+        # already_closed=True, folding a stale/unconfirmed realized_pnl
+        # into this connection's daily PnL tracking — never correct if
+        # this connection didn't actually perform the close.
+        outcome = self._handle_close_result(
+            found_pos, result, close_px, "manual", realized, int(time.time()),
+        )
+        if outcome is None:
+            # already_closed=True: position was closed by a concurrent
+            # connection or the daemon. Do NOT trust the stale
+            # new_balance/new_equity this call computed before the lock —
+            # force a fresh, non-throttled DB read instead (FASE 4).
+            await self._refresh_account_after_stale_close()
+        else:
+            self.account["balance"]      = outcome["new_balance"]
+            self.account["peak_balance"] = outcome["new_peak"]
+            self.account["status"]       = outcome["new_status"]
+            self._track_daily_pnl(realized)
 
         # Step E — respond to client (same payloads as before)
         await self._recalc_account_and_push()
-        log.info("[close] order closed OK. remaining positions=%d", len(self._positions))
-        await self.send_json({"type": "order_close",
-                              "id": found_pos["id"], "symbol": sym, "side": found_pos["side"],
-                              "qty": found_pos["qty"], "avg": found_pos["avg"],
-                              "close_px": close_px, "reason": "manual",
-                              "realized_pnl": realized, "ts": int(time.time())})
+        log.info(
+            "[close] %s. remaining positions=%d",
+            "order closed OK" if outcome is not None else "already closed by a concurrent action — synced fresh state",
+            len(self._positions),
+        )
+        if outcome is not None:
+            await self.send_json({"type": "order_close", **outcome["notify_item"]})
         await self._refresh_and_send_positions()
 
     # ---------------- Risk Preview ----------------
@@ -1538,6 +1555,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
         running_balance = self.account["balance"]
         total_floating_snapshot = self._unrealized_pnl_total()
         accum_floating_closed = 0.0
+        saw_stale_close = False
 
         for p in list(self._positions):
             sym  = p["symbol"]
@@ -1554,32 +1572,48 @@ class TradingConsumer(AsyncWebsocketConsumer):
                     p, cpx, "stopout", realized, new_balance, new_equity,
                     pricing_context_close=pricing_context_close,
                 )
-                running_balance = result["new_balance"]
-                accum_floating_closed += fp_p
-                self._track_daily_pnl(realized)
-                closed_items.append({
-                    "id": p["id"], "symbol": sym, "side": p["side"],
-                    "qty": p["qty"], "avg": p["avg"],
-                    "close_px": cpx, "reason": "stopout",
-                    "realized_pnl": realized, "ts": now_ts,
-                })
             except Exception as exc:
                 log.error("[stopout] DB close failed pos %s: %s", p["id"], exc)
                 failed_positions.append(p)
+                continue
 
-        # DB commits done — update memory, then persist suspension
-        self.account["balance"] = running_balance
-        self.account["equity"]  = round(running_balance, 2)
+            # PANEL-03 — position is gone from DB either way once we reach
+            # here — never re-add to failed_positions.
+            outcome = self._handle_close_result(p, result, cpx, "stopout", realized, now_ts)
+            if outcome is None:
+                saw_stale_close = True
+            else:
+                running_balance = outcome["new_balance"]
+                accum_floating_closed += fp_p
+                self._track_daily_pnl(realized)
+                closed_items.append(outcome["notify_item"])
+
+        # DB commits done — update memory, then persist suspension.
         self._positions = failed_positions
+        # pnl_unreal/margin_used zeroed BEFORE any balance/equity refresh
+        # below — _refresh_account_after_stale_close() derives equity as
+        # fresh_balance + self.account["pnl_unreal"], so this order
+        # matters: a stopout intends equity == balance (any leftover
+        # failed_positions notwithstanding, same approximation the
+        # non-stale branch below already made), not balance + a
+        # still-stale pre-stopout pnl_unreal.
+        self.account["pnl_unreal"]  = 0.0
+        self.account["margin_used"] = 0.0
+        if saw_stale_close:
+            # At least one collision — force a fresh, non-throttled
+            # balance/equity read rather than trust running_balance (see
+            # _refresh_account_after_stale_close's docstring).
+            await self._refresh_account_after_stale_close()
+        else:
+            self.account["balance"] = running_balance
+            self.account["equity"]  = round(running_balance, 2)
 
         try:
             await self._db_suspend_account("stopout")
         except Exception as exc:
             log.error("[stopout] DB suspend failed: %s", exc)
 
-        self.account["status"]      = "Suspendido"
-        self.account["pnl_unreal"]  = 0.0
-        self.account["margin_used"] = 0.0
+        self.account["status"] = "Suspendido"
 
         # Notify client
         for c in closed_items:
@@ -1634,6 +1668,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
         running_balance = self.account["balance"]
         total_floating_snapshot = self._unrealized_pnl_total()
         accum_floating_closed = 0.0
+        saw_stale_close = False
 
         for p in list(self._positions):
             sym  = p["symbol"]
@@ -1650,25 +1685,33 @@ class TradingConsumer(AsyncWebsocketConsumer):
                     p, cpx, "margin_call", realized, new_balance, new_equity,
                     pricing_context_close=pricing_context_close,
                 )
-                running_balance = result["new_balance"]
-                accum_floating_closed += fp_p
-                self._track_daily_pnl(realized)
-                closed_items.append({
-                    "id": p["id"], "symbol": sym, "side": p["side"],
-                    "qty": p["qty"], "avg": p["avg"],
-                    "close_px": cpx, "reason": "margin_call",
-                    "realized_pnl": realized, "ts": now_ts,
-                })
             except Exception as exc:
                 log.error("[margin_call] DB close failed pos %s: %s", p["id"], exc)
                 failed_positions.append(p)
+                continue
 
-        # DB commits done — update memory
-        self.account["balance"] = running_balance
+            # PANEL-03 — position is gone from DB either way once we reach
+            # here — never re-add to failed_positions.
+            outcome = self._handle_close_result(p, result, cpx, "margin_call", realized, now_ts)
+            if outcome is None:
+                saw_stale_close = True
+            else:
+                running_balance = outcome["new_balance"]
+                accum_floating_closed += fp_p
+                self._track_daily_pnl(realized)
+                closed_items.append(outcome["notify_item"])
+
+        # DB commits done — update memory. pnl_unreal/margin_used zeroed
+        # BEFORE any balance/equity refresh below — see the matching
+        # comment in _do_stopout for why the order matters.
         self._positions = failed_positions
         self.account["pnl_unreal"]  = 0.0
         self.account["margin_used"] = 0.0
-        self.account["equity"]      = round(self.account["balance"], 2)
+        if saw_stale_close:
+            await self._refresh_account_after_stale_close()
+        else:
+            self.account["balance"] = running_balance
+            self.account["equity"]  = round(self.account["balance"], 2)
 
         for c in closed_items:
             await self.send_json({"type": "order_close", **c})
@@ -1703,6 +1746,87 @@ class TradingConsumer(AsyncWebsocketConsumer):
             "initial_balance": self.account.get("initial_balance", balance),
         })
 
+    # ---------------- PANEL-03 — shared close-result handling ----------------
+    def _handle_close_result(self, pos: dict, result: dict, close_px: float,
+                              reason: str, realized_pnl: float, ts: int) -> dict | None:
+        """PANEL-03 — the ONE place every close path (_order_close,
+        _check_tp_sl, _do_stopout, _do_retail_liquidation) funnels a
+        _db_close_position_atomic result through, so all four apply the
+        SAME already_closed guard _order_close already had (ACCOUNT-02)
+        instead of four independent, partially-correct copies.
+
+        Real close (result["already_closed"] is falsy): returns a dict
+        with the authoritative DB values (new_balance/new_peak/new_status)
+        plus a ready-to-send order_close notify payload — the caller
+        applies these to self.account and sends the notification.
+
+        Stale close (already_closed=True — a concurrent connection or the
+        daemon already closed this exact position before this
+        transaction's lock was acquired; see
+        _db_close_position_atomic's own already_closed branch): returns
+        None. The caller MUST NOT fold this into any balance/equity
+        arithmetic, MUST NOT send an order_close for it (nothing was
+        closed by THIS action — close_px/realized_pnl here are this
+        connection's own stale, pre-lock estimate, not what actually
+        happened), and MUST NOT count it toward daily PnL tracking. The
+        position is gone from DB either way — the caller removes it from
+        self._positions regardless of this return value, and must call
+        _refresh_account_after_stale_close() once per batch if this
+        returned None for any position, per FASE 4.
+        """
+        if result.get("already_closed"):
+            log.info(
+                "[close] pos id=%r already closed by a concurrent connection/daemon "
+                "— not fabricating a close event, not trusting stale balance/equity/pnl",
+                pos.get("id"),
+            )
+            return None
+        return {
+            "new_balance": result["new_balance"],
+            "new_peak": result.get("new_peak"),
+            "new_status": result.get("new_status"),
+            "notify_item": {
+                "id": pos["id"], "symbol": pos["symbol"], "side": pos["side"],
+                "qty": pos["qty"], "avg": pos["avg"],
+                "close_px": close_px, "reason": reason,
+                "realized_pnl": realized_pnl, "ts": ts,
+            },
+        }
+
+    async def _refresh_account_after_stale_close(self) -> None:
+        """PANEL-03 FASE 4 — called once per close-path batch/attempt that
+        encountered at least one already_closed collision (see
+        _handle_close_result). Forces a fresh, non-throttled read of
+        TradingAccount.balance from DB — never trusts whatever
+        running_balance the caller accumulated locally across the batch,
+        since that bookkeeping silently stops being trustworthy the
+        moment even one collision is skipped (the caller correctly no
+        longer folds the stale echoed-back value into it, but nothing
+        upstream can retroactively prove running_balance still reflects
+        every real change once that happens — a fresh read is the only
+        way to be sure).
+
+        Reuses _db_sync_account_balances() (ACCOUNT-02) verbatim — reads
+        balance fresh (read-only), persists only derived equity — no new
+        formula. On DB failure: logs and leaves self.account untouched,
+        never fabricates/zeros the last known state (same contract as
+        _recalc_account_and_push's own DB-sync failure handling).
+        """
+        try:
+            fresh_balance = await self._db_sync_account_balances()
+        except Exception as exc:
+            log.error(
+                "[close] balance refresh after already_closed FAILED for account=%s "
+                "— keeping previous in-memory state: %r",
+                self._db_account_id, exc, exc_info=True,
+            )
+            return
+        if fresh_balance is not None:
+            self.account["balance"] = fresh_balance
+            self.account["equity"] = round(
+                fresh_balance + float(self.account.get("pnl_unreal", 0.0) or 0.0), 2,
+            )
+
     async def _check_tp_sl(self, symbol: str, bid: float, ask: float):
         dec = step_decimals_for(symbol)[1]
         remaining, closed = [], []
@@ -1710,6 +1834,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
         running_balance = self.account["balance"]
         total_floating_snapshot = self._unrealized_pnl_total()
         accum_floating_closed = 0.0
+        saw_stale_close = False
 
         for p in self._positions:
             if p["symbol"] != symbol:
@@ -1750,21 +1875,38 @@ class TradingConsumer(AsyncWebsocketConsumer):
                         p, close_px, reason, realized, new_balance, new_equity,
                         pricing_context_close=pricing_context_close,
                     )
-                    running_balance = result["new_balance"]
-                    accum_floating_closed += fp_p
-                    closed.append({"id":p["id"],"symbol":symbol,"side":side,"qty":p["qty"],"avg":p["avg"],
-                                   "close_px":close_px,"reason":reason,
-                                   "realized_pnl":realized,"ts":now})
                 except Exception as exc:
                     log.error("[tp_sl] db close FAILED pos id=%r: %s", p["id"], exc, exc_info=True)
                     remaining.append(p)
+                    continue
+
+                # PANEL-03 — the position is gone from DB either way once
+                # we reach here (this call really closed it, OR a
+                # concurrent connection/daemon already did) — never re-add
+                # to remaining. _handle_close_result decides whether it's
+                # safe to trust the returned balance/notify a close.
+                outcome = self._handle_close_result(p, result, close_px, reason, realized, now)
+                if outcome is None:
+                    saw_stale_close = True
+                else:
+                    running_balance = outcome["new_balance"]
+                    accum_floating_closed += fp_p
+                    closed.append(outcome["notify_item"])
             else:
                 remaining.append(p)
 
-        if closed:
-            self.account["balance"] = running_balance
-            self._track_daily_pnl(sum(c["realized_pnl"] for c in closed))
+        if closed or saw_stale_close:
             self._positions = remaining
+            if saw_stale_close:
+                # At least one collision — force a fresh, non-throttled
+                # balance/equity read rather than trust running_balance,
+                # which stops being provably correct the moment even one
+                # collision is skipped (see _refresh_account_after_stale_close).
+                await self._refresh_account_after_stale_close()
+            else:
+                self.account["balance"] = running_balance
+            if closed:
+                self._track_daily_pnl(sum(c["realized_pnl"] for c in closed))
             await self._recalc_account_and_push()
             for c in closed: await self.send_json({"type":"order_close", **c})
             await self._refresh_and_send_positions()
