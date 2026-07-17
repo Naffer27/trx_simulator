@@ -2047,3 +2047,34 @@ class Instrument(models.Model):
     def __str__(self):
         state = 'enabled' if self.trading_enabled else 'disabled'
         return f"{self.symbol} ({self.display_name}) [{self.asset_class}/{state}]"
+
+
+class BrokerRiskLock(models.Model):
+    """
+    RISK-02 — singleton row used ONLY as a select_for_update() mutex to
+    serialize broker-wide risk-limit evaluation (simulator/broker_risk.py)
+    against new Position creation. Holds no business data — nothing here
+    is ever read for its value, only locked.
+
+    Exactly one row (id=1) exists, created by this migration's data step.
+    Never create a second row; the whole point is a single, global
+    contention point.
+
+    Global lock order (see the module-level LOCK ORDER note in
+    consumers.py, updated by RISK-02):
+
+        BrokerRiskLock -> TradingAccount -> Position
+
+    Acquired FIRST — before TradingAccount, before Position — by
+    TradingConsumer._db_open_position_atomic (the only code path that
+    both evaluates RISK-02 rules and opens a new Position). Never
+    acquired by any close path (closing only ever reduces broker-wide
+    exposure, so closes do not need to serialize against the risk gate)
+    and never acquired AFTER TradingAccount/Position anywhere — doing so
+    would invert the order and create a deadlock against this same path.
+    """
+    id = models.SmallIntegerField(primary_key=True, default=1)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"BrokerRiskLock singleton (id={self.id})"

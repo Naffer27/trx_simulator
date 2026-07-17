@@ -436,24 +436,36 @@ def _compute_atomic_open_guard(
     }
 
 
-# ── PANEL-02 INVARIANTE-2 — global TradingAccount/Position lock order ───────
-# Audited across every live path in this codebase that locks both models
-# with select_for_update() inside a single transaction. All of them lock
-# the TradingAccount row FIRST, then Position row(s):
-#   - TradingConsumer._db_open_position_atomic  — TradingAccount →
+# ── PANEL-02 INVARIANTE-2 / RISK-02 — global lock order ─────────────────────
+# Audited across every live path in this codebase that locks any of
+# BrokerRiskLock/TradingAccount/Position with select_for_update() inside a
+# single transaction. The global order is:
+#
+#     BrokerRiskLock → TradingAccount → Position
+#
+#   - TradingConsumer._db_open_position_atomic  — BrokerRiskLock (RISK-02,
+#     always — see BrokerRiskLock's docstring) → TradingAccount →
 #     Position(all open, this account, .order_by("id"))
 #   - TradingConsumer._db_close_position_atomic — TradingAccount →
-#     Position(single, by id)
+#     Position(single, by id)   [no BrokerRiskLock — closing only reduces
+#     broker-wide exposure, never needs to serialize against the risk gate]
 #   - tasks._close_position_sync (Celery daemon TP/SL/stopout/margin-call
 #     close)                     — TradingAccount → Position(single, by id)
 #   - admin.py force_close (dealing desk)        — TradingAccount →
 #     Position(all matching, .order_by("id"))
 #
-# This is a single, consistent, GLOBAL lock order — Account → Position —
-# not a per-function choice. Any new code that locks both models MUST
-# follow the same order; reversing it in even one path (Position → Account)
-# would create a classic lock-order-inversion deadlock against every path
-# above the moment two of them run concurrently on the same account.
+# This is a single, consistent, GLOBAL lock order — not a per-function
+# choice. Any new code that locks two or more of these models MUST follow
+# the same order; reversing it in even one path would create a classic
+# lock-order-inversion deadlock against every path above the moment two of
+# them run concurrently. In particular: BrokerRiskLock is ONLY ever
+# acquired FIRST, by _db_open_position_atomic, and NEVER acquired by any
+# code path that has already locked TradingAccount or Position — see
+# BrokerRiskLock's model docstring for the full RISK-02 rationale (the
+# TOCTOU race this closes: two concurrent opens on DIFFERENT accounts, so
+# TradingAccount locking alone cannot serialize them, could otherwise both
+# read the same broker-wide exposure and jointly exceed a broker-wide
+# limit).
 #
 # WHY ACCOUNT FIRST (not Position first, the original PANEL-02 design):
 # TradingAccount is the account's actual mutex — exactly one row exists
@@ -1208,6 +1220,15 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
         dec = step_decimals_for(sym)[1]
         px_exec = round(self.exec_price(sym, side), dec)
+
+        # RISK-02 — broker-wide risk limits are evaluated INSIDE
+        # _db_open_position_atomic below (step 8.5, under BrokerRiskLock),
+        # never here. A separate pre-lock check at this point was the
+        # original RISK-02 design and had a genuine TOCTOU race: two
+        # concurrent opens on different accounts could each read the same
+        # broker-wide exposure before either wrote, both pass, and jointly
+        # exceed a broker-wide limit. There is exactly ONE place broker-wide
+        # risk is evaluated now — see _db_open_position_atomic's docstring.
 
         commission  = self.commission_for(sym, qty, px_exec)
         new_balance = self.account["balance"] - commission
@@ -2379,10 +2400,41 @@ class TradingConsumer(AsyncWebsocketConsumer):
             return {"position_id": None, "merged": False, "ok": True}
         from decimal import Decimal
         with transaction.atomic():
-            # 1. Lock the TradingAccount row FIRST — this is the account's
-            # real mutex (see the module-level LOCK ORDER note above this
-            # class: global order is TradingAccount → Position across
-            # EVERY live path). Locking Account first — even when the
+            # 0. RISK-02 — acquire the broker-wide risk lock FIRST, before
+            # ANY other lock in this transaction (see the module-level LOCK
+            # ORDER note above this class and BrokerRiskLock's own
+            # docstring: BrokerRiskLock -> TradingAccount -> Position).
+            # This is what closes the TOCTOU race a pre-lock RISK-02 check
+            # would otherwise have: two concurrent opens on DIFFERENT
+            # accounts (so TradingAccount locking alone can't serialize
+            # them) could each read the same broker-wide exposure, both
+            # evaluate PASS, and both write — jointly exceeding a
+            # broker-wide limit. Holding this lock from here through commit
+            # means only ONE order-open transaction broker-wide is ever
+            # "inside" RISK-02 evaluation + Position creation at a time; the
+            # exposure recompute at step 8.5 below is therefore guaranteed
+            # race-free. Never acquired by any close path — closing only
+            # ever REDUCES exposure, so closes don't need to serialize
+            # against this gate (see BrokerRiskLock's docstring).
+            #
+            # get_or_create() first, self-healing: the migration seeds the
+            # singleton row once at DB-creation time, but anything that
+            # truncates tables without re-running data migrations (Django
+            # TransactionTestCase's per-test flush between tests; a manual
+            # `flush`/`sqlflush` in ops) would otherwise wipe it and turn
+            # every future order-open into a DoesNotExist crash. get_or_create
+            # is itself race-safe (Django retries its internal get() once on
+            # IntegrityError from a concurrent create) — cheap even in the
+            # common case where the row already exists (single-row, PK read).
+            from .models import BrokerRiskLock
+            BrokerRiskLock.objects.get_or_create(pk=1)
+            BrokerRiskLock.objects.select_for_update().get(pk=1)
+
+            # 1. Lock the TradingAccount row — this account's own mutex
+            # (see the module-level LOCK ORDER note above this
+            # class: global order is BrokerRiskLock → TradingAccount →
+            # Position across EVERY live path that opens a position).
+            # Locking Account first — even when the
             # account currently has ZERO open positions — is what makes it
             # an actual mutex: a concurrent transaction for the SAME
             # account blocks here until this one commits, no matter how
@@ -2563,6 +2615,39 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 return {
                     "position_id": None, "merged": False, "new_balance": float(account.balance),
                     **guard,
+                }
+
+            # 8.5 RISK-02 — broker-wide risk limits. Runs here, inside the
+            # SAME transaction that has held BrokerRiskLock since step 0,
+            # AFTER the per-account guard passes and BEFORE Position
+            # creation — this is the single transactional point the FASE 5
+            # correction requires ("LOCK → recalcular exposición actual
+            # desde DB → evaluar las 9 reglas → crear Position → commit").
+            # The exposure this reads (via broker_exposure.py) is
+            # guaranteed fresh and race-free: every other concurrent
+            # order-open transaction broker-wide is either fully committed
+            # (visible now) or still blocked on BrokerRiskLock.
+            from .broker_risk import validate_new_order
+            _risk02 = validate_new_order(
+                account_id=self._db_account_id, symbol=symbol, side=side, qty=qty,
+                price=price, contract_size=_spec.contract_size,
+            )
+            if not _risk02.allowed:
+                log.info(
+                    "[db_open] REJECTED account=%s symbol=%s side=%s qty=%s code=%s (RISK-02)",
+                    self._db_account_id, symbol, side, qty, _risk02.reason_code,
+                )
+                return {
+                    "ok": False, "error_code": _risk02.reason_code,
+                    "message": _risk02.reason_message,
+                    "position_id": None, "merged": False, "new_balance": float(account.balance),
+                    "required_margin": guard.get("required_margin", 0.0),
+                    "required_margin_pct": guard.get("required_margin_pct", 0.0),
+                    "projected_total_margin": guard.get("projected_total_margin", 0.0),
+                    "projected_total_margin_pct": guard.get("projected_total_margin_pct", 0.0),
+                    "max_total_margin_pct": guard.get("max_total_margin_pct", _DEFAULT_MAX_TOTAL_MARGIN_PCT),
+                    "current_open_positions": guard.get("current_open_positions", fresh_open_count),
+                    "max_open_positions": guard.get("max_open_positions", _rule.max_open_positions),
                 }
 
             # 9. Passed — create/merge the Position exactly as before.
