@@ -290,6 +290,17 @@ def broker_pnl_summary() -> dict:
     Aggregated PnL and AUM metrics.
     Realized PnL sourced from LedgerEntry (REALIZED_PNL events).
     Unrealized PnL = Σ(equity - balance) across active accounts.
+
+    BOOK-03 — realized_pnl_all_time/7d/24h below are TRADER-perspective
+    (the raw, un-negated sum of trader LedgerEntry.EV_REALIZED — positive
+    means traders collectively made money). BOOK-01 flagged this as a
+    latent sign-inversion risk: nothing here previously computed the
+    broker's own perspective, so a future caller treating these as
+    "broker PnL" would show the exact wrong sign. broker_realized_pnl_*
+    fields are added below, correctly signed via simulator/broker_pnl.py
+    (the BOOK-03 single source of truth) — broker_monitoring no longer
+    needs (or performs) any sign inversion of its own. The old fields are
+    kept, unrenamed, for backward compatibility with any existing caller.
     """
     # Realized PnL — all time
     realized_all = (
@@ -344,6 +355,17 @@ def broker_pnl_summary() -> dict:
         .aggregate(total=Coalesce(Sum("amount_usd"), _ZERO))
     )["total"]
 
+    # BOOK-03 — correctly-signed broker-perspective figures, single source
+    # of truth (simulator/broker_pnl.py, reads BrokerLedger.COUNTERPARTY_PNL
+    # directly — never re-derives from LedgerEntry, never inverts a sign
+    # locally). lifetime/24h use the shared period builder; "7d" here stays
+    # a rolling 7-day window (matching realized_pnl_7d above) rather than
+    # PERIOD_WEEK (calendar week) — same rolling semantics, not a change.
+    from .broker_pnl import calculate_broker_pnl, PERIOD_LIFETIME, PERIOD_LAST_24H, PERIOD_CUSTOM
+    broker_lifetime = calculate_broker_pnl(period=PERIOD_LIFETIME)
+    broker_24h      = calculate_broker_pnl(period=PERIOD_LAST_24H)
+    broker_7d       = calculate_broker_pnl(period=PERIOD_CUSTOM, start=cutoff_7d, end=None)
+
     return {
         "realized_pnl_all_time": round(_f(realized_all),  2),
         "realized_pnl_7d":       round(_f(realized_7d),   2),
@@ -357,6 +379,14 @@ def broker_pnl_summary() -> dict:
         "total_deposited_usd":   round(_f(total_deposited), 2),
         "total_withdrawn_usd":   round(_f(total_withdrawn), 2),
         "pending_deposits_usd":  round(_f(pending_deposits), 2),
+        # Broker-perspective (positive = broker gains), BOOK-03:
+        "broker_realized_pnl_all_time": round(_f(broker_lifetime.broker_net_pnl), 2),
+        "broker_realized_pnl_7d":       round(_f(broker_7d.broker_net_pnl), 2),
+        "broker_realized_pnl_24h":      round(_f(broker_24h.broker_net_pnl), 2),
+        "broker_fee_revenue_all_time":  round(_f(broker_lifetime.fee_revenue), 2),
+        "broker_counterparty_pnl_all_time": round(_f(broker_lifetime.counterparty_pnl), 2),
+        "broker_pnl_coverage_pct":      broker_lifetime.coverage_pct,
+        "broker_pnl_historical_incomplete": broker_lifetime.historical_incomplete,
     }
 
 

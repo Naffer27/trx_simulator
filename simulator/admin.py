@@ -2059,8 +2059,18 @@ def _compute_control_data() -> dict:
 
     def _f(v): return float(v or 0)
 
+    # BOOK-03 — today_start now comes from the single shared UTC period
+    # builder (simulator/broker_pnl.py) instead of a locally-rolled
+    # .replace(hour=0,...). Mathematically identical (UTC midnight of the
+    # current day) — not a semantic change, just deduplication (FASE 4).
+    # week_start/month_start/day_24h stay as local ROLLING windows
+    # (now-7d/now-30d/now-24h) for this trend view — deliberately NOT
+    # redirected to the engine's calendar week/month periods, which are a
+    # different concept (Monday-anchored / 1st-of-month-anchored) and
+    # would silently change these numbers; see BOOK-03 ENTREGA FASE 4.
+    from .broker_pnl import utc_period_window, PERIOD_TODAY
     now          = timezone.now()
-    today_start  = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start, _ = utc_period_window(PERIOD_TODAY, now=now)
     yest_start   = today_start - datetime.timedelta(days=1)
     week_start   = now - datetime.timedelta(days=7)
     month_start  = now - datetime.timedelta(days=30)
@@ -2136,9 +2146,35 @@ def _compute_control_data() -> dict:
     spread_pct = round(t_spread_all / sc_sum * 100, 1) if sc_sum > 0 else 0.0
     comm_pct   = round(t_comm_all   / sc_sum * 100, 1) if sc_sum > 0 else 0.0
 
-    # Broker PnL decomposition (B-book counter-party model)
-    unrealized_risk = float(bk_snap.broker_pnl_unrealized) if bk_snap else 0.0
-    net_broker_pnl  = t_lifetime + unrealized_risk
+    # BOOK-03 — Broker PnL decomposition (B-book counter-party model).
+    # Single source of truth: simulator/broker_pnl.py, reading BrokerLedger
+    # directly (never re-deriving from BrokerRevenueSnapshot, which only
+    # ever tracked fee revenue — see that model's docstring). Replaces the
+    # old net_broker_pnl = t_lifetime(fee revenue only) + unrealized_risk,
+    # which silently omitted the realized counterparty result entirely
+    # (BOOK-01 finding) and mislabeled fee revenue as "realized broker PnL".
+    from .broker_pnl import broker_pnl_for_period, PERIOD_LIFETIME
+    lifetime_pnl = broker_pnl_for_period(PERIOD_LIFETIME, now=now)
+    realized_fee_revenue     = float(lifetime_pnl.fee_revenue)
+    realized_counterparty_pnl = float(lifetime_pnl.counterparty_pnl)
+    realized_adjustments     = float(lifetime_pnl.adjustments)
+    realized_net_pnl         = float(lifetime_pnl.broker_net_pnl)
+    coverage_pct             = lifetime_pnl.coverage_pct
+    historical_incomplete    = lifetime_pnl.historical_incomplete
+
+    # Unrealized: broker's simulated counter-party risk on currently OPEN
+    # positions (exposure_engine, routing-filtered — a separate, documented
+    # BOOK-01 finding, not something BOOK-03 changes). Kept strictly apart
+    # from the realized figures above — never summed into realized_net_pnl.
+    unrealized_counterparty_risk = float(bk_snap.broker_pnl_unrealized) if bk_snap else 0.0
+    projected_net_including_open_positions = realized_net_pnl + unrealized_counterparty_risk
+
+    # Back-compat aliases (old field names some earlier iteration of this
+    # view/template referenced) — now correctly sourced instead of being
+    # fee-revenue-only. Prefer the explicit realized_*/unrealized_*/
+    # projected_* names above for anything new.
+    unrealized_risk = unrealized_counterparty_risk
+    net_broker_pnl  = projected_net_including_open_positions
 
     # Daily pace — extrapolate today's revenue to EOD
     elapsed_s = max(1, (now - today_start).total_seconds())
@@ -2169,9 +2205,22 @@ def _compute_control_data() -> dict:
             "gross_short":      float(eq_snap.gross_short_usd)  if eq_snap else 0.0,
         },
         "broker_pnl": {
-            "realized":        t_lifetime,
-            "unrealized_risk": unrealized_risk,
-            "net":             net_broker_pnl,
+            # BOOK-03 — full breakdown, correctly labeled. "realized"/
+            # "unrealized_risk"/"net" are kept for any old consumer but now
+            # point at the CORRECT (net, not fee-only) figures.
+            "realized_fee_revenue":     realized_fee_revenue,
+            "realized_counterparty_pnl": realized_counterparty_pnl,
+            "realized_adjustments":     realized_adjustments,
+            "realized_net_pnl":         realized_net_pnl,
+            "unrealized_counterparty_risk": unrealized_counterparty_risk,
+            "projected_net_including_open_positions": projected_net_including_open_positions,
+            "coverage_pct":             coverage_pct,
+            "historical_incomplete":    historical_incomplete,
+            # Back-compat aliases — "realized" now means the real net
+            # realized figure, NOT fee revenue (BOOK-01/BOOK-03 fix).
+            "realized":        realized_net_pnl,
+            "unrealized_risk": unrealized_counterparty_risk,
+            "net":             projected_net_including_open_positions,
         },
         "top_symbols": [
             {"symbol": r["symbol"], "rev_24h": float(r["rev"])}

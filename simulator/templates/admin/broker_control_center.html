@@ -197,18 +197,30 @@ body,#content{background:var(--bg)!important;}
 </div>
 
 <!-- ── Broker PnL Stripe ──────────────────────────────────── -->
-<div class="cc-section">Broker PnL Decomposition</div>
+<div class="cc-section">Broker PnL Decomposition <span id="pnl-coverage-warning" style="display:none;color:var(--bear);font-weight:600;"></span></div>
 <div class="pnl-stripe">
   <div class="pnl-cell">
-    <div class="pnl-label">Realized Revenue</div>
-    <div class="pnl-value" id="pnl-realized" style="color:var(--bull);">$—</div>
+    <div class="pnl-label">Realized Fee Revenue</div>
+    <div class="pnl-value" id="pnl-fee-revenue" style="color:var(--bull);">$—</div>
   </div>
   <div class="pnl-cell">
-    <div class="pnl-label">Unrealized Exposure Risk</div>
+    <div class="pnl-label">Realized Counterparty PnL</div>
+    <div class="pnl-value" id="pnl-counterparty" style="color:var(--bull);">$—</div>
+  </div>
+  <div class="pnl-cell">
+    <div class="pnl-label">Realized Adjustments</div>
+    <div class="pnl-value" id="pnl-adjustments" style="color:var(--bull);">$—</div>
+  </div>
+  <div class="pnl-cell">
+    <div class="pnl-label">Realized Net PnL</div>
+    <div class="pnl-value" id="pnl-realized" style="color:var(--gold);">$—</div>
+  </div>
+  <div class="pnl-cell">
+    <div class="pnl-label">Unrealized Counterparty Risk</div>
     <div class="pnl-value" id="pnl-unrealized-risk" style="color:var(--bear);">$—</div>
   </div>
   <div class="pnl-cell">
-    <div class="pnl-label">Net Broker PnL</div>
+    <div class="pnl-label">Projected Net (incl. open positions)</div>
     <div class="pnl-value" id="pnl-net" style="color:var(--gold);">$—</div>
   </div>
 </div>
@@ -392,21 +404,35 @@ body,#content{background:var(--bg)!important;}
     document.getElementById("kpi-gross-short").textContent = fmtMoney(d.ops.gross_short);
 
     // Unrealized risk
-    const ur = d.broker_pnl.unrealized_risk;
+    const ur = d.broker_pnl.unrealized_counterparty_risk;
     const urEl = document.getElementById("kpi-unrealized");
     urEl.textContent = fmtMoney(ur);
     urEl.className = "kpi-val " + (ur < 0 ? "bear" : ur > 0 ? "bull" : "");
 
-    // Net broker PnL
-    const net = d.broker_pnl.net;
+    // Net broker PnL (projected — includes open positions, see label)
+    const net = d.broker_pnl.projected_net_including_open_positions;
     const netEl = document.getElementById("kpi-net-pnl");
     netEl.textContent = fmtMoney(net);
     netEl.className = "kpi-val " + (net > 0 ? "gold" : net < 0 ? "bear" : "");
 
-    // PnL stripe
-    document.getElementById("pnl-realized").textContent        = fmtMoney(d.broker_pnl.realized);
-    document.getElementById("pnl-unrealized-risk").textContent = fmtMoney(d.broker_pnl.unrealized_risk);
-    document.getElementById("pnl-net").textContent             = fmtMoney(d.broker_pnl.net);
+    // PnL stripe — BOOK-03 full breakdown (never mixes fee revenue and
+    // directional counterparty PnL into one unlabeled number).
+    document.getElementById("pnl-fee-revenue").textContent    = fmtMoney(d.broker_pnl.realized_fee_revenue);
+    document.getElementById("pnl-counterparty").textContent   = fmtMoney(d.broker_pnl.realized_counterparty_pnl);
+    document.getElementById("pnl-adjustments").textContent    = fmtMoney(d.broker_pnl.realized_adjustments);
+    document.getElementById("pnl-realized").textContent        = fmtMoney(d.broker_pnl.realized_net_pnl);
+    document.getElementById("pnl-unrealized-risk").textContent = fmtMoney(d.broker_pnl.unrealized_counterparty_risk);
+    document.getElementById("pnl-net").textContent             = fmtMoney(d.broker_pnl.projected_net_including_open_positions);
+
+    // Coverage warning — pre-BOOK-02 Trades have no counterparty entry;
+    // do not present realized_counterparty_pnl as complete when it isn't.
+    const covEl = document.getElementById("pnl-coverage-warning");
+    if (d.broker_pnl.historical_incomplete) {
+      covEl.style.display = "";
+      covEl.textContent = "⚠ coverage " + d.broker_pnl.coverage_pct + "% — some historical trades predate counterparty tracking";
+    } else {
+      covEl.style.display = "none";
+    }
 
     // Ratio bar
     const sp = d.spread_commission_ratio.spread_pct;
