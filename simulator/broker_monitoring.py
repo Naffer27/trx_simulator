@@ -133,6 +133,17 @@ def net_broker_exposure() -> dict:
                 e["symbol"], pct, e["net_notional_usd"],
             )
 
+    # RISK-01 — correctly-computed figures (qty * price * contract_size,
+    # fresh-price-only, never fabricated for an unpriced position), added
+    # alongside the fields above rather than replacing them. The old
+    # gross_long_notional/gross_short_notional/total_net_abs_notional
+    # above are qty * avg_price (NO contract_size) — understated by orders
+    # of magnitude for any instrument with contract_size != 1 (every FX
+    # pair here). Kept unrenamed/unchanged for any existing caller; see
+    # simulator/broker_exposure.py's module docstring for the full audit.
+    from .broker_exposure import broker_exposure_snapshot
+    risk01 = broker_exposure_snapshot()
+
     return {
         "total_open_positions": sum(e["total_positions"] for e in exposures),
         "gross_long_notional":  round(sum(e["buy_notional_usd"]  for e in exposures), 2),
@@ -140,6 +151,17 @@ def net_broker_exposure() -> dict:
         "total_net_abs_notional": round(total_net_abs, 2),
         "symbol_count":         len(exposures),
         "by_symbol":            exposures,
+        # RISK-01 — single source of truth (correct contract_size, explicit
+        # pricing coverage). Positive risk01_broker_unrealized_counterparty_pnl
+        # means the broker is currently ahead.
+        "risk01_gross_notional":  float(risk01.gross_notional),
+        "risk01_net_notional":    float(risk01.net_notional),
+        "risk01_long_notional":   float(risk01.long_notional),
+        "risk01_short_notional":  float(risk01.short_notional),
+        "risk01_broker_unrealized_counterparty_pnl": float(risk01.broker_unrealized_counterparty_pnl),
+        "risk01_trader_unrealized_pnl": float(risk01.trader_unrealized_pnl),
+        "risk01_pricing_coverage_pct": float(risk01.pricing_coverage_pct),
+        "risk01_unpriced_position_count": risk01.unpriced_position_count,
     }
 
 

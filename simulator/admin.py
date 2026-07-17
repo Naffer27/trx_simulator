@@ -2182,6 +2182,18 @@ def _compute_control_data() -> dict:
 
     snap_age_s = int((now - rev_snap.taken_at).total_seconds()) if rev_snap else -1
 
+    # RISK-01 — live open-position exposure, single source of truth
+    # (simulator/broker_exposure.py). Kept in its OWN block, separate from
+    # "ops" above (which stays sourced from BrokerEquitySnapshot/
+    # snapshots.py — untouched, including that path's known contract_size
+    # bug, see broker_exposure.py's module docstring) and from "broker_pnl"
+    # (BOOK-03, realized-only). projected_broker_result combines BOOK-03's
+    # realized_net_pnl with RISK-01's live unrealized counterparty PnL —
+    # the two numbers are never merged under an ambiguous name.
+    from .broker_exposure import broker_exposure_snapshot
+    live_exposure = broker_exposure_snapshot()
+    projected_broker_result = realized_net_pnl + float(live_exposure.broker_unrealized_counterparty_pnl)
+
     return {
         "ts":         now.isoformat(),
         "snap_age_s": snap_age_s,
@@ -2242,6 +2254,32 @@ def _compute_control_data() -> dict:
         "daily_rev_today": {
             "amount":   t_today,
             "pace_eod": pace_eod,
+        },
+        "risk_exposure": {
+            # RISK-01 — live, correctly-computed (qty * price * contract_size,
+            # fresh-price-only) open-position exposure. Separate from "ops"
+            # and "broker_pnl" above by design (FASE 8 — never one ambiguous
+            # number for realized + unrealized + notional).
+            "open_position_count": live_exposure.open_position_count,
+            "account_count":       live_exposure.account_count,
+            "symbol_count":        live_exposure.symbol_count,
+            "long_quantity":       float(live_exposure.long_quantity),
+            "short_quantity":      float(live_exposure.short_quantity),
+            "gross_quantity":      float(live_exposure.gross_quantity),
+            "net_quantity":        float(live_exposure.net_quantity),
+            "long_notional":       float(live_exposure.long_notional),
+            "short_notional":      float(live_exposure.short_notional),
+            "gross_notional":      float(live_exposure.gross_notional),
+            "net_notional":        float(live_exposure.net_notional),
+            "trader_unrealized_pnl": float(live_exposure.trader_unrealized_pnl),
+            "broker_unrealized_counterparty_pnl": float(live_exposure.broker_unrealized_counterparty_pnl),
+            "margin_used":         float(live_exposure.margin_used),
+            "largest_symbol":      live_exposure.largest_symbol,
+            "largest_symbol_gross_notional": float(live_exposure.largest_symbol_gross_notional),
+            "pricing_coverage_pct": float(live_exposure.pricing_coverage_pct),
+            "unpriced_position_count": live_exposure.unpriced_position_count,
+            # BOOK-03 realized_net_pnl + RISK-01 unrealized counterparty PnL.
+            "projected_broker_result": projected_broker_result,
         },
     }
 
