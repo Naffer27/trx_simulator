@@ -580,9 +580,20 @@ def full_report() -> dict:
         exposure=exp_data or {},
     )
 
+    # RISK-03 — structured broker-wide alert engine, single source of
+    # truth (simulator/broker_alerts.py). Additive: kept entirely
+    # separate from the legacy `alerts` block above (which stays
+    # margin/concentration-only, unchanged) rather than merged into it,
+    # since the two use different severity/category vocabularies.
+    from .broker_alerts import collect_risk_alerts
+    broker_alerts_data, ba_ms, ba_err = _timed(
+        lambda: [a.to_dict() for a in collect_risk_alerts()]
+    )
+
     errors = {k: v for k, v in {
         "pnl": pnl_err, "exposure": exp_err, "positions": pos_err,
         "accounts": acc_err, "concentration": con_err, "margin": marg_err,
+        "broker_alerts": ba_err,
     }.items() if v}
 
     if alerts["overall_status"] == "critical":
@@ -598,6 +609,7 @@ def full_report() -> dict:
         "section_ms":   {
             "pnl": pnl_ms, "exposure": exp_ms, "positions": pos_ms,
             "accounts": acc_ms, "concentration": con_ms, "margin": marg_ms,
+            "broker_alerts": ba_ms,
         },
         "alerts":              alerts,
         "pnl":                 pnl_data,
@@ -606,5 +618,9 @@ def full_report() -> dict:
         "accounts":            acc_data,
         "concentration_risk":  conc_data,
         "critical_margin":     marg_data,
+        # RISK-03 — structured alert list (simulator/broker_alerts.py),
+        # ordered by severity. Separate from "alerts" above (legacy,
+        # margin/concentration-only summary — untouched).
+        "broker_alerts":       broker_alerts_data,
         "errors":              errors,
     }

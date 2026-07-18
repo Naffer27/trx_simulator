@@ -2072,9 +2072,20 @@ class BrokerRiskLock(models.Model):
     exposure, so closes do not need to serialize against the risk gate)
     and never acquired AFTER TradingAccount/Position anywhere — doing so
     would invert the order and create a deadlock against this same path.
+
+    RISK-03 — last_recreated_at is stamped (non-null) the moment the
+    self-healing get_or_create() in _db_open_position_atomic finds the
+    row MISSING and has to recreate it (normally only possible after a
+    table truncation outside the normal migration flow — see the
+    get_or_create() call site). Left null forever on a row that has only
+    ever existed via the original migration seed. Read-only signal for
+    simulator/broker_alerts.py's SYSTEM category — never cleared
+    automatically, since its entire value is as a durable "this
+    happened" marker for operators to investigate.
     """
     id = models.SmallIntegerField(primary_key=True, default=1)
     updated_at = models.DateTimeField(auto_now=True)
+    last_recreated_at = models.DateTimeField(null=True, blank=True, default=None)
 
     def __str__(self):
         return f"BrokerRiskLock singleton (id={self.id})"

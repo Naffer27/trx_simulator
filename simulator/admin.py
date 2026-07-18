@@ -2194,6 +2194,12 @@ def _compute_control_data() -> dict:
     live_exposure = broker_exposure_snapshot()
     projected_broker_result = realized_net_pnl + float(live_exposure.broker_unrealized_counterparty_pnl)
 
+    # RISK-03 — Broker Health, single source of truth
+    # (simulator/broker_alerts.py). Pure observation — never blocks
+    # anything, just surfaces what collect_risk_alerts() already found.
+    from .broker_alerts import broker_health_summary
+    broker_health = broker_health_summary()
+
     return {
         "ts":         now.isoformat(),
         "snap_age_s": snap_age_s,
@@ -2281,6 +2287,7 @@ def _compute_control_data() -> dict:
             # BOOK-03 realized_net_pnl + RISK-01 unrealized counterparty PnL.
             "projected_broker_result": projected_broker_result,
         },
+        "broker_health": broker_health,
     }
 
 

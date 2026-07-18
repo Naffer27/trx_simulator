@@ -121,6 +121,45 @@ body,#content{background:var(--bg)!important;}
   <span class="cc-ts" id="cc-ts">Connecting…</span>
 </div>
 
+<!-- ── Broker Health (RISK-03) ─────────────────────────────── -->
+<div class="cc-section">Broker Health</div>
+<div class="kpi-grid">
+  <div class="kpi c-bull" id="bh-status-kpi">
+    <div class="kpi-lbl">Status</div>
+    <div class="kpi-val" id="bh-status">—</div>
+    <div class="kpi-sub"><span id="bh-alert-count">—</span> active alert(s)</div>
+  </div>
+  <div class="kpi c-bear">
+    <div class="kpi-lbl">Critical / High / Medium</div>
+    <div class="kpi-val" id="bh-severity-counts">—</div>
+    <div class="kpi-sub">&nbsp;</div>
+  </div>
+  <div class="kpi c-warn">
+    <div class="kpi-lbl">Exposure (gross lots)</div>
+    <div class="kpi-val" id="bh-exposure">—</div>
+    <div class="kpi-sub">&nbsp;</div>
+  </div>
+  <div class="kpi c-info">
+    <div class="kpi-lbl">Pricing Coverage</div>
+    <div class="kpi-val" id="bh-pricing-coverage">—</div>
+    <div class="kpi-sub">&nbsp;</div>
+  </div>
+  <div class="kpi c-cyan">
+    <div class="kpi-lbl">Largest Symbol</div>
+    <div class="kpi-val cyan" id="bh-largest-symbol">—</div>
+    <div class="kpi-sub"><span id="bh-largest-concentration">—</span> concentration</div>
+  </div>
+</div>
+<div class="tpanel" id="bh-critical-panel" style="margin-bottom:12px;">
+  <div class="cc-section" style="margin-top:0;">Top Critical Alerts</div>
+  <table class="cc-table">
+    <thead><tr><th>Severity</th><th>Category</th><th>Title</th></tr></thead>
+    <tbody id="bh-critical-body">
+      <tr><td colspan="3" style="color:var(--muted);text-align:center;padding:10px;">Loading…</td></tr>
+    </tbody>
+  </table>
+</div>
+
 <!-- ── KPI Row 1: Revenue ─────────────────────────────────── -->
 <div class="cc-section">Revenue</div>
 <div class="kpi-grid">
@@ -497,6 +536,39 @@ body,#content{background:var(--bg)!important;}
           <td>${riskBadge}</td>
         </tr>`;
       }).join("");
+    }
+
+    // Broker Health (RISK-03) — simulator/broker_alerts.py
+    const bh = d.broker_health;
+    if (bh) {
+      const statusMap = {
+        healthy:  {label:"● HEALTHY", cls:"kpi c-bull"},
+        warning:  {label:"⚠ WARNING", cls:"kpi c-warn"},
+        critical: {label:"⛔ CRITICAL", cls:"kpi c-bear"},
+      };
+      const s = statusMap[bh.status] || {label:bh.status, cls:"kpi c-muted"};
+      const statusEl2 = document.getElementById("bh-status");
+      statusEl2.textContent = s.label;
+      document.getElementById("bh-status-kpi").className = s.cls;
+      document.getElementById("bh-alert-count").textContent = fmtCount(bh.alert_count);
+      document.getElementById("bh-severity-counts").textContent =
+        `${bh.critical_count} / ${bh.high_count} / ${bh.medium_count}`;
+      document.getElementById("bh-exposure").textContent = fmtMoney2(bh.exposure_gross_quantity);
+      document.getElementById("bh-pricing-coverage").textContent = fmtPct(bh.pricing_coverage_pct);
+      document.getElementById("bh-largest-symbol").textContent = bh.largest_symbol || "—";
+      document.getElementById("bh-largest-concentration").textContent =
+        fmtPct(bh.largest_symbol_concentration_pct);
+
+      const bhBody = document.getElementById("bh-critical-body");
+      if (!bh.top_critical_alerts.length) {
+        bhBody.innerHTML = '<tr><td colspan="3" style="color:var(--muted);text-align:center;padding:10px;">No critical alerts</td></tr>';
+      } else {
+        bhBody.innerHTML = bh.top_critical_alerts.map(a => `<tr>
+          <td style="color:var(--bear);font-weight:700;">${a.severity}</td>
+          <td>${a.category}</td>
+          <td>${a.title}</td>
+        </tr>`).join("");
+      }
     }
 
     // Daily counter

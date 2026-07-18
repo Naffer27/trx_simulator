@@ -2427,7 +2427,16 @@ class TradingConsumer(AsyncWebsocketConsumer):
             # IntegrityError from a concurrent create) — cheap even in the
             # common case where the row already exists (single-row, PK read).
             from .models import BrokerRiskLock
-            BrokerRiskLock.objects.get_or_create(pk=1)
+            _lock_row, _lock_created = BrokerRiskLock.objects.get_or_create(pk=1)
+            if _lock_created:
+                # RISK-03 — the singleton was missing and had to be
+                # recreated here; stamp a durable marker so
+                # broker_alerts.py can surface it (see the model
+                # docstring's last_recreated_at note). Not part of the
+                # mutex itself — a plain field write under the lock we
+                # already hold.
+                _lock_row.last_recreated_at = timezone.now()
+                _lock_row.save(update_fields=["last_recreated_at"])
             BrokerRiskLock.objects.select_for_update().get(pk=1)
 
             # 1. Lock the TradingAccount row — this account's own mutex
