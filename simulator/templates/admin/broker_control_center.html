@@ -160,6 +160,17 @@ body,#content{background:var(--bg)!important;}
   </table>
 </div>
 
+<!-- ── Broker Audit Trail (AUDIT-01) ───────────────────────── -->
+<div class="tpanel" id="audit-recent-panel" style="margin-bottom:12px;">
+  <div class="cc-section" style="margin-top:0;">Recent Broker Audit Events</div>
+  <table class="cc-table">
+    <thead><tr><th>Time</th><th>Severity</th><th>Category</th><th>Event</th><th>Account</th><th>Symbol</th><th>Description</th></tr></thead>
+    <tbody id="audit-recent-body">
+      <tr><td colspan="7" style="color:var(--muted);text-align:center;padding:10px;">Loading…</td></tr>
+    </tbody>
+  </table>
+</div>
+
 <!-- ── KPI Row 1: Revenue ─────────────────────────────────── -->
 <div class="cc-section">Revenue</div>
 <div class="kpi-grid">
@@ -568,6 +579,28 @@ body,#content{background:var(--bg)!important;}
           <td>${a.category}</td>
           <td>${a.title}</td>
         </tr>`).join("");
+      }
+    }
+
+    // Broker Audit Trail (AUDIT-01) — simulator/broker_audit.py
+    const auditBody = document.getElementById("audit-recent-body");
+    if (Array.isArray(d.recent_audit_events)) {
+      if (!d.recent_audit_events.length) {
+        auditBody.innerHTML = '<tr><td colspan="7" style="color:var(--muted);text-align:center;padding:10px;">No events recorded yet</td></tr>';
+      } else {
+        const sevColor = {INFO:"var(--muted)", WARNING:"var(--warn)", HIGH:"var(--bear)", CRITICAL:"var(--bear)"};
+        auditBody.innerHTML = d.recent_audit_events.map(e => {
+          const t = new Date(e.timestamp);
+          return `<tr>
+            <td style="color:var(--muted);white-space:nowrap;">${t.toLocaleTimeString()}</td>
+            <td style="color:${sevColor[e.severity]||'var(--muted)'};font-weight:700;">${e.severity}</td>
+            <td>${e.category}</td>
+            <td>${e.event_type}</td>
+            <td>${e.account_id ?? "—"}</td>
+            <td>${e.symbol || "—"}</td>
+            <td>${e.description}</td>
+          </tr>`;
+        }).join("");
       }
     }
 

@@ -288,6 +288,14 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(minute=0),     # top of every hour
         "options":  {"expires": 55 * 60},  # drop if not picked up within 55 min
     },
+    # AUDIT-01 — persist RISK-03 alert observations into BrokerAuditEvent,
+    # independent of whether the admin dashboard is ever opened. See
+    # simulator/broker_audit.py::observe_broker_alerts().
+    "observe-broker-risk-alerts-5m": {
+        "task":     "simulator.observe_broker_risk_alerts",
+        "schedule": crontab(minute="*/5"),
+        "options":  {"expires": 4 * 60},  # drop if not picked up within 4 min
+    },
 }
 
 # Revenue snapshot retention (separate from equity snapshots — longer window for trend history).

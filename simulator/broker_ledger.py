@@ -81,4 +81,33 @@ def create_broker_counterparty_entry(trade, account, trader_pnl, reason, *, book
             },
         },
     )
+
+    # AUDIT-01 — this single writer is called from all four real close
+    # paths (WebSocket, daemon, admin force-close, population engine),
+    # so it is also the single integration point for both "Position
+    # CLOSE" and "Ledger entry importante" — deliberately recorded as
+    # ONE audit event, not two, since they are the same real-world
+    # moment. Only on a genuine new row: a get_or_create() replay
+    # (_created=False) must never produce a second audit event for the
+    # same close (FASE 9 — sin duplicados).
+    if _created:
+        from . import broker_audit as _audit
+        _audit.record_trade_event(
+            event_type=_audit.close_reason_event_type(reason),
+            actor_type=(
+                _audit.ActorType.STAFF if reason == "admin_force_close"
+                else _audit.ActorType.SYSTEM if (reason or "").startswith(("daemon_", "stopout"))
+                else _audit.ActorType.TRADER
+            ),
+            description=f"Position closed on {trade.symbol} ({reason}) — trader PnL {trader_pnl_d}",
+            account=account, trade=trade, symbol=trade.symbol,
+            source_module="simulator.broker_ledger",
+            metadata={
+                "reason": reason,
+                "trader_pnl": float(trader_pnl_d),
+                "broker_counterparty_pnl": float(counterparty_pnl),
+                "book_mode": book_mode,
+            },
+        )
+
     return entry

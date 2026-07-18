@@ -1,3 +1,4 @@
+import uuid
 from decimal import Decimal
 
 from django.db import models
@@ -2089,3 +2090,99 @@ class BrokerRiskLock(models.Model):
 
     def __str__(self):
         return f"BrokerRiskLock singleton (id={self.id})"
+
+
+class BrokerAuditEvent(models.Model):
+    """
+    AUDIT-01 — the broker's institutional, cross-engine chronological
+    audit trail. Append-only: rows are created by simulator/broker_audit.py
+    and NEVER updated or deleted afterward — same discipline as
+    BrokerLedger (BOOK-02) and AuditLog (Phase B).
+
+    This is deliberately NOT a replacement for AuditLog (simulator/audit.py
+    — HTTP-request-scoped security events: logins, deposits, withdrawals,
+    admin panel actions) or for BrokerLedger (BOOK-02 — accounting rows
+    with a Decimal amount) or for TradingViolation (risk_engine.py —
+    per-account RiskRule breaches). Those three remain the systems of
+    record for their own narrow domains. BrokerAuditEvent exists for
+    everything those three don't cover: the trading/risk lifecycle events
+    (position open/close, RISK-02 rejections, RISK-03 alerts becoming
+    active) that, per AUDIT-01's FASE 1 audit, currently leave either no
+    durable record at all or only a scrolling text log line.
+
+    Categories, severities, actor types, and event_type constants are
+    defined in simulator/broker_audit.py — this model stays a plain
+    schema, exactly like BrokerRiskAlert (RISK-03) keeps its Severity/
+    Category classes in broker_alerts.py rather than on the model.
+    """
+    event_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False, db_index=True)
+
+    # Classification (constants in simulator/broker_audit.py)
+    event_type = models.CharField(max_length=80, db_index=True)   # e.g. "position.opened"
+    category   = models.CharField(max_length=20, db_index=True)   # e.g. "TRADING"
+    severity   = models.CharField(max_length=10, db_index=True)   # e.g. "INFO"
+
+    timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    # Who/what caused this event
+    actor_type = models.CharField(max_length=20, db_index=True)   # e.g. "TRADER", "SYSTEM", "ADMIN"
+    actor_id   = models.PositiveIntegerField(null=True, blank=True)
+
+    # What it happened to — all optional, an event may touch any subset
+    account = models.ForeignKey(
+        TradingAccount, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    trade = models.ForeignKey(
+        Trade, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    symbol = models.CharField(max_length=20, blank=True)
+
+    description = models.CharField(max_length=240)
+    metadata    = models.JSONField(default=dict, blank=True)
+
+    source_module = models.CharField(max_length=80, blank=True)   # e.g. "simulator.consumers"
+    request_id    = models.CharField(max_length=40, blank=True)   # present only when applicable
+
+    class Meta:
+        ordering = ["-timestamp", "-id"]
+        get_latest_by = "timestamp"
+        indexes = [
+            models.Index(fields=["account", "-timestamp"], name="audit_evt_account_ts_idx"),
+            models.Index(fields=["trade", "-timestamp"], name="audit_evt_trade_ts_idx"),
+            models.Index(fields=["symbol", "-timestamp"], name="audit_evt_symbol_ts_idx"),
+            models.Index(fields=["category", "-timestamp"], name="audit_evt_category_ts_idx"),
+            models.Index(fields=["severity", "-timestamp"], name="audit_evt_severity_ts_idx"),
+        ]
+
+    def __str__(self):
+        return f"[{self.severity}] {self.event_type} @ {self.timestamp:%Y-%m-%d %H:%M:%S}"
+
+
+class BrokerAuditObservationLock(models.Model):
+    """
+    AUDIT-01 correction — singleton row used ONLY as a select_for_update()
+    mutex to serialize the check-then-create dedup sequence in
+    simulator/broker_audit.py's record_alert_event(). Holds no business
+    data — nothing here is ever read for its value, only locked.
+
+    Same pattern as BrokerRiskLock (RISK-02), reused deliberately rather
+    than inventing a new mechanism: a plain existence check followed by
+    a create (SELECT ... EXISTS then INSERT) has a TOCTOU race under
+    concurrent callers (e.g. two Celery workers both picking up
+    observe_broker_risk_alerts_task around the same tick) — two
+    concurrent calls can each see "not recorded yet" and both insert,
+    duplicating the observation. Holding this lock across the whole
+    check+create sequence closes that race, exactly as BrokerRiskLock
+    closes the equivalent race for RISK-02's broker-wide limit
+    evaluation. A prior review of this codebase explicitly rejected a
+    Redis/cache-only lock for this class of problem in favor of a small
+    DB singleton — this follows that same precedent.
+
+    Exactly one row (id=1) exists, created by this migration's data
+    step. Never create a second row.
+    """
+    id = models.SmallIntegerField(primary_key=True, default=1)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"BrokerAuditObservationLock singleton (id={self.id})"

@@ -22,6 +22,7 @@ from .models import (
     AccountProduct, ChallengeProduct, ChallengeEnrollment, FundedConfig,
     KYCProfile, SupportTicket,
     FundedPayoutRequest,
+    BrokerAuditEvent,
 )
 from . import challenge_engine
 from .funded_payouts import (
@@ -741,10 +742,36 @@ class TradingAccountAdmin(admin.ModelAdmin):
                             meta={"reason": "admin_force_close", "symbol": pos.symbol},
                         )
                         # BOOK-02 — broker's B-Book counterparty result for
-                        # this same Trade, same transaction.
+                        # this same Trade, same transaction. This writes
+                        # exactly one canonical FINANCIAL audit event
+                        # (EV_POSITION_CLOSED_ADMIN) via broker_ledger.py's
+                        # single writer — it has no access to a staff
+                        # actor and does not try to record one.
                         from .broker_ledger import create_broker_counterparty_entry
                         create_broker_counterparty_entry(
                             force_close_trade, locked_account or account, pnl, "admin_force_close",
+                        )
+                        # AUDIT-01 (post-review correction) — a second,
+                        # complementary ADMINISTRATIVE event, recorded
+                        # only here because this is the one code path
+                        # that actually holds the real staff actor
+                        # (request.user). Not a duplicate of the
+                        # financial event above: one describes the
+                        # money fact, this one describes who did it.
+                        from . import broker_audit as _audit
+                        _audit.record_admin_event(
+                            event_type=_audit.EV_ADMIN_POSITION_FORCE_CLOSE,
+                            description=f"Staff {request.user.username} force-closed position on {pos.symbol}",
+                            actor_id=request.user.id,
+                            account=locked_account or account,
+                            trade=force_close_trade,
+                            symbol=pos.symbol,
+                            request=request,
+                            metadata={
+                                "reason": "admin_force_close",
+                                "pnl": float(pnl),
+                                "exit_price": exit_px,
+                            },
                         )
                         pos.delete()
                         total_closed += 1
@@ -1675,6 +1702,49 @@ class AuditLogAdmin(admin.ModelAdmin):
         return request.user.is_superuser  # superuser can purge stale rows if needed
 
 
+@admin.register(BrokerAuditEvent)
+class BrokerAuditEventAdmin(admin.ModelAdmin):
+    """
+    AUDIT-01 (post-review correction) — real append-only protection.
+    BrokerAuditEvent rows are written exclusively by
+    simulator/broker_audit.py; nothing may add, change, or delete a row
+    through this admin, individually or in bulk. account/trade are
+    already SET_NULL on delete (see the model) — deleting the
+    underlying TradingAccount/Trade nulls the FK here, it never removes
+    the historical event.
+    """
+    list_display  = (
+        "timestamp", "severity", "category", "event_type",
+        "actor_type", "account", "symbol", "description",
+    )
+    list_filter   = ("category", "severity", "actor_type")
+    search_fields = ("event_type", "description", "symbol", "request_id")
+    date_hierarchy = "timestamp"
+    ordering = ("-timestamp",)
+    readonly_fields = (
+        "event_id", "event_type", "category", "severity", "timestamp",
+        "actor_type", "actor_id", "account", "trade", "symbol",
+        "description", "metadata", "source_module", "request_id",
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def get_actions(self, request):
+        # Belt-and-suspenders: has_delete_permission=False already hides
+        # delete_selected, but strip it from the actions dict explicitly
+        # so its absence is a structural guarantee, not an inference.
+        actions = super().get_actions(request)
+        actions.pop("delete_selected", None)
+        return actions
+
+
 # ─────────────────────────────────────────────
 # Broker Ecosystem Modules
 # ─────────────────────────────────────────────
@@ -2200,6 +2270,19 @@ def _compute_control_data() -> dict:
     from .broker_alerts import broker_health_summary
     broker_health = broker_health_summary()
 
+    # AUDIT-01 (post-review correction) — this dashboard computation is
+    # READ-ONLY with respect to the audit trail. It used to also call
+    # broker_audit.record_active_alerts() here, which meant an alert was
+    # only ever persisted if a staff member happened to have this
+    # dashboard open — a GET/poll should never be what decides whether
+    # broker history exists. Alert observations are now persisted
+    # exclusively by tasks.py's observe_broker_risk_alerts_task (a
+    # periodic Celery task calling broker_audit.observe_broker_alerts()),
+    # entirely outside this request path. _compute_control_data() only
+    # ever READS BrokerAuditEvent below (recent_audit_events), never
+    # writes one.
+    from . import broker_audit as _audit
+
     return {
         "ts":         now.isoformat(),
         "snap_age_s": snap_age_s,
@@ -2288,6 +2371,21 @@ def _compute_control_data() -> dict:
             "projected_broker_result": projected_broker_result,
         },
         "broker_health": broker_health,
+        # AUDIT-01 — FASE 8: simple recent-events view, no dashboard
+        # redesign. Read-only; broker_audit.recent_events() is a plain
+        # ordered query, nothing computed or cached here.
+        "recent_audit_events": [
+            {
+                "timestamp":   e.timestamp.isoformat(),
+                "severity":    e.severity,
+                "category":    e.category,
+                "event_type":  e.event_type,
+                "account_id":  e.account_id,
+                "symbol":      e.symbol,
+                "description": e.description,
+            }
+            for e in _audit.recent_events(25)
+        ],
     }
 
 

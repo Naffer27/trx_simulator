@@ -2646,6 +2646,25 @@ class TradingConsumer(AsyncWebsocketConsumer):
                     "[db_open] REJECTED account=%s symbol=%s side=%s qty=%s code=%s (RISK-02)",
                     self._db_account_id, symbol, side, qty, _risk02.reason_code,
                 )
+                # AUDIT-01 — "Broker Risk FAIL". Recorded inside this same
+                # nested savepoint (record_event's own transaction.atomic())
+                # so a write failure here can never affect the outer
+                # transaction, which is about to roll back to a no-op
+                # anyway (nothing was created). actor_type=SYSTEM: the
+                # rejection is the risk engine's decision, not the
+                # trader's action.
+                from . import broker_audit as _audit
+                _audit.record_risk_event(
+                    event_type=_audit.EV_RISK_ORDER_REJECTED,
+                    description=f"Order rejected on {symbol} {side.upper()} qty={qty}: {_risk02.reason_code}",
+                    account_id=self._db_account_id, symbol=symbol,
+                    source_module="simulator.broker_risk",
+                    metadata={
+                        "side": side, "qty": qty, "price": price,
+                        "reason_code": _risk02.reason_code,
+                        "reason_message": _risk02.reason_message,
+                    },
+                )
                 return {
                     "ok": False, "error_code": _risk02.reason_code,
                     "message": _risk02.reason_message,
@@ -2753,6 +2772,23 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
         log.info("[db_open] pos_id=%s symbol=%s side=%s qty=%s merged=%s balance=%.4f",
                  position_id, symbol, side, qty, merged, float(_auth_balance))
+
+        # AUDIT-01 — position opened (or merged into an existing one).
+        # Recorded after the transaction above has committed, using the
+        # already-authoritative position_id/balance — never inside the
+        # lock, and never able to affect whether the open itself succeeds.
+        from . import broker_audit as _audit
+        _audit.record_trade_event(
+            event_type=_audit.EV_POSITION_OPENED,
+            description=f"Position {'merged' if merged else 'opened'} on {symbol} {side.upper()} qty={qty}",
+            account_id=self._db_account_id, symbol=symbol,
+            source_module="simulator.consumers",
+            metadata={
+                "position_id": position_id, "side": side, "qty": float(qty),
+                "price": float(price), "merged": merged,
+            },
+        )
+
         return {
             "position_id": position_id, "merged": merged, "new_balance": float(_auth_balance),
             **guard,

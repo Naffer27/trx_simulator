@@ -1235,3 +1235,29 @@ def evaluate_all_challenges_task(self) -> dict:
     }
     logger.info("[evaluate_challenges] done %s", summary)
     return summary
+
+
+# ──────────────────────────────────────────────────────
+# AUDIT-01 (post-review correction) — the ONLY sanctioned call site for
+# persisting RISK-03 alert observations into BrokerAuditEvent. Runs
+# independent of the admin dashboard: alert history exists whether or
+# not any staff member ever opens the Broker Control Center. See
+# broker_audit.observe_broker_alerts() and CELERY_BEAT_SCHEDULE in
+# settings.py ("observe-broker-risk-alerts-5m").
+# ──────────────────────────────────────────────────────
+@shared_task(
+    name="simulator.observe_broker_risk_alerts",
+    bind=True,
+    max_retries=0,
+    acks_late=True,
+    soft_time_limit=25,
+    time_limit=29,
+)
+def observe_broker_risk_alerts_task(self) -> dict:
+    import time as _t
+    from .broker_audit import observe_broker_alerts
+    t0 = _t.monotonic()
+    written = observe_broker_alerts()
+    elapsed_ms = round((_t.monotonic() - t0) * 1000)
+    logger.info("[observe_broker_risk_alerts] written=%d elapsed_ms=%d", written, elapsed_ms)
+    return {"written": written, "elapsed_ms": elapsed_ms}
