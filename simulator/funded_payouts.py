@@ -125,6 +125,23 @@ def approve_sim_payout(fpr: FundedPayoutRequest, admin_user) -> None:
             updated_at=_now,
         )
 
+        # AUDIT-02 — fail-open: never allowed to affect the payout above,
+        # win or lose. See broker_audit.record_event()'s own contract.
+        from . import broker_audit as _audit
+        _audit.record_payment_event(
+            event_type=_audit.EV_FUNDED_PAYOUT_SIM_APPROVED,
+            actor_id=getattr(admin_user, "pk", None),
+            account=account, funded_payout_request=fpr_locked,
+            correlation_id=fpr_locked.correlation_id,
+            source_module="simulator.funded_payouts",
+            description=f"FUNDED_SIM payout #{fpr.pk} approved — trader_cut {trader_cut}",
+            metadata={
+                "trader_cut": float(trader_cut),
+                "broker_cut": float(fpr_locked.broker_cut),
+                "wallet_tx_id": wallet_tx.id,
+            },
+        )
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # H.3 — FUNDED_INTERNAL approval (bifásic)
@@ -235,6 +252,23 @@ def approve_internal_payout(
             updated_at=_now,
         )
 
+        # AUDIT-02 — fail-open, same discipline as H.2 above.
+        from . import broker_audit as _audit
+        _audit.record_payment_event(
+            event_type=_audit.EV_FUNDED_PAYOUT_INTERNAL_APPROVED,
+            actor_id=getattr(admin_user, "pk", None),
+            account=account, funded_payout_request=fpr_locked,
+            correlation_id=fpr_locked.correlation_id,
+            source_module="simulator.funded_payouts",
+            description=f"FUNDED_INTERNAL payout #{fpr.pk} approved (Phase 1) — trader_cut {trader_cut}",
+            metadata={
+                "trader_cut": float(trader_cut),
+                "broker_cut": float(fpr_locked.broker_cut),
+                "withdrawal_request_id": wr.id,
+                "crypto_currency": fpr_locked.crypto_currency,
+            },
+        )
+
     # Phase 1 is committed. fpr_locked holds snapshot data; wr has its DB PK.
 
     # ── Phase 2: NowPayments API call ─────────────────────────────────────────
@@ -261,6 +295,25 @@ def approve_internal_payout(
         FundedPayoutRequest.objects.filter(pk=fpr.pk).update(
             status=FundedPayoutRequest.ST_PROCESSING,
             updated_at=now(),
+        )
+
+        # AUDIT-02 — fail-open. Outside transaction.atomic() (Phase 2 is an
+        # external HTTP call, same as the rest of this block) but the audit
+        # write itself still opens its own nested savepoint inside
+        # record_event() — a failure here cannot roll back the NP call that
+        # already succeeded.
+        from . import broker_audit as _audit
+        _audit.record_payment_event(
+            event_type=_audit.EV_FUNDED_PAYOUT_INTERNAL_SUBMITTED,
+            actor_id=getattr(admin_user, "pk", None),
+            account_id=fpr_locked.funded_account_id, funded_payout_request=fpr_locked,
+            correlation_id=fpr_locked.correlation_id,
+            source_module="simulator.funded_payouts",
+            description=f"FUNDED_INTERNAL payout #{fpr.pk} submitted to NowPayments",
+            metadata={
+                "np_batch_id": batch_id, "np_payout_id": payout_id,
+                "crypto_amount": str(crypto_amount),
+            },
         )
 
     except Exception:
@@ -290,6 +343,23 @@ def approve_internal_payout(
             )
             WithdrawalRequest.objects.filter(pk=wr.pk).update(
                 status=WithdrawalRequest.STATUS_FAILED,
+            )
+
+            # AUDIT-02 — fail-open. actor_type=SYSTEM: this is an automated
+            # NowPayments failure + compensating reversal, not a staff decision.
+            from . import broker_audit as _audit
+            _audit.record_payment_event(
+                event_type=_audit.EV_FUNDED_PAYOUT_INTERNAL_SUBMIT_FAILED,
+                severity=_audit.Severity.HIGH, actor_type=_audit.ActorType.SYSTEM,
+                account_id=fpr_locked.funded_account_id, funded_payout_request=fpr_locked,
+                correlation_id=fpr_locked.correlation_id,
+                source_module="simulator.funded_payouts",
+                description=f"FUNDED_INTERNAL payout #{fpr.pk} submit FAILED — reversed",
+                metadata={
+                    "trader_cut": float(trader_cut),
+                    "withdrawal_request_id": wr.id,
+                    "reason": "NowPayments create_payout failed",
+                },
             )
         raise  # re-raise so admin action surfaces the error
 
@@ -352,6 +422,22 @@ def handle_internal_payout_webhook(
                 updated_at=_now,
             )
 
+            # AUDIT-02 — fail-open. actor_type=SYSTEM: triggered by the
+            # NowPayments webhook, no staff in the loop at this instant.
+            # This is the ONLY durable record of this transition today —
+            # withdraw_payout_callback's own log_audit() calls are skipped
+            # entirely for FUNDED_INTERNAL rows (see views.py:2522-2525).
+            from . import broker_audit as _audit
+            _audit.record_payment_event(
+                event_type=_audit.EV_FUNDED_PAYOUT_INTERNAL_COMPLETED,
+                actor_type=_audit.ActorType.SYSTEM,
+                account=account, funded_payout_request=fpr_locked,
+                correlation_id=fpr_locked.correlation_id,
+                source_module="simulator.funded_payouts",
+                description=f"FUNDED_INTERNAL payout #{fpr.pk} completed via NowPayments webhook",
+                metadata={"cycle_reset_at": _now.isoformat()},
+            )
+
         elif new_status == WithdrawalRequest.STATUS_FAILED:
             account = TradingAccount.objects.select_for_update().get(
                 pk=fpr_locked.funded_account_id
@@ -376,4 +462,19 @@ def handle_internal_payout_webhook(
             FundedPayoutRequest.objects.filter(pk=fpr.pk).update(
                 status=FundedPayoutRequest.ST_FAILED,
                 updated_at=now(),
+            )
+
+            # AUDIT-02 — fail-open. Same rationale as STATUS_COMPLETED above:
+            # this is the only durable record of this transition today —
+            # withdraw_payout_callback's own log_audit() calls are skipped
+            # entirely for FUNDED_INTERNAL rows (see views.py:2522-2525).
+            from . import broker_audit as _audit
+            _audit.record_payment_event(
+                event_type=_audit.EV_FUNDED_PAYOUT_INTERNAL_FAILED,
+                severity=_audit.Severity.HIGH, actor_type=_audit.ActorType.SYSTEM,
+                account=account, funded_payout_request=fpr_locked,
+                correlation_id=fpr_locked.correlation_id,
+                source_module="simulator.funded_payouts",
+                description=f"FUNDED_INTERNAL payout #{fpr.pk} FAILED via NowPayments webhook — reversed",
+                metadata={"payout_id": payout_id, "trader_cut": float(trader_cut)},
             )

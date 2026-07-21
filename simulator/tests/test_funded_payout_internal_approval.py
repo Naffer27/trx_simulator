@@ -262,6 +262,20 @@ class TestApproveInternalPayoutDB(TestCase):
         wallet.refresh_from_db()
         self.assertEqual(wallet.available_balance, wallet_balance_before)
 
+    # AUDIT-02 — full approval (Phase 1 + Phase 2 NP success) produces
+    # BrokerAuditEvents linked to this FPR. Full shape/correlation_id/
+    # fail-open coverage lives in test_audit02_payments_trail.py; this is
+    # the "no regression on the happy path" check alongside the pre-existing
+    # assertions in this class.
+    @patch(_NP_PAYOUT,   return_value=_NP_PAYOUT_RET)
+    @patch(_NP_ESTIMATE, return_value=_NP_ESTIMATE_RET)
+    def test_approval_creates_broker_audit_events(self, _est, _pay):
+        from simulator.models import BrokerAuditEvent
+        approve_internal_payout(self.fpr, self.admin)
+        self.assertTrue(
+            BrokerAuditEvent.objects.filter(funded_payout_request=self.fpr).exists()
+        )
+
     # ── LedgerEntry EV_FUNDED_PAYOUT created ─────────────────────────────────
 
     @patch(_NP_PAYOUT,   return_value=_NP_PAYOUT_RET)

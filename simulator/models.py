@@ -572,6 +572,16 @@ class Deposit(models.Model):
         related_name='deposits',
     )
 
+    # AUDIT-02 — institutional correlation id. Generated once at creation
+    # (default=uuid.uuid4), never derived from this row's own pk, so every
+    # BrokerAuditEvent produced across this deposit's lifecycle (created,
+    # IPN callback, credited) can be found with one value even though they
+    # span separate HTTP requests. NULL on rows created before AUDIT-02 —
+    # deliberately not backfilled; there is no trail to reconstruct for them.
+    correlation_id = models.UUIDField(
+        null=True, blank=True, default=uuid.uuid4, editable=False, db_index=True,
+    )
+
     class Meta:
         ordering = ['-created_at']
 
@@ -1914,6 +1924,17 @@ class FundedPayoutRequest(models.Model):
     reviewed_at = models.DateTimeField(null=True, blank=True)
     admin_note  = models.TextField(blank=True, default="")
 
+    # AUDIT-02 — institutional correlation id. Generated once at creation
+    # (default=uuid.uuid4), never derived from this row's own pk, so every
+    # BrokerAuditEvent produced across this payout's lifecycle (approved,
+    # submitted to NowPayments, completed/failed via webhook — each a
+    # separate HTTP request or Celery-triggered call) can be found with one
+    # value. NULL on rows created before AUDIT-02 — deliberately not
+    # backfilled; there is no trail to reconstruct for them.
+    correlation_id = models.UUIDField(
+        null=True, blank=True, default=uuid.uuid4, editable=False, db_index=True,
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -2137,6 +2158,32 @@ class BrokerAuditEvent(models.Model):
     )
     symbol = models.CharField(max_length=20, blank=True)
 
+    # AUDIT-02 — Payments domain FKs. Optional, additive, same SET_NULL
+    # discipline as account/trade above: deleting the underlying row nulls
+    # the FK here, it never removes the historical event.
+    funded_payout_request = models.ForeignKey(
+        "FundedPayoutRequest", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    deposit = models.ForeignKey(
+        "Deposit", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+
+    # AUDIT-02 — institutional correlation id (see Deposit/FundedPayoutRequest
+    # docstrings). Distinct from request_id below: request_id correlates
+    # events within ONE HTTP request/Celery task; correlation_id correlates
+    # every event belonging to the SAME business operation across however
+    # many requests/tasks/webhooks it actually took. NULL for AUDIT-01-era
+    # rows and for any event not yet wired to a correlation-bearing root
+    # entity — never fabricated.
+    correlation_id = models.UUIDField(null=True, blank=True, db_index=True)
+
+    # AUDIT-02 — versions the shape of `metadata` for THIS event_type only
+    # (same rationale as pricing_context.py's schema_version / broker_ledger
+    # .py's _SCHEMA_VERSION) — not a version of the table or the engine as a
+    # whole. Every event_type starts at 1; bump only when that specific
+    # event_type's metadata shape changes in a future block.
+    event_version = models.PositiveSmallIntegerField(default=1)
+
     description = models.CharField(max_length=240)
     metadata    = models.JSONField(default=dict, blank=True)
 
@@ -2152,6 +2199,9 @@ class BrokerAuditEvent(models.Model):
             models.Index(fields=["symbol", "-timestamp"], name="audit_evt_symbol_ts_idx"),
             models.Index(fields=["category", "-timestamp"], name="audit_evt_category_ts_idx"),
             models.Index(fields=["severity", "-timestamp"], name="audit_evt_severity_ts_idx"),
+            models.Index(fields=["funded_payout_request", "-timestamp"], name="audit_evt_fpr_ts_idx"),
+            models.Index(fields=["deposit", "-timestamp"], name="audit_evt_deposit_ts_idx"),
+            models.Index(fields=["correlation_id"], name="audit_evt_correlation_idx"),
         ]
 
     def __str__(self):

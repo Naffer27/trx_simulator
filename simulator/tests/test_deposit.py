@@ -227,3 +227,56 @@ class TestDepositCallbackNonCreditedStatus(TestCase):
 
         wallet.refresh_from_db()
         self.assertEqual(wallet.available_balance, Decimal("0"))
+
+
+# ─────────────────────────────────────────────
+# 4. AUDIT-02 — deposit lifecycle audit trail
+# ─────────────────────────────────────────────
+
+class TestDepositAuditLog(TestCase):
+    """
+    EV_DEPOSIT_CREATED / EV_DEPOSIT_CALLBACK existed in audit.py since
+    before AUDIT-02 but were never invoked — this activates them.
+    Full BrokerAuditEvent mirror coverage (deposit.credited, correlation_id,
+    fail-open) lives in test_audit02_payments_trail.py.
+    """
+
+    @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
+    def test_callback_writes_auditlog_entry(self, _mock_sig):
+        from simulator.models import AuditLog
+
+        user    = make_user()
+        make_wallet(user=user)
+        deposit = make_deposit(user=user, amount_usd=Decimal("100.00"),
+                               payment_id="pay_auditlog_001")
+
+        body = _ipn_body("pay_auditlog_001", "finished", str(deposit.pk))
+        self.client.post(CALLBACK_URL, body, content_type="application/json")
+
+        self.assertTrue(
+            AuditLog.objects.filter(event_type="deposit.callback").exists()
+        )
+        self.assertTrue(
+            AuditLog.objects.filter(event_type="deposit.credited").exists()
+        )
+
+    @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
+    def test_duplicate_callback_still_logs_each_attempt(self, _mock_sig):
+        """
+        EV_DEPOSIT_CALLBACK fires on every inbound attempt, including
+        duplicates — unlike the credit itself, which stays idempotent.
+        """
+        from simulator.models import AuditLog
+
+        user    = make_user()
+        make_wallet(user=user)
+        deposit = make_deposit(user=user, amount_usd=Decimal("100.00"),
+                               payment_id="pay_auditlog_002")
+
+        body = _ipn_body("pay_auditlog_002", "finished", str(deposit.pk))
+        self.client.post(CALLBACK_URL, body, content_type="application/json")
+        self.client.post(CALLBACK_URL, body, content_type="application/json")
+
+        self.assertEqual(
+            AuditLog.objects.filter(event_type="deposit.callback").count(), 2,
+        )

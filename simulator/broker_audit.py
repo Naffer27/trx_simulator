@@ -196,6 +196,38 @@ _CLOSE_REASON_EVENT_TYPE = {
     "admin_force_close":   EV_POSITION_CLOSED_ADMIN,
 }
 
+# ─────────────────────────────────────────────────────────────────────────
+# AUDIT-02 — Payments & Payout Audit Trail.
+#
+# Two independent additions, both Category.PAYMENTS:
+#   1. Funded payouts (H.2 FUNDED_SIM, H.3 FUNDED_INTERNAL) — previously had
+#      ZERO durable cross-cutting record of any kind; only the FundedPayoutRequest
+#      row's own reviewed_by/reviewed_at fields (last state, no history).
+#   2. Deposit — the procedural moments (deposit.created, deposit.callback)
+#      stay AuditLog-only (audit.py) — they are not yet a confirmed financial
+#      fact. The financial moment (deposit.credited) is additionally mirrored
+#      here, alongside the AuditLog row that already existed, closing the
+#      asymmetry that funded payouts (money out) had institutional coverage
+#      while deposits (money in) did not.
+#
+# Withdrawal (WithdrawalRequest) mirroring is deliberately OUT of scope here
+# — it already has rich AuditLog coverage (request/approved/rejected/failed/
+# refunded/completed); converging that into BrokerAuditEvent too is its own
+# future block (see docs/AUDIT_TRAIL_ENGINE_PLAN.md — AUDIT-09).
+# ─────────────────────────────────────────────────────────────────────────
+EV_FUNDED_PAYOUT_SIM_APPROVED           = "payment.funded_payout_sim_approved"
+EV_FUNDED_PAYOUT_INTERNAL_APPROVED      = "payment.funded_payout_internal_approved"
+EV_FUNDED_PAYOUT_INTERNAL_SUBMITTED     = "payment.funded_payout_internal_submitted"
+EV_FUNDED_PAYOUT_INTERNAL_SUBMIT_FAILED = "payment.funded_payout_internal_submit_failed"
+EV_FUNDED_PAYOUT_INTERNAL_COMPLETED     = "payment.funded_payout_internal_completed"
+EV_FUNDED_PAYOUT_INTERNAL_FAILED        = "payment.funded_payout_internal_failed"
+
+# Mirrors audit.py's EV_DEPOSIT_CREDITED string exactly (same real-world
+# fact, two systems, no import coupling between audit.py and broker_audit.py
+# — each module owns its own constants, same as everywhere else in this file).
+EV_DEPOSIT_CREDITED = "deposit.credited"
+
+
 # RISK-03 severities this module will record as an audit event when a
 # collector produces one — INFO/LOW/MEDIUM are deliberately not recorded
 # here (FASE 6: "Integrar solamente en eventos críticos").
@@ -244,6 +276,12 @@ def record_event(
     account=None,
     trade_id: Optional[int] = None,
     trade=None,
+    funded_payout_request_id: Optional[int] = None,
+    funded_payout_request=None,
+    deposit_id: Optional[int] = None,
+    deposit=None,
+    correlation_id=None,
+    event_version: int = 1,
     symbol: str = "",
     metadata: Optional[dict] = None,
     source_module: str = "",
@@ -254,12 +292,29 @@ def record_event(
     Writes exactly one BrokerAuditEvent row. Never raises — an audit
     write failure is logged and swallowed, never allowed to block or
     roll back the caller's own transaction (matches audit.py's
-    log_audit() contract exactly).
+    log_audit() contract exactly). This fail-open behavior is the
+    Audit Trail Engine's non-negotiable default — see the module docstring
+    of docs/AUDIT_TRAIL_ENGINE_PLAN.md §9: any future fail-closed exception
+    must be justified explicitly in its own block's design, never introduced
+    silently here.
 
     Writes inside a nested savepoint (transaction.atomic()) so a failure
     here can never poison an outer atomic() block the caller may already
     be inside — same pattern as the BrokerLedger SPREAD insert in
     consumers.py.
+
+    AUDIT-02 additions (all optional, retrocompatible — existing callers
+    from AUDIT-01 pass none of them and are unaffected):
+      funded_payout_request_id/funded_payout_request — Payments domain FK.
+      deposit_id/deposit                             — Payments domain FK.
+      correlation_id — institutional trace id spanning this operation's
+          full lifecycle across however many requests/tasks touched it.
+          Distinct from request_id (below), which only correlates events
+          within a single HTTP request/Celery task. Read back from the
+          root entity (FundedPayoutRequest.correlation_id,
+          Deposit.correlation_id) by the caller — never generated here.
+      event_version — versions this event_type's `metadata` shape only
+          (see module docstring). Defaults to 1 for every event_type.
     """
     try:
         from .models import BrokerAuditEvent
@@ -281,6 +336,13 @@ def record_event(
                 actor_id=actor_id,
                 account_id=account.id if account is not None else account_id,
                 trade_id=trade.id if trade is not None else trade_id,
+                funded_payout_request_id=(
+                    funded_payout_request.id if funded_payout_request is not None
+                    else funded_payout_request_id
+                ),
+                deposit_id=deposit.id if deposit is not None else deposit_id,
+                correlation_id=correlation_id,
+                event_version=event_version,
                 symbol=symbol or "",
                 description=description,
                 metadata=metadata or {},
@@ -338,6 +400,28 @@ def record_admin_event(
         actor_type=ActorType.STAFF, description=description, actor_id=actor_id,
         account_id=account_id, account=account, trade_id=trade_id, trade=trade,
         symbol=symbol, metadata=metadata, source_module=source_module, request=request,
+    )
+
+
+def record_payment_event(
+    *, event_type: str, severity: str = Severity.INFO, actor_type: str = ActorType.STAFF,
+    description: str, actor_id: Optional[int] = None, account_id=None, account=None,
+    funded_payout_request_id=None, funded_payout_request=None,
+    deposit_id=None, deposit=None, correlation_id=None,
+    metadata: Optional[dict] = None, source_module: str = "",
+):
+    """AUDIT-02 — PAYMENTS category convenience wrapper (funded payouts,
+    deposit.credited mirror). Same single-writer discipline as every other
+    record_*_event(): this delegates to record_event(), it never writes
+    directly."""
+    return record_event(
+        event_type=event_type, category=Category.PAYMENTS, severity=severity,
+        actor_type=actor_type, description=description, actor_id=actor_id,
+        account_id=account_id, account=account,
+        funded_payout_request_id=funded_payout_request_id,
+        funded_payout_request=funded_payout_request,
+        deposit_id=deposit_id, deposit=deposit, correlation_id=correlation_id,
+        metadata=metadata, source_module=source_module,
     )
 
 
@@ -490,5 +574,38 @@ def events_by_severity(severity: str, limit: int = 50):
     from .models import BrokerAuditEvent
     return list(
         BrokerAuditEvent.objects.filter(severity=severity)
+        .order_by("-timestamp", "-id")[:limit]
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# AUDIT-02 — Payments domain queries (same pattern as the six above).
+# ─────────────────────────────────────────────────────────────────────────
+def events_for_funded_payout(funded_payout_request_id: int, limit: int = 50):
+    from .models import BrokerAuditEvent
+    return list(
+        BrokerAuditEvent.objects.filter(funded_payout_request_id=funded_payout_request_id)
+        .order_by("-timestamp", "-id")[:limit]
+    )
+
+
+def events_for_deposit(deposit_id: int, limit: int = 50):
+    from .models import BrokerAuditEvent
+    return list(
+        BrokerAuditEvent.objects.filter(deposit_id=deposit_id)
+        .order_by("-timestamp", "-id")[:limit]
+    )
+
+
+def events_by_correlation_id(correlation_id, limit: int = 200):
+    """
+    All events sharing the same institutional correlation_id, across every
+    domain/FK they individually reference — the one query that answers
+    "tell me the whole story of this operation" regardless of how many
+    HTTP requests, Celery tasks, or webhooks it took.
+    """
+    from .models import BrokerAuditEvent
+    return list(
+        BrokerAuditEvent.objects.filter(correlation_id=correlation_id)
         .order_by("-timestamp", "-id")[:limit]
     )

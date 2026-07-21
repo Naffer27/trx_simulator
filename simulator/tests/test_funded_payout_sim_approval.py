@@ -169,6 +169,18 @@ class TestApproveSimpayout(TestCase):
         self.fpr.refresh_from_db()
         self.assertEqual(self.fpr.status, FundedPayoutRequest.ST_COMPLETED)
 
+    # AUDIT-02 — approval also produces a BrokerAuditEvent (see the
+    # dedicated test_audit02_payments_trail.py for full coverage of shape,
+    # correlation_id, fail-open, and privacy whitelist; this is just the
+    # "no regression on the happy path" check alongside the pre-existing
+    # assertion above).
+    def test_fpr_approval_creates_broker_audit_event(self):
+        from simulator.models import BrokerAuditEvent
+        approve_sim_payout(self.fpr, self.admin)
+        self.assertTrue(
+            BrokerAuditEvent.objects.filter(funded_payout_request=self.fpr).exists()
+        )
+
     # ── 2. Funded account balance is debited by trader_cut ───────────────────
 
     def test_funded_account_balance_decremented(self):

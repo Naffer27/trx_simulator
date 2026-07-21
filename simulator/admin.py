@@ -1718,12 +1718,18 @@ class BrokerAuditEventAdmin(admin.ModelAdmin):
         "actor_type", "account", "symbol", "description",
     )
     list_filter   = ("category", "severity", "actor_type")
-    search_fields = ("event_type", "description", "symbol", "request_id")
+    search_fields = (
+        "event_type", "description", "symbol", "request_id",
+        # AUDIT-02 — Payments domain search surface
+        "funded_payout_request__id", "deposit__id", "correlation_id",
+    )
     date_hierarchy = "timestamp"
     ordering = ("-timestamp",)
     readonly_fields = (
         "event_id", "event_type", "category", "severity", "timestamp",
         "actor_type", "actor_id", "account", "trade", "symbol",
+        # AUDIT-02
+        "funded_payout_request", "deposit", "correlation_id", "event_version",
         "description", "metadata", "source_module", "request_id",
     )
 

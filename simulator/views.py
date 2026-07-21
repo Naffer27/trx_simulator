@@ -1623,6 +1623,18 @@ def deposit_view(request):
                 "[deposit] row created deposit_id=%d user=%s amount_usd=%.2f currency=%s",
                 deposit.id, request.user.username, float(amount_usd), crypto_currency,
             )
+            # AUDIT-02 — activates a constant that existed since Phase B but
+            # was never called. Procedural, pre-financial moment: stays in
+            # AuditLog only (see docs/AUDIT_TRAIL_ENGINE_PLAN.md §2).
+            log_audit(
+                request, EV_DEPOSIT_CREATED,
+                f"Deposit #{deposit.id} created — ${amount_usd} {crypto_currency}",
+                detail={
+                    "deposit_id": deposit.id,
+                    "amount_usd": str(amount_usd),
+                    "currency": crypto_currency,
+                },
+            )
             try:
                 callback_url = request.build_absolute_uri(
                     reverse("simulator:deposit_callback")
@@ -1723,6 +1735,22 @@ def deposit_callback(request):
 
     logger.info("[callback] matched deposit_id=%d user=%s", deposit.id, deposit.user_id)
 
+    # AUDIT-02 — activates a constant that existed since Phase B but was
+    # never called. Deliberately BEFORE the idempotency gate below: every
+    # inbound callback attempt (including NowPayments retries/duplicates) is
+    # recorded, not just the first — reconstructing "did NP even call us,
+    # how many times, with what status" requires every attempt, not only
+    # the one that ended up crediting.
+    log_audit(
+        request, EV_DEPOSIT_CALLBACK,
+        f"IPN callback for deposit #{deposit.id} — status={payment_status}",
+        detail={
+            "deposit_id": deposit.id,
+            "payment_id": payment_id,
+            "payment_status": payment_status,
+        },
+    )
+
     with transaction.atomic():
         # Two concurrent callbacks serialize here; the loser reads credited=True.
         deposit = Deposit.objects.select_for_update().get(pk=deposit.pk)
@@ -1808,6 +1836,31 @@ def deposit_callback(request):
                         "currency":       deposit.crypto_currency,
                         "wallet_id":      wallet.id,
                         "payment_status": payment_status,
+                    },
+                )
+                # AUDIT-02 — mirrors the financial fact into BrokerAuditEvent
+                # (Category.PAYMENTS), the institutional cross-engine trail.
+                # AuditLog above remains the HTTP-request-scoped record; this
+                # is additive, not a replacement — same "financial vs.
+                # administrative events are distinct" precedent as force-close
+                # (see broker_audit.py module docstring). Closes the asymmetry
+                # where funded payouts (money out) had institutional coverage
+                # but deposits (money in) did not. Fail-open: never raises,
+                # never affects the credit above (already committed by the
+                # time this runs).
+                from . import broker_audit as _audit
+                _audit.record_payment_event(
+                    event_type=_audit.EV_DEPOSIT_CREDITED,
+                    deposit=deposit, correlation_id=deposit.correlation_id,
+                    actor_type=_audit.ActorType.SYSTEM,
+                    source_module="simulator.views",
+                    description=f"Deposit #{deposit.id} credited ${credit_amount}",
+                    metadata={
+                        "payment_id": payment_id,
+                        "amount_usd": str(deposit.amount_usd),
+                        "confirmed_usd": str(credit_amount),
+                        "currency": deposit.crypto_currency,
+                        "wallet_id": wallet.id,
                     },
                 )
 
