@@ -2168,6 +2168,17 @@ class BrokerAuditEvent(models.Model):
         "Deposit", null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
 
+    # AUDIT-03 — Compliance domain. `user` is the SUBJECT of the event (the
+    # KYCProfile owner), distinct from `actor_id` (who performed the action —
+    # a staff PK, or absent for a TRADER self-service action). Needed because
+    # KYC anchors to User, not TradingAccount — a user may have no
+    # TradingAccount yet at KYC time. No FK to KYCProfile: volume is low
+    # (2-3 events per user, ever) and events_for_user() already answers
+    # "all compliance events for this user" without a second access path.
+    user = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+
     # AUDIT-02 — institutional correlation id (see Deposit/FundedPayoutRequest
     # docstrings). Distinct from request_id below: request_id correlates
     # events within ONE HTTP request/Celery task; correlation_id correlates
@@ -2202,6 +2213,7 @@ class BrokerAuditEvent(models.Model):
             models.Index(fields=["funded_payout_request", "-timestamp"], name="audit_evt_fpr_ts_idx"),
             models.Index(fields=["deposit", "-timestamp"], name="audit_evt_deposit_ts_idx"),
             models.Index(fields=["correlation_id"], name="audit_evt_correlation_idx"),
+            models.Index(fields=["user", "-timestamp"], name="audit_evt_user_ts_idx"),
         ]
 
     def __str__(self):

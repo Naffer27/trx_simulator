@@ -228,6 +228,41 @@ EV_FUNDED_PAYOUT_INTERNAL_FAILED        = "payment.funded_payout_internal_failed
 EV_DEPOSIT_CREDITED = "deposit.credited"
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# AUDIT-03 — Compliance Audit Trail (KYC).
+#
+# Category.COMPLIANCE. Three events:
+#   - kyc_approved / kyc_rejected — admin.py's approve_kyc()/reject_kyc(),
+#     now re-locked with select_for_update() + a status recheck inside the
+#     transaction (FASE 1 found these unlocked — two concurrent clicks on
+#     the same profile could silently double-process it, overwriting
+#     reviewed_by and double-queuing the notification email).
+#   - kyc_resubmitted — views.py's kyc_view(), fired ONLY on the
+#     REJECTED -> PENDING transition. This is the one moment
+#     kyc.reviewed_at/reviewed_by/rejection_reason are wiped by the user's
+#     own resubmission (test_kyc_ui.py::test_rejected_post_clears_review_
+#     fields already proves this is deliberate, pre-existing behavior) —
+#     kyc_resubmitted does not need to preserve that data itself, because
+#     the EARLIER kyc_rejected event already recorded who rejected it, when,
+#     and why, permanently, in its own row. kyc_resubmitted only needs to
+#     record that the wipe-triggering transition happened, and to whom.
+#     status_before is captured BEFORE the wipe (read from the locked row);
+#     the event itself is written AFTER kyc.save(), inside the same
+#     transaction — recording "what happened" is not the same as recording
+#     it before the data disappears from KYCProfile (it already disappeared
+#     from KYCProfile the moment .save() ran; it never disappears from
+#     BrokerAuditEvent, which is the point of this module).
+# ─────────────────────────────────────────────────────────────────────────
+EV_KYC_APPROVED     = "compliance.kyc_approved"
+EV_KYC_REJECTED     = "compliance.kyc_rejected"
+EV_KYC_RESUBMITTED  = "compliance.kyc_resubmitted"
+
+# Metadata whitelist enforced by the three call sites (admin.py, views.py) —
+# never document_front/back/selfie, document_number, legal_name, country, or
+# any raw file path. rejection_reason is truncated to this many characters.
+KYC_REJECTION_REASON_MAX_LENGTH = 500
+
+
 # RISK-03 severities this module will record as an audit event when a
 # collector produces one — INFO/LOW/MEDIUM are deliberately not recorded
 # here (FASE 6: "Integrar solamente en eventos críticos").
@@ -280,6 +315,8 @@ def record_event(
     funded_payout_request=None,
     deposit_id: Optional[int] = None,
     deposit=None,
+    user_id: Optional[int] = None,
+    user=None,
     correlation_id=None,
     event_version: int = 1,
     symbol: str = "",
@@ -315,6 +352,11 @@ def record_event(
           Deposit.correlation_id) by the caller — never generated here.
       event_version — versions this event_type's `metadata` shape only
           (see module docstring). Defaults to 1 for every event_type.
+
+    AUDIT-03 addition (also optional, retrocompatible):
+      user_id/user — the SUBJECT of the event (e.g. the KYCProfile owner),
+          distinct from actor_id (who performed the action). Needed for
+          domains anchored to User rather than TradingAccount.
     """
     try:
         from .models import BrokerAuditEvent
@@ -341,6 +383,7 @@ def record_event(
                     else funded_payout_request_id
                 ),
                 deposit_id=deposit.id if deposit is not None else deposit_id,
+                user_id=user.id if user is not None else user_id,
                 correlation_id=correlation_id,
                 event_version=event_version,
                 symbol=symbol or "",
@@ -421,6 +464,29 @@ def record_payment_event(
         funded_payout_request_id=funded_payout_request_id,
         funded_payout_request=funded_payout_request,
         deposit_id=deposit_id, deposit=deposit, correlation_id=correlation_id,
+        metadata=metadata, source_module=source_module,
+    )
+
+
+def record_compliance_event(
+    *, event_type: str, severity: str = Severity.WARNING, actor_type: str = ActorType.STAFF,
+    description: str, actor_id: Optional[int] = None,
+    user_id: Optional[int] = None, user=None,
+    metadata: Optional[dict] = None, source_module: str = "",
+):
+    """AUDIT-03 — COMPLIANCE category convenience wrapper (KYC approve/
+    reject/resubmit). Same single-writer discipline as every other
+    record_*_event(): delegates 100% to record_event(), no logic of its own.
+    No correlation_id parameter — KYCProfile is a reused row across a
+    user's whole lifetime (OneToOneField), not a fresh-per-operation entity
+    like Deposit/FundedPayoutRequest, so a correlation_id here would be
+    constant forever and redundant with user_id. The "reference to the
+    prior rejection" this domain needs is answered by events_for_user()
+    ordered by timestamp, not by a stored pointer."""
+    return record_event(
+        event_type=event_type, category=Category.COMPLIANCE, severity=severity,
+        actor_type=actor_type, description=description, actor_id=actor_id,
+        user_id=user_id, user=user,
         metadata=metadata, source_module=source_module,
     )
 
@@ -593,6 +659,21 @@ def events_for_deposit(deposit_id: int, limit: int = 50):
     from .models import BrokerAuditEvent
     return list(
         BrokerAuditEvent.objects.filter(deposit_id=deposit_id)
+        .order_by("-timestamp", "-id")[:limit]
+    )
+
+
+def events_for_user(user_id: int, limit: int = 50):
+    """
+    AUDIT-03 — all events where `user` is the subject, across every
+    category (not only COMPLIANCE). Callers wanting only the KYC history
+    for a user should additionally filter .filter(category=Category.
+    COMPLIANCE) — this function intentionally stays as generic as the other
+    seven events_for_X()/events_by_X() helpers, not KYC-specific.
+    """
+    from .models import BrokerAuditEvent
+    return list(
+        BrokerAuditEvent.objects.filter(user_id=user_id)
         .order_by("-timestamp", "-id")[:limit]
     )
 

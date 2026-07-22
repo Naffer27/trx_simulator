@@ -1722,6 +1722,8 @@ class BrokerAuditEventAdmin(admin.ModelAdmin):
         "event_type", "description", "symbol", "request_id",
         # AUDIT-02 — Payments domain search surface
         "funded_payout_request__id", "deposit__id", "correlation_id",
+        # AUDIT-03 — Compliance domain search surface
+        "user__username",
     )
     date_hierarchy = "timestamp"
     ordering = ("-timestamp",)
@@ -1730,6 +1732,8 @@ class BrokerAuditEventAdmin(admin.ModelAdmin):
         "actor_type", "actor_id", "account", "trade", "symbol",
         # AUDIT-02
         "funded_payout_request", "deposit", "correlation_id", "event_version",
+        # AUDIT-03
+        "user",
         "description", "metadata", "source_module", "request_id",
     )
 
@@ -2953,38 +2957,97 @@ class KYCProfileAdmin(admin.ModelAdmin):
 
     @admin.action(description="Approve selected KYC profiles")
     def approve_kyc(self, request, queryset):
+        """
+        AUDIT-03 — one transaction.atomic()+select_for_update() per row,
+        never one lock held across the whole batch (avoids a deadlock risk
+        if two bulk actions run with overlapping-but-differently-ordered
+        selections). The status recheck happens AFTER acquiring the lock,
+        reading a fresh row — not the possibly-stale object read before the
+        loop. Only the transaction that actually wins the race reaches the
+        mutation, the audit event, and the email; the loser's recheck
+        makes it `continue` before any of those. Emails are queued after
+        every lock in this action has been released, over the list of
+        profiles that actually transitioned — never over the original
+        admin selection, which may include rows a race discarded.
+        """
         from django.utils import timezone
-        pending = list(queryset.filter(status=KYCProfile.STATUS_PENDING))
+        from . import broker_audit as _audit
+
+        ids = list(queryset.values_list("pk", flat=True))
+        approved = []
         _now = timezone.now()
-        for kyc in pending:
-            kyc.status           = KYCProfile.STATUS_APPROVED
-            kyc.reviewed_at      = _now
-            kyc.reviewed_by      = request.user
-            kyc.rejection_reason = ""
-            kyc.save(update_fields=["status", "reviewed_at", "reviewed_by", "rejection_reason"])
+        for kyc_id in ids:
+            with transaction.atomic():
+                kyc = KYCProfile.objects.select_for_update().get(pk=kyc_id)
+                if kyc.status != KYCProfile.STATUS_PENDING:
+                    continue  # lost the race, or wasn't pending — same silent skip as before
+                kyc.status           = KYCProfile.STATUS_APPROVED
+                kyc.reviewed_at      = _now
+                kyc.reviewed_by      = request.user
+                kyc.rejection_reason = ""
+                kyc.save(update_fields=["status", "reviewed_at", "reviewed_by", "rejection_reason"])
+                _audit.record_compliance_event(
+                    event_type=_audit.EV_KYC_APPROVED, severity=_audit.Severity.INFO,
+                    actor_id=request.user.pk, user=kyc.user,
+                    source_module="simulator.admin",
+                    description=f"KYC profile #{kyc.pk} approved",
+                    metadata={
+                        "kyc_profile_id": kyc.pk,
+                        "status_before": "pending",
+                        "status_after": "approved",
+                    },
+                )
+            approved.append(kyc)
+
+        for kyc in approved:
             try:
                 from .kyc_emails import send_kyc_approved_email
                 send_kyc_approved_email(kyc)
             except Exception as mail_exc:
                 _wlog.warning("[admin] kyc approved email failed kyc=%d: %s", kyc.pk, mail_exc)
-        self.message_user(request, f"{len(pending)} KYC profile(s) approved.")
+        self.message_user(request, f"{len(approved)} KYC profile(s) approved.")
 
     @admin.action(description="Reject selected KYC profiles")
     def reject_kyc(self, request, queryset):
+        """AUDIT-03 — same per-row locking discipline as approve_kyc() above."""
         from django.utils import timezone
-        pending = list(queryset.filter(status=KYCProfile.STATUS_PENDING))
+        from . import broker_audit as _audit
+
+        ids = list(queryset.values_list("pk", flat=True))
+        rejected = []
         _now = timezone.now()
-        for kyc in pending:
-            kyc.status      = KYCProfile.STATUS_REJECTED
-            kyc.reviewed_at = _now
-            kyc.reviewed_by = request.user
-            kyc.save(update_fields=["status", "reviewed_at", "reviewed_by"])
+        for kyc_id in ids:
+            with transaction.atomic():
+                kyc = KYCProfile.objects.select_for_update().get(pk=kyc_id)
+                if kyc.status != KYCProfile.STATUS_PENDING:
+                    continue
+                kyc.status      = KYCProfile.STATUS_REJECTED
+                kyc.reviewed_at = _now
+                kyc.reviewed_by = request.user
+                kyc.save(update_fields=["status", "reviewed_at", "reviewed_by"])
+                _audit.record_compliance_event(
+                    event_type=_audit.EV_KYC_REJECTED, severity=_audit.Severity.WARNING,
+                    actor_id=request.user.pk, user=kyc.user,
+                    source_module="simulator.admin",
+                    description=f"KYC profile #{kyc.pk} rejected",
+                    metadata={
+                        "kyc_profile_id": kyc.pk,
+                        "status_before": "pending",
+                        "status_after": "rejected",
+                        "rejection_reason": (kyc.rejection_reason or "")[
+                            :_audit.KYC_REJECTION_REASON_MAX_LENGTH
+                        ],
+                    },
+                )
+            rejected.append(kyc)
+
+        for kyc in rejected:
             try:
                 from .kyc_emails import send_kyc_rejected_email
                 send_kyc_rejected_email(kyc)
             except Exception as mail_exc:
                 _wlog.warning("[admin] kyc rejected email failed kyc=%d: %s", kyc.pk, mail_exc)
-        self.message_user(request, f"{len(pending)} KYC profile(s) rejected.")
+        self.message_user(request, f"{len(rejected)} KYC profile(s) rejected.")
 
     actions = ["approve_kyc", "reject_kyc"]
 

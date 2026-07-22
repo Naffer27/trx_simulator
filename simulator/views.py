@@ -3328,16 +3328,50 @@ def kyc_view(request):
 
     if editable:
         if request.method == "POST":
-            form = KYCProfileForm(request.POST, request.FILES, instance=kyc)
-            if form.is_valid():
-                kyc            = form.save(commit=False)
-                kyc.status     = KYCProfile.STATUS_PENDING
-                kyc.submitted_at = timezone.now()
-                kyc.reviewed_at  = None
-                kyc.reviewed_by  = None
-                kyc.rejection_reason = ""
-                kyc.save()
-                return redirect("simulator:kyc")
+            # AUDIT-03 — locked re-read, same discipline as admin.py's
+            # approve_kyc()/reject_kyc(): a double-submit from the same user
+            # (two tabs, double-click) must not fire two audit events, and
+            # must not let the second request act on a stale in-memory
+            # status read before either request acquired the lock.
+            with transaction.atomic():
+                kyc = KYCProfile.objects.select_for_update().get(pk=kyc.pk)
+                if kyc.status not in (KYCProfile.STATUS_NOT_STARTED, KYCProfile.STATUS_REJECTED):
+                    return redirect("simulator:kyc")  # lost the race — nothing to do
+
+                was_rejected = (kyc.status == KYCProfile.STATUS_REJECTED)
+                form = KYCProfileForm(request.POST, request.FILES, instance=kyc)
+                if form.is_valid():
+                    kyc            = form.save(commit=False)
+                    kyc.status     = KYCProfile.STATUS_PENDING
+                    kyc.submitted_at = timezone.now()
+                    kyc.reviewed_at  = None
+                    kyc.reviewed_by  = None
+                    kyc.rejection_reason = ""
+                    kyc.save()
+                    # AUDIT-03 — only on the REJECTED -> PENDING transition;
+                    # the first-ever submission (NOT_STARTED -> PENDING) has
+                    # nothing to preserve, no event needed. Written AFTER
+                    # kyc.save(), inside the same transaction — the earlier
+                    # compliance.kyc_rejected event already recorded who
+                    # rejected it, when, and why, permanently; this event
+                    # only needs to record that the wipe-triggering
+                    # transition happened, and to whom.
+                    if was_rejected:
+                        from . import broker_audit as _audit
+                        _audit.record_compliance_event(
+                            event_type=_audit.EV_KYC_RESUBMITTED,
+                            severity=_audit.Severity.INFO,
+                            actor_type=_audit.ActorType.TRADER,
+                            user=request.user,
+                            source_module="simulator.views",
+                            description=f"KYC profile #{kyc.pk} resubmitted after rejection",
+                            metadata={
+                                "kyc_profile_id": kyc.pk,
+                                "status_before": "rejected",
+                                "status_after": "pending",
+                            },
+                        )
+                    return redirect("simulator:kyc")
         else:
             form = KYCProfileForm(instance=kyc)
 
