@@ -3345,6 +3345,47 @@ class MoneyBrokerAdminSite(admin.AdminSite):
 
         return custom
 
+    def login(self, request, extra_context=None):
+        """
+        AUDIT-04b — observes the outcome of Django's own AdminSite.login()
+        (which internally delegates to django.contrib.auth.views.LoginView
+        + AdminAuthenticationForm). Never touches the form, the template,
+        session handling, or the redirect — super() runs first and fully
+        owns all of that; this method only reads request.user afterward.
+
+        AdminAuthenticationForm.confirm_login_allowed() already rejects
+        non-staff users before auth_login() is ever called, so "valid
+        credentials but not staff" and "invalid credentials" both simply
+        fall into the failed branch below — no separate reason code, by
+        design (see AUDIT-04b design doc).
+        """
+        response = super().login(request, extra_context)
+        if request.method == "POST":
+            from . import broker_audit as _audit
+            from .observability import get_client_ip
+            if request.user.is_authenticated:
+                _audit.record_auth_event(
+                    event_type=_audit.EV_ADMIN_SITE_LOGIN_SUCCESS,
+                    severity=_audit.Severity.WARNING,
+                    actor_type=_audit.ActorType.STAFF,
+                    user=request.user,
+                    source_module="simulator.admin",
+                    description=f"Admin site login succeeded for user #{request.user.pk}",
+                    metadata={"ip": get_client_ip(request)},
+                )
+            else:
+                username_attempted = (request.POST.get("username", "") or "").strip()
+                username_attempted = username_attempted[:_audit.ADMIN_LOGIN_USERNAME_ATTEMPTED_MAX_LENGTH]
+                _audit.record_auth_event(
+                    event_type=_audit.EV_ADMIN_SITE_LOGIN_FAILED,
+                    severity=_audit.Severity.WARNING,
+                    actor_type=_audit.ActorType.STAFF,
+                    source_module="simulator.admin",
+                    description="Admin site login failed",
+                    metadata={"username_attempted": username_attempted, "ip": get_client_ip(request)},
+                )
+        return response
+
 
 # Swap the class on the existing admin.site instance.
 # All @admin.register() decorators already bound to this object remain intact.

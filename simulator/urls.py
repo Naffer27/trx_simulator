@@ -1,6 +1,11 @@
 # simulator/urls.py
 from django.contrib.auth import views as auth_views
 from django.urls import path, reverse_lazy
+from .auth_password_views import (
+    AuditedPasswordChangeView,
+    AuditedPasswordResetConfirmView,
+    AuditedPasswordResetView,
+)
 from .views import (
     login_view,
     logout_view,
@@ -166,7 +171,8 @@ urlpatterns = [
     path("api/internal/challenge/status/<str:external_event_id>/", challenge_status_view, name="challenge_status"),
 
     # ── Password Change (authenticated users) ───────────────────────────────
-    path("password-change/", auth_views.PasswordChangeView.as_view(
+    # AUDIT-04b — AuditedPasswordChangeView (simulator/auth_password_views.py)
+    path("password-change/", AuditedPasswordChangeView.as_view(
         template_name="simulator/password_change_form.html",
         success_url=reverse_lazy("simulator:password_change_done"),
     ), name="password_change"),
@@ -175,7 +181,11 @@ urlpatterns = [
     ), name="password_change_done"),
 
     # ── Password Reset ───────────────────────────────────────────────────────
-    path("password-reset/", auth_views.PasswordResetView.as_view(
+    # AUDIT-04b — Audited* views (simulator/auth_password_views.py). Only
+    # the request and confirm steps are audited; the two pure-display
+    # "done"/"complete" views below have no logic to observe and stay
+    # on Django's stock views.
+    path("password-reset/", AuditedPasswordResetView.as_view(
         template_name="simulator/password_reset_form.html",
         email_template_name="simulator/password_reset_email.html",
         subject_template_name="simulator/password_reset_subject.txt",
@@ -184,7 +194,7 @@ urlpatterns = [
     path("password-reset/done/", auth_views.PasswordResetDoneView.as_view(
         template_name="simulator/password_reset_done.html",
     ), name="password_reset_done"),
-    path("password-reset/confirm/<uidb64>/<token>/", auth_views.PasswordResetConfirmView.as_view(
+    path("password-reset/confirm/<uidb64>/<token>/", AuditedPasswordResetConfirmView.as_view(
         template_name="simulator/password_reset_confirm.html",
         success_url=reverse_lazy("simulator:password_reset_complete"),
     ), name="password_reset_confirm"),

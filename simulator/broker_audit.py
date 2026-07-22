@@ -312,6 +312,55 @@ AUDIT04A_2FA_VERIFY_FAIL_WINDOW_SECONDS = int(
 )
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# AUDIT-04b — Password & Admin Access Trail.
+#
+# Category.AUTHENTICATION, same wrapper (record_auth_event()) as AUDIT-04a
+# — no new wrapper needed. Five events, all in simulator/auth_password_
+# views.py (thin subclasses of Django's own password change/reset CBVs —
+# never reimplement password hashing, token generation, or token
+# validation) except the two admin_site_login_* events, which live in
+# admin.py's MoneyBrokerAdminSite.login() override.
+#
+#   - password_changed             — no lock needed (single mutation, no
+#     state machine; two concurrent changes are two legitimate facts).
+#   - password_reset_requested     — fired from a PasswordResetForm
+#     subclass's send_mail() override (called once per matched user,
+#     AFTER Django's own send succeeds) — never fired for a non-existent
+#     email, and the fork happens entirely server-side so the HTTP
+#     response never reveals whether a user matched.
+#   - password_reset_completed     — fired from PasswordResetConfirmView's
+#     form_valid(), only after super().form_valid() succeeds.
+#   - admin_site_login_success/failed — MoneyBrokerAdminSite.login()
+#     override, observing Django's own AdminSite.login() outcome.
+#
+# correlation_id semantics (deliberately NOT "one id per request"):
+# Django's default_token_generator produces a DETERMINISTIC token from
+# (user pk, password hash, last_login, a rotating time-hash) — two reset
+# requests for the same user within the same token/timestamp bucket, with
+# nothing about the user changed in between, produce the IDENTICAL token
+# string. correlation_id is therefore keyed by sha256(token), not by
+# request or by user: multiple requests that happen to produce the same
+# token share the same correlation_id (correct — they ARE the same
+# reset attempt as far as the token/link is concerned). A request that
+# produces a different token (state changed, or enough time passed) gets
+# its own correlation_id. See _get_or_create_correlation() in
+# auth_password_views.py for the atomic Redis SET NX EX implementation —
+# first writer for a given token wins and defines that token's
+# correlation_id permanently (within its TTL); every subsequent caller
+# for the same token reads that same value back, never overwrites it.
+# ─────────────────────────────────────────────────────────────────────────
+EV_PASSWORD_CHANGED           = "auth.password_changed"
+EV_PASSWORD_RESET_REQUESTED   = "auth.password_reset_requested"
+EV_PASSWORD_RESET_COMPLETED   = "auth.password_reset_completed"
+EV_ADMIN_SITE_LOGIN_SUCCESS   = "auth.admin_site_login_success"
+EV_ADMIN_SITE_LOGIN_FAILED    = "auth.admin_site_login_failed"
+
+# Matches User.username's own max_length — never store more of an
+# attempted admin login username than Django itself would ever accept.
+ADMIN_LOGIN_USERNAME_ATTEMPTED_MAX_LENGTH = 150
+
+
 # RISK-03 severities this module will record as an audit event when a
 # collector produces one — INFO/LOW/MEDIUM are deliberately not recorded
 # here (FASE 6: "Integrar solamente en eventos críticos").
@@ -544,17 +593,21 @@ def record_auth_event(
     *, event_type: str, severity: str = Severity.INFO, actor_type: str = ActorType.TRADER,
     description: str, actor_id: Optional[int] = None,
     user_id: Optional[int] = None, user=None,
+    correlation_id=None,
     metadata: Optional[dict] = None, source_module: str = "",
 ):
-    """AUDIT-04a — AUTHENTICATION category convenience wrapper (2FA
-    lifecycle). Same single-writer discipline as every other
-    record_*_event(): delegates 100% to record_event(), no logic of its
-    own. No correlation_id — every event here is atomic within a single
-    request, no async boundary to correlate across."""
+    """AUTHENTICATION category convenience wrapper. Same single-writer
+    discipline as every other record_*_event(): delegates 100% to
+    record_event(), no logic of its own.
+
+    correlation_id is optional and unused by AUDIT-04a's 2FA lifecycle
+    events (atomic, single-request, nothing to correlate). AUDIT-04b's
+    password_reset_requested/completed DO use it — see their module
+    (auth_password_views.py) for the sha256(token)-keyed semantics."""
     return record_event(
         event_type=event_type, category=Category.AUTHENTICATION, severity=severity,
         actor_type=actor_type, description=description, actor_id=actor_id,
-        user_id=user_id, user=user,
+        user_id=user_id, user=user, correlation_id=correlation_id,
         metadata=metadata, source_module=source_module,
     )
 
