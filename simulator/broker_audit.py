@@ -263,6 +263,55 @@ EV_KYC_RESUBMITTED  = "compliance.kyc_resubmitted"
 KYC_REJECTION_REASON_MAX_LENGTH = 500
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# AUDIT-04a — 2FA Lifecycle Trail.
+#
+# Category.AUTHENTICATION, first real call sites (dormant since AUDIT-01).
+#   - 2fa_enabled  — views.py's totp_setup_view(). No lock needed: two
+#     concurrent enables are two legitimately distinct attempts (e.g. a
+#     retry after a mis-scanned QR), not a duplication bug — OneToOneField
+#     already guarantees exactly one TOTPDevice row regardless. metadata
+#     captures had_existing_device/previous_confirmed_at so a silent
+#     re-enable (replacing an already-confirmed device's secret) leaves a
+#     trace, even though no schema change was needed to record it.
+#   - 2fa_disabled — views.py's totp_disable_view(). Locked
+#     (transaction.atomic()+select_for_update()) because device.delete()
+#     destroys the only record TOTPDevice ever held (confirmed_at) — two
+#     concurrent disables (or a disable racing the emergency command below)
+#     must not both succeed and both write an event for what is really one
+#     fact. was_confirmed_at is captured BEFORE the delete.
+#   - 2fa_disabled_emergency — disable_2fa management command. Same lock,
+#     for the cross-flow race against a user's own self-service disable.
+#     actor_type=SYSTEM, no actor_id — the command does not capture the
+#     real human operator's identity (a known, accepted limitation, not
+#     fixed by this block).
+#   - 2fa_verify_failed — views.py's totp_verify_view(). Deliberately NOT
+#     recorded on every failed attempt (those stay in security_log() only,
+#     matching auth.login_failed's existing precedent) — BrokerAuditEvent
+#     is reserved for institutional events, not a mirror of every brute-
+#     force guess. Recorded only when a configurable threshold of
+#     consecutive failures is crossed, using ratelimit.py's existing
+#     Redis counter (rate_check()) in OBSERVE-ONLY mode — it counts, it
+#     never blocks the retry. Fail-open of Redis itself (rate_check
+#     returns (True, 0) on Redis failure) means the threshold simply never
+#     fires; that is the same accepted behavior every other rate_check()
+#     caller already has.
+# ─────────────────────────────────────────────────────────────────────────
+EV_2FA_ENABLED             = "auth.2fa_enabled"
+EV_2FA_DISABLED            = "auth.2fa_disabled"
+EV_2FA_DISABLED_EMERGENCY  = "auth.2fa_disabled_emergency"
+EV_2FA_VERIFY_FAILED       = "auth.2fa_verify_failed"
+
+from django.conf import settings as _settings  # noqa: E402
+
+AUDIT04A_2FA_VERIFY_FAIL_THRESHOLD = int(
+    getattr(_settings, "AUDIT04A_2FA_VERIFY_FAIL_THRESHOLD", 5)
+)
+AUDIT04A_2FA_VERIFY_FAIL_WINDOW_SECONDS = int(
+    getattr(_settings, "AUDIT04A_2FA_VERIFY_FAIL_WINDOW_SECONDS", 300)
+)
+
+
 # RISK-03 severities this module will record as an audit event when a
 # collector produces one — INFO/LOW/MEDIUM are deliberately not recorded
 # here (FASE 6: "Integrar solamente en eventos críticos").
@@ -485,6 +534,25 @@ def record_compliance_event(
     ordered by timestamp, not by a stored pointer."""
     return record_event(
         event_type=event_type, category=Category.COMPLIANCE, severity=severity,
+        actor_type=actor_type, description=description, actor_id=actor_id,
+        user_id=user_id, user=user,
+        metadata=metadata, source_module=source_module,
+    )
+
+
+def record_auth_event(
+    *, event_type: str, severity: str = Severity.INFO, actor_type: str = ActorType.TRADER,
+    description: str, actor_id: Optional[int] = None,
+    user_id: Optional[int] = None, user=None,
+    metadata: Optional[dict] = None, source_module: str = "",
+):
+    """AUDIT-04a — AUTHENTICATION category convenience wrapper (2FA
+    lifecycle). Same single-writer discipline as every other
+    record_*_event(): delegates 100% to record_event(), no logic of its
+    own. No correlation_id — every event here is atomic within a single
+    request, no async boundary to correlate across."""
+    return record_event(
+        event_type=event_type, category=Category.AUTHENTICATION, severity=severity,
         actor_type=actor_type, description=description, actor_id=actor_id,
         user_id=user_id, user=user,
         metadata=metadata, source_module=source_module,

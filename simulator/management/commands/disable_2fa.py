@@ -10,6 +10,7 @@ Always log this action and investigate why the user lost access.
 """
 from django.core.management.base import BaseCommand, CommandError
 from django.contrib.auth import get_user_model
+from django.db import transaction
 
 
 class Command(BaseCommand):
@@ -44,30 +45,51 @@ class Command(BaseCommand):
             raise CommandError(f"User '{username}' not found.")
 
         from simulator.models import TOTPDevice
-        device = TOTPDevice.objects.filter(user=user).first()
-        if not device:
-            self.stdout.write(self.style.WARNING(f"No TOTP device found for '{username}' — nothing to do."))
-            return
 
-        confirmed_at = device.confirmed_at
-        device.delete()
+        # AUDIT-04a — locked: same discipline as views.py::totp_disable_view.
+        # Closes the cross-flow race against a user's own self-service
+        # disable happening on the same TOTPDevice at nearly the same time
+        # — whichever commits first wins, the other sees no row and skips.
+        with transaction.atomic():
+            device = TOTPDevice.objects.select_for_update().filter(user=user).first()
+            if not device:
+                self.stdout.write(self.style.WARNING(f"No TOTP device found for '{username}' — nothing to do."))
+                return
 
-        # Write to audit log
-        try:
-            from simulator.models import AuditLog
-            AuditLog.objects.create(
-                event_type="admin.2fa_disabled_emergency",
-                action=f"Emergency 2FA disable for user {username} (management command)",
-                detail={
-                    "username": username,
-                    "user_id": user.pk,
-                    "was_confirmed": device.confirmed,
-                    "confirmed_at": confirmed_at.isoformat() if confirmed_at else None,
+            confirmed_at = device.confirmed_at
+            was_confirmed = device.confirmed
+            device.delete()
+
+            # Write to audit log
+            try:
+                from simulator.models import AuditLog
+                AuditLog.objects.create(
+                    event_type="admin.2fa_disabled_emergency",
+                    action=f"Emergency 2FA disable for user {username} (management command)",
+                    detail={
+                        "username": username,
+                        "user_id": user.pk,
+                        "was_confirmed": was_confirmed,
+                        "confirmed_at": confirmed_at.isoformat() if confirmed_at else None,
+                        "performed_by": "management_command",
+                    },
+                )
+            except Exception:
+                pass
+
+            from simulator import broker_audit as _audit
+            _audit.record_auth_event(
+                event_type=_audit.EV_2FA_DISABLED_EMERGENCY,
+                severity=_audit.Severity.CRITICAL,
+                actor_type=_audit.ActorType.SYSTEM,
+                user=user,
+                source_module="simulator.management.commands.disable_2fa",
+                description=f"2FA emergency-disabled for user #{user.pk} via management command",
+                metadata={
+                    "was_confirmed_at": confirmed_at.isoformat() if confirmed_at else None,
                     "performed_by": "management_command",
                 },
             )
-        except Exception:
-            pass
 
         self.stdout.write(
             self.style.SUCCESS(

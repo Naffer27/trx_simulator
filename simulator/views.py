@@ -3102,6 +3102,15 @@ def totp_setup_view(request):
         if not secret or not code:
             error = "Código o secreto inválido."
         elif verify_totp_code(secret, code):
+            # AUDIT-04a — snapshot before update_or_create() silently
+            # overwrites an already-confirmed device's secret on a re-enable.
+            # No lock needed here: two concurrent enables are two distinct
+            # legitimate attempts, not a duplication bug — OneToOneField
+            # already guarantees exactly one TOTPDevice row regardless.
+            _existing_before = TOTPDevice.objects.filter(user=request.user).first()
+            _had_existing = bool(_existing_before and _existing_before.confirmed)
+            _previous_confirmed_at = _existing_before.confirmed_at if _existing_before else None
+
             # Save or update device
             TOTPDevice.objects.update_or_create(
                 user=request.user,
@@ -3114,6 +3123,19 @@ def totp_setup_view(request):
             mark_session_verified(request)
             security_log("auth.2fa_enabled", level="info", username=request.user.username, user_id=request.user.pk)
             log_audit(request, EV_ADMIN_ACTION, f"2FA enabled for user {request.user.username}")
+            from . import broker_audit as _audit
+            _audit.record_auth_event(
+                event_type=_audit.EV_2FA_ENABLED,
+                user=request.user,
+                source_module="simulator.views",
+                description=f"2FA enabled for user #{request.user.pk}",
+                metadata={
+                    "had_existing_device": _had_existing,
+                    "previous_confirmed_at": (
+                        _previous_confirmed_at.isoformat() if _previous_confirmed_at else None
+                    ),
+                },
+            )
             return redirect("simulator:home")
         else:
             error = "Código incorrecto. Intenta de nuevo."
@@ -3163,6 +3185,34 @@ def totp_verify_view(request):
         else:
             error = "Código incorrecto."
             security_log("auth.2fa_failed", username=request.user.username, user_id=request.user.pk)
+            # AUDIT-04a — BrokerAuditEvent is reserved for institutional
+            # events, not a mirror of every brute-force guess (those stay
+            # in security_log() above, unchanged). Only record when a
+            # configurable threshold of consecutive failures is crossed,
+            # using the existing Redis counter in ratelimit.py in
+            # OBSERVE-ONLY mode — it counts, it never blocks this retry.
+            # rate_check() is fail-open on Redis failure ((True, 0)), so
+            # the threshold simply never fires in that case — same
+            # accepted behavior as every other rate_check() caller.
+            from . import broker_audit as _audit
+            from .ratelimit import rate_check
+            _, _fail_count = rate_check(
+                f"2fa_verify_fail:u{request.user.pk}",
+                limit=_audit.AUDIT04A_2FA_VERIFY_FAIL_THRESHOLD,
+                window=_audit.AUDIT04A_2FA_VERIFY_FAIL_WINDOW_SECONDS,
+            )
+            if _fail_count == _audit.AUDIT04A_2FA_VERIFY_FAIL_THRESHOLD:
+                _audit.record_auth_event(
+                    event_type=_audit.EV_2FA_VERIFY_FAILED,
+                    severity=_audit.Severity.WARNING,
+                    user=request.user,
+                    source_module="simulator.views",
+                    description=f"2FA verification failed {_fail_count} times for user #{request.user.pk}",
+                    metadata={
+                        "consecutive_failures": _fail_count,
+                        "window_seconds": _audit.AUDIT04A_2FA_VERIFY_FAIL_WINDOW_SECONDS,
+                    },
+                )
 
     return render(request, "simulator/totp_verify.html", {"error": error})
 
@@ -3179,22 +3229,41 @@ def totp_disable_view(request):
     if request.method != "POST":
         return redirect("simulator:home")
 
-    device = TOTPDevice.objects.filter(user=request.user, confirmed=True).first()
-    if not device:
-        return redirect("simulator:home")
+    # AUDIT-04a — locked: device.delete() destroys the only record
+    # TOTPDevice ever held (confirmed_at). Two concurrent disables (or a
+    # disable racing the disable_2fa emergency command) must not both
+    # succeed and both write an event for what is really one fact.
+    with transaction.atomic():
+        device = TOTPDevice.objects.select_for_update().filter(
+            user=request.user, confirmed=True
+        ).first()
+        if not device:
+            return redirect("simulator:home")
 
-    code = request.POST.get("code", "").strip()
-    if verify_totp_code(device.secret, code):
+        code = request.POST.get("code", "").strip()
+        if not verify_totp_code(device.secret, code):
+            return render(request, "simulator/totp_setup.html", {
+                "existing": device,
+                "error": "Código incorrecto — 2FA no desactivado.",
+            })
+
+        was_confirmed_at = device.confirmed_at  # snapshot BEFORE delete
         device.delete()
         request.session.pop("2fa_verified", None)
         security_log("auth.2fa_disabled", level="warning", username=request.user.username, user_id=request.user.pk)
         log_audit(request, EV_ADMIN_ACTION, f"2FA disabled for user {request.user.username}")
+        from . import broker_audit as _audit
+        _audit.record_auth_event(
+            event_type=_audit.EV_2FA_DISABLED,
+            severity=_audit.Severity.WARNING,
+            user=request.user,
+            source_module="simulator.views",
+            description=f"2FA disabled for user #{request.user.pk}",
+            metadata={
+                "was_confirmed_at": was_confirmed_at.isoformat() if was_confirmed_at else None,
+            },
+        )
         return redirect("simulator:home")
-
-    return render(request, "simulator/totp_setup.html", {
-        "existing": device,
-        "error": "Código incorrecto — 2FA no desactivado.",
-    })
 
 
 # ─────────────────────────────────────────────
