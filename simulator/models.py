@@ -2248,3 +2248,84 @@ class BrokerAuditObservationLock(models.Model):
 
     def __str__(self):
         return f"BrokerAuditObservationLock singleton (id={self.id})"
+
+
+class RoutingDecision(models.Model):
+    """
+    BOOK-04a — Routing Decision Foundation.
+
+    Persisted, historical record of a single Routing Engine decision —
+    the immutable contract approved in FASE 3 of docs/BOOK_04_IMPLEMENTATION_PLAN.md.
+    A decision is never recalculated after the fact (see FASE 2's
+    persist-vs-recompute analysis): once written, a row here is a fact
+    about what was decided at that moment, not a value a reader
+    recomputes from current state.
+
+    This block is foundation only — zero integration with the Trading
+    Engine. No FK to Position or Trade exists yet; those are added in
+    BOOK-04b (Position.routing_decision, the "principal" decision, plus
+    RoutingDecision.position for the netting/merge case) and BOOK-04c
+    (Trade.routing_decision, mirrored at close). Nothing in the Trading
+    Engine reads or writes this model until then.
+
+    Dual versioning (FASE 3): `engine_version` and `schema_version` are
+    deliberately independent axes, same rationale as
+    BrokerAuditEvent.event_version / pricing_context.py's SCHEMA_VERSION:
+      - schema_version versions the SHAPE of `inputs_snapshot` for a
+        given `reason_code` — bump when the captured input fields change.
+      - engine_version versions the DECISION LOGIC that produced `book`/
+        `reason_code` — bump when the routing algorithm itself changes,
+        independent of whether the snapshot shape changed.
+
+    `book` is a plain, open string (no `choices=` at the DB level) —
+    same pattern as broker_audit.py's Category: adding a new book value
+    in a future block never requires a migration. Constants live in
+    simulator/routing_engine.py, not on this model.
+    """
+    decision_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False, db_index=True)
+
+    # The decision itself (constants in simulator/routing_engine.py)
+    book        = models.CharField(max_length=20, db_index=True)   # e.g. "INTERNAL"
+    reason_code = models.CharField(max_length=60, db_index=True)   # e.g. "TRIVIAL_INTERNAL_DEFAULT"
+    reason_message = models.CharField(max_length=240, blank=True, default="")
+
+    # Dual versioning — see class docstring.
+    engine_version = models.PositiveSmallIntegerField(default=1)
+    schema_version = models.PositiveSmallIntegerField(default=1)
+
+    decided_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    # Snapshot of the VALUES the decision was based on, not references to
+    # them — same discipline as pricing_context.py — so the row remains
+    # meaningful even if the underlying source data (e.g. TraderScore)
+    # is later overwritten or deleted.
+    inputs_snapshot = models.JSONField(default=dict, blank=True)
+
+    # FASE 3 optional fields — all nullable, none populated by any real
+    # flow yet (no external LP, no override UI exists in BOOK-04a..04f).
+    external_reference = models.CharField(max_length=120, blank=True, default="")
+    parent_decision = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="child_decisions",
+    )
+    override_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name="+",
+    )
+    override_reason = models.CharField(max_length=240, blank=True, default="")
+
+    # Same institutional correlation semantics as BrokerAuditEvent.correlation_id
+    # — NULL until a future block wires this to a correlation-bearing root
+    # entity or a deterministic get-or-create key. Never fabricated here.
+    correlation_id = models.UUIDField(null=True, blank=True, db_index=True)
+
+    class Meta:
+        ordering = ["-decided_at", "-id"]
+        get_latest_by = "decided_at"
+        indexes = [
+            models.Index(fields=["book", "-decided_at"], name="routing_dec_book_ts_idx"),
+            models.Index(fields=["reason_code", "-decided_at"], name="routing_dec_reason_ts_idx"),
+            models.Index(fields=["correlation_id"], name="routing_dec_correlation_idx"),
+        ]
+
+    def __str__(self):
+        return f"RoutingDecision[{self.book}] {self.reason_code} @ {self.decided_at:%Y-%m-%d %H:%M:%S}"
