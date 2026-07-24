@@ -1,32 +1,36 @@
 """
 simulator/routing_engine.py
-BOOK-04a — Routing Decision Foundation.
+BOOK-04a — Routing Decision Foundation. BOOK-04b — Shadow Mode Integration.
 
-Infrastructure only. This module writes RoutingDecision rows; it does
-not decide anything. No function here inspects an order, a Position, a
-TraderScore, or any other trading state and picks a book — that
-decision logic is explicitly out of scope for BOOK-04a (see
-docs/BOOK_04_IMPLEMENTATION_PLAN.md) and lands in BOOK-04b, wired to
-the single real integration point (_db_open_position_atomic) under its
-own Shadow Mode flag, not here.
+This module writes RoutingDecision rows and, as of BOOK-04b, builds the
+one and only decision contract that exists today — a trivial,
+deterministic constant (`book=Book.INTERNAL`, always). No function here
+inspects a trader's history, TraderScore, or routing_profile, or picks
+between INTERNAL/EXTERNAL based on any real signal — that is explicitly
+out of scope for this entire plan (docs/BOOK_04_IMPLEMENTATION_PLAN.md)
+and belongs to a future block, outside BOOK-04a..04f.
 
 Design discipline carried over from broker_audit.py's record_event(),
 per BOOK-04a's own scope ("mismo contrato que record_event()"):
     - record_routing_decision() never raises — a routing-audit write
       failure must never block anything, exactly like record_event().
       Fail-open is the Audit Trail Engine's non-negotiable default and
-      this module inherits it from day one, before any real caller
-      exists.
+      this module inherits it from day one.
     - Writes inside a nested savepoint (transaction.atomic()) so a
-      failure here can never poison an outer atomic() block a future
-      caller may already be inside.
+      failure here can never poison an outer atomic() block a caller
+      may already be inside — proven empirically for BOOK-04a and
+      relied upon unchanged by BOOK-04b's real caller,
+      _db_open_position_atomic() (consumers.py).
     - FK-like parameters accept either the ORM object or its id (same
       as record_event()'s account/account_id, trade/trade_id, ...) so a
       caller that already holds the object avoids an extra query.
 
-Zero integration with consumers.py, TradingConsumer, Position, Trade,
-BrokerLedger, or BrokerAuditEvent. Nothing in this module is imported
-by any of those today.
+BOOK-04b is Shadow Mode only: the single real caller
+(TradingConsumer._db_open_position_atomic, gated by
+settings.ROUTING_ENGINE_ENABLED) always builds the same trivial
+contract via build_shadow_mode_decision_contract() below. Nothing here
+writes to Trade, BrokerLedger, or BrokerAuditEvent, and nothing here
+reads TraderScore or routing_profile.
 """
 from __future__ import annotations
 
@@ -54,11 +58,16 @@ class Book:
 
 # ─────────────────────────────────────────────────────────────────────────
 # Dual versioning (FASE 3) — see RoutingDecision's class docstring for the
-# full rationale. Both start at 1; BOOK-04a introduces no decision logic
-# and no snapshot shape yet, so neither has ever been bumped.
+# full rationale. Both start at 1; the Shadow Mode decision BOOK-04b
+# introduces is still the trivial v1 — neither axis has ever been bumped.
 # ─────────────────────────────────────────────────────────────────────────
 ENGINE_VERSION = 1
 SCHEMA_VERSION = 1
+
+# BOOK-04b — reason_code for the one decision Shadow Mode ever produces.
+# A plain string constant (like Book), not a DB-level choice — a future
+# real reason_code never requires a migration to introduce.
+REASON_TRIVIAL_INTERNAL_DEFAULT = "TRIVIAL_INTERNAL_DEFAULT"
 
 
 def record_routing_decision(
@@ -70,6 +79,8 @@ def record_routing_decision(
     schema_version: int = SCHEMA_VERSION,
     inputs_snapshot: Optional[dict] = None,
     external_reference: str = "",
+    position_id: Optional[int] = None,
+    position=None,
     parent_decision_id: Optional[int] = None,
     parent_decision=None,
     override_by_id: Optional[int] = None,
@@ -87,6 +98,11 @@ def record_routing_decision(
     failure here can never poison an outer atomic() block the caller
     may already be inside.
 
+    position/position_id (BOOK-04b): the Position this specific decision
+    was taken for — a brand-new Position, or the existing one an order
+    merged into. Optional (defaults to unlinked) so BOOK-04a's original,
+    zero-integration callers keep working unchanged.
+
     Returns the created RoutingDecision, or None if the write failed.
     """
     try:
@@ -102,6 +118,9 @@ def record_routing_decision(
                 schema_version=schema_version,
                 inputs_snapshot=inputs_snapshot or {},
                 external_reference=external_reference,
+                position_id=(
+                    position.id if position is not None else position_id
+                ),
                 parent_decision_id=(
                     parent_decision.id if parent_decision is not None else parent_decision_id
                 ),
@@ -112,11 +131,57 @@ def record_routing_decision(
                 correlation_id=correlation_id,
             )
         log.info(
-            "[routing_engine] decision=%s book=%s reason_code=%s engine_version=%s schema_version=%s",
-            decision.decision_id, book, reason_code, engine_version, schema_version,
+            "[routing_engine] decision=%s book=%s reason_code=%s position_id=%s "
+            "engine_version=%s schema_version=%s",
+            decision.decision_id, book, reason_code, decision.position_id,
+            engine_version, schema_version,
         )
         return decision
     except Exception as exc:
         log.error("[routing_engine] FAILED to record decision book=%s reason_code=%s: %r",
                    book, reason_code, exc, exc_info=True)
         return None
+
+
+def build_shadow_mode_decision_contract(*, symbol: str, side: str, qty, merged: bool) -> dict:
+    """
+    BOOK-04b — the single, trivial, deterministic decision contract
+    Shadow Mode ever produces: always `book=Book.INTERNAL`, always the
+    same reason_code. Pure function, no DB access, no exception expected
+    from normal inputs — the caller (TradingConsumer._db_open_position_
+    atomic) is responsible for wrapping this alongside the writer call in
+    its own try/except (see that call site's docstring for why: this
+    module's own fail-open only covers record_routing_decision()'s
+    internal write, not the caller's contract-construction step).
+
+    inputs_snapshot is deliberately minimal — mechanical facts about this
+    order only (symbol/side/qty/merged). No TraderScore, no
+    routing_profile, no classification of the trader — introducing any
+    of that is explicitly out of scope for every block in this plan
+    (BOOK-04a..04f).
+
+    Returns a dict of kwargs ready to pass to record_routing_decision()
+    via **contract (position_id/position still need to be added by the
+    caller once known — see BOOK-04b's approved sequencing).
+    """
+    return {
+        "book": Book.INTERNAL,
+        "reason_code": REASON_TRIVIAL_INTERNAL_DEFAULT,
+        "reason_message": (
+            "Shadow Mode: no real routing rule is active yet — every order "
+            "is routed 100% internal by design (BOOK-04b)."
+        ),
+        "engine_version": ENGINE_VERSION,
+        "schema_version": SCHEMA_VERSION,
+        "inputs_snapshot": {
+            "symbol": symbol,
+            "side": side,
+            "qty": float(qty),
+            "merged": merged,
+        },
+        "external_reference": "",
+        "parent_decision": None,
+        "override_by": None,
+        "override_reason": "",
+        "correlation_id": None,
+    }

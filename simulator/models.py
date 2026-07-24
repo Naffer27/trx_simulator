@@ -276,6 +276,22 @@ class Position(models.Model):
     # at close time; never recomputed.
     pricing_context = models.JSONField(null=True, blank=True)
 
+    # BOOK-04b — the PRINCIPAL routing decision: the one taken when this
+    # Position was created for the very first time. Never overwritten by
+    # a later netting merge — each merge increment gets its own separate
+    # RoutingDecision row (see RoutingDecision.position), but this pointer
+    # stays fixed. NULL for every Position opened before this block
+    # existed, and for every open while ROUTING_ENGINE_ENABLED is False —
+    # never fabricated retroactively. on_delete=SET_NULL: RoutingDecision
+    # rows are append-only and are never expected to be deleted in
+    # practice, but this mirrors the same defensive discipline already
+    # used for every other FK of this kind in the project (e.g.
+    # BrokerAuditEvent.account/trade).
+    routing_decision = models.ForeignKey(
+        "RoutingDecision", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="+",
+    )
+
     class Meta:
         indexes = [
             models.Index(fields=['account', 'symbol']),
@@ -2261,12 +2277,12 @@ class RoutingDecision(models.Model):
     about what was decided at that moment, not a value a reader
     recomputes from current state.
 
-    This block is foundation only — zero integration with the Trading
-    Engine. No FK to Position or Trade exists yet; those are added in
-    BOOK-04b (Position.routing_decision, the "principal" decision, plus
-    RoutingDecision.position for the netting/merge case) and BOOK-04c
-    (Trade.routing_decision, mirrored at close). Nothing in the Trading
-    Engine reads or writes this model until then.
+    BOOK-04a was foundation only — zero integration with the Trading
+    Engine. BOOK-04b (this block's sibling addition) wires the first real
+    integration: `position` below, plus Position.routing_decision (the
+    "principal" decision for a Position, set once, never overwritten by a
+    netting merge). Trade.routing_decision — a verbatim copy of the
+    principal decision, mirrored at close — is BOOK-04c, not yet added.
 
     Dual versioning (FASE 3): `engine_version` and `schema_version` are
     deliberately independent axes, same rationale as
@@ -2294,6 +2310,23 @@ class RoutingDecision(models.Model):
     schema_version = models.PositiveSmallIntegerField(default=1)
 
     decided_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    # BOOK-04b — the Position this specific decision was taken for. Every
+    # increment (a brand-new Position, or an order that merges into an
+    # existing one via netting) gets its OWN RoutingDecision row linked
+    # here — see Position.routing_decision for the separate "principal"
+    # pointer that never changes across merges. on_delete=SET_NULL is not
+    # a defensive default: Position rows are physically deleted at close
+    # time (_db_close_position_atomic, consumers.py — converted into a
+    # Trade, not archived), so this WILL fire on every real close. CASCADE
+    # would silently destroy this evidence on every close — the same
+    # destroy-evidence-on-legitimate-action bug already fixed twice
+    # (KYC in AUDIT-03, 2FA in AUDIT-04a). With SET_NULL the row survives
+    # intact; only its link to the now-gone Position is cleared.
+    position = models.ForeignKey(
+        "Position", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="routing_decisions",
+    )
 
     # Snapshot of the VALUES the decision was based on, not references to
     # them — same discipline as pricing_context.py — so the row remains

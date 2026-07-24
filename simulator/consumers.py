@@ -2397,7 +2397,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
         more honest than fabricating one for the merge.
         """
         if not self._db_account_id:
-            return {"position_id": None, "merged": False, "ok": True}
+            return {"position_id": None, "merged": False, "ok": True, "routing_decision_id": None}
         from decimal import Decimal
         with transaction.atomic():
             # 0. RISK-02 — acquire the broker-wide risk lock FIRST, before
@@ -2470,6 +2470,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
                     "ok": False, "error_code": "account_not_found",
                     "message": "Cuenta no encontrada",
                     "position_id": None, "merged": False, "new_balance": new_balance,
+                    "routing_decision_id": None,
                     "required_margin": 0.0, "required_margin_pct": 0.0,
                     "projected_total_margin": 0.0, "projected_total_margin_pct": 0.0,
                     "max_total_margin_pct": _DEFAULT_MAX_TOTAL_MARGIN_PCT,
@@ -2570,6 +2571,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
                         + ", ".join(_unpriced_symbols) + "."
                     ),
                     "position_id": None, "merged": False, "new_balance": float(account.balance),
+                    "routing_decision_id": None,
                     "required_margin": 0.0, "required_margin_pct": 0.0,
                     "projected_total_margin": round(fresh_margin_used, 4),
                     "projected_total_margin_pct": 0.0,
@@ -2623,6 +2625,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 )
                 return {
                     "position_id": None, "merged": False, "new_balance": float(account.balance),
+                    "routing_decision_id": None,
                     **guard,
                 }
 
@@ -2669,6 +2672,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
                     "ok": False, "error_code": _risk02.reason_code,
                     "message": _risk02.reason_message,
                     "position_id": None, "merged": False, "new_balance": float(account.balance),
+                    "routing_decision_id": None,
                     "required_margin": guard.get("required_margin", 0.0),
                     "required_margin_pct": guard.get("required_margin_pct", 0.0),
                     "projected_total_margin": guard.get("projected_total_margin", 0.0),
@@ -2708,6 +2712,75 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 )
                 position_id = pos.id
                 merged = False
+
+            # BOOK-04b — Routing Engine Shadow Mode. Gated by
+            # settings.ROUTING_ENGINE_ENABLED (default False — see
+            # trx_simulator/settings.py). Runs strictly AFTER step 9
+            # above, now that position_id/merged are known — never
+            # before, since RoutingDecision.position needs a real
+            # position_id and, for a brand-new Position, that id does
+            # not exist until Position.objects.create() has already
+            # returned (see docs/BOOK_04_IMPLEMENTATION_PLAN.md, BOOK-04b
+            # Alcance, 4-step sequence). Still fully inside the same
+            # transaction.atomic() opened at the top of this method —
+            # this is deliberate: if anything after this point in the
+            # transaction fails and rolls back, the RoutingDecision just
+            # written rolls back with it, never left orphaned pointing
+            # at a Position that never actually committed.
+            #
+            # The RoutingDecision write and the (for a brand-new Position
+            # only) Position.routing_decision link are wrapped in their
+            # OWN explicit nested transaction.atomic() savepoint, as a
+            # single logical unit — not two independent steps. Corrected
+            # after review found that treating them separately could
+            # leave a RoutingDecision fully created and correctly
+            # RoutingDecision.position-linked, yet never recognized as
+            # the Position's principal (Position.routing_decision stays
+            # NULL) if only the link step failed — an ambiguous state a
+            # later netting merge could not resolve (no way to tell which
+            # of possibly several RoutingDecision rows for that Position
+            # was meant to be principal). With this savepoint: if the
+            # link fails, the decision this call was about to present as
+            # successful rolls back with it — nothing ambiguous survives,
+            # and routing_decision_id (never assigned until after the
+            # link succeeds) stays None. A merge increment has no link
+            # step, so this savepoint is a no-op wrapper for that case —
+            # its own RoutingDecision is unaffected and is never removed.
+            #
+            # routing_decision_id always ends up in the result dict (see
+            # the return statements below) — None whenever the flag is
+            # off, the contract fails to build, the writer fails, or (for
+            # a new Position) the principal link fails; the real
+            # decision_id only once the whole unit above succeeded. This
+            # try/except protects contract construction, the writer call,
+            # AND the optional link — the writer's own internal fail-open
+            # (routing_engine.py) only covers its own body, not this call
+            # site's surrounding code. A failure at ANY of these points
+            # must never affect whether the position opened, the balance,
+            # margin, commission, ledger, or audit trail written
+            # below/above.
+            routing_decision_id = None
+            from django.conf import settings as _settings
+            if getattr(_settings, "ROUTING_ENGINE_ENABLED", False):
+                try:
+                    from . import routing_engine as _routing_engine
+                    _routing_contract = _routing_engine.build_shadow_mode_decision_contract(
+                        symbol=symbol, side=side.upper(), qty=qty, merged=merged,
+                    )
+                    with transaction.atomic():
+                        _routing_decision = _routing_engine.record_routing_decision(
+                            position_id=position_id, **_routing_contract,
+                        )
+                        if _routing_decision is not None:
+                            if not merged:
+                                pos.routing_decision = _routing_decision
+                                pos.save(update_fields=["routing_decision"])
+                            routing_decision_id = _routing_decision.decision_id
+                except Exception as _routing_exc:
+                    log.warning(
+                        "[routing_engine] Shadow Mode integration failed pos=%s merged=%s: %s",
+                        position_id, merged, _routing_exc,
+                    )
 
             _commission_d = Decimal(str(commission)) if commission and commission > 0 else Decimal("0")
             # Authoritative balance: deduct commission from the already-locked
@@ -2791,6 +2864,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
         return {
             "position_id": position_id, "merged": merged, "new_balance": float(_auth_balance),
+            "routing_decision_id": routing_decision_id,
             **guard,
         }
 

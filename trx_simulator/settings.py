@@ -420,6 +420,23 @@ if MARKET_DATA_ROUTER_ENABLED:
         sorted(MARKET_DATA_ROUTER_SYMBOLS),
     )
 
+# BOOK-04b — Routing Engine Shadow Mode. Observational only: records a
+# RoutingDecision alongside every real position open/merge, but the
+# decision itself is always the same trivial, deterministic value
+# (book=INTERNAL) — never controls where or how an order executes. Fail-
+# open: any failure in this path never blocks or alters the position
+# open it accompanies. Must stay False in local/staging/production until
+# explicitly approved to flip. See simulator/routing_engine.py and
+# docs/BOOK_04_IMPLEMENTATION_PLAN.md.
+ROUTING_ENGINE_ENABLED = os.getenv("ROUTING_ENGINE_ENABLED", "False").strip().lower() in {"1", "true", "yes"}
+if ROUTING_ENGINE_ENABLED:
+    import logging as _logging
+    _logging.getLogger("simulator.ws").info(
+        "[routing_engine] ROUTING_ENGINE_ENABLED is ENABLED — Shadow Mode: "
+        "records a trivial, deterministic RoutingDecision per open/merge, "
+        "never changes what executes."
+    )
+
 # FOUNDATION-12 — Runtime Instrument Catalog. Not wired into any live
 # request path in this block — no loop, provider, trading rule, price, or
 # payload changes as a result. Reserved for a future Foundation's in-band

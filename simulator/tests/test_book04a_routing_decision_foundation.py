@@ -16,7 +16,7 @@ from django.db import transaction
 from django.test import TestCase
 from unittest.mock import patch
 
-from simulator.models import Position, RoutingDecision, Trade
+from simulator.models import RoutingDecision, Trade
 from simulator.routing_engine import (
     Book,
     ENGINE_VERSION,
@@ -293,19 +293,16 @@ class RecordRoutingDecisionWriterTests(TestCase):
 class NoTradingEngineIntegrationYetTests(TestCase):
     """
     Structural guardrail: BOOK-04a must not leak into BOOK-04b/04c scope.
-    Position/Trade must not have a routing_decision field, and
-    RoutingDecision must not have a `position` field, until those blocks
-    are implemented.
-    """
 
-    def test_position_has_no_routing_decision_field_yet(self):
-        field_names = {f.name for f in Position._meta.get_fields()}
-        self.assertNotIn("routing_decision", field_names)
+    BOOK-04b has since landed (Position.routing_decision,
+    RoutingDecision.position — see test_book04b_shadow_mode_integration.py
+    for the tests covering those fields' actual behavior) — the two
+    guardrails that used to assert those fields' ABSENCE were only ever
+    meant to hold "until those blocks are implemented" (see this class's
+    prior docstring) and are removed now that they have been. Trade
+    remains untouched until BOOK-04c, so that guardrail stays.
+    """
 
     def test_trade_has_no_routing_decision_field_yet(self):
         field_names = {f.name for f in Trade._meta.get_fields()}
         self.assertNotIn("routing_decision", field_names)
-
-    def test_routing_decision_has_no_position_field_yet(self):
-        field_names = {f.name for f in RoutingDecision._meta.get_fields()}
-        self.assertNotIn("position", field_names)
