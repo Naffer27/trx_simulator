@@ -85,11 +85,15 @@ Conectar el Routing Engine al único punto real identificado en FASE 1 — dentr
 
 ### Alcance
 - Flag `ROUTING_ENGINE_ENABLED` en settings, default `False` — mismo patrón que `MARKET_DATA_SHADOW_MODE`.
-- Con el flag activo: una llamada nueva dentro de la transacción ya abierta de `_db_open_position_atomic`, después de RISK-02 y antes de `Position.objects.create()`/merge — nunca adquiere un lock nuevo, nunca invierte el LOCK ORDER ya documentado (`BrokerRiskLock → TradingAccount → Position`).
+- Con el flag activo: una integración nueva dentro de la transacción ya abierta de `_db_open_position_atomic`, ubicada en la región entre RISK-02 (paso 8.5) y la creación/merge de `Position` (paso 9), con una secuencia interna de cuatro pasos — nunca adquiere un lock nuevo, nunca invierte el LOCK ORDER ya documentado (`BrokerRiskLock → TradingAccount → Position`):
+  1. **Construir el contrato** — decidir `book`/`reason_code`/`reason_message`/`inputs_snapshot` (no depende de `position_id`, puede calcularse antes del branch `if existing:`).
+  2. **Ejecutar create/merge** — el branch existente (`Position.objects.create()` o `existing.save(...)`) se ejecuta sin cambios; a partir de aquí `position_id`/`merged` ya existen.
+  3. **Persistir `RoutingDecision`** — se llama al writer con `position_id` ya conocido, dentro de la misma transacción.
+  4. **Enlazar `Position.routing_decision` cuando corresponda** — solo si la `Position` se creó por primera vez (`merged=False`); en un merge, `Position.routing_decision` no se toca.
 - Campo nuevo en `Position`: `routing_decision` (FK nullable a `RoutingDecision`) — la **decisión principal**: la tomada cuando la `Position` se crea por primera vez. **Nunca se sobreescribe en un merge de netting.**
-- Campo nuevo en `RoutingDecision`: `position` (FK nullable a `Position`) — permite que **cada incremento** (apertura nueva o merge) tenga su propia `RoutingDecision`, todas enlazadas a la misma `Position` sin que ninguna reemplace a la anterior. Resolución arquitectónica de netting/merge (ver subsección dedicada abajo).
+- Campo nuevo en `RoutingDecision`: `position` (FK nullable a `Position`, **`on_delete=models.SET_NULL`**) — permite que **cada incremento** (apertura nueva o merge) tenga su propia `RoutingDecision`, todas enlazadas a la misma `Position` sin que ninguna reemplace a la anterior. `on_delete=SET_NULL` no es una elección defensiva genérica: es obligatoria porque `Position` se **elimina físicamente** al cerrarse (`_db_close_position_atomic`, `consumers.py` — la fila se convierte en `Trade` y `Position.delete()` se ejecuta de verdad, no es un soft-delete). Con `CASCADE` cada cierre borraría silenciosamente las `RoutingDecision` de esa posición — el mismo patrón de destrucción de evidencia ya corregido dos veces en este proyecto (KYC en AUDIT-03, 2FA en AUDIT-04a). Con `SET_NULL`, las filas sobreviven intactas; solo su enlace a la `Position` ya cerrada se anula. Resolución arquitectónica de netting/merge (ver subsección dedicada abajo, incluida su interacción con el cierre).
 - `_db_open_position_atomic()` añade `routing_decision_id` a su `result` dict de retorno (junto a `position_id`/`merged`/`new_balance` ya existentes) — es el `decision_id` de la decisión tomada **para esta llamada concreta**, sea apertura nueva o incremento por merge. Este dato es lo que permite a BOOK-04d auditar sin volver a tocar `_db_open_position_atomic()` (ver BOOK-04d).
-- Envuelto en su propio `try/except`, fail-open explícito: un fallo del router nunca impide que la posición se abra.
+- Envuelto en su propio `try/except`, fail-open explícito — y ese `try/except` protege **ambos** pasos 1 y 3 de la secuencia anterior, no solo la llamada al writer: tanto la construcción del contrato (`book`/`reason_code`/`inputs_snapshot`) como la llamada a `record_routing_decision()` deben quedar dentro del mismo bloque protegido, porque el fail-open ya probado de BOOK-04a solo cubre el cuerpo interno del writer — un fallo al **construir** el contrato (antes de siquiera llamar al writer) no está cubierto por esa garantía si no se envuelve explícitamente aquí también. En cualquiera de los dos casos: un fallo nunca impide que la posición se abra.
 
 #### Resolución arquitectónica: netting / merge
 
@@ -97,9 +101,11 @@ Cuando una orden incremental se funde en una `Position` existente (`existing` en
 
 Se resuelve con **ambas relaciones a la vez**, no una sola:
 1. `Position.routing_decision` — la decisión **principal**, fijada una sola vez al crear la `Position`, estable durante toda su vida. Es la fuente de verdad que usa BOOK-04c para el cierre y para `BrokerLedger`.
-2. `RoutingDecision.position` (relación inversa uno-a-muchos) — cada orden individual, incluida cada una que se funde por merge, produce su propia `RoutingDecision` enlazada a la misma `Position`. Nada se sobreescribe ni se pierde; cada incremento queda auditable por separado vía `RoutingDecision.objects.filter(position=...)`.
+2. `RoutingDecision.position` (relación inversa uno-a-muchos) — cada orden individual, incluida cada una que se funde por merge, produce su propia `RoutingDecision` enlazada a la misma `Position`. Nada se sobreescribe ni se pierde; cada incremento queda auditable por separado vía `RoutingDecision.objects.filter(position=...)` mientras la `Position` permanece abierta (ver abajo qué ocurre exactamente al cerrarla).
 
 Con esto: la `Position` agregada mantiene una fuente de verdad estable y única (`routing_decision`, la principal) para todo lo que consume una sola decisión por posición (cierre, `BrokerLedger`); y cada incremento individual sigue siendo explicable por completo sin ambigüedad, sin que un merge posterior borre o reemplace la evidencia de los anteriores — mismo principio de no-destrucción de evidencia ya aplicado en AUDIT-03 (KYC) y AUDIT-04a (2FA).
+
+**Qué ocurre al cerrar la `Position`:** `Position.delete()` se ejecuta de verdad en el cierre (ver `on_delete` arriba) — en ese momento, `RoutingDecision.position` pasa a `NULL` por `SET_NULL` en cada `RoutingDecision` que apuntaba a esa `Position`, incluidas la principal y todos sus incrementos. **Las decisiones no desaparecen** — cada fila sigue existiendo, íntegra, como evidencia histórica permanente — lo único que se pierde en ese instante es la posibilidad de encontrarlas por `RoutingDecision.objects.filter(position=<esa Position>)`, porque esa `Position` ya no existe como fila. La decisión principal no depende de ese enlace para sobrevivir al cierre: BOOK-04c la copia a `Trade.routing_decision` antes de que la `Position` se elimine, precisamente para que la posición cerrada conserve un puntero estable y permanente. Los incrementos no-principales no tienen ese espejo — siguen existiendo como filas de `RoutingDecision`, pero después del cierre solo son localizables por otros medios (rango de `decided_at`, o una dimensión de consulta adicional que un bloque futuro podría añadir), no por `position`.
 
 ### Archivos que probablemente participarán
 ```
@@ -112,7 +118,7 @@ simulator/tests/test_book04b_shadow_mode_integration.py
 ```
 
 ### ¿Requiere migración?
-Sí — `AddField` en `Position` y en `RoutingDecision` (ambas FK nullable), aditiva pura.
+Sí — `AddField` en `Position` (FK nullable, `on_delete=SET_NULL`) y en `RoutingDecision` (FK nullable a `Position`, `on_delete=SET_NULL` — ver justificación en Alcance), aditiva pura.
 
 ### Riesgos
 **El más alto de todo el plan — y, tras este ajuste, el único bloque que modifica el cuerpo de `_db_open_position_atomic()`** (BOOK-04d ya no lo toca, ver su sección). Mitigado por: flag apagado por defecto (cero cambio de comportamiento hasta activación explícita); decisión siempre trivial en este bloque (nada que pueda fallar de forma sorpresiva); fail-open probado explícitamente; ningún lock nuevo, ninguna inversión del orden ya documentado; la resolución de netting/merge (arriba) evita que un incremento sobreescriba o pierda la decisión de otro.
@@ -136,7 +142,7 @@ Cerrar el hueco de simetría identificado en FASE 2: al cerrar una posición, el
 ### Alcance
 - Campo espejo en `Trade`, copiado verbatim al cerrar desde `Position.routing_decision` (la decisión **principal**, nunca desde un incremento individual) — mismo patrón que `pricing_context_open`/`pricing_context_close`, nunca recalculado.
 - `create_broker_counterparty_entry()` lee `book_mode` desde la decisión principal persistida en la `Position` que se cierra — misma fuente única que consume `Trade`, sin duplicar la lectura.
-- Los incrementos individuales de una `Position` fusionada por netting (cada `RoutingDecision` enlazada vía `RoutingDecision.position`, ver BOOK-04b) permanecen íntegros y consultables por separado tras el cierre — el cierre nunca los borra ni los reescribe, solo copia la principal a `Trade`.
+- Los incrementos individuales de una `Position` fusionada por netting (cada `RoutingDecision` enlazada vía `RoutingDecision.position`, ver BOOK-04b) **sobreviven como evidencia histórica tras el cierre — el cierre nunca los borra ni los reescribe** —, pero dejan de ser localizables por `RoutingDecision.position`: al eliminarse la `Position` en el cierre, ese campo pasa a `NULL` en cada una de ellas por `SET_NULL` (ver BOOK-04b). Solo la decisión principal conserva un puntero estable post-cierre, vía `Trade.routing_decision` (copiado antes de que la `Position` se elimine); los incrementos no-principales quedan como filas íntegras pero sin ese enlace directo.
 - Sigue bajo el mismo flag `ROUTING_ENGINE_ENABLED` — apagado, comportamiento idéntico al actual.
 
 ### Archivos que probablemente participarán
@@ -158,7 +164,7 @@ Bajo — toca el camino de cierre solo para *leer* un dato ya persistido en BOOK
 BOOK-04b.
 
 ### Estrategia de pruebas
-Con el flag activo: cerrar una posición copia correctamente la decisión principal al `Trade`; `BrokerLedger.meta["book_mode"]` refleja la decisión real. **Test dedicado de cierre tras netting:** abrir una `Position`, fusionar dos o más incrementos (cada uno con su propia `RoutingDecision`), cerrarla — verificar que `Trade.routing_decision` es exactamente la decisión principal (la del primer incremento, sin cambios), que `BrokerLedger` es consistente con esa misma decisión, y que las `RoutingDecision` de los incrementos posteriores siguen existiendo y siendo consultables vía `RoutingDecision.position` después del cierre. Con el flag apagado: comportamiento idéntico al preexistente (test de no-regresión explícito, mismo criterio que cada bloque anterior).
+Con el flag activo: cerrar una posición copia correctamente la decisión principal al `Trade`; `BrokerLedger.meta["book_mode"]` refleja la decisión real. **Test dedicado de cierre tras netting:** abrir una `Position`, fusionar dos o más incrementos (cada uno con su propia `RoutingDecision`), cerrarla — verificar que `Trade.routing_decision` es exactamente la decisión principal (la del primer incremento, sin cambios), que `BrokerLedger` es consistente con esa misma decisión, y que las `RoutingDecision` de los incrementos posteriores **siguen existiendo intactas como filas** tras el cierre, con su campo `position` en `NULL` (por `SET_NULL`, ver BOOK-04b) — es decir, ya no localizables vía `RoutingDecision.position`, pero nunca borradas ni reescritas. Con el flag apagado: comportamiento idéntico al preexistente (test de no-regresión explícito, mismo criterio que cada bloque anterior).
 
 ### Definition of Done
 Simetría apertura↔cierre verificada por test. `book_mode` real fluye hasta `BrokerLedger` con el flag activo. Suite completa en verde en ambos estados del flag.
