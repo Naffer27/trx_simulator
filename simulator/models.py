@@ -382,6 +382,23 @@ class Trade(models.Model):
     # null = pre-MARGIN-02 row, or a path this block doesn't cover.
     pnl_conversion = models.JSONField(null=True, blank=True)
 
+    # BOOK-04c — verbatim copy of Position.routing_decision (the
+    # PRINCIPAL decision, never a netting increment), taken at close time
+    # while the Position is still locked, before Position.delete() —
+    # same pattern as pricing_context_open above. Never recomputed. NULL
+    # for every Trade closed before this block existed, and for every
+    # close whose Position never had a principal decision (flag was off
+    # at open time, or a pre-BOOK-04b Position) — never fabricated
+    # retroactively. on_delete=SET_NULL is defensive only: RoutingDecision
+    # rows are append-only and nothing in this codebase deletes them in
+    # normal operation, unlike RoutingDecision.position (BOOK-04b), whose
+    # SET_NULL is operationally required because Position rows themselves
+    # ARE deleted on every real close.
+    routing_decision = models.ForeignKey(
+        "RoutingDecision", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="+",
+    )
+
     class Meta:
         indexes = [
             models.Index(fields=["account", "closed_at"], name="trade_acc_closed_idx"),

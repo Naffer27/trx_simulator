@@ -734,6 +734,11 @@ class TradingAccountAdmin(admin.ModelAdmin):
                             exit_price=Decimal(str(exit_px)), stop_loss=pos.sl,
                             take_profit=pos.tp, profit_loss=Decimal(str(pnl)),
                             opened_at=pos.opened_at, closed_at=now(),
+                            # BOOK-04c — verbatim copy of the PRINCIPAL
+                            # decision, read from the still-locked `pos`
+                            # before pos.delete() later in this same loop
+                            # iteration. NULL propagates honestly.
+                            routing_decision=pos.routing_decision,
                         )
                         running_balance += pnl
                         LedgerEntry.objects.create(

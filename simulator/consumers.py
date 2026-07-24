@@ -3005,6 +3005,11 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 pricing_context_open=pos.pricing_context,
                 pricing_context_close=pricing_context_close,
                 pnl_conversion=_pnl_conversion,
+                # BOOK-04c — verbatim copy of the PRINCIPAL decision,
+                # read from the still-locked `pos` before pos.delete()
+                # below. NULL propagates honestly (flag was off at open,
+                # or a pre-BOOK-04b Position) — never fabricated.
+                routing_decision=pos.routing_decision,
             )
 
             # 3. Record LedgerEntry EV_REALIZED (balance_after = post-close balance).

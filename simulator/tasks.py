@@ -510,6 +510,10 @@ def _close_position_sync(
             pricing_context_open  = pos.pricing_context,
             pricing_context_close = pricing_context,
             pnl_conversion         = _pnl_conversion,
+            # BOOK-04c — verbatim copy of the PRINCIPAL decision, read
+            # from the still-locked `pos` before pos.delete() below.
+            # NULL propagates honestly — never fabricated.
+            routing_decision       = pos.routing_decision,
         )
 
         LedgerEntry.objects.create(

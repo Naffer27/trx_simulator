@@ -27,7 +27,33 @@ BOOK_MODE_B_BOOK = "B_BOOK"
 _SCHEMA_VERSION = 1
 
 
-def create_broker_counterparty_entry(trade, account, trader_pnl, reason, *, book_mode=BOOK_MODE_B_BOOK):
+def _book_mode_for_trade(trade):
+    """
+    BOOK-04c — the single, centralized translation point between
+    routing_engine.py's Book vocabulary (WHERE an order was routed, e.g.
+    "INTERNAL") and this module's own book_mode vocabulary (the
+    ACCOUNTING TREATMENT of a closed Trade, e.g. "B_BOOK"). Deliberately
+    separate string spaces — today they correspond 1:1 only because
+    every real routing decision is still the trivial Shadow Mode value
+    (Book.INTERNAL) and 100% of trading is B-Book; this mapping is a
+    current business fact, not a string identity. Extend the mapping
+    dict below, and only here, the day a real non-INTERNAL Book exists
+    — never inline RoutingDecision.book into book_mode anywhere else.
+
+    trade.routing_decision is None whenever ROUTING_ENGINE_ENABLED was
+    off at open time, the Position predates BOOK-04b, or the principal
+    link never got set — falls back to the same default this module
+    always used before BOOK-04c.
+    """
+    decision = trade.routing_decision
+    if decision is None:
+        return BOOK_MODE_B_BOOK
+    from .routing_engine import Book
+    book_to_book_mode = {Book.INTERNAL: BOOK_MODE_B_BOOK}
+    return book_to_book_mode.get(decision.book, BOOK_MODE_B_BOOK)
+
+
+def create_broker_counterparty_entry(trade, account, trader_pnl, reason, *, book_mode=None):
     """
     Idempotently record the broker's counterparty result for one closed Trade.
 
@@ -55,8 +81,15 @@ def create_broker_counterparty_entry(trade, account, trader_pnl, reason, *, book
     no new Trade on a race), so source_trade is never reused across two
     different close attempts for the same Position.
 
+    book_mode (BOOK-04c): when the caller does not explicitly override
+    it, derived from trade.routing_decision via _book_mode_for_trade()
+    — the single centralized translation point, not duplicated at any
+    of this function's call sites.
+
     Returns the BrokerLedger row (always — never None).
     """
+    if book_mode is None:
+        book_mode = _book_mode_for_trade(trade)
     trader_pnl_d = trader_pnl if isinstance(trader_pnl, Decimal) else Decimal(str(trader_pnl))
     # Normalize away -0 (both a literal -0 input and -Decimal("0.00") below)
     # so amount is always a clean Decimal("0.00") at break-even, never "-0.00".

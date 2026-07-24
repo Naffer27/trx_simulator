@@ -16,7 +16,7 @@ from django.db import transaction
 from django.test import TestCase
 from unittest.mock import patch
 
-from simulator.models import RoutingDecision, Trade
+from simulator.models import RoutingDecision
 from simulator.routing_engine import (
     Book,
     ENGINE_VERSION,
@@ -290,19 +290,9 @@ class RecordRoutingDecisionWriterTests(TestCase):
         # once it ends, leaving the database exactly as it was.
 
 
-class NoTradingEngineIntegrationYetTests(TestCase):
-    """
-    Structural guardrail: BOOK-04a must not leak into BOOK-04b/04c scope.
-
-    BOOK-04b has since landed (Position.routing_decision,
-    RoutingDecision.position — see test_book04b_shadow_mode_integration.py
-    for the tests covering those fields' actual behavior) — the two
-    guardrails that used to assert those fields' ABSENCE were only ever
-    meant to hold "until those blocks are implemented" (see this class's
-    prior docstring) and are removed now that they have been. Trade
-    remains untouched until BOOK-04c, so that guardrail stays.
-    """
-
-    def test_trade_has_no_routing_decision_field_yet(self):
-        field_names = {f.name for f in Trade._meta.get_fields()}
-        self.assertNotIn("routing_decision", field_names)
+# Structural guardrail class removed — BOOK-04b (Position.routing_decision,
+# RoutingDecision.position) and BOOK-04c (Trade.routing_decision) have both
+# since landed; see test_book04b_shadow_mode_integration.py and
+# test_book04c_close_symmetry.py for the tests covering those fields'
+# actual behavior. The guardrails here only ever asserted those fields'
+# ABSENCE "until those blocks are implemented" — nothing left to guard.
