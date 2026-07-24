@@ -2345,6 +2345,19 @@ class RoutingDecision(models.Model):
         related_name="routing_decisions",
     )
 
+    # BOOK-04e — denormalized so a decision remains queryable by account
+    # after the Position above is gone (SET_NULL fires on every real
+    # close, see the docstring above). Set exactly once, at creation
+    # time, in record_routing_decision() — never recalculated, never
+    # updated afterwards, never backfilled for rows created before this
+    # field existed (those keep account=None, an honest "predates
+    # BOOK-04e" signal, same discipline as every other nullable field on
+    # this model).
+    account = models.ForeignKey(
+        "TradingAccount", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="routing_decisions",
+    )
+
     # Snapshot of the VALUES the decision was based on, not references to
     # them — same discipline as pricing_context.py — so the row remains
     # meaningful even if the underlying source data (e.g. TraderScore)

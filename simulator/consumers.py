@@ -2845,6 +2845,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
                     )
                     with transaction.atomic():
                         _routing_decision = _routing_engine.record_routing_decision(
+                            account_id=self._db_account_id,
                             position_id=position_id, **_routing_contract,
                         )
                         if _routing_decision is not None:

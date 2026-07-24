@@ -24,6 +24,8 @@ from simulator.routing_engine import (
     record_routing_decision,
 )
 
+from .factories import make_account
+
 User = get_user_model()
 
 
@@ -152,11 +154,18 @@ class BookAndVersionConstantsTests(TestCase):
 class RecordRoutingDecisionWriterTests(TestCase):
     """record_routing_decision() — same contract as broker_audit.record_event()."""
 
+    def setUp(self):
+        # BOOK-04e — account_id is now a mandatory kwarg; a single shared
+        # account keeps every pre-existing BOOK-04a call site compiling
+        # without widening this file's own scope.
+        self.account = make_account()
+
     def test_creates_row_and_returns_it(self):
         decision = record_routing_decision(
             book=Book.INTERNAL,
             reason_code="TRIVIAL_INTERNAL_DEFAULT",
             reason_message="always internal today",
+            account_id=self.account.id,
         )
 
         self.assertIsNotNone(decision)
@@ -165,14 +174,14 @@ class RecordRoutingDecisionWriterTests(TestCase):
         self.assertEqual(decision.reason_code, "TRIVIAL_INTERNAL_DEFAULT")
 
     def test_defaults_engine_and_schema_version_when_not_specified(self):
-        decision = record_routing_decision(book=Book.INTERNAL, reason_code="X")
+        decision = record_routing_decision(book=Book.INTERNAL, reason_code="X", account_id=self.account.id)
         self.assertEqual(decision.engine_version, ENGINE_VERSION)
         self.assertEqual(decision.schema_version, SCHEMA_VERSION)
 
     def test_inputs_snapshot_persisted_verbatim(self):
         snapshot = {"symbol": "EURUSD", "side": "BUY", "qty": 2.5}
         decision = record_routing_decision(
-            book=Book.INTERNAL, reason_code="X", inputs_snapshot=snapshot,
+            book=Book.INTERNAL, reason_code="X", inputs_snapshot=snapshot, account_id=self.account.id,
         )
         decision.refresh_from_db()
         self.assertEqual(decision.inputs_snapshot, snapshot)
@@ -180,50 +189,52 @@ class RecordRoutingDecisionWriterTests(TestCase):
     def test_accepts_parent_decision_object(self):
         parent = RoutingDecision.objects.create(book=Book.INTERNAL, reason_code="PARENT")
         decision = record_routing_decision(
-            book=Book.INTERNAL, reason_code="CHILD", parent_decision=parent,
+            book=Book.INTERNAL, reason_code="CHILD", parent_decision=parent, account_id=self.account.id,
         )
         self.assertEqual(decision.parent_decision_id, parent.id)
 
     def test_accepts_parent_decision_id(self):
         parent = RoutingDecision.objects.create(book=Book.INTERNAL, reason_code="PARENT")
         decision = record_routing_decision(
-            book=Book.INTERNAL, reason_code="CHILD", parent_decision_id=parent.id,
+            book=Book.INTERNAL, reason_code="CHILD", parent_decision_id=parent.id, account_id=self.account.id,
         )
         self.assertEqual(decision.parent_decision_id, parent.id)
 
     def test_accepts_override_by_object(self):
         staff = User.objects.create_user(username="staff3", password="x")
         decision = record_routing_decision(
-            book=Book.INTERNAL, reason_code="X", override_by=staff,
+            book=Book.INTERNAL, reason_code="X", override_by=staff, account_id=self.account.id,
         )
         self.assertEqual(decision.override_by_id, staff.id)
 
     def test_accepts_override_by_id(self):
         staff = User.objects.create_user(username="staff4", password="x")
         decision = record_routing_decision(
-            book=Book.INTERNAL, reason_code="X", override_by_id=staff.id,
+            book=Book.INTERNAL, reason_code="X", override_by_id=staff.id, account_id=self.account.id,
         )
         self.assertEqual(decision.override_by_id, staff.id)
 
     def test_correlation_id_passed_through(self):
         corr = uuid.uuid4()
         decision = record_routing_decision(
-            book=Book.INTERNAL, reason_code="X", correlation_id=corr,
+            book=Book.INTERNAL, reason_code="X", correlation_id=corr, account_id=self.account.id,
         )
         self.assertEqual(decision.correlation_id, corr)
 
     def test_missing_required_kwargs_raises(self):
         with self.assertRaises(TypeError):
-            record_routing_decision(reason_code="X")   # missing `book`
+            record_routing_decision(reason_code="X", account_id=self.account.id)   # missing `book`
         with self.assertRaises(TypeError):
-            record_routing_decision(book=Book.INTERNAL)   # missing `reason_code`
+            record_routing_decision(book=Book.INTERNAL, account_id=self.account.id)   # missing `reason_code`
+        with self.assertRaises(TypeError):
+            record_routing_decision(book=Book.INTERNAL, reason_code="X")   # missing `account_id`
 
     def test_fail_open_returns_none_on_write_failure(self):
         with patch(
             "simulator.models.RoutingDecision.objects.create",
             side_effect=Exception("simulated DB failure"),
         ):
-            result = record_routing_decision(book=Book.INTERNAL, reason_code="WILL_FAIL")
+            result = record_routing_decision(book=Book.INTERNAL, reason_code="WILL_FAIL", account_id=self.account.id)
         self.assertIsNone(result)
         self.assertEqual(RoutingDecision.objects.count(), 0)
 
@@ -233,7 +244,7 @@ class RecordRoutingDecisionWriterTests(TestCase):
             side_effect=RuntimeError("boom"),
         ):
             try:
-                record_routing_decision(book=Book.INTERNAL, reason_code="WILL_FAIL")
+                record_routing_decision(book=Book.INTERNAL, reason_code="WILL_FAIL", account_id=self.account.id)
             except Exception as exc:   # pragma: no cover - test fails via assertion below
                 self.fail(f"record_routing_decision() raised unexpectedly: {exc!r}")
 
@@ -266,7 +277,9 @@ class RecordRoutingDecisionWriterTests(TestCase):
                 # transaction.atomic():` block right here and the test
                 # would ERROR (not just fail an assertion) — the absence
                 # of an error is itself proof requirement (2) holds.
-                result = record_routing_decision(book=Book.INTERNAL, reason_code="WILL_FAIL_INSIDE_OUTER")
+                result = record_routing_decision(
+                    book=Book.INTERNAL, reason_code="WILL_FAIL_INSIDE_OUTER", account_id=self.account.id,
+                )
 
             # (1) the writer reports failure unambiguously.
             self.assertIsNone(result)

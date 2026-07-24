@@ -74,6 +74,7 @@ def record_routing_decision(
     *,
     book: str,
     reason_code: str,
+    account_id: int,
     reason_message: str = "",
     engine_version: int = ENGINE_VERSION,
     schema_version: int = SCHEMA_VERSION,
@@ -103,6 +104,11 @@ def record_routing_decision(
     merged into. Optional (defaults to unlinked) so BOOK-04a's original,
     zero-integration callers keep working unchanged.
 
+    account_id (BOOK-04e): mandatory, no default — a caller that omits it
+    fails immediately with TypeError rather than silently creating a row
+    with an implicit account. Stored directly as the id already handed
+    in; no query is made to resolve or validate the TradingAccount.
+
     Returns the created RoutingDecision, or None if the write failed.
     """
     try:
@@ -118,6 +124,7 @@ def record_routing_decision(
                 schema_version=schema_version,
                 inputs_snapshot=inputs_snapshot or {},
                 external_reference=external_reference,
+                account_id=account_id,
                 position_id=(
                     position.id if position is not None else position_id
                 ),
@@ -131,9 +138,9 @@ def record_routing_decision(
                 correlation_id=correlation_id,
             )
         log.info(
-            "[routing_engine] decision=%s book=%s reason_code=%s position_id=%s "
+            "[routing_engine] decision=%s book=%s reason_code=%s account_id=%s position_id=%s "
             "engine_version=%s schema_version=%s",
-            decision.decision_id, book, reason_code, decision.position_id,
+            decision.decision_id, book, reason_code, account_id, decision.position_id,
             engine_version, schema_version,
         )
         return decision
@@ -141,6 +148,34 @@ def record_routing_decision(
         log.error("[routing_engine] FAILED to record decision book=%s reason_code=%s: %r",
                    book, reason_code, exc, exc_info=True)
         return None
+
+
+def routing_decisions_for_account(account_id: int):
+    """
+    BOOK-04e — direct query on the denormalized `account` FK, same mold
+    as broker_audit.py's events_for_account(). Works identically for
+    decisions tied to open and closed Positions, because `account` never
+    depends on Position's lifecycle (unlike `position`, which is
+    SET_NULL'd away on every real close — see routing_decisions_for_position
+    below). No JOIN through Position/Trade/BrokerAuditEvent.
+    """
+    from .models import RoutingDecision
+
+    return RoutingDecision.objects.filter(account_id=account_id)
+
+
+def routing_decisions_for_position(position_id: int):
+    """
+    BOOK-04e — direct query on `position`. Useful only while the
+    Position is still open: RoutingDecision.position is SET_NULL on
+    every real close (see RoutingDecision's docstring in models.py), so
+    this returns an empty queryset for a closed/deleted Position by
+    design, not by defect. Durable, close-surviving lookups must use
+    routing_decisions_for_account() instead.
+    """
+    from .models import RoutingDecision
+
+    return RoutingDecision.objects.filter(position_id=position_id)
 
 
 def build_shadow_mode_decision_contract(*, symbol: str, side: str, qty, merged: bool) -> dict:

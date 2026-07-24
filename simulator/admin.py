@@ -23,6 +23,7 @@ from .models import (
     KYCProfile, SupportTicket,
     FundedPayoutRequest,
     BrokerAuditEvent,
+    RoutingDecision,
 )
 from . import challenge_engine
 from .funded_payouts import (
@@ -1755,6 +1756,43 @@ class BrokerAuditEventAdmin(admin.ModelAdmin):
         # Belt-and-suspenders: has_delete_permission=False already hides
         # delete_selected, but strip it from the actions dict explicitly
         # so its absence is a structural guarantee, not an inference.
+        actions = super().get_actions(request)
+        actions.pop("delete_selected", None)
+        return actions
+
+
+@admin.register(RoutingDecision)
+class RoutingDecisionAdmin(admin.ModelAdmin):
+    """
+    BOOK-04e — read-only visibility surface, same append-only protection
+    pattern as BrokerAuditEventAdmin. RoutingDecision rows are written
+    exclusively by simulator/routing_engine.py; nothing may add, change,
+    or delete a row through this admin, individually or in bulk.
+    account/position are already SET_NULL on delete (see the model) —
+    deleting the underlying TradingAccount/Position nulls the FK here,
+    it never removes the historical decision.
+    """
+    list_display = (
+        "decision_id", "book", "reason_code", "account", "position", "decided_at",
+    )
+    list_filter = ("book", "reason_code")
+    search_fields = (
+        "decision_id", "account__user__username", "position__id",
+    )
+    date_hierarchy = "decided_at"
+    ordering = ("-decided_at", "-id")
+    readonly_fields = [f.name for f in RoutingDecision._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def get_actions(self, request):
         actions = super().get_actions(request)
         actions.pop("delete_selected", None)
         return actions
