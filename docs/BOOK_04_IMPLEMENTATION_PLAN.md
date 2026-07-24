@@ -121,7 +121,7 @@ simulator/tests/test_book04b_shadow_mode_integration.py
 Sí — `AddField` en `Position` (FK nullable, `on_delete=SET_NULL`) y en `RoutingDecision` (FK nullable a `Position`, `on_delete=SET_NULL` — ver justificación en Alcance), aditiva pura.
 
 ### Riesgos
-**El más alto de todo el plan — y, tras este ajuste, el único bloque que modifica el cuerpo de `_db_open_position_atomic()`** (BOOK-04d ya no lo toca, ver su sección). Mitigado por: flag apagado por defecto (cero cambio de comportamiento hasta activación explícita); decisión siempre trivial en este bloque (nada que pueda fallar de forma sorpresiva); fail-open probado explícitamente; ningún lock nuevo, ninguna inversión del orden ya documentado; la resolución de netting/merge (arriba) evita que un incremento sobreescriba o pierda la decisión de otro.
+**El más alto de todo el plan — y el único bloque que introduce lógica de decisión real dentro de `_db_open_position_atomic()`** (BOOK-04d no la toca, ver su sección; BOOK-04e la toca más tarde, pero solo para pasar un `account_id` ya disponible a la llamada que este bloque ya introduce aquí — sin ninguna lógica de decisión adicional, ver la sección de BOOK-04e). Mitigado por: flag apagado por defecto (cero cambio de comportamiento hasta activación explícita); decisión siempre trivial en este bloque (nada que pueda fallar de forma sorpresiva); fail-open probado explícitamente; ningún lock nuevo, ninguna inversión del orden ya documentado; la resolución de netting/merge (arriba) evita que un incremento sobreescriba o pierda la decisión de otro.
 
 ### Dependencias
 BOOK-04a.
@@ -185,7 +185,7 @@ Simetría apertura↔cierre verificada por test **en los tres escritores reales 
 ## BOOK-04d — Integración con Audit Trail (Category.ROUTING)
 
 ### Objetivo
-Registrar, como evento institucional, el hecho de que **"la decisión de routing asociada a una apertura aceptada fue registrada"** — no la finalización completa de la respuesta WebSocket ni del flujo de presentación al cliente. Sigue exactamente el patrón de los cinco bloques ya cerrados del Audit Trail Engine — sin diseñar aquí los `event_type` exactos más allá de dejar reservado que serán constantes `EV_*` coherentes con el resto de `broker_audit.py` (detalle de implementación del propio bloque, no de este plan). **Este bloque no modifica `_db_open_position_atomic()` — BOOK-04b es, y permanece, el único bloque que toca esa función.**
+Registrar, como evento institucional, el hecho de que **"la decisión de routing asociada a una apertura aceptada fue registrada"** — no la finalización completa de la respuesta WebSocket ni del flujo de presentación al cliente. Sigue exactamente el patrón de los cinco bloques ya cerrados del Audit Trail Engine — sin diseñar aquí los `event_type` exactos más allá de dejar reservado que serán constantes `EV_*` coherentes con el resto de `broker_audit.py` (detalle de implementación del propio bloque, no de este plan). **Este bloque no modifica `_db_open_position_atomic()` — BOOK-04b introduce ahí la única lógica de decisión real; BOOK-04e la toca después, pero solo para pasar un dato ya disponible (`account_id`), sin ninguna lógica de decisión nueva (ver BOOK-04e).**
 
 ### Alcance
 
@@ -212,7 +212,7 @@ simulator/broker_audit.py         — Category.ROUTING, record_routing_event(), 
 simulator/consumers.py            — función nueva @database_sync_to_async + una llamada await en _order_new(), después del chequeo result.get("ok") — NO en _db_open_position_atomic()
 simulator/tests/test_book04d_routing_audit_trail.py
 ```
-Ningún otro archivo. Sin migración. `_db_open_position_atomic()` no se toca de nuevo bajo ninguna circunstancia.
+Ningún otro archivo. Sin migración. Este bloque no modifica `_db_open_position_atomic()` en ningún punto de su propia implementación (un bloque posterior, BOOK-04e, sí la toca — ver su sección — pero eso es ajeno al alcance de BOOK-04d).
 
 ### ¿Requiere migración?
 No.
@@ -248,33 +248,75 @@ Cada decisión de ruteo real (flag activo, `routing_decision_id` no `None`) gene
 ## BOOK-04e — Visibilidad para Staff (Dealing Desk, solo lectura)
 
 ### Objetivo
-Dar a staff una superficie de consulta de las decisiones de ruteo — preparación explícita para el bloque 4 del roadmap oficial (Dealing Desk híbrido A-book/B-book), sin implementar ninguna lógica híbrida todavía.
+Staff debe poder consultar decisiones de routing **por cuenta de forma durable** — incluyendo posiciones abiertas y cerradas, **sin depender del ciclo de vida de `Position`** — además de la superficie de solo lectura sobre `RoutingDecision` en el admin. Preparación explícita para el bloque 4 del roadmap oficial (Dealing Desk híbrido A-book/B-book), sin implementar ninguna lógica híbrida todavía.
 
 ### Alcance
-- Registro de `RoutingDecision` en el admin, solo lectura — mismo patrón `has_add/change/delete_permission=False` ya establecido para `BrokerAuditEvent`.
-- Helpers de consulta (`routing_decisions_for_account()`, `routing_decisions_for_position()`) — mismo molde que los nueve `events_for_X()` ya existentes en `broker_audit.py`.
+
+**1. Modelo — `RoutingDecision.account` (resolución de FASE 2, Opción B aprobada).**
+Campo nuevo:
+- `ForeignKey` a `TradingAccount`;
+- `null=True`, `blank=True`;
+- `on_delete=models.SET_NULL`;
+- `related_name="routing_decisions"` (mismo criterio ya usado por `RoutingDecision.position` — sin colisión, cada `related_name` es único por modelo destino: `TradingAccount.routing_decisions` y `Position.routing_decisions` coexisten sin conflicto);
+- fijado **una sola vez**, dentro de `record_routing_decision()`, en el momento de creación;
+- **nunca recalculado, nunca actualizado después de creado, nunca derivado posteriormente desde `Position`, `Trade`, `BrokerAuditEvent` ni ningún otro modelo.**
+
+**2. Compatibilidad histórica.**
+Sin backfill. Toda `RoutingDecision` creada antes de este bloque conserva `account=None` — una señal honesta de "anterior a BOOK-04e", igual que el resto de campos nullable ya introducidos en BOOK-04a/04b/04c. No se fabrica ni se infiere ninguna relación histórica desde `Position`, `Trade`, `BrokerAuditEvent` ni ningún otro modelo.
+
+**3. Firma del servicio — `record_routing_decision()`.**
+El parámetro pasa a ser **`account_id`** (forma por id, no por objeto) y **obligatorio, sin default**. Justificación de la elección entre las dos formas ya establecidas en el resto de la API interna: el único call site real (`_db_open_position_atomic()`, dentro de `_order_new()`) ya tiene `self._db_account_id` disponible como atributo directo, y ya lo pasa en esa misma forma a otras llamadas dentro de la misma función (p. ej. `record_risk_event(..., account_id=self._db_account_id, ...)` en el rechazo de RISK-02). Es además el mismo criterio ya usado por este propio writer para `position_id` (se pasa `position_id=position_id`, no el objeto, porque el id ya es una variable local disponible en ese punto). `account_id` sin valor por defecto obliga a que cualquier caller — presente o futuro — decida explícitamente qué pasar, en vez de heredar un `None` silencioso por omisión.
+
+**4. Call site.**
+El único punto real que debe pasar `account_id` de forma explícita es la llamada a `record_routing_decision()` dentro de `_db_open_position_atomic()` (`consumers.py`), usando `self._db_account_id` — ya disponible en ese punto, sin ninguna consulta adicional. No se modifica el comportamiento de la decisión de ruteo, no se toca ningún lock, no se altera el orden ni el alcance de la transacción ya aprobados en BOOK-04b.
+
+**5. Helpers de consulta.**
+- `routing_decisions_for_account(account_id)` — consulta **directa** sobre `RoutingDecision.objects.filter(account_id=account_id)`, mismo molde exacto que `events_for_account()` en `broker_audit.py`. Funciona igual para decisiones de posiciones abiertas y cerradas, porque `account` nunca depende de `Position`.
+- `routing_decisions_for_position(position_id)` — se mantiene sin cambios de diseño: sigue siendo útil **mientras la posición esté abierta** (`RoutingDecision.position` aún no se ha anulado por `SET_NULL`); una vez la posición se cierra, deja de devolver resultados por esa vía — la consulta durable por cuenta se resuelve exclusivamente mediante `RoutingDecision.account`, no mediante este helper.
+
+**6. Admin — `RoutingDecisionAdmin` (solo lectura, sin cambios de permisos).**
+- `list_display`: `decision_id, book, reason_code, account, position, decided_at` (mismo criterio de columnas relevantes ya usado en `BrokerAuditEventAdmin`).
+- `list_filter`: `book`, `reason_code`.
+- `search_fields`: `decision_id`, `account__user__username`, `position__id` — `account` ahora es un campo de búsqueda directo y funcional incluso para decisiones de posiciones ya cerradas (a diferencia de la única vía indirecta disponible antes de esta resolución).
+- `readonly_fields`: todos los campos del modelo — mismo criterio de "ningún campo editable" ya aplicado en `BrokerAuditEventAdmin`.
+- `has_add_permission`/`has_change_permission`/`has_delete_permission`: los tres `False` — mismo patrón exacto.
+- `get_actions()`: `delete_selected` eliminado explícitamente del diccionario de acciones — mismo refuerzo "cinturón y tirantes" ya usado en `BrokerAuditEventAdmin`.
 
 ### Archivos que probablemente participarán
 ```
-simulator/admin.py                — RoutingDecisionAdmin (solo lectura)
-simulator/routing_engine.py       — helpers de consulta
+simulator/models.py                — RoutingDecision: +account (FK nullable, on_delete=SET_NULL)
+simulator/routing_engine.py        — record_routing_decision(account_id obligatorio), helpers de consulta
+simulator/consumers.py             — call site en _db_open_position_atomic() pasa account_id=self._db_account_id
+simulator/admin.py                 — RoutingDecisionAdmin (solo lectura)
+simulator/migrations/00XX_book04e_routing_decision_account.py
 simulator/tests/test_book04e_routing_visibility.py
 ```
 
 ### ¿Requiere migración?
-No.
+**Sí** — `AddField` en `RoutingDecision` (FK nullable), aditiva pura, sin `RunPython`, reversible, sin alteración de ninguna fila existente.
 
 ### Riesgos
-Mínimos — capa de lectura pura sobre datos ya persistidos en bloques anteriores.
+- **Futuros callers que olviden pasar `account_id`**: mitigado haciendo el parámetro obligatorio (sin `default=None`) en `record_routing_decision()` — un caller nuevo que no lo pase falla de forma explícita e inmediata (`TypeError`), no de forma silenciosa.
+- **`account=None` es válido únicamente** para decisiones históricas anteriores a BOOK-04e, o ante un fallo controlado y ya fail-open del propio writer (mismo criterio que el resto de campos opcionales del contrato) — nunca como resultado de omitir el argumento por descuido en un caller nuevo.
+- Ninguna escritura adicional fuera de la creación de la `RoutingDecision` — el campo se fija una sola vez, en el mismo `INSERT`, sin ningún `UPDATE` posterior.
+- Ninguna modificación del campo `account` después de creado, bajo ninguna circunstancia.
+- Bajo — capa de lectura pura para los helpers/admin; el único cambio con escritura real es la línea nueva en el único call site ya existente.
 
 ### Dependencias
-BOOK-04a (modelo), BOOK-04b (datos reales que mostrar).
+BOOK-04a (modelo), BOOK-04b (único call site real que puede poblar `account_id`). **No se declara dependencia funcional obligatoria de BOOK-04c ni de BOOK-04d** para resolver la consulta por cuenta — la resolución de FASE 2 (Opción B) elimina esa dependencia por diseño: `account` se fija en el momento del `open`, sin necesitar pasar por `Trade` ni por `BrokerAuditEvent`.
 
 ### Estrategia de pruebas
-El admin carga sin error; los helpers retornan lo esperado; el append-only se verifica con el mismo test estructural ya usado para `BrokerAuditEventAdmin`.
+El admin carga sin error y es completamente solo lectura (mismo test estructural ya usado para `BrokerAuditEventAdmin`); `routing_decisions_for_account()` retorna resultados idénticos para una decisión con posición abierta y para la misma decisión tras el cierre de esa posición (prueba directa de que la consulta por cuenta no depende del ciclo de vida de `Position`); `routing_decisions_for_position()` retorna resultados mientras la posición está abierta y una lista vacía tras su cierre — comportamiento documentado, no un defecto; decisiones creadas antes de este bloque (`account=None`, simuladas directamente en el test) siguen siendo consultables por los helpers existentes sin fallar; `record_routing_decision()` sin `account_id` falla con `TypeError`, nunca crea una fila con `account` implícito.
 
 ### Definition of Done
-Staff puede consultar, desde el admin estándar, qué decisión de ruteo tuvo cualquier posición/cuenta, sin necesitar shell ni acceso directo a la base de datos.
+- Toda `RoutingDecision` nueva guarda `account` en el momento de su creación.
+- Las decisiones anteriores a BOOK-04e permanecen con `account=None`, sin backfill.
+- La consulta por cuenta (`routing_decisions_for_account()`) funciona igual antes y después del cierre de la `Position` asociada.
+- `RoutingDecisionAdmin` es completamente solo lectura — sin `add`/`change`/`delete`, sin `delete_selected`.
+- No se fabrica ningún dato histórico ni se infiere ninguna relación retroactiva.
+- El comportamiento del motor de ruteo (decisión trivial, Shadow Mode, netting, cierre) permanece exactamente igual al de BOOK-04a-04d — este bloque es una capa de lectura y un campo denormalizado, no un cambio de lógica.
+- Migración aditiva, reversible, verificada (aplicar/revertir/reaplicar) sin pérdida de datos existentes.
+- Suite completa del proyecto en verde, sin regresiones.
 
 ---
 
@@ -343,10 +385,10 @@ Si el flag se desactiva después de haber estado activo (en cualquier entorno):
 | BOOK-04b | Sí — único punto crítico | `_db_open_position_atomic()` (bajo lock) | Sí (`Position`, `RoutingDecision`) | No | Registra, nunca decide distinto |
 | BOOK-04c | Sí — solo lectura al cerrar | escritor(es) de cierre real (fuera del lock de apertura) | Sí (`Trade`) | No | Registra, nunca decide distinto |
 | BOOK-04d | Sí — una llamada más | `_order_new()`, después del retorno de `_db_open_position_atomic()` — **no** la función crítica | No | No | Registra evento institucional |
-| BOOK-04e | No | — | No | No | No (solo lectura) |
+| BOOK-04e | Sí — un argumento más en una llamada existente | `_db_open_position_atomic()`, pasa `account_id` ya disponible a la llamada que BOOK-04b ya introduce — sin nueva lógica de decisión | Sí (`RoutingDecision`: +`account`) | No | No (solo lectura + denormalización) |
 | BOOK-04f | No | — | No | No | Prepara el interruptor, no lo acciona |
 
-**`_db_open_position_atomic()` es tocada por exactamente un bloque de este plan: BOOK-04b.** BOOK-04d, que en una versión anterior de este plan compartía esa misma función (junto a `EV_POSITION_OPENED`), fue reubicado a `_order_new()` precisamente para preservar esa propiedad.
+**`_db_open_position_atomic()` es modificada por dos bloques de este plan: BOOK-04b (la única lógica de decisión real, bajo lock) y BOOK-04e (un argumento más en esa misma llamada, sin ninguna lógica de decisión nueva).** BOOK-04d, que en una versión anterior de este plan compartía esa misma función (junto a `EV_POSITION_OPENED`), fue reubicado a `_order_new()` precisamente para no depender de ella.
 
 **En ningún punto de este plan el broker deja de ejecutar exactamente las mismas operaciones que ejecuta hoy.** El Routing Engine, al cierre de BOOK-04, sabe registrar y mostrar decisiones — no sabe, ni debe saber todavía, tomar una decisión distinta de la que el sistema ya toma implícitamente desde su primer commit.
 
