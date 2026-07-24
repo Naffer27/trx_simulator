@@ -1260,6 +1260,44 @@ class TradingConsumer(AsyncWebsocketConsumer):
             })
             return
 
+        # BOOK-04d — Routing Engine audit trail. Purely observational:
+        # "the routing decision associated with an accepted open was
+        # recorded" — not the completion of the WebSocket response. Runs
+        # strictly after the open above already committed (result["ok"]
+        # is True), never inside _db_open_position_atomic()'s transaction
+        # or locks, and before the memory mutation/order_ack/order_fill
+        # below — a slow or failed audit write here must never delay or
+        # affect what the client is about to receive.
+        #
+        # Uses exclusively what BOOK-04b/04c's result dict already
+        # exposes (routing_decision_id/position_id/merged) — never
+        # re-reads RoutingDecision or Position, never re-opens the open
+        # transaction. If routing_decision_id is None (flag was off, the
+        # writer failed, or the principal link failed — all already
+        # fail-open in BOOK-04b), no ROUTING event is created at all.
+        #
+        # record_event() is already fail-open internally, but this own
+        # try/except additionally covers argument construction and the
+        # database_sync_to_async scheduling/await itself — a failure at
+        # any of those points is absorbed here, never allowed to affect
+        # Position, RoutingDecision, balance, margin, or the order_ack/
+        # order_fill sent further below.
+        _routing_decision_id = result.get("routing_decision_id")
+        if _routing_decision_id is not None:
+            try:
+                await self._db_record_routing_audit_event(
+                    account_id=self._db_account_id,
+                    symbol=sym,
+                    routing_decision_id=_routing_decision_id,
+                    position_id=result.get("position_id"),
+                    merged=bool(result.get("merged")),
+                )
+            except Exception as _routing_audit_exc:
+                log.warning(
+                    "[routing_engine] audit event failed decision=%s pos=%s: %s",
+                    _routing_decision_id, result.get("position_id"), _routing_audit_exc,
+                )
+
         # DB committed — safe to mutate memory now.
         # Use authoritative balance from DB (returned by _db_open_position_atomic),
         # falling back to pre-computed value only for demo sessions (no _db_account_id).
@@ -1278,6 +1316,44 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
         await self._recalc_account_and_push()
         await self._refresh_and_send_positions()
+
+    @database_sync_to_async
+    def _db_record_routing_audit_event(self, *, account_id, symbol, routing_decision_id,
+                                        position_id, merged):
+        """
+        BOOK-04d — records "a routing decision associated with an accepted
+        open was registered" as an institutional BrokerAuditEvent, under
+        Category.ROUTING. Deliberately thin: only routing_decision_id/
+        position_id/merged — never re-reads RoutingDecision or Position,
+        never includes inputs_snapshot/book/reason_code/engine_version
+        (see docs/BOOK_04_IMPLEMENTATION_PLAN.md, BOOK-04d contract).
+
+        Sync method, decorated database_sync_to_async precisely because
+        _order_new() (its only caller) is `async def` without that
+        decorator, while record_event()'s ORM writes are synchronous —
+        calling it directly from _order_new()'s body would raise
+        SynchronousOnlyOperation. Same pattern already used by every
+        other _db_* method in this class.
+
+        routing_decision_id is a uuid.UUID (RoutingDecision.decision_id)
+        — stringified before going into `metadata`, a plain JSONField
+        (no DjangoJSONEncoder), which cannot serialize a raw UUID object.
+        """
+        from . import broker_audit as _audit
+        _audit.record_routing_event(
+            event_type=_audit.EV_ROUTING_DECISION_RECORDED,
+            description=(
+                f"Routing decision recorded for {symbol} "
+                f"(position_id={position_id}, merged={merged})"
+            ),
+            account_id=account_id, symbol=symbol,
+            source_module="simulator.consumers",
+            metadata={
+                "routing_decision_id": str(routing_decision_id),
+                "position_id": position_id,
+                "merged": merged,
+            },
+        )
 
     async def _order_update(self, data: dict):
         pid = data.get("id")

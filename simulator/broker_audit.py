@@ -119,9 +119,14 @@ class Category:
     COMPLIANCE     = "COMPLIANCE"
     MONITORING     = "MONITORING"
     SYSTEM         = "SYSTEM"
+    # BOOK-04d — business decisions of the Routing Engine. Deliberately
+    # distinct from MONITORING (infrastructure/providers/circuit-breakers/
+    # health in market_data/) — a routing decision is a business fact
+    # about an order, not an observation about system health.
+    ROUTING        = "ROUTING"
 
     ALL = (TRADING, RISK, LEDGER, PAYMENTS, ADMIN, AUTHENTICATION,
-           COMPLIANCE, MONITORING, SYSTEM)
+           COMPLIANCE, MONITORING, SYSTEM, ROUTING)
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -391,6 +396,16 @@ def close_reason_event_type(reason: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# BOOK-04d — Routing Engine audit trail. A single, reusable event type —
+# same shape whether the call opened a brand-new Position or merged into
+# an existing one (merged=True/False lives in metadata, mirroring how
+# EV_POSITION_OPENED already distinguishes the two cases in its own
+# metadata rather than using two different event types).
+# ─────────────────────────────────────────────────────────────────────────
+EV_ROUTING_DECISION_RECORDED = "routing.decision_recorded"
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # FASE 5 — the engine. record_event() is the single writer; every other
 # record_*_event() function is a thin, category-fixed convenience
 # wrapper around it, so the actual database write exists in exactly one
@@ -523,6 +538,35 @@ def record_risk_event(
     """FASE 5 — RISK category convenience wrapper (RISK-02 rejections, RISK-03 alerts)."""
     return record_event(
         event_type=event_type, category=Category.RISK, severity=severity,
+        actor_type=actor_type, description=description,
+        account_id=account_id, account=account, symbol=symbol,
+        metadata=metadata, source_module=source_module,
+    )
+
+
+def record_routing_event(
+    *, event_type: str, severity: str = Severity.INFO, actor_type: str = ActorType.SYSTEM,
+    description: str, account_id=None, account=None, symbol: str = "",
+    metadata: Optional[dict] = None, source_module: str = "",
+):
+    """
+    BOOK-04d — ROUTING category convenience wrapper. Same single-writer
+    discipline as every other record_*_event(): delegates 100% to
+    record_event(), no logic of its own.
+
+    actor_type defaults to SYSTEM — a routing decision is the engine's
+    own determination, not a trader or staff action, same rationale as
+    record_risk_event()'s default.
+
+    Callers (see simulator/consumers.py) must keep `metadata` thin —
+    routing_decision_id/position_id/merged only, per
+    docs/BOOK_04_IMPLEMENTATION_PLAN.md's BOOK-04d contract — never
+    inputs_snapshot, book, reason_code, or engine_version, none of which
+    are available without re-reading RoutingDecision (explicitly
+    forbidden by that same contract).
+    """
+    return record_event(
+        event_type=event_type, category=Category.ROUTING, severity=severity,
         actor_type=actor_type, description=description,
         account_id=account_id, account=account, symbol=symbol,
         metadata=metadata, source_module=source_module,
