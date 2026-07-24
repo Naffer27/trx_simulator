@@ -141,7 +141,16 @@ Cerrar el hueco de simetría identificado en FASE 2: al cerrar una posición, el
 
 ### Alcance
 - Campo espejo en `Trade`, copiado verbatim al cerrar desde `Position.routing_decision` (la decisión **principal**, nunca desde un incremento individual) — mismo patrón que `pricing_context_open`/`pricing_context_close`, nunca recalculado.
-- `create_broker_counterparty_entry()` lee `book_mode` desde la decisión principal persistida en la `Position` que se cierra — misma fuente única que consume `Trade`, sin duplicar la lectura.
+- **BOOK-04c debe mantener consistencia entre los tres escritores reales de cierre, no solo `consumers.py`** — verificados por código, los tres llaman a `create_broker_counterparty_entry()` y comparten el mismo flujo común (crear `Trade` → `LedgerEntry` → `BrokerLedger` → recién entonces `Position.delete()`):
+  - `simulator/consumers.py::_db_close_position_atomic()` — cierre manual vía WebSocket.
+  - `simulator/tasks.py::_close_position_sync()` — daemon Celery (TP/SL/stopout/margin-call).
+  - `simulator/admin.py::force_close` (bloque de cierre de la acción de dealing desk) — cierre administrativo.
+
+  Los tres reciben el mismo cambio mecánico y simétrico: copiar `pos.routing_decision` al `Trade.objects.create(...)` de cada uno, en el mismo punto donde ya copian `pricing_context`/`pnl_conversion` (dos de los tres lo hacen hoy) — siempre antes de `pos.delete()`. Ninguna lógica de decisión nueva en ninguno de los tres; solo lectura de un dato ya persistido.
+
+  `simulator/consumers.py::_db_mirror_close_position` queda **explícitamente fuera de alcance**: es un path ya deprecado ("superseded by `_db_close_position_atomic`"), ya inconsistente hoy respecto a los tres anteriores (no copia `pricing_context`, no llama a `create_broker_counterparty_entry()`). BOOK-04c no lo corrige ni lo homologa — mantiene su estado actual, sin empeorarlo ni mejorarlo.
+
+- **`RoutingDecision.book` y `BrokerLedger.book_mode` no representan el mismo dominio de valores.** Son dos vocabularios de strings distintos: `routing_engine.py::Book` describe *dónde* se enruta una orden (hoy solo `"INTERNAL"`); `broker_ledger.py::BOOK_MODE_B_BOOK = "B_BOOK"` describe el *tratamiento contable* de un `Trade` ya cerrado. Que hoy correspondan 1:1 (`INTERNAL` → siempre `B_BOOK`) es un mapeo de negocio vigente, no una identidad de strings, y no debe asumirse que seguirá siendo así el día que exista un routing real (A-book/LP/hedge). La traducción entre ambos espacios ocurre en **un único punto claramente identificado: dentro de `create_broker_counterparty_entry()` (`broker_ledger.py`)**, derivando `book_mode` internamente a partir de `trade.routing_decision.book` cuando el llamador no lo sobreescribe explícitamente (el parámetro `book_mode=` ya existente se conserva para overrides futuros) — nunca replicada en cada uno de los tres escritores por separado. No se introduce ninguna tabla nueva, ningún enum nuevo, ni ningún cambio de modelo para esto — es una función de traducción interna a `broker_ledger.py`, del mismo tamaño y naturaleza que el resto de ese módulo.
 - Los incrementos individuales de una `Position` fusionada por netting (cada `RoutingDecision` enlazada vía `RoutingDecision.position`, ver BOOK-04b) **sobreviven como evidencia histórica tras el cierre — el cierre nunca los borra ni los reescribe** —, pero dejan de ser localizables por `RoutingDecision.position`: al eliminarse la `Position` en el cierre, ese campo pasa a `NULL` en cada una de ellas por `SET_NULL` (ver BOOK-04b). Solo la decisión principal conserva un puntero estable post-cierre, vía `Trade.routing_decision` (copiado antes de que la `Position` se elimine); los incrementos no-principales quedan como filas íntegras pero sin ese enlace directo.
 - Sigue bajo el mismo flag `ROUTING_ENGINE_ENABLED` — apagado, comportamiento idéntico al actual.
 
@@ -149,8 +158,10 @@ Cerrar el hueco de simetría identificado en FASE 2: al cerrar una posición, el
 ```
 simulator/models.py               — Trade: +routing_decision (FK nullable, espejo de Position)
 simulator/migrations/00XX_book04c_trade_routing_decision.py
-simulator/consumers.py            — escritor(es) de cierre real
-simulator/broker_ledger.py        — create_broker_counterparty_entry() lee book_mode real
+simulator/consumers.py            — _db_close_position_atomic() únicamente (NO _db_mirror_close_position, deprecado y fuera de alcance)
+simulator/tasks.py                — _close_position_sync()
+simulator/admin.py                — force_close (bloque de cierre)
+simulator/broker_ledger.py        — create_broker_counterparty_entry() — único punto de traducción book → book_mode
 simulator/tests/test_book04c_close_symmetry.py
 ```
 
@@ -158,16 +169,16 @@ simulator/tests/test_book04c_close_symmetry.py
 Sí — `AddField` en `Trade`, aditiva pura.
 
 ### Riesgos
-Bajo — toca el camino de cierre solo para *leer* un dato ya persistido en BOOK-04b, nunca para tomar una nueva decisión ahí. Flag apagado mantiene el comportamiento actual sin cambio.
+Bajo — toca el camino de cierre solo para *leer* un dato ya persistido en BOOK-04b, nunca para tomar una nueva decisión ahí. Flag apagado mantiene el comportamiento actual sin cambio. Riesgo de alcance (no de arquitectura): si el cambio se aplica solo en `consumers.py` y no en `tasks.py`/`admin.py`, la "simetría apertura↔cierre" quedaría probada solo parcialmente — mitigado exigiendo el mismo cambio, simétrico, en los tres escritores reales. Centralizar la traducción `book`→`book_mode` en `create_broker_counterparty_entry()` (en vez de repetirla en cada escritor) evita que los tres puedan divergir entre sí.
 
 ### Dependencias
 BOOK-04b.
 
 ### Estrategia de pruebas
-Con el flag activo: cerrar una posición copia correctamente la decisión principal al `Trade`; `BrokerLedger.meta["book_mode"]` refleja la decisión real. **Test dedicado de cierre tras netting:** abrir una `Position`, fusionar dos o más incrementos (cada uno con su propia `RoutingDecision`), cerrarla — verificar que `Trade.routing_decision` es exactamente la decisión principal (la del primer incremento, sin cambios), que `BrokerLedger` es consistente con esa misma decisión, y que las `RoutingDecision` de los incrementos posteriores **siguen existiendo intactas como filas** tras el cierre, con su campo `position` en `NULL` (por `SET_NULL`, ver BOOK-04b) — es decir, ya no localizables vía `RoutingDecision.position`, pero nunca borradas ni reescritas. Con el flag apagado: comportamiento idéntico al preexistente (test de no-regresión explícito, mismo criterio que cada bloque anterior).
+Con el flag activo: cerrar una posición copia correctamente la decisión principal al `Trade`; `BrokerLedger.meta["book_mode"]` refleja `"B_BOOK"` (nunca el string literal `"INTERNAL"`) — test explícito de la traducción de vocabularios. **La misma verificación (Trade.routing_decision correcto + book_mode correcto) se repite en los tres escritores reales** (`consumers.py`, `tasks.py`, `admin.py`) — no basta con probarlo en uno solo. **Test dedicado de cierre tras netting:** abrir una `Position`, fusionar dos o más incrementos (cada uno con su propia `RoutingDecision`), cerrarla — verificar que `Trade.routing_decision` es exactamente la decisión principal (la del primer incremento, sin cambios), que `BrokerLedger` es consistente con esa misma decisión, y que las `RoutingDecision` de los incrementos posteriores **siguen existiendo intactas como filas** tras el cierre, con su campo `position` en `NULL` (por `SET_NULL`, ver BOOK-04b) — es decir, ya no localizables vía `RoutingDecision.position`, pero nunca borradas ni reescritas. Con el flag apagado: comportamiento idéntico al preexistente (test de no-regresión explícito, mismo criterio que cada bloque anterior).
 
 ### Definition of Done
-Simetría apertura↔cierre verificada por test. `book_mode` real fluye hasta `BrokerLedger` con el flag activo. Suite completa en verde en ambos estados del flag.
+Simetría apertura↔cierre verificada por test **en los tres escritores reales de cierre** (`consumers.py`, `tasks.py`, `admin.py`) — `_db_mirror_close_position` queda fuera, sin cambios. `book_mode` real fluye hasta `BrokerLedger` con el flag activo, traducido desde `RoutingDecision.book` en el único punto centralizado (`create_broker_counterparty_entry()`). Suite completa en verde en ambos estados del flag.
 
 ---
 
