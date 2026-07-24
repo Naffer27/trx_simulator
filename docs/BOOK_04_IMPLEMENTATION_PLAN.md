@@ -185,41 +185,63 @@ Simetría apertura↔cierre verificada por test **en los tres escritores reales 
 ## BOOK-04d — Integración con Audit Trail (Category.ROUTING)
 
 ### Objetivo
-Registrar cada decisión de ruteo como evento institucional, siguiendo exactamente el patrón de los cinco bloques ya cerrados del Audit Trail Engine — sin diseñar aquí los `event_type` exactos (detalle de implementación del propio bloque, no de este plan). **Este bloque no modifica `_db_open_position_atomic()` — BOOK-04b es, y permanece, el único bloque que toca esa función** (ver ajuste de arquitectura abajo).
+Registrar, como evento institucional, el hecho de que **"la decisión de routing asociada a una apertura aceptada fue registrada"** — no la finalización completa de la respuesta WebSocket ni del flujo de presentación al cliente. Sigue exactamente el patrón de los cinco bloques ya cerrados del Audit Trail Engine — sin diseñar aquí los `event_type` exactos más allá de dejar reservado que serán constantes `EV_*` coherentes con el resto de `broker_audit.py` (detalle de implementación del propio bloque, no de este plan). **Este bloque no modifica `_db_open_position_atomic()` — BOOK-04b es, y permanece, el único bloque que toca esa función.**
 
 ### Alcance
-- `Category.ROUTING` — nuevo valor de string, sin migración (mismo patrón ya confirmado tres veces: `PAYMENTS`/`COMPLIANCE`/`AUTHENTICATION`).
-- `record_routing_event()` — wrapper delgado sobre `record_event()`, mismo molde que los siete wrappers ya existentes.
-- **Punto de registro: `_order_new()`, no `_db_open_position_atomic()`.** La llamada se emite justo después de la comprobación existente `if not result.get("ok", True): ... return` en `_order_new()` — es decir, después de que `_db_open_position_atomic()` ya retornó y la apertura (o el rechazo) ya es un hecho consumado. Usa exclusivamente los datos que BOOK-04b añade al `result` dict (`routing_decision_id`, `position_id`, `merged`) — nunca vuelve a leer la base de datos ni reabre la transacción de apertura.
-- Consecuencia directa: la llamada queda **fuera de `transaction.atomic()`, fuera de todos los locks** (`BrokerRiskLock`/`TradingAccount`/`Position`), y **es estructuralmente incapaz de bloquear o revertir una apertura ya confirmada** — para cuando se ejecuta, la `Position` ya existe (o ya se fusionó) y la transacción de BOOK-04b ya hizo commit.
-- Fail-open explícito: el mismo `try/except` que ya protege a `record_event()` — un fallo al auditar nunca deshace ni afecta la apertura que ya ocurrió.
-- `metadata` referencia `decision_id`, nunca duplica `inputs_snapshot` completo dentro de `BrokerAuditEvent`.
 
-**Datos mínimos que BOOK-04b debe devolver en el `result` dict para permitir esto** (sin diseñar aquí los `event_type`, solo el contrato de datos entre bloques):
-- `routing_decision_id` — el `decision_id` de la `RoutingDecision` tomada para esta llamada concreta (presente si el flag está activo; ausente/`None` si está apagado).
-- `position_id` y `merged` — ya existen hoy en el `result` dict, reutilizados tal cual, sin duplicarlos.
+**1. Integración async correcta — obligatoria, no opcional.** `_order_new()` (`simulator/consumers.py`) es un método `async def`, **sin** el decorador `database_sync_to_async`. `record_routing_event()`/`record_event()` (`broker_audit.py`) usan el ORM de Django de forma **síncrona**. Llamar a `record_routing_event()` directamente desde el cuerpo de `_order_new()` produciría `django.core.exceptions.SynchronousOnlyOperation` en el primer pedido real procesado con el flag activo — **queda expresamente prohibido**. La implementación debe crear una función pequeña, sync, decorada `@database_sync_to_async` (mismo molde que las 14 apariciones ya existentes de ese decorador en `consumers.py`), invocada con `await` desde `_order_new()`.
+
+**2. Punto exacto de emisión.** La llamada (`await self._db_record_routing_audit_event(...)` o el nombre que se le dé) se ubica:
+- después de confirmar `result.get("ok", True)` (es decir, después del `if not result.get("ok", True): ... return` ya existente);
+- **antes** de las mutaciones de memoria (`self.account["balance"] = ...`, `self._create_position()`/`self._open_or_update_position()`) y de los envíos WebSocket (`order_ack`/`order_fill`);
+- fuera de `_db_open_position_atomic()`;
+- fuera de todos los locks (`BrokerRiskLock`/`TradingAccount`/`Position`);
+- fuera de la transacción de apertura (que ya hizo commit).
+
+La escritura es fail-open y no puede impedir, retrasar de forma relevante, ni alterar que la orden continúe — para cuando se ejecuta, la `Position` ya existe (o ya se fusionó) y la transacción de BOOK-04b ya comprometió.
+
+**3. Contrato de datos.** No releer `RoutingDecision` ni `Position` desde la base de datos bajo ninguna circunstancia. Usar **únicamente** los datos ya expuestos en `result`: `routing_decision_id`, `position_id`, `merged`. El `metadata` del evento es deliberadamente delgado — **no incluye** `inputs_snapshot`, `book`, `reason_code`, `engine_version`, ni ningún dato que exigiera una consulta adicional (esos campos no viajan en `result` hoy; incluirlos violaría la prohibición de releer la base de datos). **Si `routing_decision_id` es `None` (flag apagado, writer fallido, o enlace principal fallido), no se crea ningún evento `ROUTING`** — la ausencia de decisión no es, en sí misma, un hecho auditable por este bloque.
+
+**4. Categoría institucional.** `Category.ROUTING` — categoría **nueva y distinta**, sin migración (mismo patrón ya confirmado tres veces: `PAYMENTS`/`COMPLIANCE`/`AUTHENTICATION`). **No se reutiliza `Category.MONITORING`** — `MONITORING` corresponde a infraestructura, proveedores, circuit breakers y health de `market_data/`; `ROUTING` corresponde a decisiones de negocio del motor de ruteo. Son dominios semánticamente distintos; conflacionarlos degradaría la utilidad de ambas categorías para cualquier consulta futura por categoría.
+
+**5. Fail-open — protección adicional en el call site.** `record_event()` ya es fail-open por diseño (savepoint anidado, nunca relanza), pero esa garantía cubre únicamente su propio cuerpo. La implementación debe envolver, en el *call site* dentro de `_order_new()`, tanto la construcción de los argumentos como el `await` a la función `database_sync_to_async` en su propio `try/except` — no basta con confiar en el fail-open interno de `record_event()`. Cualquier fallo de: construcción del contrato de argumentos; *scheduling* del hilo (`database_sync_to_async` en sí); ejecución del wrapper; o escritura de auditoría — debe quedar absorbido ahí, sin propagarse, y sin afectar en ningún caso: `Position`; `RoutingDecision`; balance; margen; `order_ack`; `order_fill`; ni el flujo normal de apertura.
 
 ### Archivos que probablemente participarán
 ```
-simulator/broker_audit.py         — Category.ROUTING, record_routing_event(), constantes de evento
-simulator/consumers.py            — una llamada nueva en _order_new(), después del chequeo result.get("ok") — NO en _db_open_position_atomic()
+simulator/broker_audit.py         — Category.ROUTING, record_routing_event(), constantes EV_* (reservadas, sin diseñar aquí)
+simulator/consumers.py            — función nueva @database_sync_to_async + una llamada await en _order_new(), después del chequeo result.get("ok") — NO en _db_open_position_atomic()
 simulator/tests/test_book04d_routing_audit_trail.py
 ```
+Ningún otro archivo. Sin migración. `_db_open_position_atomic()` no se toca de nuevo bajo ninguna circunstancia.
 
 ### ¿Requiere migración?
 No.
 
 ### Riesgos
-Mínimos — mismo perfil que cualquier bloque de integración del Audit Trail ya completado. Fail-open heredado sin cambios de `record_event()`. Riesgo adicional mitigado por este ajuste: al vivir en `_order_new()` en vez de en `_db_open_position_atomic()`, este bloque ya no comparte superficie de riesgo con el camino crítico bajo lock — su única dependencia de datos es el `result` dict ya devuelto.
+Mínimos — mismo perfil que cualquier bloque de integración del Audit Trail ya completado. Fail-open heredado sin cambios de `record_event()`, más la protección adicional del call site (punto 5). Riesgo adicional ya mitigado por este ajuste: al vivir en `_order_new()` en vez de en `_db_open_position_atomic()`, este bloque ya no comparte superficie de riesgo con el camino crítico bajo lock — su única dependencia de datos es el `result` dict ya devuelto. Riesgo de integración async (llamada síncrona directa desde un método `async def`) identificado y resuelto explícitamente arriba — antes de este ajuste, una implementación literal del texto previo del plan habría fallado en tiempo de ejecución con `SynchronousOnlyOperation`.
 
 ### Dependencias
 BOOK-04b (necesita `routing_decision_id` en el `result` dict). Audit Trail Engine ya cerrado (prerequisito ya cumplido).
 
 ### Estrategia de pruebas
-Mismo molde que los cinco bloques anteriores: shape del evento, whitelist de metadata (nunca el `inputs_snapshot` completo), fail-open. Test dedicado: forzar un fallo en `record_routing_event()` y verificar que la `Position` ya abierta (y el `result` ya devuelto al cliente WebSocket) no se ven afectados en absoluto — el fallo de auditoría es puramente posterior y observacional.
+Mínimo exigido:
+- categoría `ROUTING` en el evento creado;
+- `metadata` exacta y con whitelist explícita (`decision_id`/`position_id`/`merged` únicamente — ningún otro campo);
+- una apertura nueva produce exactamente un evento;
+- un merge produce exactamente un evento;
+- flag apagado produce cero eventos;
+- `routing_decision_id=None` produce cero eventos (independientemente del estado del flag);
+- una orden rechazada (`result["ok"] is False`) produce cero eventos;
+- un fallo forzado en la escritura de auditoría no afecta la apertura ya confirmada (`Position`, balance, margen, `order_ack`, `order_fill` sin cambios);
+- **prueba dedicada del camino async real** (no solo la función `@database_sync_to_async` desnuda) que demuestre la ausencia de `SynchronousOnlyOperation` al invocar el flujo completo desde un contexto async genuino;
+- cero consultas adicionales a la base de datos para enriquecer el `metadata` (verificable con `CaptureQueriesContext`, mismo patrón ya usado en BOOK-04b/04c);
+- ningún `inputs_snapshot` duplicado dentro de `BrokerAuditEvent`.
 
 ### Definition of Done
-Cada decisión de ruteo real (flag activo) genera exactamente un evento institucional, correlacionable por `decision_id`/`trade`/`account`. Flag apagado: cero eventos nuevos. `_db_open_position_atomic()` permanece sin cambios respecto a BOOK-04b — confirmado por lectura de diff, no solo por descripción.
+Cada decisión de ruteo real (flag activo, `routing_decision_id` no `None`) genera exactamente un evento institucional bajo `Category.ROUTING`, correlacionable por `decision_id`/`position_id`/`account`. Flag apagado, o `routing_decision_id=None` por cualquier motivo: cero eventos nuevos. Orden rechazada: cero eventos. `_db_open_position_atomic()` permanece sin cambios respecto a BOOK-04b — confirmado por lectura de diff, no solo por descripción. La llamada se realiza vía `@database_sync_to_async` + `await`, nunca de forma síncrona directa desde `_order_new()`.
+
+### Estado del bloque
+**APROBADO PARA IMPLEMENTAR DESPUÉS DEL AJUSTE DOCUMENTAL** — la revisión técnica previa a este ajuste encontró un riesgo real y verificable (integración async faltante); queda resuelto explícitamente arriba. No quedan ajustes pendientes conocidos para iniciar la implementación de este bloque.
 
 ---
 
