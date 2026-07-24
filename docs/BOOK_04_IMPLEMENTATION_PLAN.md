@@ -329,24 +329,68 @@ Preparar el mecanismo operativo para que un bloque futuro — **fuera de BOOK-04
 - Flags de activación granular adicionales (mecánica de filtrado por símbolo o tipo de cuenta — no las reglas de *qué* activar), mismo patrón canario que `MARKET_DATA_ROUTER_ENABLED`/`MARKET_DATA_ROUTER_SYMBOLS` (Foundation-09).
 - Ningún cambio a la decisión trivial introducida en BOOK-04b — este bloque solo prepara el interruptor, no lo acciona con lógica nueva.
 
+### Diseño del mecanismo de gate (resolución de FASE 2)
+
+**1. Dónde vive el gate: `simulator/consumers.py`, no `routing_engine.py`.**
+Precedente directo ya probado en este mismo proyecto: `FeedManager._should_use_new_router(symbol)` (`market_data/feeds.py:449-459`) — la decisión de "¿debo delegar a la ruta nueva?" vive en el módulo **caller** (`feeds.py`), no en el módulo **callee** (`market_data/runtime_router/service.py`). BOOK-04f replica exactamente esa misma división de responsabilidades: `consumers.py` es el caller de `routing_engine.py`, así que el gate — "¿debo siquiera intentar Shadow Mode para esta orden?" — vive junto al call site que protege, como método privado de `TradingConsumer`, no dentro de `routing_engine.py`. Colocarlo en `routing_engine.py` acoplaría ese módulo a conocimiento de `TradingConsumer`/`self.account` que hoy no tiene ninguna razón para tener — `routing_engine.py` sigue sin saber nada de símbolos permitidos, tipos de cuenta, ni de ningún estado del consumer, exactamente como hoy.
+
+**2. Firma propuesta**: `TradingConsumer._should_activate_routing_decision(self, symbol: str, account_type: str) -> bool`, definido en `simulator/consumers.py` junto a `_db_open_position_atomic()`. No es `@database_sync_to_async` — no hace ninguna consulta a la DB (ver Riesgos → Rendimiento).
+
+**3. Único cambio al call site existente**: reemplaza exactamente la línea `if getattr(_settings, "ROUTING_ENGINE_ENABLED", False):` (dentro de `_db_open_position_atomic()`) por `if self._should_activate_routing_decision(symbol, self.account.get("account_type", "CHALLENGE")):` — mismo punto exacto de la secuencia ya aprobada en BOOK-04b, ningún otro cambio a esa función.
+
+### ¿Modifica BOOK-04f `_db_open_position_atomic()`?
+**Sí.** Un tercer bloque la modifica, de forma mínima: cambia únicamente la condición del `if` que ya gatea todo el bloque de Shadow Mode (introducido por BOOK-04b), de un booleano plano a una llamada a `_should_activate_routing_decision()`. No cambia el orden de ejecución, el lock, la atomicidad, el contenido de la decisión, el punto donde se invoca `record_routing_decision()`, ni ningún otro código dentro del bloque ya aprobado por BOOK-04b/04e.
+
 ### Archivos que probablemente participarán
 ```
-trx_simulator/settings.py         — flags de activación granular adicionales
-simulator/routing_engine.py       — mecanismo de lectura de esos flags
+trx_simulator/settings.py         — ROUTING_ENGINE_SYMBOLS, ROUTING_ENGINE_ACCOUNT_TYPES (flags de activación granular)
+simulator/consumers.py            — nuevo método _should_activate_routing_decision(); cambia la condición del if ya existente en _db_open_position_atomic()
 simulator/tests/test_book04f_activation_mechanism.py
 ```
+(`simulator/routing_engine.py` retirado de esta lista — no participa; ver "Diseño del mecanismo de gate" arriba.)
 
 ### ¿Requiere migración?
-No.
+No — los flags nuevos son configuración de entorno (mismo criterio que `MARKET_DATA_ROUTER_ENABLED`/`MARKET_DATA_ROUTER_SYMBOLS`), sin campo ni tabla nueva.
+
+### Vocabulario de `account_type`
+`ROUTING_ENGINE_ACCOUNT_TYPES`, cuando se define, contiene únicamente valores tomados de `TradingAccount.ACCOUNT_TYPES` (`RETAIL, ECN, STANDARD, DEMO, CRYPTO, CHALLENGE, FUNDED` — los mismos 7 ya definidos en `simulator/models.py`). Sin validación en tiempo de carga de `settings.py` contra el modelo (evita importar `simulator.models` desde `settings.py`, con el riesgo de `AppRegistryNotReady` que eso implicaría al cargarse antes de que el app registry esté listo) — un valor mal escrito simplemente nunca coincide con ningún `account_type` real en tiempo de ejecución (ver tabla de comportamiento abajo), nunca lanza una excepción ni bloquea el arranque.
+
+### Comportamiento del gate — todos los casos
+
+| Escenario | Comportamiento |
+|---|---|
+| `ROUTING_ENGINE_ENABLED=False` | Inactivo siempre — mismo interruptor maestro de BOOK-04b, sin cambios. Ninguna otra variable se evalúa. |
+| `ROUTING_ENGINE_ENABLED=True`, `ROUTING_ENGINE_SYMBOLS` ausente o vacío | **Sin restricción por símbolo** — activo para todos los símbolos, idéntico al comportamiento actual de BOOK-04b/04e. Ver justificación de compatibilidad abajo. |
+| `ROUTING_ENGINE_ENABLED=True`, `ROUTING_ENGINE_SYMBOLS` definido, símbolo de la orden SÍ está en la lista | Activo para esa orden (sujeto también al filtro de cuenta si está definido — ver siguiente fila). |
+| `ROUTING_ENGINE_ENABLED=True`, `ROUTING_ENGINE_SYMBOLS` definido, símbolo de la orden NO está en la lista | Inactivo para esa orden — no se evalúa ninguna otra condición. |
+| `ROUTING_ENGINE_ENABLED=True`, `ROUTING_ENGINE_ACCOUNT_TYPES` ausente o vacío | **Sin restricción por tipo de cuenta** — mismo criterio de compatibilidad que `ROUTING_ENGINE_SYMBOLS` vacío. |
+| `ROUTING_ENGINE_ENABLED=True`, `ROUTING_ENGINE_ACCOUNT_TYPES` definido, `account_type` de la cuenta SÍ está en la lista | Activo para esa cuenta (AND con el filtro de símbolo si ambos están definidos, nunca OR). |
+| `ROUTING_ENGINE_ENABLED=True`, `ROUTING_ENGINE_ACCOUNT_TYPES` definido, `account_type` NO está en la lista (incluye un valor mal escrito que no coincide con ningún valor real de `TradingAccount.ACCOUNT_TYPES`) | Inactivo para esa cuenta. |
+| Variable de entorno mal formada (p. ej. `ROUTING_ENGINE_SYMBOLS` con solo comas/espacios) | Se parsea al mismo `frozenset` vacío que "ausente" (mismo parseo defensivo ya usado por `MARKET_DATA_ROUTER_SYMBOLS`: `s.strip() for s in ... if s.strip()`) — nunca lanza excepción al cargar `settings.py`. |
+| Cualquier excepción inesperada durante la evaluación del gate (p. ej. `self.account` ausente o con forma inesperada) | Fail-safe: se trata como inactivo — nunca como activo por defecto, y nunca propaga la excepción hacia `_db_open_position_atomic()`. Mismo criterio exacto que `_should_use_new_router()` en `market_data/feeds.py` (`try/except Exception: return False`). |
+
+**Justificación de la asimetría con `MARKET_DATA_ROUTER_SYMBOLS`** (donde una lista vacía significa "ningún símbolo", no "todos"): `MARKET_DATA_ROUTER_ENABLED` y su allowlist se introdujeron juntos, sin ningún despliegue previo dependiendo del flag maestro por sí solo — vacío-significa-ninguno fue una elección deliberada para forzar una lista canaria explícita desde el día uno. `ROUTING_ENGINE_ENABLED`, en cambio, ya existe desde BOOK-04b y ya activa Shadow Mode para el 100% de símbolos/cuentas cuando está en `True`. Si BOOK-04f adoptara la semántica "vacío = ninguno" para los nuevos flags, cualquier entorno que ya tuviera `ROUTING_ENGINE_ENABLED=True` perdería toda actividad de Shadow Mode en cuanto BOOK-04f se desplegara — un cambio de comportamiento real causado por un bloque cuyo propio Objetivo declara explícitamente que no acciona nada. La semántica "ausente = sin restricción" es la única compatible con el principio rector del plan ("el broker debe quedar completamente funcional después de cada bloque, sin excepción") aplicado a los entornos que ya adoptaron BOOK-04b/04e.
 
 ### Riesgos
-Bajo, siempre que se resista la tentación de agregar reglas reales en este bloque — el límite debe quedar explícito en el propio commit y en su documentación.
+- **Alcance**: bajo, siempre que se resista la tentación de agregar reglas reales en este bloque — el límite debe quedar explícito en el propio commit y en su documentación.
+- **Atomicidad**: nula — el gate se resuelve enteramente con datos ya en memoria antes de llegar a este punto (`symbol` como parámetro ya recibido, `self.account.get("account_type", ...)` ya cacheado en el consumer desde connect/hydrate, `settings.ROUTING_ENGINE_SYMBOLS`/`ROUTING_ENGINE_ACCOUNT_TYPES` ya cargados al arrancar el proceso). Ninguna query nueva se introduce dentro de `transaction.atomic()` ni bajo ningún lock.
+- **Concurrencia**: nula — mismos frozensets inmutables que `MARKET_DATA_ROUTER_SYMBOLS`, fijados una sola vez al cargar `settings.py`; sin estado compartido mutable, sin necesidad de ningún lock nuevo.
+- **Rendimiento**: despreciable — el gate es una comparación de membership en un `frozenset` (O(1) amortizado) más, en el peor caso, un dict lookup sobre `self.account` ya en memoria. Explícitamente prohibido: el gate nunca debe emitir una query a `TradingAccount` para resolver `account_type` — debe reutilizar `self.account["account_type"]`, ya poblado.
+- **Compatibilidad**: sin riesgo si se respeta la semántica "ausente = sin restricción" definida arriba — comportamiento idéntico a hoy para cualquier entorno que aún no haya definido los flags granulares nuevos.
 
 ### Dependencias
 BOOK-04a → BOOK-04e completos.
 
 ### Estrategia de pruebas
-El mecanismo de activación granular funciona (por símbolo/tipo de cuenta), pero la decisión resultante sigue siendo la misma trivial de BOOK-04b — ningún test de "regla real" porque ninguna existe todavía.
+- Flag maestro apagado (ya cubierto, sin regresión) — ninguna decisión se registra, sin importar los flags granulares.
+- Flag maestro encendido, sin flags granulares definidos → comportamiento idéntico al de BOOK-04b/04e (todos los símbolos/cuentas activan) — prueba de compatibilidad explícita, reutilizando el mismo patrón (`_db_open_sync` + `_FakeConsumer`) ya establecido en `test_book04b_shadow_mode_integration.py` y `test_book04e_routing_visibility.py`.
+- Flag maestro encendido + `ROUTING_ENGINE_SYMBOLS` definido → activa solo para símbolos en la lista, inactiva para cualquier otro.
+- Flag maestro encendido + `ROUTING_ENGINE_ACCOUNT_TYPES` definido → activa solo para los `account_type` reales de `TradingAccount.ACCOUNT_TYPES` incluidos en la lista, inactiva para cualquier otro (incluyendo un valor no perteneciente a esos 7).
+- Ambos flags granulares definidos simultáneamente → AND, no OR (una orden debe cumplir símbolo Y tipo de cuenta para activar).
+- Configuración inválida/mal formada (variable vacía, solo separadores) → se comporta igual que "ausente", nunca lanza excepción.
+- Excepción inesperada durante la evaluación del gate → capturada, tratada como inactivo, nunca propaga hacia `_db_open_position_atomic()`.
+- `_FakeConsumer` (stub reutilizado desde BOOK-04b) debe extenderse con `account_type` en su diccionario `self.account` para poder probar la dimensión de cuenta.
+- Ningún test de "regla real" — ninguna existe todavía.
 
 ### Definition of Done
 BOOK-04 queda cerrado con el motor completo, auditable, visible, y con el interruptor de activación gradual listo — sin una sola regla de negocio de ruteo activa. Un bloque futuro (fuera de este plan) diseña e implementa las reglas reales sobre esta base ya construida.
@@ -386,9 +430,9 @@ Si el flag se desactiva después de haber estado activo (en cualquier entorno):
 | BOOK-04c | Sí — solo lectura al cerrar | escritor(es) de cierre real (fuera del lock de apertura) | Sí (`Trade`) | No | Registra, nunca decide distinto |
 | BOOK-04d | Sí — una llamada más | `_order_new()`, después del retorno de `_db_open_position_atomic()` — **no** la función crítica | No | No | Registra evento institucional |
 | BOOK-04e | Sí — un argumento más en una llamada existente | `_db_open_position_atomic()`, pasa `account_id` ya disponible a la llamada que BOOK-04b ya introduce — sin nueva lógica de decisión | Sí (`RoutingDecision`: +`account`) | No | No (solo lectura + denormalización) |
-| BOOK-04f | No | — | No | No | Prepara el interruptor, no lo acciona |
+| BOOK-04f | Sí — cambia la condición del `if` ya existente | `_db_open_position_atomic()`, sustituye el booleano plano por `_should_activate_routing_decision(symbol, account_type)` — sin nueva lógica de decisión ni cambio al contenido de la decisión | No | No | No decide distinto — solo amplía o restringe CUÁNDO se registra la misma decisión trivial, nunca QUÉ decisión es |
 
-**`_db_open_position_atomic()` es modificada por dos bloques de este plan: BOOK-04b (la única lógica de decisión real, bajo lock) y BOOK-04e (un argumento más en esa misma llamada, sin ninguna lógica de decisión nueva).** BOOK-04d, que en una versión anterior de este plan compartía esa misma función (junto a `EV_POSITION_OPENED`), fue reubicado a `_order_new()` precisamente para no depender de ella.
+**`_db_open_position_atomic()` es modificada por tres bloques de este plan: BOOK-04b (la única lógica de decisión real, bajo lock), BOOK-04e (un argumento más en esa misma llamada, sin ninguna lógica de decisión nueva) y BOOK-04f (sustituye la condición booleana plana del `if` que gatea todo el bloque por una llamada a `_should_activate_routing_decision()`, sin alterar nada dentro de ese bloque).** BOOK-04d, que en una versión anterior de este plan compartía esa misma función (junto a `EV_POSITION_OPENED`), fue reubicado a `_order_new()` precisamente para no depender de ella.
 
 **En ningún punto de este plan el broker deja de ejecutar exactamente las mismas operaciones que ejecuta hoy.** El Routing Engine, al cierre de BOOK-04, sabe registrar y mostrar decisiones — no sabe, ni debe saber todavía, tomar una decisión distinta de la que el sistema ya toma implícitamente desde su primer commit.
 
