@@ -24,7 +24,12 @@ _db_open_sync = TradingConsumer._db_open_position_atomic.__wrapped__
 
 
 class _FakeConsumer:
-    """Minimal consumer stub: only the attributes accessed by _db_open_position_atomic."""
+    """Minimal consumer stub: only the attributes accessed by _db_open_position_atomic.
+    BOOK-04f — the call site now calls self._should_activate_routing_decision();
+    borrowed directly from TradingConsumer (real function, not a
+    reimplementation), same principle as _db_open_sync above."""
+    _should_activate_routing_decision = TradingConsumer._should_activate_routing_decision
+
     def __init__(self, account_id, netting_mode=False):
         self._db_account_id = account_id
         self.account = {"netting_mode": netting_mode, "spread_pips": 0.0}

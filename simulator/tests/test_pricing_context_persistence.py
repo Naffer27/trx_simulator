@@ -33,7 +33,12 @@ _db_close_sync = TradingConsumer._db_close_position_atomic.__wrapped__
 
 
 class _FakeConsumer:
-    """Minimal consumer stub — only the attributes _db_open/_close_position_atomic touch."""
+    """Minimal consumer stub — only the attributes _db_open/_close_position_atomic touch.
+    BOOK-04f — the call site now calls self._should_activate_routing_decision();
+    borrowed directly from TradingConsumer (real function, not a
+    reimplementation), same principle as _db_open_sync above."""
+    _should_activate_routing_decision = TradingConsumer._should_activate_routing_decision
+
     def __init__(self, account_id, netting_mode=False, spread_pips=0.0):
         from market_data.feeds import get_feed_manager
         self._db_account_id = account_id

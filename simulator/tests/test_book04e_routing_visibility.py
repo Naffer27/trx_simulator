@@ -59,7 +59,12 @@ def _clear_price(symbol):
 
 
 class _FakeConsumer:
-    """Same minimal stub used by test_book04b_shadow_mode_integration.py."""
+    """Same minimal stub used by test_book04b_shadow_mode_integration.py.
+    BOOK-04f — the call site now calls self._should_activate_routing_decision();
+    borrowed directly from TradingConsumer (real function, not a
+    reimplementation), same principle as _db_open_sync above."""
+    _should_activate_routing_decision = TradingConsumer._should_activate_routing_decision
+
     def __init__(self, account_id, netting_mode=False):
         self._db_account_id = account_id
         self.account = {"netting_mode": netting_mode, "spread_pips": 0.0}

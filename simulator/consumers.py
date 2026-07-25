@@ -2427,6 +2427,49 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 external_id=str(order_id),
             )
 
+    def _should_activate_routing_decision(self, symbol: str, account_type: str) -> bool:
+        """
+        BOOK-04f — Controlled Activation Mechanism. Gate for whether
+        _db_open_position_atomic() should run the BOOK-04b Shadow Mode
+        block at all. Never decides WHAT the decision is — that remains
+        the same trivial contract from BOOK-04b regardless of this
+        method's answer.
+
+        Lives here, not in routing_engine.py — same caller-owns-the-gate
+        precedent already used by FeedManager._should_use_new_router()
+        in market_data/feeds.py. No DB access, no new state: reads only
+        the symbol/account_type already handed to it and the frozensets
+        already loaded into settings at process start. Never raises —
+        any unexpected failure here is treated as "no", exactly like
+        _should_use_new_router()'s own contract.
+
+        Semantics (see docs/BOOK_04_IMPLEMENTATION_PLAN.md, BOOK-04f —
+        "Comportamiento del gate — todos los casos"): an absent/empty
+        allowlist means NO restriction on that dimension (opposite of
+        MARKET_DATA_ROUTER_SYMBOLS's empty-means-none) — required so
+        that any environment with ROUTING_ENGINE_ENABLED already True
+        keeps its current 100%-of-orders behavior unchanged until a
+        granular allowlist is explicitly set. Both dimensions are ANDed
+        when both are non-empty, never ORed.
+        """
+        try:
+            from django.conf import settings as _settings
+
+            if not getattr(_settings, "ROUTING_ENGINE_ENABLED", False):
+                return False
+
+            symbols = getattr(_settings, "ROUTING_ENGINE_SYMBOLS", frozenset())
+            if symbols and symbol not in symbols:
+                return False
+
+            account_types = getattr(_settings, "ROUTING_ENGINE_ACCOUNT_TYPES", frozenset())
+            if account_types and account_type not in account_types:
+                return False
+
+            return True
+        except Exception:
+            return False
+
     @database_sync_to_async
     def _db_open_position_atomic(self, symbol: str, side: str, qty: float, price: float,
                                   sl, tp, commission: float, new_balance: float,
@@ -2790,7 +2833,9 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 merged = False
 
             # BOOK-04b — Routing Engine Shadow Mode. Gated by
-            # settings.ROUTING_ENGINE_ENABLED (default False — see
+            # _should_activate_routing_decision() (BOOK-04f — master flag
+            # settings.ROUTING_ENGINE_ENABLED plus optional granular
+            # symbol/account_type allowlists, default: fully off — see
             # trx_simulator/settings.py). Runs strictly AFTER step 9
             # above, now that position_id/merged are known — never
             # before, since RoutingDecision.position needs a real
@@ -2836,8 +2881,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
             # margin, commission, ledger, or audit trail written
             # below/above.
             routing_decision_id = None
-            from django.conf import settings as _settings
-            if getattr(_settings, "ROUTING_ENGINE_ENABLED", False):
+            if self._should_activate_routing_decision(symbol, self.account.get("account_type", "CHALLENGE")):
                 try:
                     from . import routing_engine as _routing_engine
                     _routing_contract = _routing_engine.build_shadow_mode_decision_contract(

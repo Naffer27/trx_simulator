@@ -437,6 +437,22 @@ if ROUTING_ENGINE_ENABLED:
         "never changes what executes."
     )
 
+# BOOK-04f — Controlled Activation Mechanism. Granular narrowing of WHEN
+# the Shadow Mode block above runs — never WHAT it decides. Absent/empty
+# means "no restriction on that dimension" (deliberately the OPPOSITE of
+# MARKET_DATA_ROUTER_SYMBOLS's empty-means-none), because
+# ROUTING_ENGINE_ENABLED already exists and may already be True in some
+# environment — narrowing must never silently zero out Shadow Mode for
+# an environment that adopted BOOK-04b/04e before these flags existed.
+# See docs/BOOK_04_IMPLEMENTATION_PLAN.md, BOOK-04f — "Comportamiento del
+# gate — todos los casos" for the full behavior table.
+ROUTING_ENGINE_SYMBOLS = frozenset(
+    s.strip() for s in os.getenv("ROUTING_ENGINE_SYMBOLS", "").split(",") if s.strip()
+)
+ROUTING_ENGINE_ACCOUNT_TYPES = frozenset(
+    s.strip() for s in os.getenv("ROUTING_ENGINE_ACCOUNT_TYPES", "").split(",") if s.strip()
+)
+
 # FOUNDATION-12 — Runtime Instrument Catalog. Not wired into any live
 # request path in this block — no loop, provider, trading rule, price, or
 # payload changes as a result. Reserved for a future Foundation's in-band
