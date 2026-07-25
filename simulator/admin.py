@@ -24,7 +24,7 @@ from .models import (
     FundedPayoutRequest,
     BrokerAuditEvent,
     RoutingDecision,
-    LiquidityProvider, LiquidityDecision,
+    LiquidityProvider, LiquidityDecision, LiquidityLedger,
 )
 from . import challenge_engine
 from .funded_payouts import (
@@ -1801,6 +1801,44 @@ class LiquidityDecisionAdmin(admin.ModelAdmin):
     )
     ordering = ("-decided_at", "-id")
     readonly_fields = [f.name for f in LiquidityDecision._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def get_actions(self, request):
+        actions = super().get_actions(request)
+        actions.pop("delete_selected", None)
+        return actions
+
+
+@admin.register(LiquidityLedger)
+class LiquidityLedgerAdmin(admin.ModelAdmin):
+    """
+    BOOK-05d.1 — read-only visibility surface, same append-only
+    protection pattern as LiquidityDecisionAdmin/RoutingDecisionAdmin.
+    LiquidityLedger rows will be written exclusively by
+    simulator/liquidity_ledger.py (BOOK-05d.2, not yet implemented —
+    this table is empty until then); nothing may add, change, or delete
+    a row through this admin, individually or in bulk. source_trade/
+    liquidity_decision are already SET_NULL on delete (see the model) —
+    deleting the underlying Trade/LiquidityDecision nulls the FK here,
+    it never removes the historical simulated ledger entry.
+    """
+    list_display = (
+        "id", "symbol", "simulated_pnl", "source_trade", "liquidity_decision", "created_at",
+    )
+    list_filter = ("symbol",)
+    search_fields = (
+        "source_trade__id", "liquidity_decision__decision_id",
+    )
+    ordering = ("-created_at", "-id")
+    readonly_fields = [f.name for f in LiquidityLedger._meta.fields]
 
     def has_add_permission(self, request):
         return False

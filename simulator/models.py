@@ -2526,3 +2526,64 @@ class LiquidityDecision(models.Model):
 
     def __str__(self):
         return f"LiquidityDecision[{self.symbol}] cost={self.simulated_cost} @ {self.decided_at:%Y-%m-%d %H:%M:%S}"
+
+
+class LiquidityLedger(models.Model):
+    """
+    BOOK-05d — Liquidity Ledger Foundation.
+
+    Records the simulated counterparty result a Liquidity Provider would
+    have had, as a hedge, for one real closed Trade — the close-time
+    mirror of what LiquidityDecision already captures at open-time
+    (simulated_cost). Same relationship BrokerLedger.REV_COUNTERPARTY_PNL
+    has to BrokerLedger's own open-time spread/commission rows, but for
+    the simulated LP instead of the real broker.
+
+    Never a row of BrokerLedger — a separate table, by design (FASE 2
+    architecture decision), precisely so no real Sum('amount') can ever
+    absorb simulated money by accident. Never modifies Trade,
+    LiquidityDecision, RoutingDecision, or BrokerLedger — this model's
+    own foundation (BOOK-05d.1) has no writer yet; when one is added
+    (BOOK-05d.2), it only ever creates rows here.
+
+    Append-only, same regime as RoutingDecision/LiquidityDecision/
+    BrokerLedger — a close is a definitive, unrepeatable fact; a row
+    here is never updated after creation.
+
+    No `account` field — same reasoning already applied to
+    LiquidityDecision in BOOK-05a: Trade.account is a solid, required FK
+    (on_delete=CASCADE, never null), so source_trade.account is already
+    a durable, direct path; a denormalized account field here would be
+    redundant.
+
+    Deliberately no UniqueConstraint and no get_or_create in its future
+    writer (FASE 2 architectural decision, approved after verifying the
+    three real close writers' own already_closed guard already makes a
+    duplicate row for the same Trade unreachable in the current flow —
+    same reasoning BrokerLedger's own writer documents as its "real
+    guarantee", upstream of its own belt-and-suspenders constraint).
+    """
+    source_trade = models.ForeignKey(
+        "Trade", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="liquidity_ledger",
+    )
+    liquidity_decision = models.ForeignKey(
+        "LiquidityDecision", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="ledger_entries",
+    )
+    symbol = models.CharField(max_length=12, db_index=True)
+    simulated_pnl = models.DecimalField(max_digits=18, decimal_places=2)
+    meta = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [
+            models.Index(fields=["symbol", "-created_at"], name="liquidity_ledger_symbol_ts_idx"),
+            # Shortened from "liquidity_ledger_decision_ts_idx" (32 chars)
+            # to fit Django's 30-character index name limit (E034).
+            models.Index(fields=["liquidity_decision", "-created_at"], name="liquidity_ledger_dec_ts_idx"),
+        ]
+
+    def __str__(self):
+        return f"LiquidityLedger[{self.symbol}] pnl={self.simulated_pnl} @ {self.created_at:%Y-%m-%d %H:%M:%S}"
