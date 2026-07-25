@@ -24,6 +24,7 @@ from .models import (
     FundedPayoutRequest,
     BrokerAuditEvent,
     RoutingDecision,
+    LiquidityProvider, LiquidityDecision,
 )
 from . import challenge_engine
 from .funded_payouts import (
@@ -1756,6 +1757,61 @@ class BrokerAuditEventAdmin(admin.ModelAdmin):
         # Belt-and-suspenders: has_delete_permission=False already hides
         # delete_selected, but strip it from the actions dict explicitly
         # so its absence is a structural guarantee, not an inference.
+        actions = super().get_actions(request)
+        actions.pop("delete_selected", None)
+        return actions
+
+
+@admin.register(LiquidityProvider)
+class LiquidityProviderAdmin(admin.ModelAdmin):
+    """
+    BOOK-05a — plain CRUD, same pattern as BrokerSpreadConfigAdmin/
+    InstrumentAdmin: a LiquidityProvider is staff configuration, not a
+    recorded fact, so no permission overrides — normal Django model
+    permissions apply.
+    """
+    list_display = (
+        "name", "enabled", "simulated_spread_markup_pips", "max_capacity_usd", "updated_at",
+    )
+    list_filter = ("enabled",)
+    search_fields = ("name",)
+    list_editable = ("enabled", "simulated_spread_markup_pips", "max_capacity_usd")
+    readonly_fields = ("created_at", "updated_at")
+
+
+@admin.register(LiquidityDecision)
+class LiquidityDecisionAdmin(admin.ModelAdmin):
+    """
+    BOOK-05a — read-only visibility surface, same append-only protection
+    pattern as RoutingDecisionAdmin. LiquidityDecision rows are written
+    exclusively by simulator/liquidity_engine.py (BOOK-05c, not yet
+    implemented — this table is empty until then); nothing may add,
+    change, or delete a row through this admin, individually or in bulk.
+    routing_decision/provider/position are already SET_NULL on delete
+    (see the model) — deleting the underlying RoutingDecision/
+    LiquidityProvider/Position nulls the FK here, it never removes the
+    historical simulation.
+    """
+    list_display = (
+        "decision_id", "symbol", "provider", "exposure_usd", "simulated_cost", "decided_at",
+    )
+    list_filter = ("provider", "symbol")
+    search_fields = (
+        "decision_id", "routing_decision__decision_id", "position__id",
+    )
+    ordering = ("-decided_at", "-id")
+    readonly_fields = [f.name for f in LiquidityDecision._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def get_actions(self, request):
         actions = super().get_actions(request)
         actions.pop("delete_selected", None)
         return actions

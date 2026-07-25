@@ -2392,3 +2392,137 @@ class RoutingDecision(models.Model):
 
     def __str__(self):
         return f"RoutingDecision[{self.book}] {self.reason_code} @ {self.decided_at:%Y-%m-%d %H:%M:%S}"
+
+
+class LiquidityProvider(models.Model):
+    """
+    BOOK-05a — Liquidity Engine Foundation.
+
+    Simulated liquidity provider profile — configuration, not a real
+    connection. This project is a simulator (trx_sim): no code anywhere
+    connects to a real LP, sends a real order externally, or settles
+    real money against one. Staff-configured via the admin (plain CRUD,
+    same pattern as BrokerSpreadConfig/Instrument) — not append-only,
+    not audited, because it is configuration, not a recorded fact.
+
+    enabled defaults to False — same "off until explicit activation"
+    discipline as every flag in this project; a disabled provider is
+    never selected by a future hedge-selection service (BOOK-05b).
+    """
+    name = models.CharField(max_length=80, unique=True)
+
+    # JSONField, not ArrayField: ArrayField is Postgres-only and this
+    # project runs SQLite in dev/test, Postgres in production (see
+    # trx_simulator/settings.py) — ArrayField would break the local
+    # suite outright. Same pattern already used twice in this project
+    # for exactly this kind of data: AccountProduct.allowed_symbols,
+    # TradingAccount.allowed_symbols_snapshot.
+    symbols_covered = models.JSONField(default=list, blank=True)
+
+    simulated_spread_markup_pips = models.DecimalField(
+        max_digits=8, decimal_places=2, default=Decimal("0.00"),
+    )
+    max_capacity_usd = models.DecimalField(
+        max_digits=18, decimal_places=2, default=Decimal("0.00"),
+    )
+    enabled = models.BooleanField(default=False)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"LiquidityProvider[{self.name}] enabled={self.enabled}"
+
+
+class LiquidityDecision(models.Model):
+    """
+    BOOK-05a — Liquidity Engine Foundation.
+
+    Records a simulated hedge evaluation for a real Position/RoutingDecision
+    — never a real hedge, never a real order, never a real LP interaction.
+    Architectural rule (docs/BOOK_05_IMPLEMENTATION_PLAN.md, Principio
+    rector, approved FASE 2): NEVER modify an existing RoutingDecision.
+    Every simulation lives exclusively here, linked via `routing_decision`
+    — a read-only FK. No code in this model, or anywhere in BOOK-05a,
+    writes to RoutingDecision.
+
+    No `account` field: routing_decision.account (BOOK-04e) is already a
+    durable, denormalized pointer that survives Position being deleted at
+    close (RoutingDecision itself is append-only, never deleted) — adding
+    a second copy here would be redundant denormalization with no
+    durability benefit, only a second field to keep in sync.
+
+    No `parent_decision` here — no confirmed use case in BOOK-05a-05g for
+    chaining simulations to each other (unlike RoutingDecision.parent_decision,
+    which exists but has zero real callers since BOOK-04a — not replicated
+    speculatively).
+
+    Foundation only: BOOK-05a creates this table empty. The real writer
+    (record_liquidity_decision(), BOOK-05c) and the calculation engine
+    (evaluate_simulated_hedge()/select_simulated_provider(), BOOK-05b) do
+    not exist yet — no uniqueness constraint is imposed here because the
+    exact shape of that future writer call is not yet known; deferred to
+    BOOK-05c, when the real writer exists.
+    """
+    decision_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False, db_index=True)
+
+    # The single, read-only point of contact with BOOK-04 — see class
+    # docstring. SET_NULL, not CASCADE: RoutingDecision is append-only
+    # and never deleted in normal operation, but if it ever were, the
+    # simulation evidence here must survive, same discipline as every
+    # other SET_NULL in this project.
+    routing_decision = models.ForeignKey(
+        "RoutingDecision", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="liquidity_decisions",
+    )
+
+    # SET_NULL, not CASCADE: LiquidityProvider is plain CRUD (staff can
+    # delete a provider) — deleting it must never delete the historical
+    # simulations made against it. Same destroy-evidence-on-legitimate-
+    # action bug already fixed twice before in this project (KYC in
+    # AUDIT-03, 2FA in AUDIT-04a).
+    provider = models.ForeignKey(
+        "LiquidityProvider", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="decisions",
+    )
+
+    # Operationally required SET_NULL, not defensive: Position rows are
+    # physically deleted at close time (same fact already documented on
+    # RoutingDecision.position) — this WILL fire on every real close.
+    position = models.ForeignKey(
+        "Position", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="liquidity_decisions",
+    )
+
+    # Denormalized, typed column — not read from position.symbol (SET_NULL
+    # at close) or unpacked from inputs_snapshot — needs to be filtered/
+    # indexed directly, same discipline already documented in BOOK-04's
+    # "Consideraciones transversales" (typed column for anything filtered/
+    # indexed, JSON only for opaque snapshots).
+    symbol = models.CharField(max_length=12, db_index=True)
+
+    exposure_usd = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal("0.00"))
+    simulated_spread = models.DecimalField(max_digits=8, decimal_places=2, default=Decimal("0.00"))
+    simulated_cost = models.DecimalField(max_digits=18, decimal_places=2, default=Decimal("0.00"))
+
+    # Snapshot of the VALUES the decision was based on, not references —
+    # same discipline as RoutingDecision.inputs_snapshot.
+    inputs_snapshot = models.JSONField(default=dict, blank=True)
+
+    # Same dual-versioning rationale as RoutingDecision — present from
+    # day one so a future BOOK-05b/05c algorithm change never needs a
+    # migration to retrofit versioning onto already-written rows.
+    engine_version = models.PositiveSmallIntegerField(default=1)
+    schema_version = models.PositiveSmallIntegerField(default=1)
+
+    decided_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-decided_at", "-id"]
+        indexes = [
+            models.Index(fields=["symbol", "-decided_at"], name="liquidity_dec_symbol_ts_idx"),
+            models.Index(fields=["provider", "-decided_at"], name="liquidity_dec_provider_ts_idx"),
+        ]
+
+    def __str__(self):
+        return f"LiquidityDecision[{self.symbol}] cost={self.simulated_cost} @ {self.decided_at:%Y-%m-%d %H:%M:%S}"
