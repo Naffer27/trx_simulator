@@ -453,6 +453,26 @@ ROUTING_ENGINE_ACCOUNT_TYPES = frozenset(
     s.strip() for s in os.getenv("ROUTING_ENGINE_ACCOUNT_TYPES", "").split(",") if s.strip()
 )
 
+# BOOK-05c — Liquidity Engine Shadow Mode. Master flag only — same role
+# ROUTING_ENGINE_ENABLED had before BOOK-04f added granular allowlists;
+# this block's own granular flags (by symbol/routing_profile) are a
+# later block (BOOK-05g), not introduced here. Observational only:
+# records a LiquidityDecision alongside every real position open/merge
+# that has a qualifying simulated provider, but never controls where or
+# how an order executes, never writes to RoutingDecision. Fail-open: any
+# failure in this path never blocks or alters the position open it
+# accompanies. Must stay False in local/staging/production until
+# explicitly approved to flip. See simulator/liquidity_engine.py and
+# docs/BOOK_05_IMPLEMENTATION_PLAN.md.
+LIQUIDITY_ENGINE_ENABLED = os.getenv("LIQUIDITY_ENGINE_ENABLED", "False").strip().lower() in {"1", "true", "yes"}
+if LIQUIDITY_ENGINE_ENABLED:
+    import logging as _logging
+    _logging.getLogger("simulator.ws").info(
+        "[liquidity_engine] LIQUIDITY_ENGINE_ENABLED is ENABLED — Shadow Mode: "
+        "records a simulated LiquidityDecision per open/merge when a provider "
+        "qualifies, never changes what executes."
+    )
+
 # FOUNDATION-12 — Runtime Instrument Catalog. Not wired into any live
 # request path in this block — no loop, provider, trading rule, price, or
 # payload changes as a result. Reserved for a future Foundation's in-band

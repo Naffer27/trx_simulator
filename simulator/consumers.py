@@ -1298,6 +1298,43 @@ class TradingConsumer(AsyncWebsocketConsumer):
                     _routing_decision_id, result.get("position_id"), _routing_audit_exc,
                 )
 
+        # BOOK-05c — Liquidity Engine Shadow Mode. Gated by
+        # settings.LIQUIDITY_ENGINE_ENABLED (default False — see
+        # trx_simulator/settings.py). Purely observational: "a simulated
+        # hedge evaluation for this accepted open was recorded" — never
+        # affects execution, price, margin, commission, or the routing
+        # decision itself (RoutingDecision is never written by this
+        # block — see docs/BOOK_05_IMPLEMENTATION_PLAN.md, Principio
+        # rector). Runs strictly after the open above already committed,
+        # after the routing audit block above (placed after purely to
+        # avoid interleaving with already-shipped BOOK-04d code — the
+        # order between the two has no functional dependency), and
+        # before the memory mutation/order_ack/order_fill below. Same
+        # discipline as the routing audit block: a slow or failed
+        # evaluation here must never delay or affect what the client is
+        # about to receive, and never affects whether the position that
+        # already opened continues its normal flow.
+        #
+        # Only runs when a real routing_decision_id exists (flag off,
+        # writer failure, or principal link failure upstream all already
+        # leave it None — same guard already used above for the audit
+        # event) — a simulated hedge with nothing real to link to would
+        # be meaningless.
+        from django.conf import settings as _settings
+        if getattr(_settings, "LIQUIDITY_ENGINE_ENABLED", False) and _routing_decision_id is not None:
+            try:
+                await self._db_record_liquidity_decision(
+                    routing_decision_uuid=_routing_decision_id,
+                    account_id=self._db_account_id,
+                    position_id=result.get("position_id"),
+                    symbol=sym, side=side, qty=qty, price=px_exec,
+                )
+            except Exception as _liquidity_exc:
+                log.warning(
+                    "[liquidity_engine] shadow evaluation failed decision=%s pos=%s: %s",
+                    _routing_decision_id, result.get("position_id"), _liquidity_exc,
+                )
+
         # DB committed — safe to mutate memory now.
         # Use authoritative balance from DB (returned by _db_open_position_atomic),
         # falling back to pre-computed value only for demo sessions (no _db_account_id).
@@ -1353,6 +1390,88 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 "position_id": position_id,
                 "merged": merged,
             },
+        )
+
+    @database_sync_to_async
+    def _db_record_liquidity_decision(self, *, routing_decision_uuid, account_id,
+                                       position_id, symbol, side, qty, price):
+        """
+        BOOK-05c — resolves the inputs needed to evaluate a simulated
+        hedge for this accepted open, and persists the result via
+        liquidity_engine.record_liquidity_decision() — the single write
+        point for LiquidityDecision (see that function's own docstring).
+
+        Sync method, decorated database_sync_to_async for the same
+        reason as _db_record_routing_audit_event above — its caller,
+        _order_new(), is `async def`.
+
+        Never writes to RoutingDecision — routing_decision_uuid (a
+        uuid.UUID, RoutingDecision.decision_id) is only ever used to
+        resolve the real primary key via a read-only lookup, exactly
+        once. Never queries Position or TradingAccount beyond the two
+        reads below (TraderScore.routing_profile, active
+        LiquidityProvider rows) — symbol/side/qty/price are the same
+        values _order_new() already validated and used to open the
+        position, never re-derived.
+
+        No internal try/except: any exception here (unknown symbol from
+        market_data.symbol_specs.get_spec, or anything else) propagates
+        to _order_new()'s own try/except around the await of this
+        method — same fail-safe boundary already relied upon for the
+        routing audit event above. record_liquidity_decision() itself
+        never raises (fail-open, matches record_routing_decision()'s
+        contract) — the only exceptions that can reach the caller here
+        come from the read-only resolution steps below, never from the
+        write itself.
+
+        Returns the created LiquidityDecision, or None if no routing
+        decision could be resolved, no provider qualified, or the write
+        failed.
+        """
+        from decimal import Decimal
+
+        from market_data.symbol_specs import get_spec
+
+        from . import liquidity_engine as _liquidity_engine
+        from .models import LiquidityProvider, RoutingDecision, TraderScore
+
+        routing_decision_pk = (
+            RoutingDecision.objects.filter(decision_id=routing_decision_uuid)
+            .values_list("id", flat=True).first()
+        )
+        if routing_decision_pk is None:
+            return None
+
+        routing_profile = (
+            TraderScore.objects.filter(account_id=account_id)
+            .values_list("routing_profile", flat=True).first()
+            or "INTERNAL"
+        )
+
+        spec = get_spec(symbol)
+        exposure_usd = abs(Decimal(str(qty)) * Decimal(str(price)) * Decimal(str(spec.contract_size)))
+
+        providers = list(LiquidityProvider.objects.filter(enabled=True))
+        provider = _liquidity_engine.select_simulated_provider(providers, symbol, exposure_usd)
+        if provider is None:
+            return None
+
+        contract = _liquidity_engine.evaluate_simulated_hedge(
+            symbol=symbol, side=side, qty=qty, price=price,
+            provider=provider, routing_profile=routing_profile,
+        )
+
+        return _liquidity_engine.record_liquidity_decision(
+            routing_decision_id=routing_decision_pk,
+            position_id=position_id,
+            provider_id=contract["provider_id"],
+            symbol=contract["symbol"],
+            exposure_usd=contract["exposure_usd"],
+            simulated_spread=contract["simulated_spread"],
+            simulated_cost=contract["simulated_cost"],
+            inputs_snapshot=contract["inputs_snapshot"],
+            engine_version=contract["engine_version"],
+            schema_version=contract["schema_version"],
         )
 
     async def _order_update(self, data: dict):

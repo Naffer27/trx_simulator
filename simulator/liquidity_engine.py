@@ -1,20 +1,22 @@
 # simulator/liquidity_engine.py
 """
-BOOK-05b — Simulated Hedge Pricing.
+BOOK-05b — Simulated Hedge Pricing. BOOK-05c — Shadow Mode Integration.
 
-Two pure functions — no DB, no network, no writes, no side effects of
-any kind. This module never touches LiquidityDecision, RoutingDecision,
-Position, TradingAccount, or any other model. It never calls
-LiquidityProvider.objects.* — the caller (BOOK-05c, not yet built) is
-responsible for loading candidate providers and passing them in.
+select_simulated_provider() and evaluate_simulated_hedge() (BOOK-05b)
+are pure functions — no DB, no network, no writes, no side effects of
+any kind. Neither touches LiquidityDecision, RoutingDecision, Position,
+TradingAccount, or any other model. select_simulated_provider() never
+calls LiquidityProvider.objects.* — the caller (consumers.py, BOOK-05c)
+is responsible for loading candidate providers and passing them in.
 
-Nothing here is wired into consumers.py, routing_engine.py,
-broker_ledger.py, or broker_audit.py. This module has no callers yet —
-BOOK-05c is what will eventually call select_simulated_provider() and
-evaluate_simulated_hedge() from the real trading flow, gated behind its
-own flag (BOOK-05g). Persisting the result (record_liquidity_decision())
-is also out of scope here — see docs/BOOK_05_IMPLEMENTATION_PLAN.md,
-BOOK-05b.
+record_liquidity_decision() (BOOK-05c) is the single write point for
+LiquidityDecision — see its own docstring below. It never touches
+RoutingDecision, routing_engine.py, broker_ledger.py, or
+broker_audit.py; its only real caller is
+TradingConsumer._db_record_liquidity_decision() in consumers.py,
+gated behind settings.LIQUIDITY_ENGINE_ENABLED, called from
+_order_new() after _db_open_position_atomic() has already committed —
+see docs/BOOK_05_IMPLEMENTATION_PLAN.md, BOOK-05c.
 
 Costo simulado — resolución de FASE 1 (precisión final de diseño):
 `LiquidityProvider.simulated_spread_markup_pips` se mantiene en PIPS,
@@ -29,9 +31,16 @@ simulator/spread_engine.py::calculate_spread_revenue() — sin su factor
 como revenue al abrir", un concepto distinto de "pagar el spread
 completo de un LP simulado como costo de cobertura".
 """
+import logging
+import uuid as _uuid
 from decimal import Decimal
+from typing import Optional
+
+from django.db import transaction
 
 from market_data.symbol_specs import get_spec
+
+log = logging.getLogger("simulator.liquidity_engine")
 
 # Same dual-versioning rationale as routing_engine.py: ENGINE_VERSION
 # tracks the pricing/selection LOGIC, SCHEMA_VERSION tracks the SHAPE of
@@ -123,3 +132,67 @@ def evaluate_simulated_hedge(*, symbol: str, side: str, qty, price, provider, ro
             "routing_profile": routing_profile,
         },
     }
+
+
+def record_liquidity_decision(
+    *,
+    routing_decision_id: int,
+    symbol: str,
+    exposure_usd,
+    simulated_spread,
+    simulated_cost,
+    position_id: Optional[int] = None,
+    provider_id: Optional[int] = None,
+    inputs_snapshot: Optional[dict] = None,
+    engine_version: int = ENGINE_VERSION,
+    schema_version: int = SCHEMA_VERSION,
+):
+    """
+    BOOK-05c — single write point for LiquidityDecision. A plain
+    .create() — never raises, matches routing_engine.record_routing_
+    decision()'s exact fail-open contract (nested transaction.atomic()
+    so a failure here can never poison an outer atomic() block the
+    caller may already be inside; any exception is logged and
+    swallowed). No get_or_create, no uniqueness constraint — idempotency
+    is deliberately deferred to a later block (see
+    docs/BOOK_05_IMPLEMENTATION_PLAN.md, BOOK-05c approval).
+
+    routing_decision_id must be the RoutingDecision's real primary key
+    (the caller resolves this from the UUID _db_open_position_atomic()
+    returns) — this function never queries RoutingDecision itself, and
+    never writes to it under any circumstance (Principio rector,
+    docs/BOOK_05_IMPLEMENTATION_PLAN.md): it only stores the id it was
+    handed, on this row, in this table.
+
+    Returns the created LiquidityDecision, or None if the write failed.
+    """
+    try:
+        from .models import LiquidityDecision
+
+        with transaction.atomic():
+            decision = LiquidityDecision.objects.create(
+                decision_id=_uuid.uuid4(),
+                routing_decision_id=routing_decision_id,
+                provider_id=provider_id,
+                position_id=position_id,
+                symbol=symbol,
+                exposure_usd=exposure_usd,
+                simulated_spread=simulated_spread,
+                simulated_cost=simulated_cost,
+                inputs_snapshot=inputs_snapshot or {},
+                engine_version=engine_version,
+                schema_version=schema_version,
+            )
+        log.info(
+            "[liquidity_engine] decision=%s symbol=%s routing_decision_id=%s position_id=%s "
+            "provider_id=%s engine_version=%s schema_version=%s",
+            decision.decision_id, symbol, routing_decision_id, position_id,
+            provider_id, engine_version, schema_version,
+        )
+        return decision
+    except Exception as exc:
+        log.error(
+            "[liquidity_engine] FAILED to record liquidity decision symbol=%s routing_decision_id=%s: %r",
+            symbol, routing_decision_id, exc, exc_info=True,
+        )
+        return None
