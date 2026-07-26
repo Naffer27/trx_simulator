@@ -124,9 +124,17 @@ class Category:
     # health in market_data/) — a routing decision is a business fact
     # about an order, not an observation about system health.
     ROUTING        = "ROUTING"
+    # BOOK-05e — business facts of the Liquidity Engine (BOOK-05):
+    # a LiquidityDecision recorded at open, a LiquidityLedger entry
+    # recorded at close. Deliberately distinct from ROUTING — a
+    # simulated hedge evaluation is not a routing decision, and from
+    # TRADING — it never affects the real Trade/BrokerLedger it
+    # observes. Same rationale as ROUTING's own distinction from
+    # MONITORING.
+    LIQUIDITY      = "LIQUIDITY"
 
     ALL = (TRADING, RISK, LEDGER, PAYMENTS, ADMIN, AUTHENTICATION,
-           COMPLIANCE, MONITORING, SYSTEM, ROUTING)
+           COMPLIANCE, MONITORING, SYSTEM, ROUTING, LIQUIDITY)
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -404,6 +412,19 @@ def close_reason_event_type(reason: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────
 EV_ROUTING_DECISION_RECORDED = "routing.decision_recorded"
 
+# ─────────────────────────────────────────────────────────────────────────
+# BOOK-05e — Liquidity Engine audit trail (foundation only — no call
+# site wired yet, that is BOOK-05e.2/3a/3b/3c). Two event types, one per
+# real write the Liquidity Engine's own writers (BOOK-05c/05d.2) can
+# produce: a LiquidityDecision at open, a LiquidityLedger entry at
+# close. Neither writer uses get_or_create (Option A, closed during
+# BOOK-05d's own FASE 2 — see docs/BOOK_05_IMPLEMENTATION_PLAN.md), so
+# unlike create_broker_counterparty_entry()'s _created-gated event,
+# these fire once per non-None return from their respective writer.
+# ─────────────────────────────────────────────────────────────────────────
+EV_LIQUIDITY_DECISION_RECORDED = "liquidity.decision_recorded"
+EV_LIQUIDITY_LEDGER_RECORDED   = "liquidity.ledger_recorded"
+
 
 # ─────────────────────────────────────────────────────────────────────────
 # FASE 5 — the engine. record_event() is the single writer; every other
@@ -570,6 +591,47 @@ def record_routing_event(
         actor_type=actor_type, description=description,
         account_id=account_id, account=account, symbol=symbol,
         metadata=metadata, source_module=source_module,
+    )
+
+
+def record_liquidity_event(
+    *, event_type: str, severity: str = Severity.INFO, actor_type: str = ActorType.SYSTEM,
+    description: str, account_id=None, account=None, trade_id=None, trade=None,
+    symbol: str = "", metadata: Optional[dict] = None, source_module: str = "",
+):
+    """
+    BOOK-05e.1 — LIQUIDITY category convenience wrapper. Same single-
+    writer discipline as every other record_*_event(): delegates 100% to
+    record_event(), no logic of its own — no transaction.atomic() here
+    (record_event() already opens its own), no database query, no
+    mutation of any object other than the new BrokerAuditEvent row
+    record_event() itself creates.
+
+    actor_type defaults to SYSTEM — a simulated liquidity evaluation (at
+    open) or a simulated hedge settlement (at close) is the Liquidity
+    Engine's own determination, never a trader or staff action, same
+    rationale as record_routing_event()'s default.
+
+    account_id/account cover the open-time event (EV_LIQUIDITY_DECISION_
+    RECORDED); trade_id/trade cover the close-time event (EV_LIQUIDITY_
+    LEDGER_RECORDED, tied to the Trade the LiquidityLedger row
+    references) — both accepted here so this single wrapper serves both
+    call sites BOOK-05e.2 and BOOK-05e.3a/3b/3c will add; no call site
+    exists yet (BOOK-05e.1 is foundation only).
+
+    Future callers must keep `metadata` as thin as record_routing_event()
+    already mandates for ROUTING — liquidity_decision_id/liquidity_
+    ledger_id and the ids of what they reference only, never
+    inputs_snapshot, simulated_spread, simulated_cost, or any other
+    pricing detail (see docs/BOOK_05_IMPLEMENTATION_PLAN.md, Principio
+    rector — this event observes that a decision/ledger row was
+    recorded, it does not re-expose its contents).
+    """
+    return record_event(
+        event_type=event_type, category=Category.LIQUIDITY, severity=severity,
+        actor_type=actor_type, description=description,
+        account_id=account_id, account=account, trade_id=trade_id, trade=trade,
+        symbol=symbol, metadata=metadata, source_module=source_module,
     )
 
 
