@@ -531,6 +531,65 @@ def _close_position_sync(
             from .broker_ledger import create_broker_counterparty_entry
             create_broker_counterparty_entry(trade, _acct_row, realized_pnl, reason)
 
+        # BOOK-05d.3b — Liquidity Ledger. Purely observational, simulated
+        # — never affects Trade, BrokerLedger, the negative balance guard
+        # below, Position deletion, or balance/equity updates. Only runs
+        # if this Trade's principal RoutingDecision (already copied
+        # verbatim onto trade.routing_decision at creation, above) has a
+        # LiquidityDecision associated with it — if the Liquidity Engine
+        # (or the Routing Engine itself) was off at open time, there is
+        # nothing to settle, and neither the lookup nor the writer runs
+        # at all. Mirrors TradingConsumer._db_close_position_atomic's
+        # own integration (BOOK-05d.3a) exactly, adapted to this
+        # function's own logger/transaction alias names.
+        #
+        # Two independent nested savepoints, not one:
+        #   - the one below protects the LiquidityDecision lookup — a
+        #     DatabaseError here must never leave this function's own
+        #     outer _tx.atomic() (opened at the top of this function)
+        #     marked as needing a rollback;
+        #   - record_liquidity_ledger_entry()'s own internal
+        #     transaction.atomic() (BOOK-05d.2) separately protects just
+        #     its .create() call.
+        # The except below is deliberately OUTSIDE this savepoint —
+        # catching inside it would risk leaving the savepoint itself in
+        # a broken state; catching outside it, after the `with` has
+        # already unwound, is what guarantees this function's own outer
+        # transaction remains fully usable for pos.delete() and the
+        # balance/equity update that follow, regardless of what happened
+        # here. The writer's return value is never checked.
+        if trade.routing_decision_id is not None:
+            try:
+                with _tx.atomic():
+                    from .models import LiquidityDecision
+                    liquidity_decision = (
+                        LiquidityDecision.objects
+                        .filter(routing_decision_id=trade.routing_decision_id)
+                        .order_by("-decided_at")
+                        .first()
+                    )
+
+                    if liquidity_decision is not None:
+                        from .liquidity_ledger import record_liquidity_ledger_entry
+                        record_liquidity_ledger_entry(
+                            source_trade_id=trade.id,
+                            liquidity_decision_id=liquidity_decision.id,
+                            symbol=trade.symbol,
+                            simulated_pnl=(
+                                Decimal("0.00") if trade.profit_loss == 0
+                                else -trade.profit_loss
+                            ),
+                            meta={
+                                "trader_pnl": float(trade.profit_loss),
+                                "close_reason": reason,
+                            },
+                        )
+            except Exception as _liquidity_ledger_exc:
+                logger.warning(
+                    "[liquidity_ledger] entry failed trade=%s: %s",
+                    trade.id, _liquidity_ledger_exc, exc_info=True,
+                )
+
         if _shortfall > _ZERO:
             LedgerEntry.objects.create(
                 account_id    = account_id,
