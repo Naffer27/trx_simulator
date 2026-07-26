@@ -1321,9 +1321,10 @@ class TradingConsumer(AsyncWebsocketConsumer):
         # event) — a simulated hedge with nothing real to link to would
         # be meaningless.
         from django.conf import settings as _settings
+        _liquidity_decision = None
         if getattr(_settings, "LIQUIDITY_ENGINE_ENABLED", False) and _routing_decision_id is not None:
             try:
-                await self._db_record_liquidity_decision(
+                _liquidity_decision = await self._db_record_liquidity_decision(
                     routing_decision_uuid=_routing_decision_id,
                     account_id=self._db_account_id,
                     position_id=result.get("position_id"),
@@ -1334,6 +1335,39 @@ class TradingConsumer(AsyncWebsocketConsumer):
                     "[liquidity_engine] shadow evaluation failed decision=%s pos=%s: %s",
                     _routing_decision_id, result.get("position_id"), _liquidity_exc,
                 )
+
+            # BOOK-05e.2 — Liquidity Engine audit trail. Purely
+            # observational: "a LiquidityDecision was actually recorded
+            # for this accepted open" — a second, independent try/except
+            # from the write above (same rationale BOOK-04d already
+            # established: catching an audit-event failure inside the
+            # writer's own except would misattribute it as a "shadow
+            # evaluation failed" instead of what it really is). Only
+            # runs when _liquidity_decision is not None — covers, without
+            # needing to distinguish them, every reason the write above
+            # could have produced nothing (flag off is already excluded
+            # by the outer `if`; no qualifying provider; no resolvable
+            # RoutingDecision; the writer's own internal fail-open). No
+            # atomic() needed here beyond record_liquidity_event()'s own
+            # internal one — this code runs after
+            # _db_open_position_atomic()'s transaction already committed,
+            # so there is no outer transaction to protect. Return value
+            # ignored, same as the routing audit event above.
+            if _liquidity_decision is not None:
+                try:
+                    await self._db_record_liquidity_audit_event(
+                        account_id=self._db_account_id,
+                        symbol=sym,
+                        liquidity_decision_id=_liquidity_decision.decision_id,
+                        routing_decision_id=_routing_decision_id,
+                        position_id=result.get("position_id"),
+                    )
+                except Exception as _liquidity_audit_exc:
+                    log.warning(
+                        "[liquidity_engine] audit event failed decision=%s pos=%s: %s",
+                        _liquidity_decision.decision_id, result.get("position_id"),
+                        _liquidity_audit_exc, exc_info=True,
+                    )
 
         # DB committed — safe to mutate memory now.
         # Use authoritative balance from DB (returned by _db_open_position_atomic),
@@ -1472,6 +1506,47 @@ class TradingConsumer(AsyncWebsocketConsumer):
             inputs_snapshot=contract["inputs_snapshot"],
             engine_version=contract["engine_version"],
             schema_version=contract["schema_version"],
+        )
+
+    @database_sync_to_async
+    def _db_record_liquidity_audit_event(self, *, account_id, symbol,
+                                          liquidity_decision_id, routing_decision_id,
+                                          position_id):
+        """
+        BOOK-05e.2 — records "a LiquidityDecision associated with an
+        accepted open was recorded" as an institutional BrokerAuditEvent,
+        under Category.LIQUIDITY. Deliberately thin: only
+        liquidity_decision_id/routing_decision_id/position_id — never
+        re-reads LiquidityDecision, never includes inputs_snapshot,
+        simulated_spread, simulated_cost, or provider details (see
+        docs/BOOK_05_IMPLEMENTATION_PLAN.md, Principio rector — this
+        event observes that a decision was recorded, it does not
+        re-expose its contents).
+
+        Sync method, decorated database_sync_to_async for the same
+        reason as _db_record_routing_audit_event above — its caller,
+        _order_new(), is `async def` without that decorator, while
+        record_event()'s ORM writes are synchronous.
+
+        liquidity_decision_id/routing_decision_id are uuid.UUID values
+        (LiquidityDecision.decision_id / RoutingDecision.decision_id) —
+        stringified before going into `metadata`, a plain JSONField
+        (no DjangoJSONEncoder), which cannot serialize a raw UUID object.
+        """
+        from . import broker_audit as _audit
+        _audit.record_liquidity_event(
+            event_type=_audit.EV_LIQUIDITY_DECISION_RECORDED,
+            description=(
+                f"Liquidity decision recorded for {symbol} "
+                f"(position_id={position_id})"
+            ),
+            account_id=account_id, symbol=symbol,
+            source_module="simulator.consumers",
+            metadata={
+                "liquidity_decision_id": str(liquidity_decision_id),
+                "routing_decision_id": str(routing_decision_id),
+                "position_id": position_id,
+            },
         )
 
     async def _order_update(self, data: dict):
