@@ -793,6 +793,24 @@ class TradingAccountAdmin(admin.ModelAdmin):
                         # to pos.delete() and that the loop proceeds to the
                         # next position, regardless of what happened here.
                         # The writer's return value is never checked.
+                        # BOOK-05e.3c — the two ids below (liquidity_decision's
+                        # own decision_id and RoutingDecision's own decision_id)
+                        # are resolved HERE, still inside this same pre-existing
+                        # per-iteration savepoint, precisely so the extra
+                        # RoutingDecision lookup this block adds is covered by
+                        # it too — a raw ORM query's DatabaseError corrupts the
+                        # surrounding transaction's DB-level state even if a
+                        # bare try/except catches it; only a savepoint recovers
+                        # cleanly. Resolving it here reuses the savepoint
+                        # BOOK-05d.3c already opened for the LiquidityDecision
+                        # lookup, rather than requiring a second, new one — "no
+                        # atomic() adicional" is satisfied by scope, not by
+                        # skipping protection. Mirrors
+                        # TradingConsumer._db_close_position_atomic (BOOK-05e.3a)
+                        # and tasks._close_position_sync (BOOK-05e.3b) exactly.
+                        _liquidity_ledger_entry = None
+                        _liquidity_decision_uuid = None
+                        _routing_decision_uuid = None
                         if force_close_trade.routing_decision_id is not None:
                             try:
                                 with db_tx.atomic():
@@ -805,7 +823,7 @@ class TradingAccountAdmin(admin.ModelAdmin):
 
                                     if liquidity_decision is not None:
                                         from .liquidity_ledger import record_liquidity_ledger_entry
-                                        record_liquidity_ledger_entry(
+                                        _liquidity_ledger_entry = record_liquidity_ledger_entry(
                                             source_trade_id=force_close_trade.id,
                                             liquidity_decision_id=liquidity_decision.id,
                                             symbol=force_close_trade.symbol,
@@ -818,12 +836,73 @@ class TradingAccountAdmin(admin.ModelAdmin):
                                                 "close_reason": "admin_force_close",
                                             },
                                         )
+                                        if _liquidity_ledger_entry is not None:
+                                            _liquidity_decision_uuid = liquidity_decision.decision_id
+                                            _routing_decision_uuid = (
+                                                RoutingDecision.objects
+                                                .filter(pk=force_close_trade.routing_decision_id)
+                                                .values_list("decision_id", flat=True)
+                                                .first()
+                                            )
                             except Exception as _liquidity_ledger_exc:
                                 import logging
                                 logger = logging.getLogger("simulator.admin")
                                 logger.warning(
                                     "[liquidity_ledger] entry failed trade=%s: %s",
                                     force_close_trade.id, _liquidity_ledger_exc, exc_info=True,
+                                )
+
+                        # BOOK-05e.3c — Liquidity Ledger audit trail. A second,
+                        # independent try/except from the write above (same
+                        # rationale BOOK-05e.3a/3b already established:
+                        # catching an audit-event failure inside the writer's
+                        # own except would misattribute it as a
+                        # "liquidity_ledger entry failed" instead of what it
+                        # really is). Deliberately placed AFTER the nested
+                        # `with db_tx.atomic()` above has already closed —
+                        # never inside it — so that a failure constructing or
+                        # sending this event can never roll back the
+                        # LiquidityLedger row already committed a moment
+                        # earlier, relative to its own savepoint, and can
+                        # never abort the remaining positions in this same
+                        # queryset loop. Still runs inside the outer
+                        # db_tx.atomic() opened once for the whole queryset —
+                        # no additional atomic() needed here:
+                        # record_liquidity_event() (-> record_event()) already
+                        # opens and fully contains its own internal savepoint
+                        # and never raises. Only runs when the writer above
+                        # actually produced a row for THIS position. Return
+                        # value ignored, same as every other record_*_event()
+                        # call site.
+                        if _liquidity_ledger_entry is not None:
+                            try:
+                                from . import broker_audit as _audit
+                                _audit.record_liquidity_event(
+                                    event_type=_audit.EV_LIQUIDITY_LEDGER_RECORDED,
+                                    description=(
+                                        f"Liquidity ledger entry recorded for {force_close_trade.symbol} "
+                                        f"(trade_id={force_close_trade.id})"
+                                    ),
+                                    account=locked_account or account,
+                                    trade_id=force_close_trade.id,
+                                    symbol=force_close_trade.symbol,
+                                    source_module="simulator.admin",
+                                    metadata={
+                                        "liquidity_ledger_id": _liquidity_ledger_entry.id,
+                                        "liquidity_decision_id": str(_liquidity_decision_uuid),
+                                        "routing_decision_id": (
+                                            str(_routing_decision_uuid) if _routing_decision_uuid else None
+                                        ),
+                                        "position_id": pos.id,
+                                        "close_reason": "admin_force_close",
+                                    },
+                                )
+                            except Exception as _liquidity_ledger_audit_exc:
+                                import logging
+                                logger = logging.getLogger("simulator.admin")
+                                logger.warning(
+                                    "[liquidity_ledger] audit event failed trade=%s: %s",
+                                    force_close_trade.id, _liquidity_ledger_audit_exc, exc_info=True,
                                 )
                         # AUDIT-01 (post-review correction) — a second,
                         # complementary ADMINISTRATIVE event, recorded
