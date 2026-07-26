@@ -3369,10 +3369,24 @@ class TradingConsumer(AsyncWebsocketConsumer):
             # happened here. The writer's return value is never checked —
             # a fail-open write's only observable outcome is "row exists"
             # or "row doesn't exist", never a value this call site acts on.
+            # BOOK-05e.3a — the two ids below (liquidity_decision's own
+            # decision_id and RoutingDecision's own decision_id) are
+            # resolved HERE, still inside this same pre-existing nested
+            # savepoint, precisely so the extra RoutingDecision lookup
+            # this block adds is covered by it too — a raw ORM query's
+            # DatabaseError corrupts the surrounding transaction's DB-
+            # level state even if a bare try/except catches it; only a
+            # savepoint recovers cleanly. Resolving it here reuses the
+            # savepoint BOOK-05d.3a already opened for the LiquidityDecision
+            # lookup, rather than requiring a second, new one — "no atomic()
+            # adicional" is satisfied by scope, not by skipping protection.
+            _liquidity_ledger_entry = None
+            _liquidity_decision_uuid = None
+            _routing_decision_uuid = None
             if trade.routing_decision_id is not None:
                 try:
                     with transaction.atomic():
-                        from .models import LiquidityDecision
+                        from .models import LiquidityDecision, RoutingDecision
                         liquidity_decision = (
                             LiquidityDecision.objects
                             .filter(routing_decision_id=trade.routing_decision_id)
@@ -3382,7 +3396,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
                         if liquidity_decision is not None:
                             from .liquidity_ledger import record_liquidity_ledger_entry
-                            record_liquidity_ledger_entry(
+                            _liquidity_ledger_entry = record_liquidity_ledger_entry(
                                 source_trade_id=trade.id,
                                 liquidity_decision_id=liquidity_decision.id,
                                 symbol=trade.symbol,
@@ -3395,10 +3409,70 @@ class TradingConsumer(AsyncWebsocketConsumer):
                                     "close_reason": reason,
                                 },
                             )
+                            if _liquidity_ledger_entry is not None:
+                                _liquidity_decision_uuid = liquidity_decision.decision_id
+                                _routing_decision_uuid = (
+                                    RoutingDecision.objects
+                                    .filter(pk=trade.routing_decision_id)
+                                    .values_list("decision_id", flat=True)
+                                    .first()
+                                )
                 except Exception as _liquidity_ledger_exc:
                     log.warning(
                         "[liquidity_ledger] entry failed trade=%s: %s",
                         trade.id, _liquidity_ledger_exc, exc_info=True,
+                    )
+
+            # BOOK-05e.3a — Liquidity Ledger audit trail. A second,
+            # independent try/except from the write above (same
+            # rationale BOOK-05e.2 already established: catching an
+            # audit-event failure inside the writer's own except would
+            # misattribute it as a "liquidity_ledger entry failed"
+            # instead of what it really is). Deliberately placed AFTER
+            # the nested `with transaction.atomic()` above has already
+            # closed — never inside it — so that a failure constructing
+            # or sending this event can never roll back the
+            # LiquidityLedger row that was already committed a moment
+            # earlier, relative to its own savepoint. Still runs inside
+            # this method's own OUTER transaction.atomic() (opened at
+            # the top of this function) — no additional atomic() needed
+            # here: record_liquidity_event() (-> record_event()) already
+            # opens and fully contains its own internal savepoint and
+            # never raises: the only residual risk here is a plain
+            # Python bug in this call site's own argument construction,
+            # which a bare except already fully contains (no SQL
+            # statement is at risk of failing at this point). Only runs
+            # when the writer above actually produced a row — covers,
+            # without needing to distinguish them, every reason it could
+            # have produced nothing. Return value ignored, same as every
+            # other record_*_event() call site in this file.
+            if _liquidity_ledger_entry is not None:
+                try:
+                    from . import broker_audit as _audit
+                    _audit.record_liquidity_event(
+                        event_type=_audit.EV_LIQUIDITY_LEDGER_RECORDED,
+                        description=(
+                            f"Liquidity ledger entry recorded for {trade.symbol} "
+                            f"(trade_id={trade.id})"
+                        ),
+                        account_id=self._db_account_id,
+                        trade_id=trade.id,
+                        symbol=trade.symbol,
+                        source_module="simulator.consumers",
+                        metadata={
+                            "liquidity_ledger_id": _liquidity_ledger_entry.id,
+                            "liquidity_decision_id": str(_liquidity_decision_uuid),
+                            "routing_decision_id": (
+                                str(_routing_decision_uuid) if _routing_decision_uuid else None
+                            ),
+                            "position_id": pos.id,
+                            "close_reason": reason,
+                        },
+                    )
+                except Exception as _liquidity_ledger_audit_exc:
+                    log.warning(
+                        "[liquidity_ledger] audit event failed trade=%s: %s",
+                        trade.id, _liquidity_ledger_audit_exc, exc_info=True,
                     )
 
             if _shortfall > _ZERO:
