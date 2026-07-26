@@ -3323,7 +3323,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 except Exception as _liquidity_ledger_exc:
                     log.warning(
                         "[liquidity_ledger] entry failed trade=%s: %s",
-                        trade.id, _liquidity_ledger_exc,
+                        trade.id, _liquidity_ledger_exc, exc_info=True,
                     )
 
             if _shortfall > _ZERO:
