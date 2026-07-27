@@ -402,11 +402,11 @@ def validate_position_limit(requested_qty: Decimal, book) -> list:
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# BOOK-06g — Controlled Activation Foundation (2026-07-27). Dormant
-# technical support for a future activation — NEITHER function below has
-# any real caller yet. validate_new_order() (below) still calls
-# broker_exposure_snapshot() directly, unchanged. Wiring these in is a
-# separate, still-unauthorized future block.
+# BOOK-06g — Controlled Activation Foundation (2026-07-27). BOOK-06h.1
+# scoped the exclusion query to the canary allowlist; BOOK-06h.2 wired
+# _resolve_broker_exposure_for_validation() into validate_new_order()
+# (below) as its sole functional change. Flag OFF and empty allowlist
+# are both still the default — see settings.py.
 # ─────────────────────────────────────────────────────────────────────────
 def _should_use_dealing_desk_adjusted_exposure(account_id: int) -> bool:
     """
@@ -513,7 +513,12 @@ def validate_new_order(
 
     # Fetched ONCE, shared by validate_total_limit and validate_position_limit
     # (both used to call broker_exposure_snapshot() independently).
-    book = _exposure.broker_exposure_snapshot()
+    #
+    # BOOK-06h.2: resolved through _resolve_broker_exposure_for_validation(),
+    # which returns broker_exposure_snapshot() unchanged unless account_id is
+    # inside the DEALING_DESK_EXPOSURE_ACCOUNT_IDS canary (flag OFF by
+    # default) — fail-safe to the same official snapshot on any error.
+    book = _resolve_broker_exposure_for_validation(account_id)
 
     checks: list = []
     checks += validate_symbol_limit(symbol, qty_d)

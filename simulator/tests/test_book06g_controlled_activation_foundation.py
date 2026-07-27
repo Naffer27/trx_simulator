@@ -258,23 +258,30 @@ class DealingDeskExposureResolverTests(TestCase):
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# 5. Prueba estructural — validate_new_order() completamente sin cambios
+# 5. Prueba estructural — validate_new_order() (BOOK-06h.2 updated this
+#    class: the resolver is now the real call site — see
+#    test_book06h2_real_activation_integration.py for the full battery.
+#    What stays true, and is still asserted here, is that no OTHER
+#    function in validate_new_order() changed shape.)
 # ─────────────────────────────────────────────────────────────────────────
 class ValidateNewOrderUnaffectedTests(TestCase):
 
-    def test_validate_new_order_never_calls_the_new_resolver(self):
-        """With the flag OFF (default everywhere), validate_new_order()
-        must still call broker_exposure_snapshot() directly — the new
-        resolver must never be invoked from the real validation path."""
+    def test_validate_new_order_now_calls_the_resolver_exactly_once(self):
+        """BOOK-06h.2 wired _resolve_broker_exposure_for_validation() in
+        as validate_new_order()'s sole functional change — it is now
+        called exactly once per call, with the account_id positional
+        arg, superseding this class's original BOOK-06g/06h.1-era
+        assertion that it was never invoked."""
         make_account(balance=Decimal("100000"))
 
         with patch(
             "simulator.broker_risk._resolve_broker_exposure_for_validation",
-        ) as mocked_resolver:
+            wraps=broker_risk._resolve_broker_exposure_for_validation,
+        ) as spy_resolver:
             broker_risk.validate_new_order(
                 account_id=1, symbol="BTCUSD", side="BUY", qty=Decimal("0.1"),
             )
-            mocked_resolver.assert_not_called()
+            spy_resolver.assert_called_once_with(1)
 
     def test_no_new_imports_of_pnl_or_ledger_modules(self):
         import inspect
