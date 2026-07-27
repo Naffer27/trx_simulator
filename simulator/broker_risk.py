@@ -72,6 +72,7 @@ migration required.
    untouched).
 """
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
@@ -80,6 +81,8 @@ from django.conf import settings
 from django.utils import timezone
 
 from . import broker_exposure as _exposure
+
+log = logging.getLogger("simulator.broker_risk")
 
 _ZERO = Decimal("0")
 
@@ -396,6 +399,78 @@ def validate_position_limit(requested_qty: Decimal, book) -> list:
         ))
 
     return results
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# BOOK-06g — Controlled Activation Foundation (2026-07-27). Dormant
+# technical support for a future activation — NEITHER function below has
+# any real caller yet. validate_new_order() (below) still calls
+# broker_exposure_snapshot() directly, unchanged. Wiring these in is a
+# separate, still-unauthorized future block.
+# ─────────────────────────────────────────────────────────────────────────
+def _should_use_dealing_desk_adjusted_exposure(account_id: int) -> bool:
+    """
+    Gate — never decides HOW the adjusted exposure is computed, only
+    WHETHER it should be attempted at all for this account_id. Lives
+    here, not in broker_exposure.py/broker_risk_shadow.py, same
+    caller-owns-the-gate precedent already used by
+    TradingConsumer._should_activate_routing_decision() (BOOK-04f).
+
+    Deliberately the opposite default from BOOK-04f's own allowlist
+    semantics: an EMPTY DEALING_DESK_EXPOSURE_ACCOUNT_IDS means NO
+    account qualifies, even with the master flag True — never "no
+    restriction". BOOK-04f's allowlists gate a per-order decision, where
+    "empty means unrestricted" preserves 100%-of-orders behavior for an
+    environment that already had the master flag on. This gate controls
+    an AGGREGATE, whole-book calculation instead — "no restriction"
+    here would mean "every account's is_simulated_hedge=True positions
+    are excluded from the broker-wide aggregate", the opposite of the
+    minimal, controlled first activation this block exists to support.
+
+    Never raises — any unexpected failure here is treated as "no",
+    same contract as _should_activate_routing_decision().
+    """
+    try:
+        if not getattr(settings, "DEALING_DESK_EXPOSURE_ENABLED", False):
+            return False
+
+        allowlist = getattr(settings, "DEALING_DESK_EXPOSURE_ACCOUNT_IDS", frozenset())
+        return account_id in allowlist
+    except Exception:
+        return False
+
+
+def _resolve_broker_exposure_for_validation(account_id: int):
+    """
+    The single decision point for whether validate_new_order() (once a
+    future block wires this in — not done here) should evaluate limits
+    against the official broker-wide exposure or the Dealing-Desk-
+    adjusted one. Not called by validate_new_order() today — this
+    function exists, fully tested in isolation, with zero real callers,
+    exactly as authorized for BOOK-06g.
+
+    Fail-SAFE, not fail-open in the observational sense: any failure
+    here falls back to the official calculation already trusted today
+    — it never means "skip the limit check". Never raises.
+    """
+    if not _should_use_dealing_desk_adjusted_exposure(account_id):
+        return _exposure.broker_exposure_snapshot()
+
+    try:
+        from .models import DealingDeskDecision
+
+        excluded_ids = frozenset(
+            DealingDeskDecision.objects
+            .filter(is_simulated_hedge=True)
+            .values_list("position_id", flat=True)
+        )
+        return _exposure.calculate_broker_exposure(exclude_position_ids=excluded_ids)
+    except Exception as exc:
+        log.error(
+            "[broker_risk] dealing desk exposure resolution failed for account=%s: %r",
+            account_id, exc, exc_info=True,
+        )
+        return _exposure.broker_exposure_snapshot()
 
 
 # ─────────────────────────────────────────────────────────────────────────

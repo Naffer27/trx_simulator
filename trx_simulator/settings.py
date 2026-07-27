@@ -473,6 +473,33 @@ if LIQUIDITY_ENGINE_ENABLED:
         "qualifies, never changes what executes."
     )
 
+# BOOK-06g — Controlled Activation Foundation (2026-07-27). These two
+# flags are read exclusively by simulator/broker_risk.py's own gate
+# (_should_use_dealing_desk_adjusted_exposure()) and resolver
+# (_resolve_broker_exposure_for_validation()) — neither has any real
+# caller yet (validate_new_order() does not use them; it still calls
+# broker_exposure_snapshot() directly, unchanged). Present here purely
+# as dormant technical support for a future, separately-authorized
+# activation — must stay False/empty in every environment until that
+# future block explicitly wires them in and is itself approved to flip.
+#
+# Unlike ROUTING_ENGINE_SYMBOLS/ROUTING_ENGINE_ACCOUNT_TYPES (BOOK-04f,
+# where an empty allowlist means NO restriction once the master flag is
+# True), an empty DEALING_DESK_EXPOSURE_ACCOUNT_IDS means NO accounts
+# qualify even with the master flag True — deliberately the opposite
+# default, because this gate controls an AGGREGATE, whole-book
+# calculation, not a per-order decision; "no restriction" would mean
+# "every account's is_simulated_hedge=True positions are excluded from
+# the broker-wide aggregate", the exact opposite of "nothing activated
+# yet" that an empty canary allowlist must mean here.
+DEALING_DESK_EXPOSURE_ENABLED = os.getenv(
+    "DEALING_DESK_EXPOSURE_ENABLED", "False",
+).strip().lower() in {"1", "true", "yes"}
+DEALING_DESK_EXPOSURE_ACCOUNT_IDS = frozenset(
+    int(s.strip()) for s in os.getenv("DEALING_DESK_EXPOSURE_ACCOUNT_IDS", "").split(",")
+    if s.strip().lstrip("-").isdigit()
+)
+
 # FOUNDATION-12 — Runtime Instrument Catalog. Not wired into any live
 # request path in this block — no loop, provider, trading rule, price, or
 # payload changes as a result. Reserved for a future Foundation's in-band

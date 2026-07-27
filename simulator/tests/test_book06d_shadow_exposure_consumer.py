@@ -176,8 +176,17 @@ class ShadowExposureConsumerTests(TestCase):
         self.assertEqual(result.gross_exposure_actual, Decimal("100.00"))
         self.assertEqual(result.total_position_count, 1)
 
-    # ── 10. Cero N+1 ──────────────────────────────────────────────────────
-    def test_two_queries_regardless_of_position_count(self):
+    # ── 10. Cero N+1 (nunca por posición) ────────────────────────────────
+    def test_fixed_query_count_regardless_of_position_count(self):
+        """BOOK-06g (2026-07-27): calculate_shadow_broker_exposure() now
+        delegates to broker_exposure.calculate_broker_exposure() TWICE
+        (official + shadow, deliberately, to guarantee both use the
+        exact same formula — see broker_risk_shadow.py's own module
+        docstring) plus one DealingDeskDecision batch lookup — 3 queries
+        total, still none per position. Was 2 under BOOK-06d's original
+        Option B (a single, isolated, duplicated formula) — the one
+        extra query is the accepted, documented cost of eliminating that
+        duplication, not a regression."""
         for _ in range(5):
             _make_position(self.account, qty="1.0", avg_price="100.00", is_simulated_hedge=True)
 
@@ -185,7 +194,7 @@ class ShadowExposureConsumerTests(TestCase):
             calculate_shadow_broker_exposure()
 
         select_queries = [q for q in ctx.captured_queries if q["sql"].strip().upper().startswith("SELECT")]
-        self.assertEqual(len(select_queries), 2)
+        self.assertEqual(len(select_queries), 3)
 
     # ── 11. DealingDeskDecision no se modifica ──────────────────────────
     def test_never_modifies_dealing_desk_decision(self):

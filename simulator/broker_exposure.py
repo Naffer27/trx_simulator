@@ -236,6 +236,7 @@ def calculate_broker_exposure(
     account_type: "str | None" = None,
     status: "str | None" = None,
     trader_class: "str | None" = None,
+    exclude_position_ids: "frozenset | None" = None,
 ) -> BrokerExposureBreakdown:
     """
     The one aggregation function — every broker_exposure_for_* helper
@@ -243,6 +244,20 @@ def calculate_broker_exposure(
     (select_related account — FASE 10, no N+1), everything else is
     pure Python/Decimal over the fetched rows plus one FeedManager call
     per DISTINCT symbol (never per position).
+
+    exclude_position_ids (BOOK-06g, added 2026-07-27): optional,
+    defaults to None — every existing caller (broker_exposure_for_symbol/
+    _for_account/_for_accounts/broker_exposure_snapshot, and
+    broker_risk.py::validate_new_order today) never passes it, so the
+    exclusion branch below never runs for them — behavior is unchanged,
+    bit for bit, for every caller that predates this parameter. Exists
+    so a future, still-unactivated Dealing Desk exposure gate
+    (broker_risk.py, BOOK-06g) can ask this SAME formula to compute the
+    aggregate with specific positions removed, instead of a second,
+    parallel implementation risking silent drift from this one (the
+    Option A this project chose over the Option B duplication BOOK-06d
+    accepted temporarily — see broker_risk_shadow.py's own module
+    docstring for where that duplication was retired).
     """
     from . import pnl_engine
 
@@ -265,6 +280,8 @@ def calculate_broker_exposure(
         qs = qs.filter(account__trader_score__trader_class=trader_class)
 
     positions = list(qs)
+    if exclude_position_ids:
+        positions = [p for p in positions if p.id not in exclude_position_ids]
 
     symbols = {p.symbol for p in positions}
     prices = _price_lookup_for_symbols(symbols)
