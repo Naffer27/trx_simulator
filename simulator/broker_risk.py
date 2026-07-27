@@ -452,6 +452,14 @@ def _resolve_broker_exposure_for_validation(account_id: int):
     Fail-SAFE, not fail-open in the observational sense: any failure
     here falls back to the official calculation already trusted today
     — it never means "skip the limit check". Never raises.
+
+    BOOK-06h.1: the exclusion is scoped to
+    DEALING_DESK_EXPOSURE_ACCOUNT_IDS — only positions belonging to
+    canary-authorized accounts are ever excluded, never every
+    is_simulated_hedge=True position broker-wide. Joined via
+    routing_decision__account_id rather than position__account_id
+    because RoutingDecision is append-only and never deleted, while
+    Position is always deleted on close.
     """
     if not _should_use_dealing_desk_adjusted_exposure(account_id):
         return _exposure.broker_exposure_snapshot()
@@ -459,9 +467,14 @@ def _resolve_broker_exposure_for_validation(account_id: int):
     try:
         from .models import DealingDeskDecision
 
+        allowlist = getattr(settings, "DEALING_DESK_EXPOSURE_ACCOUNT_IDS", frozenset())
         excluded_ids = frozenset(
             DealingDeskDecision.objects
-            .filter(is_simulated_hedge=True)
+            .filter(
+                is_simulated_hedge=True,
+                routing_decision__account_id__in=allowlist,
+            )
+            .exclude(position_id__isnull=True)
             .values_list("position_id", flat=True)
         )
         return _exposure.calculate_broker_exposure(exclude_position_ids=excluded_ids)
