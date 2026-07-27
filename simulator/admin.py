@@ -1548,6 +1548,11 @@ class BrokerSnapshotAdmin(admin.ModelAdmin):
                 self.admin_site.admin_view(self.take_snapshot_view),
                 name="broker_take_snapshot",
             ),
+            path(
+                "shadow-exposure/",
+                self.admin_site.admin_view(self.shadow_exposure_view),
+                name="broker_shadow_exposure",
+            ),
         ]
         return custom + urls
 
@@ -1585,6 +1590,83 @@ class BrokerSnapshotAdmin(admin.ModelAdmin):
             f"{snap.total_open_positions} posiciones.",
         )
         return redirect("admin:broker_live_analytics")
+
+    def shadow_exposure_view(self, request):
+        """
+        BOOK-06e — read-only observability surface for
+        calculate_shadow_broker_exposure() (BOOK-06d). Restricted to
+        is_superuser (approved 2026-07-27) — stricter than
+        live_analytics_view's plain is_staff, because this screen still
+        exposes an experimental calculation used only for architectural/
+        business validation while the Dealing Desk stays in Shadow Mode.
+        May be relaxed to is_staff once the calculation exits Shadow Mode
+        — that is a future, separately-authorized decision, not made here.
+
+        Computed strictly on demand, on every GET — no cache, no Celery,
+        same discipline as live_analytics_view. Never writes anything:
+        calculate_shadow_broker_exposure() itself is read-only by
+        contract (BOOK-06d), and this view adds no write of its own.
+
+        The outer try/except is a second, defensive layer — the same
+        "belt and suspenders" already used throughout BOOK-04/05/06's own
+        call sites — on top of calculate_shadow_broker_exposure()'s own
+        internal fail-open contract (which already never raises): a
+        failure anywhere in this view (bad filter value, unexpected
+        error) must never produce a 500, only a visible warning with an
+        all-zero comparison.
+        """
+        from django.core.exceptions import PermissionDenied
+
+        if not request.user.is_superuser:
+            raise PermissionDenied("Esta vista requiere permisos de superusuario.")
+
+        from .broker_risk_shadow import ShadowExposureComparison, calculate_shadow_broker_exposure
+
+        filters = {}
+        calc_failed = False
+
+        try:
+            symbol = (request.GET.get("symbol") or "").strip()
+            if symbol:
+                filters["symbol"] = symbol
+
+            account_id_raw = (request.GET.get("account_id") or "").strip()
+            if account_id_raw:
+                try:
+                    filters["account_id"] = int(account_id_raw)
+                except ValueError:
+                    messages.warning(request, f"account_id inválido ignorado: {account_id_raw!r}")
+
+            account_type = (request.GET.get("account_type") or "").strip()
+            if account_type:
+                filters["account_type"] = account_type
+
+            status = (request.GET.get("status") or "").strip()
+            if status:
+                filters["status"] = status
+
+            trader_class = (request.GET.get("trader_class") or "").strip()
+            if trader_class:
+                filters["trader_class"] = trader_class
+
+            comparison = calculate_shadow_broker_exposure(**filters)
+        except Exception as exc:
+            import logging
+            logging.getLogger("simulator.admin").error(
+                "[admin] shadow exposure view failed: %r", exc, exc_info=True,
+            )
+            comparison = ShadowExposureComparison()
+            calc_failed = True
+
+        context = dict(
+            self.admin_site.each_context(request),
+            title="Shadow Exposure Observability (BOOK-06e)",
+            comparison=comparison,
+            calc_failed=calc_failed,
+            applied_filters=filters,
+            live_url=reverse("admin:broker_live_analytics"),
+        )
+        return render(request, "admin/shadow_exposure_observability.html", context)
 
 
 # ─────────────────────────────────────────────

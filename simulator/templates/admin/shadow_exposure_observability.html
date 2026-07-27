@@ -1,0 +1,154 @@
+{% extends "admin/base_site.html" %}
+{% block extrahead %}{{ block.super }}
+<style>
+:root{
+  --bg:#07070f;--panel:#0f0f1c;--panel2:#13131f;--border:#1e1e30;
+  --gold:#e8c84a;--bull:#27ae60;--bear:#e74c3c;--warn:#e67e22;--info:#3498db;--shadow:#5c7cfa;
+  --text:#c8ccd8;--muted:#55556a;--r:8px;
+}
+#content{background:var(--bg)!important;color:var(--text);}
+#content h1{color:var(--gold);font-size:1.05rem;letter-spacing:.06em;margin:0;}
+
+.da-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;
+  background:var(--panel);border:1px solid var(--border);border-radius:var(--r);padding:12px 16px;margin-bottom:16px;}
+.da-title{font-size:.9rem;font-weight:700;color:var(--text);}
+.da-sub{font-size:.7rem;color:var(--muted);margin-top:2px;}
+.da-btn{display:inline-block;padding:6px 16px;border-radius:6px;font-size:.75rem;font-weight:700;
+  cursor:pointer;border:none;text-decoration:none;letter-spacing:.04em;transition:opacity .15s;}
+.da-btn:hover{opacity:.82;}
+.da-btn-gold{background:rgba(232,200,74,.15);color:var(--gold);border:1px solid rgba(232,200,74,.3);}
+.da-btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--border);}
+
+/* ── SHADOW warning — permanent, non-dismissable ── */
+.shadow-bar{background:#2a0000;border:2px solid rgba(231,76,60,.55);border-radius:var(--r);
+  padding:12px 16px;margin-bottom:16px;font-size:.78rem;color:#ffb3ab;font-weight:600;line-height:1.5;}
+.shadow-bar b{color:#ef5350;}
+
+.calc-failed-bar{background:#2a1a00;border:1px solid rgba(230,126,34,.4);border-radius:var(--r);
+  padding:10px 14px;margin-bottom:14px;font-size:.75rem;color:#e67e22;font-weight:700;}
+
+/* ── Filter form ── */
+.filter-form{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+  padding:12px 16px;margin-bottom:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:end;}
+.filter-form label{display:block;font-size:.62rem;color:var(--muted);text-transform:uppercase;
+  letter-spacing:.06em;margin-bottom:4px;}
+.filter-form input, .filter-form select{background:var(--panel2);border:1px solid var(--border);
+  color:var(--text);border-radius:5px;padding:6px 8px;font-size:.75rem;}
+
+/* ── Metric cards ── */
+.da-metrics{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-bottom:16px;}
+.da-metric{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+  padding:14px 16px;position:relative;overflow:hidden;}
+.da-metric::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;}
+.da-metric.c-gold::before{background:var(--gold);}
+.da-metric.c-shadow::before{background:var(--shadow);}
+.da-metric.c-warn::before{background:var(--warn);}
+.da-metric.c-muted::before{background:var(--border);}
+.dm-label{font-size:.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px;}
+.dm-val{font-size:1.25rem;font-weight:800;color:var(--text);line-height:1;}
+.dm-sub{font-size:.65rem;color:var(--muted);margin-top:4px;}
+.tag-shadow{display:inline-block;font-size:.58rem;font-weight:700;color:var(--shadow);
+  background:rgba(92,124,250,.12);border:1px solid rgba(92,124,250,.3);border-radius:4px;
+  padding:1px 6px;margin-left:6px;letter-spacing:.06em;}
+.tag-official{display:inline-block;font-size:.58rem;font-weight:700;color:var(--gold);
+  background:rgba(232,200,74,.1);border:1px solid rgba(232,200,74,.3);border-radius:4px;
+  padding:1px 6px;margin-left:6px;letter-spacing:.06em;}
+</style>
+{% endblock %}
+
+{% block content %}
+
+{% if messages %}{% for m in messages %}
+<div class="messagelist"><li class="{{ m.tags }}">{{ m }}</li></div>
+{% endfor %}{% endif %}
+
+<div class="da-header">
+  <div>
+    <div class="da-title">🧪 Shadow Exposure Observability</div>
+    <div class="da-sub">
+      Generado {{ comparison.generated_at|date:"Y-m-d H:i:s"|default:"—" }} ·
+      {{ comparison.total_position_count }} posición(es) totales ·
+      {{ comparison.excluded_position_count }} excluida(s) del shadow
+    </div>
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;">
+    <a href="{{ live_url }}" class="da-btn da-btn-gold">📊 Live Analytics (Oficial) →</a>
+  </div>
+</div>
+
+<div class="shadow-bar">
+  ⚠ <b>MODO SHADOW — OBSERVACIONAL, NO OFICIAL.</b> Esta comparación no afecta la aceptación/rechazo
+  de órdenes, los límites de riesgo, el margen, el P&amp;L, el spread, la comisión ni ninguna decisión
+  real del sistema. La exposición oficial del bróker es siempre la que muestra
+  <a href="{{ live_url }}" style="color:#ef5350;text-decoration:underline;">Live Analytics</a>.
+</div>
+
+{% if calc_failed %}
+<div class="calc-failed-bar">
+  ⚠ El cálculo shadow no pudo completarse — mostrando valores en cero. Revise los logs de
+  <code>simulator.admin</code> para más detalle.
+</div>
+{% endif %}
+
+<form method="get" class="filter-form">
+  <div>
+    <label for="symbol">Symbol</label>
+    <input type="text" id="symbol" name="symbol" value="{{ applied_filters.symbol|default:'' }}" placeholder="BTCUSD">
+  </div>
+  <div>
+    <label for="account_id">Account ID</label>
+    <input type="number" id="account_id" name="account_id" value="{{ applied_filters.account_id|default:'' }}">
+  </div>
+  <div>
+    <label for="account_type">Account Type</label>
+    <input type="text" id="account_type" name="account_type" value="{{ applied_filters.account_type|default:'' }}" placeholder="STANDARD">
+  </div>
+  <div>
+    <label for="status">Status</label>
+    <input type="text" id="status" name="status" value="{{ applied_filters.status|default:'' }}" placeholder="Activo">
+  </div>
+  <div>
+    <label for="trader_class">Trader Class</label>
+    <input type="text" id="trader_class" name="trader_class" value="{{ applied_filters.trader_class|default:'' }}" placeholder="ELITE">
+  </div>
+  <div>
+    <button type="submit" class="da-btn da-btn-gold">Filtrar</button>
+    <a href="{% url 'admin:broker_shadow_exposure' %}" class="da-btn da-btn-ghost">Limpiar</a>
+  </div>
+</form>
+
+<div class="da-metrics">
+
+  <div class="da-metric c-gold">
+    <div class="dm-label">Gross Exposure Actual<span class="tag-official">OFICIAL</span></div>
+    <div class="dm-val">${{ comparison.gross_exposure_actual|floatformat:2 }}</div>
+  </div>
+
+  <div class="da-metric c-shadow">
+    <div class="dm-label">Gross Exposure Shadow<span class="tag-shadow">SHADOW</span></div>
+    <div class="dm-val">${{ comparison.gross_exposure_shadow|floatformat:2 }}</div>
+  </div>
+
+  <div class="da-metric c-warn">
+    <div class="dm-label">Excluido por Simulated Hedge<span class="tag-shadow">SHADOW</span></div>
+    <div class="dm-val">${{ comparison.simulated_hedge_excluded_exposure|floatformat:2 }}</div>
+  </div>
+
+  <div class="da-metric c-warn">
+    <div class="dm-label">Diferencia Absoluta</div>
+    <div class="dm-val">${{ comparison.absolute_difference|floatformat:2 }}</div>
+  </div>
+
+  <div class="da-metric c-warn">
+    <div class="dm-label">Diferencia %</div>
+    <div class="dm-val">{{ comparison.percentage_difference|floatformat:2 }}%</div>
+  </div>
+
+  <div class="da-metric c-muted">
+    <div class="dm-label">Posiciones Excluidas / Totales</div>
+    <div class="dm-val">{{ comparison.excluded_position_count }} / {{ comparison.total_position_count }}</div>
+  </div>
+
+</div>
+
+{% endblock %}
