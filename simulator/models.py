@@ -2587,3 +2587,83 @@ class LiquidityLedger(models.Model):
 
     def __str__(self):
         return f"LiquidityLedger[{self.symbol}] pnl={self.simulated_pnl} @ {self.created_at:%Y-%m-%d %H:%M:%S}"
+
+
+class DealingDeskDecision(models.Model):
+    """
+    BOOK-06a — Dealing Desk Foundation.
+
+    Records the internal risk-treatment classification for a real
+    Position/RoutingDecision — never a real hedge, never a real order,
+    never any external LP interaction. Same architectural rule as
+    LiquidityDecision (docs/BOOK_05_IMPLEMENTATION_PLAN.md, Principio
+    rector, extended explicitly to BOOK-06 in its own FASE 0, approved
+    2026-07-26): NEVER modify an existing RoutingDecision. Every
+    classification lives exclusively here, linked via read-only FKs.
+    `Book.ALL` (routing_engine.py) is untouched by this model — its only
+    value remains `Book.INTERNAL`.
+
+    is_simulated_hedge is a risk classification, not an event: it never
+    represents a real hedge executed against a real liquidity provider —
+    same "simulated_" naming discipline already used by
+    LiquidityDecision.simulated_cost/simulated_spread and
+    LiquidityLedger.simulated_pnl.
+
+    routing_profile_snapshot captures the VALUE of
+    TraderScore.routing_profile at the moment this decision was made —
+    never a live reference, since routing_profile can change afterwards
+    and this decision must remain an honest historical record of what
+    was true when it was decided (same discipline as
+    RoutingDecision/LiquidityDecision's own inputs_snapshot).
+
+    No `inputs_snapshot` here (deliberately, approved during BOOK-06a's
+    own design review): the decision engine that would populate it does
+    not exist yet (BOOK-06b) — its exact shape is unknown today, so no
+    field is added speculatively. Will be added, if a real need
+    materializes, as an additive migration alongside the engine that
+    writes it, never before.
+
+    Foundation only: BOOK-06a creates this table empty. No writer, no
+    engine, no integration with consumers.py/tasks.py/admin.py::force_close/
+    broker_risk.py/broker_audit.py exists yet — those are BOOK-06b/06c
+    and beyond. No uniqueness constraint is imposed here, same Option A
+    precedent already closed in BOOK-05d (idempotency deferred until the
+    real writer's call pattern is known).
+    """
+    decision_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False, db_index=True)
+
+    routing_decision = models.ForeignKey(
+        "RoutingDecision", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="dealing_desk_decisions",
+    )
+    position = models.ForeignKey(
+        "Position", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="dealing_desk_decisions",
+    )
+    liquidity_decision = models.ForeignKey(
+        "LiquidityDecision", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="dealing_desk_decisions",
+    )
+
+    symbol = models.CharField(max_length=12, db_index=True)
+    is_simulated_hedge = models.BooleanField(default=False)
+    routing_profile_snapshot = models.CharField(max_length=20, db_index=True)
+
+    engine_version = models.PositiveSmallIntegerField(default=1)
+    schema_version = models.PositiveSmallIntegerField(default=1)
+
+    decided_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-decided_at", "-id"]
+        indexes = [
+            models.Index(fields=["symbol", "-decided_at"], name="ddesk_dec_symbol_ts_idx"),
+            models.Index(fields=["routing_decision", "-decided_at"], name="ddesk_dec_routing_ts_idx"),
+        ]
+
+    def __str__(self):
+        return (
+            f"DealingDeskDecision[{self.symbol}] "
+            f"is_simulated_hedge={self.is_simulated_hedge} "
+            f"@ {self.decided_at:%Y-%m-%d %H:%M:%S}"
+        )

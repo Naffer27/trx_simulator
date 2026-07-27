@@ -25,6 +25,7 @@ from .models import (
     BrokerAuditEvent,
     RoutingDecision,
     LiquidityProvider, LiquidityDecision, LiquidityLedger,
+    DealingDeskDecision,
 )
 from . import challenge_engine
 from .funded_payouts import (
@@ -1985,6 +1986,43 @@ class LiquidityLedgerAdmin(admin.ModelAdmin):
     )
     ordering = ("-created_at", "-id")
     readonly_fields = [f.name for f in LiquidityLedger._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def get_actions(self, request):
+        actions = super().get_actions(request)
+        actions.pop("delete_selected", None)
+        return actions
+
+
+@admin.register(DealingDeskDecision)
+class DealingDeskDecisionAdmin(admin.ModelAdmin):
+    """
+    BOOK-06a — read-only visibility surface, same append-only protection
+    pattern as LiquidityDecisionAdmin/LiquidityLedgerAdmin. DealingDeskDecision
+    rows will be written exclusively by a future BOOK-06 writer (not yet
+    implemented — this table is empty until then); nothing may add,
+    change, or delete a row through this admin, individually or in bulk.
+    routing_decision/position/liquidity_decision are already SET_NULL on
+    delete (see the model) — deleting the underlying row nulls the FK
+    here, it never removes the historical classification.
+    """
+    list_display = (
+        "decision_id", "symbol", "is_simulated_hedge", "routing_profile_snapshot", "decided_at",
+    )
+    list_filter = ("is_simulated_hedge", "routing_profile_snapshot", "symbol")
+    search_fields = (
+        "decision_id", "routing_decision__decision_id", "position__id",
+    )
+    ordering = ("-decided_at", "-id")
+    readonly_fields = [f.name for f in DealingDeskDecision._meta.fields]
 
     def has_add_permission(self, request):
         return False
