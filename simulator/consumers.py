@@ -1369,6 +1369,52 @@ class TradingConsumer(AsyncWebsocketConsumer):
                         _liquidity_audit_exc, exc_info=True,
                     )
 
+        # BOOK-06c — Dealing Desk Decision Engine integration. Purely
+        # observational and simulated: records the internal risk
+        # classification of this position's exposure (never a real
+        # hedge, never affects execution, price, margin, commission, or
+        # P&L — see DealingDeskDecision's own docstring and BOOK-06
+        # FASE 0, approved 2026-07-26). Runs strictly after the open
+        # above already committed, after the routing/liquidity blocks
+        # above (placed after purely to avoid interleaving with already-
+        # shipped BOOK-04d/05c/05e.2 code — no functional dependency on
+        # their internal ordering), and before the memory mutation/
+        # order_ack/order_fill below.
+        #
+        # Deliberately gated ONLY on `_routing_decision_id is not None`
+        # — independent of LIQUIDITY_ENGINE_ENABLED and of whether
+        # `_liquidity_decision` ended up None. BOOK-06c design (approved
+        # 2026-07-27): exactly one DealingDeskDecision per RoutingDecision
+        # created, regardless of the Liquidity Engine's own configuration
+        # — LiquidityDecision is an optional INPUT to the decision
+        # (has_liquidity_decision), never a precondition for whether a
+        # row is written at all. This preserves a complete history of
+        # every Dealing Desk evaluation.
+        #
+        # record_dealing_desk_decision() is already fail-open internally,
+        # but this own try/except additionally covers argument
+        # construction and the database_sync_to_async scheduling/await
+        # itself — a failure at any of those points is absorbed here,
+        # never allowed to affect Position, RoutingDecision, balance,
+        # margin, or the order_ack/order_fill sent further below.
+        if _routing_decision_id is not None:
+            try:
+                await self._db_record_dealing_desk_decision(
+                    routing_decision_uuid=_routing_decision_id,
+                    account_id=self._db_account_id,
+                    position_id=result.get("position_id"),
+                    symbol=sym,
+                    has_liquidity_decision=_liquidity_decision is not None,
+                    liquidity_decision_id=(
+                        _liquidity_decision.id if _liquidity_decision is not None else None
+                    ),
+                )
+            except Exception as _dealing_desk_exc:
+                log.warning(
+                    "[dealing_desk] decision failed routing_decision=%s pos=%s: %s",
+                    _routing_decision_id, result.get("position_id"), _dealing_desk_exc, exc_info=True,
+                )
+
         # DB committed — safe to mutate memory now.
         # Use authoritative balance from DB (returned by _db_open_position_atomic),
         # falling back to pre-computed value only for demo sessions (no _db_account_id).
@@ -1547,6 +1593,75 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 "routing_decision_id": str(routing_decision_id),
                 "position_id": position_id,
             },
+        )
+
+    @database_sync_to_async
+    def _db_record_dealing_desk_decision(self, *, routing_decision_uuid, account_id,
+                                          position_id, symbol, has_liquidity_decision,
+                                          liquidity_decision_id=None):
+        """
+        BOOK-06c — resolves the inputs needed to evaluate a Dealing Desk
+        decision for this accepted open, and persists the result via
+        dealing_desk.record_dealing_desk_decision() — the single write
+        point for DealingDeskDecision (see that function's own
+        docstring).
+
+        Sync method, decorated database_sync_to_async for the same
+        reason as _db_record_liquidity_decision above — its caller,
+        _order_new(), is `async def`.
+
+        Never writes to RoutingDecision or LiquidityDecision —
+        routing_decision_uuid (a uuid.UUID, RoutingDecision.decision_id)
+        is only ever used to resolve the real primary key via a
+        read-only lookup, exactly once, same pattern as
+        _db_record_liquidity_decision. routing_profile is resolved
+        independently here (its own TraderScore read, same fallback to
+        "INTERNAL" for a brand-new account with no TraderScore row yet)
+        — deliberately NOT read from any LiquidityDecision.inputs_snapshot,
+        because this decision is recorded regardless of whether a
+        LiquidityDecision exists at all (BOOK-06c design, approved
+        2026-07-27).
+
+        evaluate_dealing_desk_decision() (BOOK-06b) is a pure function —
+        called here, inline, with no DB access of its own.
+        record_dealing_desk_decision() itself never raises (fail-open,
+        matches record_liquidity_decision()'s contract) — the only
+        exceptions that can reach the caller here come from the
+        read-only resolution steps below, never from the write itself.
+
+        Returns the created DealingDeskDecision, or None if no
+        RoutingDecision could be resolved or the write failed.
+        """
+        from . import dealing_desk as _dealing_desk
+        from .models import RoutingDecision, TraderScore
+
+        routing_decision_pk = (
+            RoutingDecision.objects.filter(decision_id=routing_decision_uuid)
+            .values_list("id", flat=True).first()
+        )
+        if routing_decision_pk is None:
+            return None
+
+        routing_profile = (
+            TraderScore.objects.filter(account_id=account_id)
+            .values_list("routing_profile", flat=True).first()
+            or "INTERNAL"
+        )
+
+        decision_result = _dealing_desk.evaluate_dealing_desk_decision(
+            routing_profile=routing_profile,
+            has_liquidity_decision=has_liquidity_decision,
+        )
+
+        return _dealing_desk.record_dealing_desk_decision(
+            routing_decision_id=routing_decision_pk,
+            position_id=position_id,
+            liquidity_decision_id=liquidity_decision_id,
+            symbol=symbol,
+            routing_profile_snapshot=routing_profile,
+            is_simulated_hedge=decision_result["is_simulated_hedge"],
+            engine_version=decision_result["engine_version"],
+            schema_version=decision_result["schema_version"],
         )
 
     async def _order_update(self, data: dict):
