@@ -2264,6 +2264,31 @@ class BrokerSpreadConfigAdmin(admin.ModelAdmin):
 
 @admin.register(Instrument)
 class InstrumentAdmin(admin.ModelAdmin):
+    """
+    MD-5 FASE 1 (approved 2026-07-28) — this catalog is administrative
+    reference only. `market_data.symbol_specs.SymbolSpec` remains the
+    sole runtime authority for every field edited here (pricing,
+    contract, margin, market-data routing, trading gate) — see
+    docs/MARKET_DATA_ARCHITECTURE.md §5-6 and the MD-5 FASE 0 RFC
+    (2026-07-28). Editing a row here has ZERO effect on live trading,
+    pricing, risk, or order execution — this was a real, silent
+    operator-error vector (no warning existed anywhere in this admin
+    before this block), now made explicit via the warning banner below
+    on every list/add/change view. Kept editable (not made readonly):
+    `Instrument` remains a legitimate reference/staging catalog per the
+    FASE 0 recommendation (Option B — code-first stays authoritative,
+    no migration to DB-first) — the fix for the risk was visibility,
+    not restricting a use case (drift comparison, future planning)
+    that genuinely needs edits to keep working.
+    """
+    _RUNTIME_WARNING = (
+        "⚠ Este catálogo es de referencia administrativa únicamente. "
+        "NINGÚN campo editado aquí afecta el trading real, el pricing, el "
+        "margen ni el riesgo — la fuente de verdad del runtime sigue "
+        "siendo market_data.symbol_specs.SymbolSpec (código), no esta "
+        "tabla. Ver docs/MARKET_DATA_ARCHITECTURE.md."
+    )
+
     list_display = (
         'symbol', 'display_name', 'asset_class', 'trading_enabled',
         'market_data_provider', 'max_leverage', 'default_spread', 'spread_unit',
@@ -2272,6 +2297,19 @@ class InstrumentAdmin(admin.ModelAdmin):
     search_fields  = ('symbol', 'display_name')
     ordering       = ('asset_class', 'symbol')
     readonly_fields = ('created_at', 'updated_at')
+
+    def changelist_view(self, request, extra_context=None):
+        messages.warning(request, self._RUNTIME_WARNING)
+        return super().changelist_view(request, extra_context=extra_context)
+
+    def add_view(self, request, form_url='', extra_context=None):
+        messages.warning(request, self._RUNTIME_WARNING)
+        return super().add_view(request, form_url, extra_context=extra_context)
+
+    def change_view(self, request, object_id, form_url='', extra_context=None):
+        messages.warning(request, self._RUNTIME_WARNING)
+        return super().change_view(request, object_id, form_url, extra_context=extra_context)
+
     fieldsets = (
         ('Identity', {
             'fields': ('symbol', 'display_name', 'asset_class', 'base_currency', 'quote_currency'),
