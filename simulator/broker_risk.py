@@ -477,13 +477,89 @@ def _resolve_broker_exposure_for_validation(account_id: int):
             .exclude(position_id__isnull=True)
             .values_list("position_id", flat=True)
         )
-        return _exposure.calculate_broker_exposure(exclude_position_ids=excluded_ids)
+        adjusted = _exposure.calculate_broker_exposure(exclude_position_ids=excluded_ids)
+
+        # BOOK-06h.3 — observability only (closes RC-1 Finding F-05:
+        # "no se puede confirmar desde logs con qué frecuencia se usó
+        # el canario"). Never feeds back into the risk decision — the
+        # object returned below is the exact same `adjusted` value
+        # validate_new_order() already used before this block existed.
+        #
+        # One extra read-only call to the SAME official formula,
+        # exclusively on this success path (never on flag OFF/outside
+        # the allowlist/empty allowlist — see the early return above),
+        # mirrors broker_risk_shadow.py's own "call the formula twice
+        # rather than duplicate it" precedent instead of re-deriving
+        # gross/net notional independently.
+        #
+        # The comparison numbers are stashed as a plain, transient
+        # attribute on the returned dataclass instance — never a new
+        # dataclass field, never module/thread-local state (unsafe
+        # under concurrent async requests) — purely so
+        # validate_new_order() can emit ONE combined structured log
+        # once risk_allowed/reason_code are known, several calls later
+        # in the same sequence. If this observability block itself
+        # fails, it is swallowed here and `adjusted` is returned
+        # exactly as it would have been anyway — validate_new_order()
+        # simply has nothing to log for this call, same as the
+        # official path.
+        try:
+            official = _exposure.calculate_broker_exposure()
+            adjusted._dealing_desk_observability = {
+                "excluded_positions_count": official.open_position_count - adjusted.open_position_count,
+                "excluded_notional": official.gross_notional - adjusted.gross_notional,
+                "official_gross_notional": official.gross_notional,
+                "adjusted_gross_notional": adjusted.gross_notional,
+                "official_net_notional": official.net_notional,
+                "adjusted_net_notional": adjusted.net_notional,
+            }
+        except Exception as obs_exc:
+            log.error(
+                "[broker_risk] dealing desk exposure observability computation failed for account=%s: %r",
+                account_id, obs_exc, exc_info=True,
+            )
+
+        return adjusted
     except Exception as exc:
         log.error(
             "[broker_risk] dealing desk exposure resolution failed for account=%s: %r",
             account_id, exc, exc_info=True,
         )
         return _exposure.broker_exposure_snapshot()
+
+
+def _log_dealing_desk_exposure_usage(account_id, book, *, allowed, reason_code):
+    """
+    BOOK-06h.3 — closes RC-1 Finding F-05. Emits exactly one structured
+    INFO log per validate_new_order() call, but ONLY when the adjusted
+    book was genuinely used by _resolve_broker_exposure_for_validation()
+    above — never on flag OFF, outside the allowlist, an empty
+    allowlist, or a resolver fallback caused by an exception (in every
+    one of those cases `book` carries no `_dealing_desk_observability`
+    attribute at all, so this simply returns without logging — no
+    noise, matching BOOK-06h.3's own requirement).
+
+    Called from validate_new_order() after risk_allowed/reason_code are
+    final — this function has no opinion on and never affects either
+    value, purely observational. Never raises.
+    """
+    obs = getattr(book, "_dealing_desk_observability", None)
+    if obs is None:
+        return
+    try:
+        log.info(
+            "[broker_risk] dealing_desk_exposure_used account_id=%s mode=adjusted "
+            "excluded_positions_count=%s excluded_notional=%s "
+            "official_gross_notional=%s adjusted_gross_notional=%s "
+            "official_net_notional=%s adjusted_net_notional=%s "
+            "risk_allowed=%s reason_code=%s",
+            account_id, obs["excluded_positions_count"], obs["excluded_notional"],
+            obs["official_gross_notional"], obs["adjusted_gross_notional"],
+            obs["official_net_notional"], obs["adjusted_net_notional"],
+            allowed, reason_code,
+        )
+    except Exception:
+        pass
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -565,6 +641,7 @@ def validate_new_order(
     allowed = len(failures) == 0
 
     if allowed:
+        _log_dealing_desk_exposure_usage(account_id, book, allowed=True, reason_code=None)
         return RiskLimitDecision(
             allowed=True, reason_code=None, reason_message="Orden dentro de todos los límites del broker.",
             risk_checks=checks, margin_after=margin_after, exposure_after=exposure_after,
@@ -583,6 +660,7 @@ def validate_new_order(
     first = pricing_failure or failures[0]
     reason_code = REASON_PRICING_INCOMPLETE if pricing_failure is not None else first.rule
 
+    _log_dealing_desk_exposure_usage(account_id, book, allowed=False, reason_code=reason_code)
     return RiskLimitDecision(
         allowed=False,
         reason_code=reason_code,

@@ -1658,6 +1658,19 @@ class BrokerSnapshotAdmin(admin.ModelAdmin):
             comparison = ShadowExposureComparison()
             calc_failed = True
 
+        # BOOK-06h.3 — read-only canary status indicator (closes RC-1
+        # Finding F-05's UI half). Plain settings reads, same pattern
+        # already used by broker_risk.py's own gate — no write, no
+        # form, no action, nothing here can change the configuration.
+        # Deliberately distinct from `comparison` above: this reflects
+        # the REAL canary configuration consumed by
+        # broker_risk.py::validate_new_order(); the shadow numbers
+        # above are a separate, always-global preview (never scoped to
+        # this allowlist) — see broker_risk_shadow.py's own docstring.
+        from django.conf import settings as _dj_settings
+        canary_enabled = bool(getattr(_dj_settings, "DEALING_DESK_EXPOSURE_ENABLED", False))
+        canary_account_count = len(getattr(_dj_settings, "DEALING_DESK_EXPOSURE_ACCOUNT_IDS", frozenset()))
+
         context = dict(
             self.admin_site.each_context(request),
             title="Shadow Exposure Observability (BOOK-06e)",
@@ -1665,6 +1678,8 @@ class BrokerSnapshotAdmin(admin.ModelAdmin):
             calc_failed=calc_failed,
             applied_filters=filters,
             live_url=reverse("admin:broker_live_analytics"),
+            canary_enabled=canary_enabled,
+            canary_account_count=canary_account_count,
         )
         return render(request, "admin/shadow_exposure_observability.html", context)
 
