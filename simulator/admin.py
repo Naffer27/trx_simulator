@@ -12,7 +12,8 @@ from django.db import transaction
 
 from .models import (
     TradingAccount, Position, Trade, LedgerEntry,
-    Purchase, Deposit, WithdrawalRequest, WalletTransaction,
+    Purchase, Deposit, WithdrawalRequest, Wallet, WalletTransaction, InternalTransfer,
+    TreasuryOperationRequest,
     RiskRule, DrawdownSnapshot, TradingViolation, TraderScore,
     BrokerSnapshot, SymbolExposure, TraderClassExposure,
     AuditLog,
@@ -20,7 +21,7 @@ from .models import (
     BrokerLedger, BrokerSpreadConfig, Instrument,
     BrokerEquitySnapshot, BrokerRevenueSnapshot,
     AccountProduct, ChallengeProduct, ChallengeEnrollment, FundedConfig,
-    KYCProfile, SupportTicket,
+    KYCProfile, SupportTicket, EmailVerification, TermsAcceptance, TOTPDevice,
     FundedPayoutRequest,
     BrokerAuditEvent,
     RoutingDecision,
@@ -1929,6 +1930,160 @@ class WithdrawalRequestAdmin(admin.ModelAdmin):
 
 
 # ─────────────────────────────────────────────
+# Treasury Audit & Reconciliation — O.2e-1
+#
+# Read-only observation surface only. No path here creates, edits or
+# deletes a Wallet / WalletTransaction / InternalTransfer, and none of
+# it calls credit_wallet() / debit_wallet() / transfer_to_account() /
+# transfer_to_wallet() — those remain the exclusive write path
+# (wallet_ledger.py, untouched by this block). The one action below
+# (Verify Wallet Consistency) calls the already-existing, already-tested
+# reconcile_wallet() — itself read-only by contract — and only ever
+# reports what it finds via messages.
+#
+# Treasury Private Operations (moving money, corrections, reversals,
+# payouts) is explicitly out of scope and is not started here.
+# ─────────────────────────────────────────────
+
+class WalletTransactionInline(admin.TabularInline):
+    model = WalletTransaction
+    extra = 0
+    can_delete = False
+    fk_name = "wallet"
+    readonly_fields = (
+        "tx_type", "amount", "balance_after", "initiated_by", "created_at",
+    )
+    fields = readonly_fields
+    ordering = ("-created_at",)
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(Wallet)
+class WalletAdmin(admin.ModelAdmin):
+    list_display   = ("user", "currency", "available_balance", "pending_balance", "updated_at")
+    list_filter    = ("currency",)
+    search_fields  = ("user__username", "user__email")
+    readonly_fields = [f.name for f in Wallet._meta.fields]
+    inlines = [WalletTransactionInline]
+    actions = ["verify_wallet_consistency"]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    @admin.action(description="Verify Wallet Consistency")
+    def verify_wallet_consistency(self, request, queryset):
+        """
+        Read-only audit action. Calls reconcile_wallet() (wallet_ledger.py,
+        untouched) once per selected wallet and only reports the result —
+        never writes anything.
+        """
+        from .wallet_ledger import reconcile_wallet
+
+        results = [reconcile_wallet(w.pk) for w in queryset]
+        clean = [r for r in results if r["ok"]]
+        drifted = [r for r in results if not r["ok"]]
+
+        if drifted:
+            detail = "; ".join(
+                f"wallet #{r['wallet_id']} stored={r['stored']} computed={r['computed']} drift={r['drift']}"
+                for r in drifted
+            )
+            self.message_user(
+                request,
+                f"{len(clean)} wallet(s) consistent — {len(drifted)} with drift: {detail}",
+                level=messages.WARNING,
+            )
+        else:
+            self.message_user(
+                request,
+                f"Verified {len(clean)} wallet(s) — all consistent (drift = 0).",
+                level=messages.SUCCESS,
+            )
+
+
+@admin.register(WalletTransaction)
+class WalletTransactionAdmin(admin.ModelAdmin):
+    list_display   = ("wallet", "tx_type", "amount", "balance_after", "initiated_by", "created_at")
+    list_filter    = ("tx_type", "created_at")
+    search_fields  = ("wallet__user__username", "note")
+    readonly_fields = [f.name for f in WalletTransaction._meta.fields]
+    ordering = ("-created_at", "-id")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(InternalTransfer)
+class InternalTransferAdmin(admin.ModelAdmin):
+    list_display   = ("wallet", "trading_account", "direction", "amount", "status", "initiated_by", "created_at")
+    list_filter    = ("direction", "status", "created_at")
+    search_fields  = ("wallet__user__username", "trading_account__id")
+    readonly_fields = [f.name for f in InternalTransfer._meta.fields]
+    ordering = ("-created_at",)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+# ─────────────────────────────────────────────
+# Treasury Private Operations — O.2g-1 (infrastructure only)
+#
+# Read-only observation surface only, same discipline as the Treasury
+# Audit & Reconciliation block above. No add/change/delete, no action,
+# no request/approve/reject/execute path — none of that exists in the
+# codebase yet. This registration exists purely so the schema created
+# by this block is visible, exactly like Wallet/WalletTransaction were
+# registered read-only (O.2e-1) before any action was added.
+# ─────────────────────────────────────────────
+
+@admin.register(TreasuryOperationRequest)
+class TreasuryOperationRequestAdmin(admin.ModelAdmin):
+    list_display   = (
+        "id", "operation_type", "wallet", "amount", "status",
+        "requested_by", "requested_at",
+    )
+    list_filter    = ("operation_type", "status", "category", "requested_at")
+    search_fields  = ("wallet__user__username", "reference", "reason")
+    readonly_fields = [f.name for f in TreasuryOperationRequest._meta.fields]
+    ordering       = ("-requested_at", "-id")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+# ─────────────────────────────────────────────
 # Audit Log — read-only
 # ─────────────────────────────────────────────
 
@@ -2348,7 +2503,13 @@ class BrokerLedgerAdmin(admin.ModelAdmin):
     # populates list_filter choices from the field's `choices`, not from
     # distinct DB values) and `amount` already renders negative values
     # correctly with no code change (plain Decimal field).
-    list_display   = ('id', 'revenue_type', 'amount', 'source_account', 'source_trade', 'symbol', 'created_at')
+    @admin.display(description="Dashboard")
+    def revenue_dashboard_link(self, obj):
+        url = reverse("admin:brokerledger_revenue_dashboard")
+        return format_html('<a href="{}">→ Revenue Dashboard</a>', url)
+
+    list_display   = ('id', 'revenue_type', 'amount', 'source_account', 'source_trade', 'symbol', 'created_at',
+                       'revenue_dashboard_link')
     list_filter    = ('revenue_type', 'created_at')
     search_fields  = ('symbol', 'source_account__id')
     readonly_fields = (
@@ -2883,8 +3044,19 @@ class BrokerRevenueSnapshotAdmin(admin.ModelAdmin):
             color, f"${v:+,.2f}",
         )
 
+    @admin.display(description="Analytics")
+    def analytics_link(self, obj):
+        url = reverse("admin:brokerrevsnap_analytics")
+        return format_html('<a href="{}">→ Broker Analytics</a>', url)
+
+    @admin.display(description="Control Center")
+    def control_center_link(self, obj):
+        url = reverse("admin:brokerrevsnap_control")
+        return format_html('<a href="{}">→ Broker Control Center</a>', url)
+
     list_display    = ("taken_at", "total_col", "period_col",
-                       "active_accounts", "open_positions", "exposure_col")
+                       "active_accounts", "open_positions", "exposure_col",
+                       "analytics_link", "control_center_link")
     list_filter     = ("taken_at",)
     date_hierarchy  = "taken_at"
     ordering        = ("-taken_at",)
@@ -2971,6 +3143,8 @@ class BrokerRevenueSnapshotAdmin(admin.ModelAdmin):
             changelist_url    = reverse("admin:simulator_brokerrevenuesnapshot_changelist"),
             revenue_url       = reverse("admin:brokerledger_revenue_dashboard"),
             exposure_url      = reverse("admin:broker_live_analytics"),
+            is_superuser      = request.user.is_superuser,
+            shadow_exposure_url = reverse("admin:broker_shadow_exposure"),
         )
         return render(request, "admin/broker_control_center.html", context)
 
@@ -3534,6 +3708,88 @@ def mark_closed(modeladmin, request, queryset):
     modeladmin.message_user(request, f"{updated} ticket(s) marcado(s) como Cerrado.")
 
 
+# ─────────────────────────────────────────────
+# Compliance Center — O.2f-1
+#
+# Read-only observation surface only, mirroring the Treasury Audit &
+# Reconciliation block (O.2e-1). No path here creates, edits or deletes
+# an EmailVerification / TermsAcceptance / TOTPDevice row, and nothing
+# here touches broker_audit.py / audit.py / two_factor.py /
+# email_verification.py or any gate (_is_email_verified,
+# _has_accepted_terms, the 2FA/KYC withdrawal gates) — those stay exactly
+# as they are, in views.py.
+#
+# TOTPDevice.secret is deliberately absent from `fields` itself (not just
+# `readonly_fields`) — Django never renders a field that isn't listed,
+# so it cannot appear on the change form under any circumstance, not
+# even as a masked/read-only value.
+#
+# KYCProfile is untouched in this block — still registered exactly as
+# it was, still in CORE OPERATIONS. Its approve_kyc/reject_kyc actions
+# are not modified.
+# ─────────────────────────────────────────────
+
+@admin.register(EmailVerification)
+class EmailVerificationAdmin(admin.ModelAdmin):
+    list_display   = ("user", "verified", "verified_at")
+    list_filter    = ("verified",)
+    search_fields  = ("user__username", "user__email")
+    fields         = ("user", "verified", "verified_at")
+    readonly_fields = fields
+    ordering       = ("-verified_at",)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(TermsAcceptance)
+class TermsAcceptanceAdmin(admin.ModelAdmin):
+    list_display   = ("user", "terms_version", "risk_disclaimer_version", "accepted_at", "ip_address")
+    list_filter    = ("terms_version", "risk_disclaimer_version", "accepted_at")
+    search_fields  = ("user__username", "user__email", "ip_address")
+    fields         = (
+        "user", "terms_version", "risk_disclaimer_version",
+        "accepted_at", "ip_address", "user_agent",
+    )
+    readonly_fields = fields
+    ordering       = ("-accepted_at",)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(TOTPDevice)
+class TOTPDeviceAdmin(admin.ModelAdmin):
+    # "secret" is intentionally excluded from `fields` — see module note above.
+    list_display   = ("user", "confirmed", "created_at", "confirmed_at")
+    list_filter    = ("confirmed",)
+    search_fields  = ("user__username", "user__email")
+    fields         = ("user", "confirmed", "created_at", "confirmed_at")
+    readonly_fields = fields
+    ordering       = ("-created_at",)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
 @admin.register(SupportTicket)
 class SupportTicketAdmin(admin.ModelAdmin):
 
@@ -3718,6 +3974,11 @@ class MoneyBrokerAdminSite(admin.AdminSite):
             "supportticket",
             "auditlog",
         ]),
+        ("COMPLIANCE", "compliance", [
+            "emailverification",
+            "termsacceptance",
+            "totpdevice",
+        ]),
         ("TRADING ENGINE", "trading_eng", [
             "tradingaccount",
             "trade",
@@ -3732,6 +3993,7 @@ class MoneyBrokerAdminSite(admin.AdminSite):
             "challengeenrollment",
             "fundedconfig",
             "fundedpayoutrequest",
+            "accountproduct",
         ]),
         ("PAYMENTS & LEDGER", "payments", [
             "deposit",
@@ -3740,13 +4002,27 @@ class MoneyBrokerAdminSite(admin.AdminSite):
             "purchase",
             "bonus",
         ]),
+        ("BROKER OPERATIONS", "broker_ops", [
+            "routingdecision",
+            "liquidityprovider",
+            "liquiditydecision",
+            "liquidityledger",
+            "dealingdeskdecision",
+            "brokerauditevent",
+            "brokerspreadconfig",
+            "instrument",
+        ]),
+        ("TREASURY", "treasury", [
+            "wallet",
+            "wallettransaction",
+            "internaltransfer",
+            "treasuryoperationrequest",  # O.2g-1b — was falling into UNCATEGORIZED
+        ]),
         ("BROKER BUSINESS", "broker_biz", [
             "brokerledger",
             "brokersnapshot",
             "brokerrevenuesnapshot",
-            "brokerspreadconfig",
             "brokerdocument",
-            "instrument",
         ]),
         ("GROWTH", "growth", [
             "referral",

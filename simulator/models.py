@@ -1132,6 +1132,175 @@ class WalletTransaction(models.Model):
 
 
 # ─────────────────────────────────────────────
+# Treasury Private Operations — O.2g-1
+#
+# Infrastructure-only block. This model is the central request/approval
+# entity for the six movement operations approved in the frozen O.2g
+# architecture (Credit Funds, Debit Funds, Refund, Bonus Credit,
+# IB Commission, Manual Adjustment). Treasury Hold is deliberately NOT
+# covered here — per the frozen design it is a structurally distinct
+# entity (no WalletTransaction, its own ACTIVE/RELEASED/EXPIRED
+# lifecycle) and gets its own model when Hold itself is authorized.
+#
+# No approval, rejection or execution logic lives here or anywhere yet —
+# this migration only creates schema. Meta.permissions declares
+# can_review_treasury_request / can_execute_treasury_request; Django's
+# own post_migrate signal (django.contrib.auth) materializes them into
+# auth_permission automatically — no data migration needed for that.
+# Group creation/assignment is explicitly out of scope for this block.
+#
+# State machine (frozen, O.2g-1 architecture review):
+#   PENDING    -> APPROVED | REJECTED | CANCELLED
+#   APPROVED   -> EXECUTING
+#   EXECUTING  -> EXECUTED | FAILED
+#   REJECTED / EXECUTED / FAILED / CANCELLED are terminal.
+# No code enforces these transitions yet (no approve/reject/execute
+# service exists) — the state machine is schema-frozen so a future block
+# implements it exactly as designed, not improvised at that time.
+# ─────────────────────────────────────────────
+
+class TreasuryOperationRequest(models.Model):
+    """
+    Central request/approval record for Treasury Private Operations.
+
+    Every field beyond the operation-type-agnostic core (operation_type,
+    wallet, amount, currency, status, actors/timestamps) is intentionally
+    generic and optional at the schema level — reason/reference/category/
+    comment/evidence/metadata apply differently per operation_type (e.g.
+    reference+category are mandatory only for MANUAL_ADJUSTMENT), and
+    that per-type requirement is enforced by the service layer that a
+    future block adds, never by this schema. Same discipline already
+    used by WalletTransaction.deposit/internal_transfer ("at most one
+    reference is set per transaction").
+    """
+    OP_CREDIT_FUNDS       = "CREDIT_FUNDS"
+    OP_DEBIT_FUNDS        = "DEBIT_FUNDS"
+    OP_REFUND             = "REFUND"
+    OP_BONUS_CREDIT       = "BONUS_CREDIT"
+    OP_IB_COMMISSION      = "IB_COMMISSION"
+    OP_MANUAL_ADJUSTMENT  = "MANUAL_ADJUSTMENT"
+
+    OPERATION_TYPE_CHOICES = [
+        (OP_CREDIT_FUNDS,      "Credit Funds"),
+        (OP_DEBIT_FUNDS,       "Debit Funds"),
+        (OP_REFUND,            "Refund"),
+        (OP_BONUS_CREDIT,      "Bonus Credit"),
+        (OP_IB_COMMISSION,     "IB / Referral Commission"),
+        (OP_MANUAL_ADJUSTMENT, "Manual Adjustment"),
+    ]
+
+    ST_PENDING   = "PENDING"
+    ST_APPROVED  = "APPROVED"
+    ST_REJECTED  = "REJECTED"
+    ST_EXECUTING = "EXECUTING"
+    ST_EXECUTED  = "EXECUTED"
+    ST_FAILED    = "FAILED"
+    ST_CANCELLED = "CANCELLED"
+
+    STATUS_CHOICES = [
+        (ST_PENDING,   "Pending"),
+        (ST_APPROVED,  "Approved"),
+        (ST_REJECTED,  "Rejected"),
+        (ST_EXECUTING, "Executing"),
+        (ST_EXECUTED,  "Executed"),
+        (ST_FAILED,    "Failed"),
+        (ST_CANCELLED, "Cancelled"),
+    ]
+
+    CAT_SYSTEM_ERROR          = "SYSTEM_ERROR"
+    CAT_PROVIDER_DUPLICATE    = "PROVIDER_DUPLICATE"
+    CAT_INCIDENT_COMPENSATION = "INCIDENT_COMPENSATION"
+    CAT_OTHER                 = "OTHER"
+
+    CATEGORY_CHOICES = [
+        (CAT_SYSTEM_ERROR,          "System Error"),
+        (CAT_PROVIDER_DUPLICATE,    "Provider Duplicate"),
+        (CAT_INCIDENT_COMPENSATION, "Incident Compensation"),
+        (CAT_OTHER,                 "Other"),
+    ]
+
+    operation_type = models.CharField(max_length=20, choices=OPERATION_TYPE_CHOICES, db_index=True)
+    wallet         = models.ForeignKey(
+        Wallet, on_delete=models.PROTECT, related_name="treasury_requests",
+    )
+    amount   = models.DecimalField(max_digits=18, decimal_places=2)
+    currency = models.CharField(max_length=6, blank=True, default="")
+
+    status = models.CharField(
+        max_length=12, choices=STATUS_CHOICES, default=ST_PENDING, db_index=True,
+    )
+
+    reason    = models.TextField(blank=True, default="")
+    reference = models.CharField(max_length=120, blank=True, default="")
+    category  = models.CharField(max_length=40, choices=CATEGORY_CHOICES, blank=True, default="")
+    comment   = models.TextField(blank=True, default="")
+    evidence  = models.FileField(upload_to="treasury/evidence/", null=True, blank=True)
+    metadata  = models.JSONField(default=dict, blank=True)
+
+    wallet_transaction = models.OneToOneField(
+        WalletTransaction, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name="treasury_request",
+    )
+
+    requested_by = models.ForeignKey(
+        User, null=True, on_delete=models.SET_NULL, related_name="treasury_requests_made",
+    )
+    requested_at = models.DateTimeField(auto_now_add=True)
+
+    approved_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="treasury_requests_approved",
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+
+    rejected_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="treasury_requests_rejected",
+    )
+    rejected_at      = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(blank=True, default="")
+
+    # O.2g-1a — CANCELLED state audit completion. No cancelled_by: the
+    # frozen architecture allows either requested_by (withdrawing their
+    # own request) or a Supervisor (administrative cancellation) to
+    # produce this transition — that distinction is recorded by
+    # AuditLog/BrokerAuditEvent once the (not yet built) cancellation
+    # service exists, same discipline AUDIT-03 already uses for
+    # KYCProfile ("the audit event recorded who — the model doesn't
+    # need to preserve that data itself"). See O.2g-1a's technical
+    # decision for the full argument.
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+
+    executed_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="treasury_requests_executed",
+    )
+    executed_at    = models.DateTimeField(null=True, blank=True)
+    failure_reason = models.CharField(max_length=256, blank=True, default="")
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-requested_at", "-id"]
+        indexes = [
+            models.Index(fields=["status", "requested_at"], name="treasury_req_status_ts_idx"),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(amount__gt=0),
+                name="treasury_request_amount_positive",
+            ),
+        ]
+        permissions = [
+            ("can_review_treasury_request", "Can review (approve/reject) treasury request"),
+            ("can_execute_treasury_request", "Can execute treasury request"),
+        ]
+
+    def __str__(self):
+        return f"TreasuryRequest #{self.id} {self.operation_type} ${self.amount} [{self.status}]"
+
+
+# ─────────────────────────────────────────────
 # Risk Engine models
 # ─────────────────────────────────────────────
 

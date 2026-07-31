@@ -117,6 +117,7 @@ body,#content{background:var(--bg)!important;}
   <a href="{{ analytics_url }}"  class="cc-link">Analytics →</a>
   <a href="{{ revenue_url }}"    class="cc-link">Revenue →</a>
   <a href="{{ exposure_url }}"   class="cc-link">Exposure →</a>
+  {% if is_superuser %}<a href="{{ shadow_exposure_url }}" class="cc-link">Shadow Exposure →</a>{% endif %}
   <a href="{{ changelist_url }}" class="cc-link">Snapshots</a>
   <span class="cc-ts" id="cc-ts">Connecting…</span>
 </div>
