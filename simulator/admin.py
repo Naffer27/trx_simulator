@@ -2146,6 +2146,37 @@ class TreasuryOperationRequestAdmin(admin.ModelAdmin):
             extra_context["new_treasury_request_url"] = reverse("admin:treasury_request_new")
         return super().changelist_view(request, extra_context)
 
+    def change_view(self, request, object_id, form_url='', extra_context=None):
+        """
+        O.3b-3 — injects the Approve/Reject header buttons into the
+        detail page, exactly the visibility rule frozen in the O.3b
+        design: status == PENDING, request.user holds
+        can_review_treasury_request, and request.user is not the
+        request's own requested_by. Read-only lookup only — no state
+        changes happen in this method; approve/reject themselves live
+        entirely in treasury_request_approve_view()/
+        treasury_request_reject_view() below, which call
+        approve_treasury_request()/reject_treasury_request() (O.3b-2)
+        unmodified.
+        """
+        extra_context = extra_context or {}
+        instance = TreasuryOperationRequest.objects.filter(pk=object_id).first()
+        if instance is not None and request.user.is_authenticated:
+            can_review = (
+                instance.status == TreasuryOperationRequest.ST_PENDING
+                and request.user.has_perm("simulator.can_review_treasury_request")
+                and instance.requested_by_id != request.user.pk
+            )
+            if can_review:
+                extra_context["show_treasury_review_buttons"] = True
+                extra_context["treasury_approve_url"] = reverse(
+                    "admin:treasury_request_approve", args=[instance.pk],
+                )
+                extra_context["treasury_reject_url"] = reverse(
+                    "admin:treasury_request_reject", args=[instance.pk],
+                )
+        return super().change_view(request, object_id, form_url, extra_context)
+
     def get_urls(self):
         urls = super().get_urls()
         custom = [
@@ -2153,6 +2184,16 @@ class TreasuryOperationRequestAdmin(admin.ModelAdmin):
                 "new/",
                 self.admin_site.admin_view(self.treasury_request_new_view),
                 name="treasury_request_new",
+            ),
+            path(
+                "<int:pk>/approve/",
+                self.admin_site.admin_view(self.treasury_request_approve_view),
+                name="treasury_request_approve",
+            ),
+            path(
+                "<int:pk>/reject/",
+                self.admin_site.admin_view(self.treasury_request_reject_view),
+                name="treasury_request_reject",
             ),
         ]
         return custom + urls
@@ -2208,6 +2249,161 @@ class TreasuryOperationRequestAdmin(admin.ModelAdmin):
             cancel_url=reverse("admin:simulator_treasuryoperationrequest_changelist"),
         )
         return render(request, "admin/treasury_request_new.html", context)
+
+    def treasury_request_approve_view(self, request, pk):
+        """
+        O.3b-3 — confirmation screen for approve_treasury_request()
+        (O.3b-2). This method does not reimplement any review logic —
+        it only renders a read-only summary on GET, and on POST calls
+        approve_treasury_request() exactly as built there, unmodified.
+
+        Visibility/permission is checked here (view layer) AND,
+        independently, again inside approve_treasury_request() (service
+        layer) — same two-layer defense already used by
+        treasury_request_new_view()/submit_treasury_request() (O.3a-5).
+        A status recheck also happens here on GET (so a stale
+        confirmation screen is never shown for an already-processed
+        request), on top of the service's own recheck under lock.
+        """
+        from django.core.exceptions import PermissionDenied
+        from django.http import Http404
+
+        from .treasury_requests import (
+            TREASURY_REVIEW_PERMISSION,
+            TreasuryRequestNotPending,
+            approve_treasury_request,
+        )
+
+        if not request.user.has_perm(TREASURY_REVIEW_PERMISSION):
+            raise PermissionDenied(f"Missing permission: {TREASURY_REVIEW_PERMISSION}")
+
+        instance = TreasuryOperationRequest.objects.filter(pk=pk).first()
+        if instance is None:
+            raise Http404("Treasury request not found.")
+
+        if instance.requested_by_id == request.user.pk:
+            raise PermissionDenied("No puedes aprobar tu propia solicitud.")
+
+        change_url = reverse("admin:simulator_treasuryoperationrequest_change", args=[instance.pk])
+
+        if instance.status != TreasuryOperationRequest.ST_PENDING:
+            messages.warning(
+                request,
+                f"⚠ Esta solicitud ya no está pendiente (estado actual: "
+                f"{instance.status}) — no se puede revisar.",
+            )
+            return redirect(change_url)
+
+        if request.method == "POST":
+            review_notes = request.POST.get("review_notes", "")
+            try:
+                approve_treasury_request(instance, request=request, review_notes=review_notes)
+            except TreasuryRequestNotPending:
+                messages.warning(
+                    request,
+                    f"⚠ Esta solicitud ya no está pendiente (estado actual: "
+                    f"{instance.status}) — no se puede revisar.",
+                )
+            except TreasuryOperationRequest.DoesNotExist:
+                raise Http404("Treasury request not found.")
+            else:
+                messages.success(request, f"✓ Treasury Request #{instance.pk} aprobada.")
+            return redirect(change_url)
+
+        context = dict(
+            self.admin_site.each_context(request),
+            title=f"Approve Treasury Request #{instance.pk}",
+            instance=instance,
+            reviewing_as=request.user,
+            cancel_url=change_url,
+        )
+        return render(request, "admin/treasury_request_approve.html", context)
+
+    def treasury_request_reject_view(self, request, pk):
+        """
+        O.3b-3 — confirmation screen for reject_treasury_request()
+        (O.3b-2). Same discipline as treasury_request_approve_view()
+        above: no review logic is reimplemented here.
+
+        rejection_reason is validated for non-emptiness HERE, before
+        the service is ever called — this makes reject_treasury_
+        request()'s own ValueError branch structurally unreachable
+        from this call site (same pattern already used by
+        treasury_request_new_view() making submit_treasury_request()'s
+        ValueError/ValidationError branches unreachable), so the
+        operator sees a normal re-rendered form with an inline error
+        instead of a raw exception.
+        """
+        from django.core.exceptions import PermissionDenied
+        from django.http import Http404
+
+        from .treasury_requests import (
+            TREASURY_REVIEW_PERMISSION,
+            TreasuryRequestNotPending,
+            reject_treasury_request,
+        )
+
+        if not request.user.has_perm(TREASURY_REVIEW_PERMISSION):
+            raise PermissionDenied(f"Missing permission: {TREASURY_REVIEW_PERMISSION}")
+
+        instance = TreasuryOperationRequest.objects.filter(pk=pk).first()
+        if instance is None:
+            raise Http404("Treasury request not found.")
+
+        if instance.requested_by_id == request.user.pk:
+            raise PermissionDenied("No puedes rechazar tu propia solicitud.")
+
+        change_url = reverse("admin:simulator_treasuryoperationrequest_change", args=[instance.pk])
+
+        if instance.status != TreasuryOperationRequest.ST_PENDING:
+            messages.warning(
+                request,
+                f"⚠ Esta solicitud ya no está pendiente (estado actual: "
+                f"{instance.status}) — no se puede revisar.",
+            )
+            return redirect(change_url)
+
+        if request.method == "POST":
+            rejection_reason = request.POST.get("rejection_reason", "")
+            review_notes = request.POST.get("review_notes", "")
+
+            if not rejection_reason.strip():
+                messages.error(request, "⚠ Rejection Reason es obligatorio.")
+                context = dict(
+                    self.admin_site.each_context(request),
+                    title=f"Reject Treasury Request #{instance.pk}",
+                    instance=instance,
+                    reviewing_as=request.user,
+                    cancel_url=change_url,
+                    rejection_reason=rejection_reason,
+                    review_notes=review_notes,
+                )
+                return render(request, "admin/treasury_request_reject.html", context)
+
+            try:
+                reject_treasury_request(
+                    instance, rejection_reason, request=request, review_notes=review_notes,
+                )
+            except TreasuryRequestNotPending:
+                messages.warning(
+                    request,
+                    f"⚠ Esta solicitud ya no está pendiente (estado actual: "
+                    f"{instance.status}) — no se puede revisar.",
+                )
+            except TreasuryOperationRequest.DoesNotExist:
+                raise Http404("Treasury request not found.")
+            else:
+                messages.success(request, f"✓ Treasury Request #{instance.pk} rechazada.")
+            return redirect(change_url)
+
+        context = dict(
+            self.admin_site.each_context(request),
+            title=f"Reject Treasury Request #{instance.pk}",
+            instance=instance,
+            reviewing_as=request.user,
+            cancel_url=change_url,
+        )
+        return render(request, "admin/treasury_request_reject.html", context)
 
 
 # ─────────────────────────────────────────────

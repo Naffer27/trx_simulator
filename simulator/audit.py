@@ -43,6 +43,11 @@ EV_ACCOUNT_CREATED   = "account.created"
 # no call site exists yet (that is a later block).
 EV_TREASURY_REQUEST_SUBMITTED = "treasury.request_submitted"
 
+# O.3b-1 — Treasury Request Review Workflow (approve/reject). Schema-only:
+# no call site exists yet (that is a later block, O.3b-2).
+EV_TREASURY_REQUEST_APPROVED = "treasury.request_approved"
+EV_TREASURY_REQUEST_REJECTED = "treasury.request_rejected"
+
 EV_ADMIN_ACTION      = "admin.action"
 EV_ADMIN_VIEW        = "admin.view"
 

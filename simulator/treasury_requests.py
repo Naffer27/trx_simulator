@@ -60,12 +60,22 @@ does not, trusting that same contract.
 """
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
+from django.utils import timezone
 
 from . import audit
 from . import broker_audit
 from .models import TreasuryOperationRequest
 
 TREASURY_SUBMIT_PERMISSION = "simulator.can_submit_treasury_request"
+TREASURY_REVIEW_PERMISSION = "simulator.can_review_treasury_request"
+
+
+class TreasuryRequestNotPending(Exception):
+    """Raised when review is attempted on a non-PENDING request."""
+
+
+class TreasuryRequestSelfReviewDenied(Exception):
+    """Raised when requested_by attempts to review their own request."""
 
 
 def submit_treasury_request(form, *, request):
@@ -154,3 +164,240 @@ def submit_treasury_request(form, *, request):
     )
 
     return instance
+
+
+# ─────────────────────────────────────────────
+# Treasury Request Review Workflow — O.3b-2
+#
+# approve_treasury_request() / reject_treasury_request() — the two
+# terminal-for-this-phase transitions PENDING -> APPROVED and
+# PENDING -> REJECTED. Neither moves money: no WalletTransaction or
+# InternalTransfer is ever created, Wallet.available_balance /
+# Wallet.pending_balance are never touched, and neither
+# credit_wallet() / debit_wallet() / reconcile_wallet() /
+# transfer_to_account() / transfer_to_wallet() is called
+# (wallet_ledger.py, untouched) nor funded_payouts.py. Neither function
+# touches executed_by / executed_at / wallet_transaction / cancelled_at,
+# and neither transitions status to EXECUTING — that is a later block.
+#
+# Concurrency pattern mirrors funded_payouts.py::approve_sim_payout()
+# (O.3b Fase 0 §Fase 1/3), not the bulk admin-action idiom used by
+# approve_kyc()/approve_withdrawals(): this is a single-object service
+# meant to be called once per button click, so a lost race raises
+# TreasuryRequestNotPending rather than silently no-op'ing — the caller
+# (a future view, O.3b-3) needs to know explicitly that nothing happened
+# on this call, not assume success.
+#
+# Permission contract (two layers, same discipline as O.3a-4's
+# submit_treasury_request() and the O.3b security decision that
+# approved this design): the future UI will hide Approve/Reject for
+# ineligible users, but this service re-checks permission AND
+# self-review independently — it never trusts that the caller already
+# did.
+#
+# review_notes is optional supplementary commentary from the reviewer.
+# It is NOT a model field and NEVER written to
+# TreasuryOperationRequest.metadata or any other column — it exists
+# only in AuditLog.detail and BrokerAuditEvent.metadata, per the O.3b
+# Fase 0 design adjustment approved before this block.
+# ─────────────────────────────────────────────
+
+def approve_treasury_request(instance, *, request, review_notes=""):
+    """
+    Transition a PENDING TreasuryOperationRequest to APPROVED.
+
+    Args:
+        instance:      a TreasuryOperationRequest — only its .pk is used;
+                        it is re-read under lock, never trusted for
+                        status or requested_by (both could be stale).
+        request:       the current HttpRequest — request.user must be
+                        authenticated and hold TREASURY_REVIEW_PERMISSION,
+                        and must not be the request's own requested_by;
+                        request is also forwarded to audit.log_audit().
+        review_notes:  optional reviewer commentary, stripped; recorded
+                        only in AuditLog/BrokerAuditEvent, never on the
+                        model.
+
+    Returns:
+        The locked, updated TreasuryOperationRequest instance (APPROVED).
+
+    Raises:
+        PermissionDenied:              request.user not authenticated,
+                                        or lacks TREASURY_REVIEW_PERMISSION.
+        TreasuryRequestSelfReviewDenied: request.user is the request's
+                                        own requested_by.
+        TreasuryRequestNotPending:      the request's current status is
+                                        not PENDING (re-checked under lock).
+        TreasuryOperationRequest.DoesNotExist: instance.pk no longer
+                                        exists — left to propagate; the
+                                        future view (O.3b-3) translates
+                                        this to a 404.
+    """
+    if not request.user.is_authenticated:
+        raise PermissionDenied("Authentication required to review a treasury request.")
+
+    if not request.user.has_perm(TREASURY_REVIEW_PERMISSION):
+        raise PermissionDenied(f"Missing permission: {TREASURY_REVIEW_PERMISSION}")
+
+    review_notes = (review_notes or "").strip()
+
+    with transaction.atomic():
+        locked = TreasuryOperationRequest.objects.select_for_update().get(pk=instance.pk)
+
+        if locked.status != TreasuryOperationRequest.ST_PENDING:
+            raise TreasuryRequestNotPending(
+                f"TreasuryOperationRequest #{locked.pk} is not pending (status={locked.status})."
+            )
+        if locked.requested_by_id == request.user.pk:
+            raise TreasuryRequestSelfReviewDenied(
+                f"User #{request.user.pk} cannot review their own treasury request #{locked.pk}."
+            )
+
+        previous_status = locked.status
+        locked.status = TreasuryOperationRequest.ST_APPROVED
+        locked.approved_by = request.user
+        locked.approved_at = timezone.now()
+        locked.save(update_fields=["status", "approved_by", "approved_at"])
+    # ── transaction closed — the APPROVED transition is committed from here on ──
+
+    audit.log_audit(
+        request, audit.EV_TREASURY_REQUEST_APPROVED,
+        f"Treasury request #{locked.pk} approved",
+        detail={
+            "treasury_request_id": locked.pk,
+            "operation_type": locked.operation_type,
+            "wallet_id": locked.wallet_id,
+            "wallet_user_id": locked.wallet.user_id,
+            "amount": str(locked.amount),
+            "requested_by_id": locked.requested_by_id,
+            "approved_by_id": locked.approved_by_id,
+            "review_notes": review_notes,
+            "previous_status": previous_status,
+            "new_status": locked.status,
+        },
+    )
+
+    broker_audit.record_payment_event(
+        event_type=broker_audit.EV_TREASURY_REQUEST_APPROVED,
+        severity=broker_audit.Severity.INFO,
+        actor_type=broker_audit.ActorType.STAFF,
+        actor_id=request.user.pk,
+        description=f"Treasury request #{locked.pk} approved",
+        source_module="simulator.treasury_requests",
+        metadata={
+            "treasury_operation_request_id": locked.pk,
+            "operation_type": locked.operation_type,
+            "wallet_id": locked.wallet_id,
+            "wallet_user_id": locked.wallet.user_id,
+            "amount": str(locked.amount),
+            "requested_by_id": locked.requested_by_id,
+            "approved_by_id": locked.approved_by_id,
+            "review_notes": review_notes,
+            "previous_status": previous_status,
+            "status": locked.status,
+        },
+    )
+
+    return locked
+
+
+def reject_treasury_request(instance, rejection_reason, *, request, review_notes=""):
+    """
+    Transition a PENDING TreasuryOperationRequest to REJECTED.
+
+    Args:
+        instance:          a TreasuryOperationRequest — only its .pk is
+                            used; re-read under lock, same discipline as
+                            approve_treasury_request().
+        rejection_reason:  required, stripped; ValueError if empty after
+                            stripping — checked BEFORE any lock is
+                            acquired or any row is touched.
+        request:           same contract as approve_treasury_request().
+        review_notes:      optional, same contract as
+                            approve_treasury_request() — separate from
+                            rejection_reason, never on the model.
+
+    Returns:
+        The locked, updated TreasuryOperationRequest instance (REJECTED).
+
+    Raises:
+        ValueError:                     rejection_reason is empty/blank.
+        PermissionDenied:               same as approve_treasury_request().
+        TreasuryRequestSelfReviewDenied: same as approve_treasury_request().
+        TreasuryRequestNotPending:       same as approve_treasury_request().
+        TreasuryOperationRequest.DoesNotExist: same as
+                                        approve_treasury_request().
+    """
+    if not request.user.is_authenticated:
+        raise PermissionDenied("Authentication required to review a treasury request.")
+
+    if not request.user.has_perm(TREASURY_REVIEW_PERMISSION):
+        raise PermissionDenied(f"Missing permission: {TREASURY_REVIEW_PERMISSION}")
+
+    rejection_reason = (rejection_reason or "").strip()
+    if not rejection_reason:
+        raise ValueError("rejection_reason is required to reject a treasury request.")
+
+    review_notes = (review_notes or "").strip()
+
+    with transaction.atomic():
+        locked = TreasuryOperationRequest.objects.select_for_update().get(pk=instance.pk)
+
+        if locked.status != TreasuryOperationRequest.ST_PENDING:
+            raise TreasuryRequestNotPending(
+                f"TreasuryOperationRequest #{locked.pk} is not pending (status={locked.status})."
+            )
+        if locked.requested_by_id == request.user.pk:
+            raise TreasuryRequestSelfReviewDenied(
+                f"User #{request.user.pk} cannot review their own treasury request #{locked.pk}."
+            )
+
+        previous_status = locked.status
+        locked.status = TreasuryOperationRequest.ST_REJECTED
+        locked.rejected_by = request.user
+        locked.rejected_at = timezone.now()
+        locked.rejection_reason = rejection_reason
+        locked.save(update_fields=["status", "rejected_by", "rejected_at", "rejection_reason"])
+    # ── transaction closed — the REJECTED transition is committed from here on ──
+
+    audit.log_audit(
+        request, audit.EV_TREASURY_REQUEST_REJECTED,
+        f"Treasury request #{locked.pk} rejected",
+        detail={
+            "treasury_request_id": locked.pk,
+            "operation_type": locked.operation_type,
+            "wallet_id": locked.wallet_id,
+            "wallet_user_id": locked.wallet.user_id,
+            "amount": str(locked.amount),
+            "requested_by_id": locked.requested_by_id,
+            "rejected_by_id": locked.rejected_by_id,
+            "rejection_reason": locked.rejection_reason,
+            "review_notes": review_notes,
+            "previous_status": previous_status,
+            "new_status": locked.status,
+        },
+    )
+
+    broker_audit.record_payment_event(
+        event_type=broker_audit.EV_TREASURY_REQUEST_REJECTED,
+        severity=broker_audit.Severity.WARNING,
+        actor_type=broker_audit.ActorType.STAFF,
+        actor_id=request.user.pk,
+        description=f"Treasury request #{locked.pk} rejected",
+        source_module="simulator.treasury_requests",
+        metadata={
+            "treasury_operation_request_id": locked.pk,
+            "operation_type": locked.operation_type,
+            "wallet_id": locked.wallet_id,
+            "wallet_user_id": locked.wallet.user_id,
+            "amount": str(locked.amount),
+            "requested_by_id": locked.requested_by_id,
+            "rejected_by_id": locked.rejected_by_id,
+            "rejection_reason": locked.rejection_reason,
+            "review_notes": review_notes,
+            "previous_status": previous_status,
+            "status": locked.status,
+        },
+    )
+
+    return locked

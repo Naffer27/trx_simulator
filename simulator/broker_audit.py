@@ -245,6 +245,12 @@ EV_DEPOSIT_CREDITED = "deposit.credited"
 # exists yet (the submission view that will emit it is a later block).
 EV_TREASURY_REQUEST_SUBMITTED = "treasury.request_submitted"
 
+# O.3b-1 — mirrors audit.py's EV_TREASURY_REQUEST_APPROVED/REJECTED strings
+# exactly, same discipline as above. Schema-only: no call site exists yet
+# (the approve/reject service is a later block, O.3b-2).
+EV_TREASURY_REQUEST_APPROVED = "treasury.request_approved"
+EV_TREASURY_REQUEST_REJECTED = "treasury.request_rejected"
+
 
 # ─────────────────────────────────────────────────────────────────────────
 # AUDIT-03 — Compliance Audit Trail (KYC).

@@ -441,12 +441,20 @@ class StandardAddChangeDeleteDeniedOverHttpTests(TestCase):
         self.assertTrue(TreasuryOperationRequest.objects.filter(pk=self.instance.pk).exists())
 
 
-class NoApproveRejectExecuteCancelUrlTests(TestCase):
-    """2d/2e/2f/2g — no Approve/Reject/Execute/Cancel URL exists anywhere;
-    get_urls() exposes exactly one custom URL beyond Django's own CRUD
-    routes."""
+class NoExecuteCancelUrlTests(TestCase):
+    """
+    2d/2e/2f/2g — no Execute/Cancel URL exists anywhere; get_urls()
+    exposes exactly the three custom URLs authorized so far beyond
+    Django's own CRUD routes.
 
-    def test_get_urls_exposes_only_the_new_request_url(self):
+    O.3a-5 originally asserted that treasury_request_approve/reject
+    ALSO did not exist yet — that was true at the time (this block only
+    built submission) but was superseded on purpose by O.3b-3, which
+    legitimately added both. This test now locks down the current,
+    still-accurate boundary: Approve/Reject exist, Execute/Cancel do not.
+    """
+
+    def test_get_urls_exposes_only_the_authorized_custom_urls(self):
         from django.contrib import admin as django_admin
         from django.urls import NoReverseMatch, reverse as _reverse
 
@@ -460,12 +468,12 @@ class NoApproveRejectExecuteCancelUrlTests(TestCase):
         # get_urls() — the CRUD names are Django's own, not registered
         # by this class's override.
         custom_names = {n for n in url_names if not n.startswith("simulator_treasuryoperationrequest_")}
-        self.assertEqual(custom_names, {"treasury_request_new"})
+        self.assertEqual(
+            custom_names,
+            {"treasury_request_new", "treasury_request_approve", "treasury_request_reject"},
+        )
 
-        for hypothetical in (
-            "treasury_request_approve", "treasury_request_reject",
-            "treasury_request_execute", "treasury_request_cancel",
-        ):
+        for hypothetical in ("treasury_request_execute", "treasury_request_cancel"):
             with self.assertRaises(NoReverseMatch):
                 _reverse(f"admin:{hypothetical}")
 

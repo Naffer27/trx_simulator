@@ -1,0 +1,22 @@
+{% extends "admin/change_form.html" %}
+{% block object-tools-items %}
+  {% if show_treasury_review_buttons %}
+  <li>
+    <a href="{{ treasury_approve_url }}" class="historylink"
+       style="background:rgba(39,174,96,.15);color:#27ae60;border:1px solid rgba(39,174,96,.3);
+              border-radius:4px;padding:5px 14px;font-size:.75rem;font-weight:700;
+              text-decoration:none;letter-spacing:.04em;">
+      Approve →
+    </a>
+  </li>
+  <li>
+    <a href="{{ treasury_reject_url }}" class="historylink"
+       style="background:rgba(231,76,60,.12);color:#e74c3c;border:1px solid rgba(231,76,60,.3);
+              border-radius:4px;padding:5px 14px;font-size:.75rem;font-weight:700;
+              text-decoration:none;letter-spacing:.04em;">
+      Reject →
+    </a>
+  </li>
+  {% endif %}
+  {{ block.super }}
+{% endblock %}

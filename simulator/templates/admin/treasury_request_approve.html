@@ -1,0 +1,96 @@
+{% extends "admin/base_site.html" %}
+{% block title %}Approve Treasury Request #{{ instance.pk }}{% endblock %}
+{% block extrahead %}{{ block.super }}
+<style>
+:root{
+  --bg:#07070f;--panel:#0f0f1c;--panel2:#13131f;--border:#1e1e30;
+  --gold:#e8c84a;--bull:#27ae60;--bear:#e74c3c;--warn:#e67e22;--info:#3498db;
+  --text:#c8ccd8;--muted:#55556a;--r:8px;
+}
+#content{background:var(--bg)!important;color:var(--text);}
+#content h1{color:var(--gold);font-size:1.05rem;letter-spacing:.06em;margin:0;}
+
+.tr-header{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+  padding:14px 18px;margin-bottom:14px;}
+.tr-title{font-size:.95rem;font-weight:800;color:var(--bull);letter-spacing:.04em;}
+.tr-crumb{font-size:.65rem;color:var(--muted);margin-top:2px;text-transform:uppercase;letter-spacing:.06em;}
+
+.tr-summary{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+  padding:16px 18px;margin-bottom:16px;}
+.tr-summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px 20px;}
+.tr-summary .sm-label{font-size:.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;}
+.tr-summary .sm-val{font-size:.85rem;color:var(--text);font-weight:700;margin-top:2px;}
+
+.tr-bignotice{background:rgba(39,174,96,.08);border:2px solid var(--bull);border-radius:var(--r);
+  padding:18px 20px;margin-bottom:16px;text-align:center;}
+.tr-bignotice .line1{font-size:1.05rem;font-weight:800;color:var(--bull);letter-spacing:.01em;}
+.tr-bignotice .line2{font-size:.85rem;color:var(--text);margin-top:6px;}
+
+.tr-section{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+  padding:16px 18px;margin-bottom:14px;}
+.tr-field label{display:block;font-size:.72rem;font-weight:700;color:var(--text);margin-bottom:4px;}
+.tr-field textarea{width:100%;max-width:640px;background:var(--panel2);border:1px solid var(--border);
+  color:var(--text);border-radius:5px;padding:7px 10px;font-size:.8rem;min-height:64px;resize:vertical;}
+.tr-field .tr-help{font-size:.65rem;color:var(--muted);margin-top:4px;}
+
+.tr-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:6px;}
+.tr-btn{display:inline-block;padding:8px 20px;border-radius:6px;font-size:.78rem;font-weight:700;
+  cursor:pointer;border:none;text-decoration:none;letter-spacing:.04em;transition:opacity .15s;}
+.tr-btn:hover{opacity:.85;}
+.tr-btn-bull{background:var(--bull);color:#0a1a0a;}
+.tr-btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--border);}
+</style>
+{% endblock %}
+
+{% block content %}
+
+{% if messages %}{% for m in messages %}
+<div class="messagelist"><li class="{{ m.tags }}">{{ m }}</li></div>
+{% endfor %}{% endif %}
+
+<div class="tr-header">
+  <div class="tr-title">✓ Approve Treasury Request #{{ instance.pk }}</div>
+  <div class="tr-crumb">TREASURY › TreasuryOperationRequest › #{{ instance.pk }} › Approve</div>
+</div>
+
+<div class="tr-summary">
+  <div class="tr-summary-grid">
+    <div><div class="sm-label">Request ID</div><div class="sm-val">#{{ instance.pk }}</div></div>
+    <div><div class="sm-label">Wallet</div><div class="sm-val">{{ instance.wallet }}</div></div>
+    <div><div class="sm-label">Username</div><div class="sm-val">{{ instance.wallet.user.username }}</div></div>
+    <div><div class="sm-label">Email</div><div class="sm-val">{{ instance.wallet.user.email|default:"—" }}</div></div>
+    <div><div class="sm-label">Operation</div><div class="sm-val">{{ instance.get_operation_type_display }}</div></div>
+    <div><div class="sm-label">Currency</div><div class="sm-val">{{ instance.currency|default:instance.wallet.currency }}</div></div>
+    <div><div class="sm-label">Amount</div><div class="sm-val">{{ instance.amount }}</div></div>
+    <div><div class="sm-label">Category</div><div class="sm-val">{{ instance.get_category_display|default:"—" }}</div></div>
+    <div><div class="sm-label">Reference</div><div class="sm-val">{{ instance.reference|default:"—" }}</div></div>
+    <div><div class="sm-label">Requested By</div><div class="sm-val">{{ instance.requested_by|default:"—" }}</div></div>
+    <div><div class="sm-label">Requested At</div><div class="sm-val">{{ instance.requested_at }}</div></div>
+    <div><div class="sm-label">Reviewing As</div><div class="sm-val">{{ reviewing_as }}</div></div>
+    <div><div class="sm-label">Status</div><div class="sm-val">{{ instance.status }}</div></div>
+  </div>
+</div>
+
+<div class="tr-bignotice">
+  <div class="line1">Approving this request DOES NOT move funds.</div>
+  <div class="line2">Execution will happen in a later phase.</div>
+</div>
+
+<form method="post">
+  {% csrf_token %}
+
+  <div class="tr-section">
+    <div class="tr-field">
+      <label for="id_review_notes">Review Notes (opcional)</label>
+      <textarea name="review_notes" id="id_review_notes"></textarea>
+      <div class="tr-help">Observaciones administrativas para futuras revisiones — no afecta la decisión.</div>
+    </div>
+  </div>
+
+  <div class="tr-actions">
+    <a href="{{ cancel_url }}" class="tr-btn tr-btn-ghost">Cancel</a>
+    <button type="submit" class="tr-btn tr-btn-bull">Approve Request</button>
+  </div>
+</form>
+
+{% endblock %}
