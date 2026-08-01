@@ -48,6 +48,13 @@ EV_TREASURY_REQUEST_SUBMITTED = "treasury.request_submitted"
 EV_TREASURY_REQUEST_APPROVED = "treasury.request_approved"
 EV_TREASURY_REQUEST_REJECTED = "treasury.request_rejected"
 
+# O.3c-1 — Treasury Execution Engine. Schema-only: no call site exists
+# yet (the execution service is a later block, O.3c-3). No WalletTransaction,
+# no EXECUTING/EXECUTED/FAILED transition is implemented by this constant.
+EV_TREASURY_REQUEST_EXECUTION_STARTED = "treasury.request_execution_started"
+EV_TREASURY_REQUEST_EXECUTED          = "treasury.request_executed"
+EV_TREASURY_REQUEST_EXECUTION_FAILED  = "treasury.request_execution_failed"
+
 EV_ADMIN_ACTION      = "admin.action"
 EV_ADMIN_VIEW        = "admin.view"
 

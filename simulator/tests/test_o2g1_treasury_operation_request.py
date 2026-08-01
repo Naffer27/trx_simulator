@@ -48,10 +48,13 @@ class TreasuryOperationRequestModelTests(TestCase):
         self.assertEqual(req.status, TreasuryOperationRequest.ST_PENDING)
 
     def test_operation_type_choices_match_frozen_design(self):
+        # O.3c-0a — MANUAL_ADJUSTMENT was replaced by MANUAL_CREDIT/
+        # MANUAL_DEBIT (frozen O.3c-0 architecture decision: the type
+        # itself carries direction, no separate `direction` field).
         values = {c[0] for c in TreasuryOperationRequest.OPERATION_TYPE_CHOICES}
         self.assertEqual(values, {
             "CREDIT_FUNDS", "DEBIT_FUNDS", "REFUND",
-            "BONUS_CREDIT", "IB_COMMISSION", "MANUAL_ADJUSTMENT",
+            "BONUS_CREDIT", "IB_COMMISSION", "MANUAL_CREDIT", "MANUAL_DEBIT",
         })
 
     def test_treasury_hold_is_not_an_operation_type(self):
@@ -224,7 +227,7 @@ class CancelledAtFieldTests(TestCase):
 
         wallet = make_wallet()
         req = TreasuryOperationRequest.objects.create(
-            operation_type=TreasuryOperationRequest.OP_MANUAL_ADJUSTMENT,
+            operation_type=TreasuryOperationRequest.OP_MANUAL_CREDIT,
             wallet=wallet, amount=Decimal("18.00"), cancelled_at=timezone.now(),
         )
         staff = make_user(username="o2g1a_admin_staff", is_staff=True, is_superuser=True)
@@ -310,7 +313,7 @@ class TreasuryOperationRequestAdminPermissionTests(TestCase):
     def test_changelist_loads_without_error(self):
         wallet = make_wallet()
         TreasuryOperationRequest.objects.create(
-            operation_type=TreasuryOperationRequest.OP_MANUAL_ADJUSTMENT,
+            operation_type=TreasuryOperationRequest.OP_MANUAL_CREDIT,
             wallet=wallet, amount=Decimal("30.00"),
         )
         staff = make_user(username="o2g1_admin_staff2", is_staff=True, is_superuser=True)

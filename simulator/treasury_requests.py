@@ -58,16 +58,38 @@ reading their source, O.3a-4 design study §1) — this service does not
 add a redundant try/except around them, exactly like deposit_callback()
 does not, trusting that same contract.
 """
+import logging
+
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.utils import timezone
 
 from . import audit
 from . import broker_audit
-from .models import TreasuryOperationRequest
+from .models import TreasuryOperationRequest, WalletTransaction
 
-TREASURY_SUBMIT_PERMISSION = "simulator.can_submit_treasury_request"
-TREASURY_REVIEW_PERMISSION = "simulator.can_review_treasury_request"
+log = logging.getLogger("simulator.treasury_requests")
+
+TREASURY_SUBMIT_PERMISSION  = "simulator.can_submit_treasury_request"
+TREASURY_REVIEW_PERMISSION  = "simulator.can_review_treasury_request"
+TREASURY_EXECUTE_PERMISSION = "simulator.can_execute_treasury_request"
+
+# O.3c-2 — frozen mapping decision: reuse the existing WalletTransaction
+# tx_type catalog exclusively, no new tx_type. "credit"/"debit" is a
+# direction marker resolved against wallet_ledger.credit_wallet()/
+# debit_wallet() inside execute_treasury_request() — the two functions
+# themselves are imported locally there (never at module level here),
+# same discipline already used everywhere else this project calls into
+# wallet_ledger.py from outside it.
+_EXECUTION_MAPPING = {
+    TreasuryOperationRequest.OP_CREDIT_FUNDS:  ("credit", WalletTransaction.TX_CORRECTION),
+    TreasuryOperationRequest.OP_DEBIT_FUNDS:   ("debit",  WalletTransaction.TX_CORRECTION),
+    TreasuryOperationRequest.OP_REFUND:        ("credit", WalletTransaction.TX_CORRECTION),
+    TreasuryOperationRequest.OP_BONUS_CREDIT:  ("credit", WalletTransaction.TX_BONUS),
+    TreasuryOperationRequest.OP_IB_COMMISSION: ("credit", WalletTransaction.TX_REBATE),
+    TreasuryOperationRequest.OP_MANUAL_CREDIT: ("credit", WalletTransaction.TX_CORRECTION),
+    TreasuryOperationRequest.OP_MANUAL_DEBIT:  ("debit",  WalletTransaction.TX_CORRECTION),
+}
 
 
 class TreasuryRequestNotPending(Exception):
@@ -76,6 +98,29 @@ class TreasuryRequestNotPending(Exception):
 
 class TreasuryRequestSelfReviewDenied(Exception):
     """Raised when requested_by attempts to review their own request."""
+
+
+class TreasuryRequestNotApproved(Exception):
+    """Raised when execution is attempted on a non-APPROVED request."""
+
+
+class TreasuryRequestSelfExecutionDenied(Exception):
+    """Raised when requested_by or approved_by attempts to execute their own request."""
+
+
+class TreasuryRequestExecutionInconsistent(Exception):
+    """
+    Raised when a Step B execution attempt finds the request's row no
+    longer matches what it expects to own — either the Step B
+    revalidation itself (status != EXECUTING, executed_by mismatch, or
+    wallet_transaction already linked), or the failure-handling
+    conditional update in the except block matching zero rows (the
+    financial operation failed AND, by the time the code tried to mark
+    the row FAILED, its state had already changed again). In the second
+    case this means the row could NOT be confirmed as marked FAILED —
+    callers must not assume FAILED was persisted and must treat this as
+    requiring operational investigation.
+    """
 
 
 def submit_treasury_request(form, *, request):
@@ -397,6 +442,328 @@ def reject_treasury_request(instance, rejection_reason, *, request, review_notes
             "review_notes": review_notes,
             "previous_status": previous_status,
             "status": locked.status,
+        },
+    )
+
+    return locked
+
+
+# ─────────────────────────────────────────────
+# Treasury Request Execution Engine — O.3c-3
+#
+# execute_treasury_request() — the only transition that moves real
+# money: APPROVED -> EXECUTING -> EXECUTED, or APPROVED -> EXECUTING ->
+# FAILED. Every credit_wallet()/debit_wallet() call and every tx_type
+# choice follows the frozen O.3c-2 mapping (_EXECUTION_MAPPING above)
+# exactly — no new tx_type, no direction field (O.3c-0), no
+# WalletTransaction ever edited or deleted, no InternalTransfer ever
+# created (this is a pure Wallet-internal correction/credit, never a
+# Wallet<->TradingAccount transfer).
+#
+# Two separate transaction.atomic() blocks (Step A / Step B), mirroring
+# wallet_ledger.py::transfer_to_account()'s own pattern — not a single
+# atomic block — so that a durable EXECUTING marker survives a process
+# crash between the two steps (O.3c Fase 0 §Fase 4/5): Step A commits
+# APPROVED -> EXECUTING alone; Step B is the only place that ever calls
+# credit_wallet()/debit_wallet() and the only place that ever sets
+# wallet_transaction, always together with the EXECUTED transition, in
+# the same atomic() — so wallet_transaction IS NULL is always a 100%
+# reliable signal that no money moved for this request.
+#
+# Step B revalidation (O.3c-3 security amendment #1, required before
+# this block was authorized): Step A's checks are NOT trusted blindly.
+# Step B re-locks the row and independently reconfirms status ==
+# EXECUTING, executed_by_id == request.user.pk, and wallet_transaction_id
+# is None, BEFORE calling credit_wallet()/debit_wallet(). Any mismatch
+# raises TreasuryRequestExecutionInconsistent and touches no money.
+#
+# Failure handling (O.3c-3 security amendment #2, required before this
+# block was authorized): the except branch never does an unconditional
+# UPDATE by pk. It uses a conditional UPDATE scoped to
+# (pk, status=EXECUTING, wallet_transaction__isnull=True,
+# executed_by=request.user) and inspects the number of rows actually
+# updated. Only when exactly one row was updated does this function
+# treat the request as durably marked FAILED and emit
+# EXECUTION_FAILED — if zero rows matched, the row's state had already
+# changed out from under this execution attempt; no FAILED transition
+# can be claimed to have happened, no EXECUTION_FAILED event is emitted
+# (that would be reporting a persisted fact that never actually
+# persisted), and TreasuryRequestExecutionInconsistent is raised
+# instead, chained via `from` onto the original financial exception so
+# both are visible for operational investigation.
+# ─────────────────────────────────────────────
+
+def execute_treasury_request(instance, *, request, execution_notes=""):
+    """
+    Transition an APPROVED TreasuryOperationRequest to EXECUTED (moving
+    real money via wallet_ledger.credit_wallet()/debit_wallet()) or, on
+    financial failure, to FAILED.
+
+    Args:
+        instance:         a TreasuryOperationRequest — only its .pk is
+                           used; re-read under lock in both steps, never
+                           trusted for status/requested_by/approved_by/
+                           executed_by/wallet_transaction (all could be
+                           stale).
+        request:          the current HttpRequest — request.user must be
+                           authenticated and hold
+                           TREASURY_EXECUTE_PERMISSION, and must be
+                           neither the request's requested_by nor its
+                           approved_by; request is also forwarded to
+                           audit.log_audit().
+        execution_notes:  optional executor commentary, stripped;
+                           recorded only in AuditLog/BrokerAuditEvent,
+                           never on the model and never merged into the
+                           WalletTransaction.note text.
+
+    Returns:
+        The locked, updated TreasuryOperationRequest instance (EXECUTED).
+
+    Raises:
+        PermissionDenied:                request.user not authenticated,
+                                          or lacks TREASURY_EXECUTE_PERMISSION.
+        TreasuryRequestSelfExecutionDenied: request.user is the request's
+                                          own requested_by or approved_by.
+        TreasuryRequestNotApproved:       the request's status is not
+                                          APPROVED (Step A recheck under
+                                          lock).
+        TreasuryRequestExecutionInconsistent: the Step B revalidation
+                                          found status/executed_by/
+                                          wallet_transaction no longer
+                                          matching this execution
+                                          attempt, or the failure-path
+                                          conditional UPDATE matched
+                                          zero rows.
+        InsufficientFunds / ValueError:  propagated from debit_wallet()/
+                                          credit_wallet() — the request
+                                          is marked FAILED first (when
+                                          the conditional UPDATE
+                                          succeeds), then this is
+                                          re-raised.
+        TreasuryOperationRequest.DoesNotExist: instance.pk no longer
+                                          exists — left to propagate;
+                                          the future view (O.3c-5)
+                                          translates this to a 404.
+    """
+    if not request.user.is_authenticated:
+        raise PermissionDenied("Authentication required to execute a treasury request.")
+
+    if not request.user.has_perm(TREASURY_EXECUTE_PERMISSION):
+        raise PermissionDenied(f"Missing permission: {TREASURY_EXECUTE_PERMISSION}")
+
+    execution_notes = (execution_notes or "").strip()
+
+    # ── Step A — durable EXECUTING marker, own atomic block, commits alone ──
+    with transaction.atomic():
+        locked = TreasuryOperationRequest.objects.select_for_update().get(pk=instance.pk)
+
+        if locked.status != TreasuryOperationRequest.ST_APPROVED:
+            raise TreasuryRequestNotApproved(
+                f"TreasuryOperationRequest #{locked.pk} is not approved (status={locked.status})."
+            )
+        if locked.requested_by_id == request.user.pk or locked.approved_by_id == request.user.pk:
+            raise TreasuryRequestSelfExecutionDenied(
+                f"User #{request.user.pk} cannot execute treasury request #{locked.pk} "
+                "they themselves requested or approved."
+            )
+
+        locked.status = TreasuryOperationRequest.ST_EXECUTING
+        locked.executed_by = request.user
+        locked.wallet_transaction = None
+        locked.save(update_fields=["status", "executed_by", "wallet_transaction"])
+    # ── EXECUTING is committed and durable from here on ──
+
+    audit.log_audit(
+        request, audit.EV_TREASURY_REQUEST_EXECUTION_STARTED,
+        f"Treasury request #{locked.pk} execution started",
+        detail={
+            "treasury_request_id": locked.pk,
+            "operation_type": locked.operation_type,
+            "wallet_id": locked.wallet_id,
+            "wallet_user_id": locked.wallet.user_id,
+            "amount": str(locked.amount),
+            "requested_by_id": locked.requested_by_id,
+            "approved_by_id": locked.approved_by_id,
+            "executed_by_id": locked.executed_by_id,
+            "previous_status": TreasuryOperationRequest.ST_APPROVED,
+            "new_status": TreasuryOperationRequest.ST_EXECUTING,
+        },
+    )
+    broker_audit.record_payment_event(
+        event_type=broker_audit.EV_TREASURY_REQUEST_EXECUTION_STARTED,
+        severity=broker_audit.Severity.INFO,
+        actor_type=broker_audit.ActorType.STAFF,
+        actor_id=request.user.pk,
+        description=f"Treasury request #{locked.pk} execution started",
+        source_module="simulator.treasury_requests",
+        metadata={
+            "treasury_operation_request_id": locked.pk,
+            "operation_type": locked.operation_type,
+            "wallet_id": locked.wallet_id,
+            "wallet_user_id": locked.wallet.user_id,
+            "amount": str(locked.amount),
+            "requested_by_id": locked.requested_by_id,
+            "approved_by_id": locked.approved_by_id,
+            "executed_by_id": locked.executed_by_id,
+            "status": TreasuryOperationRequest.ST_EXECUTING,
+        },
+    )
+
+    # ── Step B — the only place that moves money, own atomic block ──
+    from .wallet_ledger import credit_wallet, debit_wallet
+
+    try:
+        with transaction.atomic():
+            locked = TreasuryOperationRequest.objects.select_for_update().get(pk=instance.pk)
+
+            # Security amendment #1 — never trust Step A's checks alone.
+            # Independently reconfirm this execution attempt still owns
+            # this row before touching any money.
+            if locked.status != TreasuryOperationRequest.ST_EXECUTING:
+                raise TreasuryRequestExecutionInconsistent(
+                    f"TreasuryOperationRequest #{locked.pk}: expected status "
+                    f"EXECUTING at Step B, found {locked.status}."
+                )
+            if locked.executed_by_id != request.user.pk:
+                raise TreasuryRequestExecutionInconsistent(
+                    f"TreasuryOperationRequest #{locked.pk}: expected executed_by="
+                    f"{request.user.pk} at Step B, found {locked.executed_by_id}."
+                )
+            if locked.wallet_transaction_id is not None:
+                raise TreasuryRequestExecutionInconsistent(
+                    f"TreasuryOperationRequest #{locked.pk}: wallet_transaction "
+                    f"already linked (#{locked.wallet_transaction_id}) — refusing "
+                    "to move money a second time."
+                )
+
+            direction, tx_type = _EXECUTION_MAPPING[locked.operation_type]
+            op_function = credit_wallet if direction == "credit" else debit_wallet
+            note = (
+                f"Treasury Request #{locked.pk} — {locked.get_operation_type_display()} — "
+                f"{locked.reference or locked.reason}"
+            )
+
+            wtx = op_function(
+                locked.wallet_id, locked.amount, tx_type,
+                note=note, initiated_by=request.user,
+            )
+
+            locked.wallet_transaction = wtx
+            locked.status = TreasuryOperationRequest.ST_EXECUTED
+            locked.executed_at = timezone.now()
+            locked.save(update_fields=["wallet_transaction", "status", "executed_at"])
+    except Exception as exc:
+        # Security amendment #2 — never an unconditional update by pk.
+        # Only claim FAILED was persisted if the conditional UPDATE
+        # actually matched (and therefore updated) exactly this row,
+        # still owned by this execution attempt, with no money moved.
+        updated_rows = TreasuryOperationRequest.objects.filter(
+            pk=instance.pk,
+            status=TreasuryOperationRequest.ST_EXECUTING,
+            wallet_transaction__isnull=True,
+            executed_by=request.user,
+        ).update(
+            status=TreasuryOperationRequest.ST_FAILED,
+            failure_reason=str(exc)[:256],
+            executed_at=timezone.now(),
+        )
+
+        if updated_rows == 0:
+            log.error(
+                "[treasury_requests] execution failure for TreasuryOperationRequest "
+                "#%s could NOT be persisted as FAILED — row no longer matched the "
+                "expected state (status=EXECUTING, wallet_transaction=None, "
+                "executed_by=%s); original error: %r. Requires operational "
+                "investigation — do not assume FAILED was recorded.",
+                instance.pk, request.user.pk, exc, exc_info=True,
+            )
+            raise TreasuryRequestExecutionInconsistent(
+                f"TreasuryOperationRequest #{instance.pk}: execution failed "
+                f"({exc!r}) but could not be marked FAILED — its state changed "
+                "unexpectedly before the failure could be persisted. Requires "
+                "operational investigation."
+            ) from exc
+
+        audit.log_audit(
+            request, audit.EV_TREASURY_REQUEST_EXECUTION_FAILED,
+            f"Treasury request #{instance.pk} execution failed",
+            detail={
+                "treasury_request_id": instance.pk,
+                "operation_type": locked.operation_type,
+                "wallet_id": locked.wallet_id,
+                "wallet_user_id": locked.wallet.user_id,
+                "amount": str(locked.amount),
+                "requested_by_id": locked.requested_by_id,
+                "approved_by_id": locked.approved_by_id,
+                "executed_by_id": locked.executed_by_id,
+                "previous_status": TreasuryOperationRequest.ST_EXECUTING,
+                "new_status": TreasuryOperationRequest.ST_FAILED,
+                "failure_reason": str(exc)[:256],
+            },
+        )
+        broker_audit.record_payment_event(
+            event_type=broker_audit.EV_TREASURY_REQUEST_EXECUTION_FAILED,
+            severity=broker_audit.Severity.HIGH,
+            actor_type=broker_audit.ActorType.STAFF,
+            actor_id=request.user.pk,
+            description=f"Treasury request #{instance.pk} execution failed",
+            source_module="simulator.treasury_requests",
+            metadata={
+                "treasury_operation_request_id": instance.pk,
+                "operation_type": locked.operation_type,
+                "wallet_id": locked.wallet_id,
+                "wallet_user_id": locked.wallet.user_id,
+                "amount": str(locked.amount),
+                "requested_by_id": locked.requested_by_id,
+                "approved_by_id": locked.approved_by_id,
+                "executed_by_id": locked.executed_by_id,
+                "status": TreasuryOperationRequest.ST_FAILED,
+                "failure_reason": str(exc)[:256],
+            },
+        )
+        raise
+
+    # ── transaction closed — EXECUTED + wallet_transaction are committed together ──
+
+    audit.log_audit(
+        request, audit.EV_TREASURY_REQUEST_EXECUTED,
+        f"Treasury request #{locked.pk} executed",
+        detail={
+            "treasury_request_id": locked.pk,
+            "operation_type": locked.operation_type,
+            "wallet_id": locked.wallet_id,
+            "wallet_user_id": locked.wallet.user_id,
+            "amount": str(locked.amount),
+            "requested_by_id": locked.requested_by_id,
+            "approved_by_id": locked.approved_by_id,
+            "executed_by_id": locked.executed_by_id,
+            "wallet_transaction_id": locked.wallet_transaction_id,
+            "tx_type": locked.wallet_transaction.tx_type,
+            "execution_notes": execution_notes,
+            "previous_status": TreasuryOperationRequest.ST_EXECUTING,
+            "new_status": TreasuryOperationRequest.ST_EXECUTED,
+        },
+    )
+    broker_audit.record_payment_event(
+        event_type=broker_audit.EV_TREASURY_REQUEST_EXECUTED,
+        severity=broker_audit.Severity.WARNING,
+        actor_type=broker_audit.ActorType.STAFF,
+        actor_id=request.user.pk,
+        description=f"Treasury request #{locked.pk} executed",
+        source_module="simulator.treasury_requests",
+        metadata={
+            "treasury_operation_request_id": locked.pk,
+            "operation_type": locked.operation_type,
+            "wallet_id": locked.wallet_id,
+            "wallet_user_id": locked.wallet.user_id,
+            "amount": str(locked.amount),
+            "requested_by_id": locked.requested_by_id,
+            "approved_by_id": locked.approved_by_id,
+            "executed_by_id": locked.executed_by_id,
+            "wallet_transaction_id": locked.wallet_transaction_id,
+            "tx_type": locked.wallet_transaction.tx_type,
+            "execution_notes": execution_notes,
+            "status": TreasuryOperationRequest.ST_EXECUTED,
         },
     )
 

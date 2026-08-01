@@ -1167,7 +1167,7 @@ class TreasuryOperationRequest(models.Model):
     wallet, amount, currency, status, actors/timestamps) is intentionally
     generic and optional at the schema level — reason/reference/category/
     comment/evidence/metadata apply differently per operation_type (e.g.
-    reference+category are mandatory only for MANUAL_ADJUSTMENT), and
+    reference+category are mandatory only for MANUAL_CREDIT/MANUAL_DEBIT), and
     that per-type requirement is enforced by the service layer that a
     future block adds, never by this schema. Same discipline already
     used by WalletTransaction.deposit/internal_transfer ("at most one
@@ -1178,7 +1178,18 @@ class TreasuryOperationRequest(models.Model):
     OP_REFUND             = "REFUND"
     OP_BONUS_CREDIT       = "BONUS_CREDIT"
     OP_IB_COMMISSION      = "IB_COMMISSION"
-    OP_MANUAL_ADJUSTMENT  = "MANUAL_ADJUSTMENT"
+    # O.3c-0a — MANUAL_ADJUSTMENT (single, direction-less type) was
+    # replaced by two explicit types before any execution engine could
+    # be built against it. The schema has no field to disambiguate
+    # credit vs debit for a single "Manual Adjustment" type (amount is
+    # always positive, CheckConstraint amount__gt=0) — same problem
+    # CREDIT_FUNDS/DEBIT_FUNDS already solved by being two types
+    # instead of one. Frozen decision (O.3c-0 architecture review): no
+    # `direction` field, no inference from `category` — the type itself
+    # is the direction, mirroring WalletTransaction's own convention
+    # (tx_type + signed amount, never a separate direction flag).
+    OP_MANUAL_CREDIT      = "MANUAL_CREDIT"
+    OP_MANUAL_DEBIT       = "MANUAL_DEBIT"
 
     OPERATION_TYPE_CHOICES = [
         (OP_CREDIT_FUNDS,      "Credit Funds"),
@@ -1186,7 +1197,8 @@ class TreasuryOperationRequest(models.Model):
         (OP_REFUND,            "Refund"),
         (OP_BONUS_CREDIT,      "Bonus Credit"),
         (OP_IB_COMMISSION,     "IB / Referral Commission"),
-        (OP_MANUAL_ADJUSTMENT, "Manual Adjustment"),
+        (OP_MANUAL_CREDIT,     "Manual Credit Adjustment"),
+        (OP_MANUAL_DEBIT,      "Manual Debit Adjustment"),
     ]
 
     ST_PENDING   = "PENDING"

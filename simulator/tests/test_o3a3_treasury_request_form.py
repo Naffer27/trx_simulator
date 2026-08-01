@@ -140,7 +140,7 @@ class GeneralValidationTests(TestCase):
         self.assertFalse(form.is_valid())
         self.assertIn("operation_type", form.errors)
 
-    def test_operation_type_must_be_one_of_the_six_choices(self):
+    def test_operation_type_must_be_one_of_the_valid_choices(self):
         data = _minimal_valid_data(self.wallet, operation_type="TREASURY_HOLD")
         form = TreasuryOperationRequestForm(data=data)
         self.assertFalse(form.is_valid())
@@ -394,7 +394,19 @@ class IBCommissionTests(TestCase):
         self.assertTrue(form.is_valid(), form.errors)
 
 
-class ManualAdjustmentTests(TestCase):
+class _ManualAdjustmentRulesMixin:
+    """
+    O.3c-0a — OP_MANUAL_ADJUSTMENT was replaced by OP_MANUAL_CREDIT /
+    OP_MANUAL_DEBIT (frozen O.3c-0 architecture decision). Both new
+    types inherit MANUAL_ADJUSTMENT's exact requirement rules
+    unchanged — the split only changes which wallet_ledger.py
+    primitive a future execution engine calls, never what this form
+    requires. Shared here via a mixin so both concrete TestCase
+    subclasses below exercise identical test bodies without
+    duplicating logic, per O.3c-0a's own instruction.
+    """
+
+    operation_type = None  # set by each concrete subclass
 
     def setUp(self):
         self.wallet = make_wallet()
@@ -402,7 +414,7 @@ class ManualAdjustmentTests(TestCase):
     def _data(self, **overrides):
         data = {
             "wallet": self.wallet.pk,
-            "operation_type": TreasuryOperationRequest.OP_MANUAL_ADJUSTMENT,
+            "operation_type": self.operation_type,
             "amount": "33.00",
             "reason": "One-off adjustment per support ticket",
             "category": TreasuryOperationRequest.CAT_OTHER,
@@ -445,6 +457,29 @@ class ManualAdjustmentTests(TestCase):
         form = TreasuryOperationRequestForm(data=data)
         self.assertTrue(form.is_valid(), form.errors)
         self.assertFalse(form.cleaned_data.get("evidence"))
+
+
+class ManualCreditAdjustmentTests(_ManualAdjustmentRulesMixin, TestCase):
+    operation_type = TreasuryOperationRequest.OP_MANUAL_CREDIT
+
+
+class ManualDebitAdjustmentTests(_ManualAdjustmentRulesMixin, TestCase):
+    operation_type = TreasuryOperationRequest.OP_MANUAL_DEBIT
+
+
+class ManualAdjustmentOldValueRejectedTests(TestCase):
+    """O.3c-0a §10 — the retired MANUAL_ADJUSTMENT value must now be
+    rejected as an invalid operation_type, same as any other bogus
+    string (Django's own ChoiceField validation, no custom code)."""
+
+    def setUp(self):
+        self.wallet = make_wallet()
+
+    def test_old_manual_adjustment_value_rejected(self):
+        data = _minimal_valid_data(self.wallet, operation_type="MANUAL_ADJUSTMENT")
+        form = TreasuryOperationRequestForm(data=data)
+        self.assertFalse(form.is_valid())
+        self.assertIn("operation_type", form.errors)
 
 
 class EvidenceValidationTests(TestCase):

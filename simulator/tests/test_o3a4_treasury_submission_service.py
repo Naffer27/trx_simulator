@@ -79,16 +79,21 @@ class SuccessfulCreationTests(TestCase):
         if operation_type in (
             TreasuryOperationRequest.OP_CREDIT_FUNDS,
             TreasuryOperationRequest.OP_DEBIT_FUNDS,
-            TreasuryOperationRequest.OP_MANUAL_ADJUSTMENT,
+            TreasuryOperationRequest.OP_MANUAL_CREDIT,
+            TreasuryOperationRequest.OP_MANUAL_DEBIT,
         ):
             base["category"] = TreasuryOperationRequest.CAT_OTHER
         if operation_type in (
             TreasuryOperationRequest.OP_REFUND,
             TreasuryOperationRequest.OP_IB_COMMISSION,
-            TreasuryOperationRequest.OP_MANUAL_ADJUSTMENT,
+            TreasuryOperationRequest.OP_MANUAL_CREDIT,
+            TreasuryOperationRequest.OP_MANUAL_DEBIT,
         ):
             base["reference"] = "REF-O3A4"
-        if operation_type == TreasuryOperationRequest.OP_MANUAL_ADJUSTMENT:
+        if operation_type in (
+            TreasuryOperationRequest.OP_MANUAL_CREDIT,
+            TreasuryOperationRequest.OP_MANUAL_DEBIT,
+        ):
             base["comment"] = "Documented manually for this test."
         return base
 
@@ -365,21 +370,33 @@ class AuditFailureIsolationTests(TestCase):
 
 class NoWalletLedgerOrFundedPayoutsUsageTests(TestCase):
     """
-    20 — el servicio no llama wallet_ledger.py ni funded_payouts.py.
+    20 — submit_treasury_request() no llama wallet_ledger.py ni
+    funded_payouts.py.
+
+    Scoped to submit_treasury_request() specifically (via
+    inspect.getsource(module.submit_treasury_request), not the whole
+    module) since O.3c-3 legitimately added execute_treasury_request()
+    to this same module, which DOES import and call
+    credit_wallet()/debit_wallet() — that is its entire purpose, proven
+    separately by simulator.tests.test_o3c3_treasury_execution_service.
+    py::WalletLedgerUsageTests. A whole-module scan would now
+    false-positive on that unrelated, authorized function.
 
     AST-based (not a plain substring search): the module's own docstring
-    legitimately documents, in prose, that it does NOT call credit_wallet()
-    / debit_wallet() / etc. — a substring search would false-positive on
-    that very documentation. Walking the parsed AST for real Import/
-    ImportFrom nodes and real Call nodes ignores docstrings entirely.
+    legitimately documents, in prose, that submit_treasury_request()
+    does NOT call credit_wallet() / debit_wallet() / etc. — a substring
+    search would false-positive on that very documentation. Walking the
+    parsed AST for real Import/ImportFrom nodes and real Call nodes
+    ignores docstrings entirely.
     """
 
-    def test_module_never_imports_wallet_ledger_or_funded_payouts(self):
+    def test_submit_treasury_request_never_imports_wallet_ledger_or_funded_payouts(self):
         import ast
         import inspect
-        import simulator.treasury_requests as module
+        import textwrap
+        from simulator.treasury_requests import submit_treasury_request
 
-        tree = ast.parse(inspect.getsource(module))
+        tree = ast.parse(textwrap.dedent(inspect.getsource(submit_treasury_request)))
         imported_modules = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -392,12 +409,13 @@ class NoWalletLedgerOrFundedPayoutsUsageTests(TestCase):
         self.assertNotIn("wallet_ledger", imported_modules)
         self.assertNotIn("funded_payouts", imported_modules)
 
-    def test_module_never_calls_wallet_movement_functions(self):
+    def test_submit_treasury_request_never_calls_wallet_movement_functions(self):
         import ast
         import inspect
-        import simulator.treasury_requests as module
+        import textwrap
+        from simulator.treasury_requests import submit_treasury_request
 
-        tree = ast.parse(inspect.getsource(module))
+        tree = ast.parse(textwrap.dedent(inspect.getsource(submit_treasury_request)))
         called_names = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):

@@ -340,18 +340,28 @@ class TreasuryOperationRequestForm(forms.ModelForm):
     # Fase 0 §2/§4) — enforced here, in the service layer, never in the
     # schema, same discipline TreasuryOperationRequest's own docstring
     # already documents for reference/category.
+    #
+    # O.3c-0a — OP_MANUAL_ADJUSTMENT was replaced by OP_MANUAL_CREDIT /
+    # OP_MANUAL_DEBIT (frozen O.3c-0 architecture decision: the type
+    # itself carries direction, no `direction` field). Both new types
+    # inherit MANUAL_ADJUSTMENT's exact requirement rules unchanged —
+    # they differ only in which wallet_ledger.py primitive the future
+    # execution engine calls, never in what this form requires.
     _CATEGORY_REQUIRED_TYPES = {
         TreasuryOperationRequest.OP_CREDIT_FUNDS,
         TreasuryOperationRequest.OP_DEBIT_FUNDS,
-        TreasuryOperationRequest.OP_MANUAL_ADJUSTMENT,
+        TreasuryOperationRequest.OP_MANUAL_CREDIT,
+        TreasuryOperationRequest.OP_MANUAL_DEBIT,
     }
     _REFERENCE_REQUIRED_TYPES = {
         TreasuryOperationRequest.OP_REFUND,
         TreasuryOperationRequest.OP_IB_COMMISSION,
-        TreasuryOperationRequest.OP_MANUAL_ADJUSTMENT,
+        TreasuryOperationRequest.OP_MANUAL_CREDIT,
+        TreasuryOperationRequest.OP_MANUAL_DEBIT,
     }
     _COMMENT_REQUIRED_TYPES = {
-        TreasuryOperationRequest.OP_MANUAL_ADJUSTMENT,
+        TreasuryOperationRequest.OP_MANUAL_CREDIT,
+        TreasuryOperationRequest.OP_MANUAL_DEBIT,
     }
     # CREDIT_FUNDS / DEBIT_FUNDS only: reference additionally becomes
     # required when category is one of these two.
@@ -366,7 +376,7 @@ class TreasuryOperationRequestForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # reason is required for all six operation_type. The model field
+        # reason is required for all operation_type values. The model field
         # is blank=True (per-type enforcement lives in the form, never in
         # the schema), so ModelForm would otherwise default it to
         # required=False.
@@ -440,6 +450,6 @@ class TreasuryOperationRequestForm(forms.ModelForm):
             )
 
         if operation_type in self._COMMENT_REQUIRED_TYPES and not comment:
-            self.add_error("comment", "Comment es obligatorio para Manual Adjustment.")
+            self.add_error("comment", "Comment es obligatorio para Manual Credit/Debit Adjustment.")
 
         return cleaned_data
