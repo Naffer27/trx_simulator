@@ -2062,6 +2062,40 @@ class InternalTransferAdmin(admin.ModelAdmin):
 # registered read-only (O.2e-1) before any action was added.
 # ─────────────────────────────────────────────
 
+def _treasury_wallet_confirmation_data():
+    """
+    O.3a-5 — one row of confirmation-panel data per Wallet, embedded in the
+    "New Treasury Request" page as a JSON blob and looked up client-side
+    by WalletChoiceField's <select> value on change. Display-only: this
+    never writes anything, and the values shown (balances, KYC status) are
+    read straight from the DB at page-render time, same discipline as
+    every other read-only observability view in this file.
+
+    KYC status is looked up via a single extra query (not one per wallet)
+    to avoid N+1 — a user with no KYCProfile row shows "Not Started",
+    matching KYCProfile.STATUS_NOT_STARTED's own default semantics even
+    though no row exists yet for that user.
+    """
+    kyc_status_by_user_id = dict(
+        KYCProfile.objects.values_list("user_id", "status")
+    )
+    kyc_labels = dict(KYCProfile.STATUS_CHOICES)
+
+    data = {}
+    for wallet in Wallet.objects.select_related("user").order_by("user__username"):
+        kyc_code = kyc_status_by_user_id.get(wallet.user_id, KYCProfile.STATUS_NOT_STARTED)
+        data[str(wallet.pk)] = {
+            "username": wallet.user.username,
+            "email": wallet.user.email or "—",
+            "wallet": str(wallet),
+            "available_balance": f"{wallet.available_balance:,.2f}",
+            "pending_balance": f"{wallet.pending_balance:,.2f}",
+            "currency": wallet.currency,
+            "kyc_status": kyc_labels.get(kyc_code, kyc_code),
+        }
+    return data
+
+
 @admin.register(TreasuryOperationRequest)
 class TreasuryOperationRequestAdmin(admin.ModelAdmin):
     list_display   = (
@@ -2074,6 +2108,11 @@ class TreasuryOperationRequestAdmin(admin.ModelAdmin):
     ordering       = ("-requested_at", "-id")
 
     def has_add_permission(self, request):
+        # O.3a-5 — Django's own add form stays blocked forever (Fase 0
+        # Decision 1, ADMIN_UI.1 pattern): the only entry point is the
+        # custom "New Treasury Request" view registered in get_urls()
+        # below, which uses TreasuryOperationRequestForm + submit_
+        # treasury_request(), not this ModelAdmin's default add machinery.
         return False
 
     def has_change_permission(self, request, obj=None):
@@ -2081,6 +2120,94 @@ class TreasuryOperationRequestAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+    def has_view_permission(self, request, obj=None):
+        # O.3a-5 — anyone who can submit/review/execute a treasury request
+        # can also VIEW the (100% read-only, see readonly_fields above)
+        # request ledger — needed so the post-submit redirect to this
+        # object's own change/detail page (O.3a-5 UX design §6) actually
+        # resolves for an operator who only holds can_submit_treasury_
+        # request, instead of dead-ending in a 403 right after a
+        # successful submission. has_change_permission stays hard-False
+        # above regardless, so this never grants edit access — only
+        # read-only visibility, the same discipline as every field in
+        # readonly_fields already enforces.
+        if request.user.has_perm("simulator.can_submit_treasury_request"):
+            return True
+        if request.user.has_perm("simulator.can_review_treasury_request"):
+            return True
+        if request.user.has_perm("simulator.can_execute_treasury_request"):
+            return True
+        return super().has_view_permission(request, obj)
+
+    def changelist_view(self, request, extra_context=None):
+        extra_context = extra_context or {}
+        if request.user.has_perm("simulator.can_submit_treasury_request"):
+            extra_context["new_treasury_request_url"] = reverse("admin:treasury_request_new")
+        return super().changelist_view(request, extra_context)
+
+    def get_urls(self):
+        urls = super().get_urls()
+        custom = [
+            path(
+                "new/",
+                self.admin_site.admin_view(self.treasury_request_new_view),
+                name="treasury_request_new",
+            ),
+        ]
+        return custom + urls
+
+    def treasury_request_new_view(self, request):
+        """
+        O.3a-5 — the only entry point that can create a
+        TreasuryOperationRequest. Follows the same shape as every other
+        custom admin view in this file (Control Center, Shadow Exposure,
+        Dealing Desk): get_urls() + self.admin_site.admin_view(...) +
+        a plain method rendering a template in simulator/templates/admin/.
+
+        Permission is checked HERE (view layer) and, independently,
+        again inside submit_treasury_request() (service layer,
+        O.3a-4) — the two-layer defense explicitly required when O.3a-4
+        was approved: this view does not assume the service will catch
+        a caller that forgot to check.
+
+        POST validation and creation are delegated entirely to
+        TreasuryOperationRequestForm (O.3a-3) and submit_treasury_
+        request() (O.3a-4) — no validation or persistence logic is
+        duplicated here.
+        """
+        import json
+
+        from django.core.exceptions import PermissionDenied
+
+        from .forms import TreasuryOperationRequestForm
+        from .treasury_requests import TREASURY_SUBMIT_PERMISSION, submit_treasury_request
+
+        if not request.user.has_perm(TREASURY_SUBMIT_PERMISSION):
+            raise PermissionDenied(f"Missing permission: {TREASURY_SUBMIT_PERMISSION}")
+
+        if request.method == "POST":
+            form = TreasuryOperationRequestForm(request.POST, request.FILES)
+            if form.is_valid():
+                instance = submit_treasury_request(form, request=request)
+                messages.success(
+                    request,
+                    f"✓ Treasury Request #{instance.pk} creada — estado: "
+                    f"{instance.status}. Pendiente de revisión.",
+                )
+                return redirect("admin:simulator_treasuryoperationrequest_change", instance.pk)
+            messages.error(request, "⚠ Revisa los campos marcados antes de continuar.")
+        else:
+            form = TreasuryOperationRequestForm()
+
+        context = dict(
+            self.admin_site.each_context(request),
+            title="New Treasury Request",
+            form=form,
+            wallet_data_json=json.dumps(_treasury_wallet_confirmation_data()),
+            cancel_url=reverse("admin:simulator_treasuryoperationrequest_changelist"),
+        )
+        return render(request, "admin/treasury_request_new.html", context)
 
 
 # ─────────────────────────────────────────────

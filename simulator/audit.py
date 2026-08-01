@@ -39,6 +39,10 @@ EV_ACCOUNT_FUNDED    = "account.funded"
 EV_ACCOUNT_WITHDRAWN = "account.withdrawn"
 EV_ACCOUNT_CREATED   = "account.created"
 
+# O.3a-2 — Treasury Private Operations submission engine. Schema-only:
+# no call site exists yet (that is a later block).
+EV_TREASURY_REQUEST_SUBMITTED = "treasury.request_submitted"
+
 EV_ADMIN_ACTION      = "admin.action"
 EV_ADMIN_VIEW        = "admin.view"
 

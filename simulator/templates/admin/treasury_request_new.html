@@ -1,0 +1,303 @@
+{% extends "admin/base_site.html" %}
+{% block title %}New Treasury Request{% endblock %}
+{% block extrahead %}{{ block.super }}
+<style>
+:root{
+  --bg:#07070f;--panel:#0f0f1c;--panel2:#13131f;--border:#1e1e30;
+  --gold:#e8c84a;--bull:#27ae60;--bear:#e74c3c;--warn:#e67e22;--info:#3498db;
+  --text:#c8ccd8;--muted:#55556a;--r:8px;
+}
+#content{background:var(--bg)!important;color:var(--text);}
+#content h1{color:var(--gold);font-size:1.05rem;letter-spacing:.06em;margin:0;}
+
+.tr-header{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+  padding:14px 18px;margin-bottom:14px;}
+.tr-title{font-size:.95rem;font-weight:800;color:var(--gold);letter-spacing:.04em;}
+.tr-crumb{font-size:.65rem;color:var(--muted);margin-top:2px;text-transform:uppercase;letter-spacing:.06em;}
+
+/* Adjustment 3 — professional top disclaimer, not a warning */
+.tr-disclaimer{background:var(--panel2);border:1px solid var(--border);border-left:3px solid var(--info);
+  border-radius:var(--r);padding:12px 16px;margin-bottom:16px;font-size:.75rem;color:var(--text);line-height:1.55;}
+.tr-disclaimer b{color:var(--info);}
+
+.tr-section{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+  padding:16px 18px;margin-bottom:14px;}
+.tr-section-title{font-size:.68rem;font-weight:800;color:var(--muted);text-transform:uppercase;
+  letter-spacing:.08em;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--border);}
+
+.tr-field{margin-bottom:14px;}
+.tr-field:last-child{margin-bottom:0;}
+.tr-field label{display:block;font-size:.72rem;font-weight:700;color:var(--text);margin-bottom:4px;}
+.tr-field label .req{color:var(--bear);margin-left:2px;}
+.tr-field .tr-help{font-size:.65rem;color:var(--muted);margin-top:4px;}
+.tr-field select, .tr-field input[type=text], .tr-field input[type=number],
+.tr-field textarea, .tr-field input[type=file]{
+  width:100%;max-width:520px;background:var(--panel2);border:1px solid var(--border);
+  color:var(--text);border-radius:5px;padding:7px 10px;font-size:.8rem;
+}
+.tr-field textarea{min-height:64px;resize:vertical;}
+.tr-field .errorlist{list-style:none;margin:4px 0 0 0;padding:0;color:var(--bear);font-size:.68rem;}
+
+/* Adjustment 1 — read-only wallet confirmation panel */
+.tr-wallet-panel{display:none;margin-top:12px;background:var(--panel2);border:1px solid var(--border);
+  border-radius:var(--r);padding:12px 16px;}
+.tr-wallet-panel.show{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;}
+.tr-wallet-panel .wp-item{}
+.tr-wallet-panel .wp-label{font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;}
+.tr-wallet-panel .wp-val{font-size:.8rem;color:var(--text);font-weight:700;margin-top:2px;}
+.tr-wallet-panel .wp-val.kyc-approved{color:var(--bull);}
+.tr-wallet-panel .wp-val.kyc-pending-review{color:var(--warn);}
+.tr-wallet-panel .wp-val.kyc-rejected{color:var(--bear);}
+.tr-wallet-hint{font-size:.65rem;color:var(--muted);margin-top:4px;font-style:italic;}
+
+/* Adjustment 2 — summary block before Submit */
+.tr-summary{background:var(--panel2);border:1px solid var(--gold);border-radius:var(--r);
+  padding:16px 18px;margin-bottom:16px;}
+.tr-summary-title{font-size:.7rem;font-weight:800;color:var(--gold);text-transform:uppercase;
+  letter-spacing:.08em;margin-bottom:10px;}
+.tr-summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px 18px;}
+.tr-summary .sm-label{font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;}
+.tr-summary .sm-val{font-size:.78rem;color:var(--text);margin-top:2px;word-break:break-word;}
+.tr-summary .sm-val.empty{color:var(--muted);font-style:italic;}
+.tr-summary-note{font-size:.68rem;color:var(--muted);margin-top:12px;padding-top:10px;border-top:1px solid var(--border);}
+
+.tr-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:6px;}
+.tr-btn{display:inline-block;padding:8px 20px;border-radius:6px;font-size:.78rem;font-weight:700;
+  cursor:pointer;border:none;text-decoration:none;letter-spacing:.04em;transition:opacity .15s;}
+.tr-btn:hover{opacity:.85;}
+.tr-btn-gold{background:var(--gold);color:#1a1a1a;}
+.tr-btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--border);}
+</style>
+{% endblock %}
+
+{% block content %}
+
+{% if messages %}{% for m in messages %}
+<div class="messagelist"><li class="{{ m.tags }}">{{ m }}</li></div>
+{% endfor %}{% endif %}
+
+<div class="tr-header">
+  <div class="tr-title">⬡ New Treasury Request</div>
+  <div class="tr-crumb">TREASURY › TreasuryOperationRequest › New Request</div>
+</div>
+
+<div class="tr-disclaimer">
+  Esta pantalla crea únicamente una <b>solicitud administrativa de Treasury</b>
+  (Treasury Operation Request). Ningún fondo, balance de wallet ni saldo de
+  cuenta se modifica en este paso — el movimiento real solo ocurrirá tras
+  la futura revisión, aprobación y ejecución por un supervisor autorizado.
+</div>
+
+<form method="post" enctype="multipart/form-data" id="tr-form" novalidate>
+  {% csrf_token %}
+
+  <div class="tr-section">
+    <div class="tr-section-title">1 · Wallet &amp; Operation Type</div>
+
+    <div class="tr-field">
+      <label for="{{ form.wallet.id_for_label }}">Wallet<span class="req">*</span></label>
+      {{ form.wallet }}
+      {{ form.wallet.errors }}
+      <div class="tr-help">Busca por username o email del cliente.</div>
+
+      {# Adjustment 1 — read-only wallet confirmation panel, no data edited here #}
+      <div class="tr-wallet-panel" id="tr-wallet-panel">
+        <div class="wp-item"><div class="wp-label">Username</div><div class="wp-val" id="wp-username">—</div></div>
+        <div class="wp-item"><div class="wp-label">Email</div><div class="wp-val" id="wp-email">—</div></div>
+        <div class="wp-item"><div class="wp-label">Wallet</div><div class="wp-val" id="wp-wallet">—</div></div>
+        <div class="wp-item"><div class="wp-label">Available Balance</div><div class="wp-val" id="wp-available">—</div></div>
+        <div class="wp-item"><div class="wp-label">Pending Balance</div><div class="wp-val" id="wp-pending">—</div></div>
+        <div class="wp-item"><div class="wp-label">KYC Status</div><div class="wp-val" id="wp-kyc">—</div></div>
+      </div>
+      <div class="tr-wallet-hint">Panel de confirmación de solo lectura — no modifica ningún dato.</div>
+    </div>
+
+    <div class="tr-field">
+      <label for="{{ form.operation_type.id_for_label }}">Operation Type<span class="req">*</span></label>
+      {{ form.operation_type }}
+      {{ form.operation_type.errors }}
+      <div class="tr-help" id="tr-optype-help">Determina qué campos son obligatorios más abajo.</div>
+    </div>
+  </div>
+
+  <div class="tr-section">
+    <div class="tr-section-title">2 · Amount</div>
+    <div class="tr-field">
+      <label for="{{ form.amount.id_for_label }}">Amount<span class="req">*</span></label>
+      {{ form.amount }}
+      {{ form.amount.errors }}
+      <div class="tr-help">Debe ser mayor a cero, máximo 2 decimales. Currency se toma del wallet — no editable.</div>
+    </div>
+  </div>
+
+  <div class="tr-section">
+    <div class="tr-section-title">3 · Classification &amp; Justification</div>
+
+    <div class="tr-field" id="tr-field-category">
+      <label for="{{ form.category.id_for_label }}">Category<span class="req" id="tr-req-category" style="display:none;">*</span></label>
+      {{ form.category }}
+      {{ form.category.errors }}
+      <div class="tr-help">Selecciona la categoría que mejor describe este movimiento.</div>
+    </div>
+
+    <div class="tr-field" id="tr-field-reference">
+      <label for="{{ form.reference.id_for_label }}">Reference<span class="req" id="tr-req-reference" style="display:none;">*</span></label>
+      {{ form.reference }}
+      {{ form.reference.errors }}
+      <div class="tr-help">Referencia al ticket, depósito o período original.</div>
+    </div>
+
+    <div class="tr-field">
+      <label for="{{ form.reason.id_for_label }}">Reason<span class="req">*</span></label>
+      {{ form.reason }}
+      {{ form.reason.errors }}
+      <div class="tr-help">Obligatorio para los 6 tipos de operación. Explica el motivo del movimiento.</div>
+    </div>
+
+    <div class="tr-field" id="tr-field-comment">
+      <label for="{{ form.comment.id_for_label }}">Comment<span class="req" id="tr-req-comment" style="display:none;">*</span></label>
+      {{ form.comment }}
+      {{ form.comment.errors }}
+      <div class="tr-help">Manual Adjustment requiere una justificación explícita por escrito.</div>
+    </div>
+  </div>
+
+  <div class="tr-section">
+    <div class="tr-section-title">4 · Evidence (opcional)</div>
+    <div class="tr-field">
+      <label for="{{ form.evidence.id_for_label }}">Evidence</label>
+      {{ form.evidence }}
+      {{ form.evidence.errors }}
+      <div class="tr-help">PDF, JPG, JPEG o PNG — máximo 5 MB.</div>
+    </div>
+  </div>
+
+  {# Adjustment 2 — final-review summary block, mirrors form values live, edits nothing #}
+  <div class="tr-summary">
+    <div class="tr-summary-title">Summary — revisión final antes de enviar</div>
+    <div class="tr-summary-grid">
+      <div><div class="sm-label">Wallet</div><div class="sm-val empty" id="sm-wallet">—</div></div>
+      <div><div class="sm-label">Operation Type</div><div class="sm-val empty" id="sm-optype">—</div></div>
+      <div><div class="sm-label">Amount</div><div class="sm-val empty" id="sm-amount">—</div></div>
+      <div><div class="sm-label">Currency</div><div class="sm-val empty" id="sm-currency">—</div></div>
+      <div><div class="sm-label">Category</div><div class="sm-val empty" id="sm-category">—</div></div>
+      <div><div class="sm-label">Reference</div><div class="sm-val empty" id="sm-reference">—</div></div>
+      <div><div class="sm-label">Reason</div><div class="sm-val empty" id="sm-reason">—</div></div>
+      <div><div class="sm-label">Comment</div><div class="sm-val empty" id="sm-comment">—</div></div>
+      <div><div class="sm-label">Evidence</div><div class="sm-val empty" id="sm-evidence">—</div></div>
+    </div>
+    <div class="tr-summary-note">
+      Esta solicitud se creará como <b>PENDING</b>. Ningún fondo se mueve hasta que sea
+      revisada y ejecutada por un supervisor autorizado.
+    </div>
+  </div>
+
+  <div class="tr-actions">
+    <a href="{{ cancel_url }}" class="tr-btn tr-btn-ghost">Cancel</a>
+    <button type="submit" class="tr-btn tr-btn-gold">Submit Treasury Request</button>
+  </div>
+</form>
+
+<script type="application/json" id="tr-wallet-data">{{ wallet_data_json|safe }}</script>
+<script>
+(function () {
+  "use strict";
+  var walletData = JSON.parse(document.getElementById("tr-wallet-data").textContent || "{}");
+
+  // Mirrors TreasuryOperationRequestForm's per-operation_type rules
+  // (simulator/forms.py, O.3a-3) — cosmetic only. The server remains the
+  // sole authority: this only toggles a visual "*" marker, it never
+  // blocks submission client-side.
+  var CATEGORY_REQUIRED = ["CREDIT_FUNDS", "DEBIT_FUNDS", "MANUAL_ADJUSTMENT"];
+  var REFERENCE_REQUIRED = ["REFUND", "IB_COMMISSION", "MANUAL_ADJUSTMENT"];
+  var REFERENCE_CATEGORY_GATED = ["CREDIT_FUNDS", "DEBIT_FUNDS"];
+  var REFERENCE_REQUIRED_CATEGORIES = ["SYSTEM_ERROR", "PROVIDER_DUPLICATE"];
+  var COMMENT_REQUIRED = ["MANUAL_ADJUSTMENT"];
+
+  var walletSelect = document.getElementById("{{ form.wallet.id_for_label }}");
+  var opTypeSelect = document.getElementById("{{ form.operation_type.id_for_label }}");
+  var categorySelect = document.getElementById("{{ form.category.id_for_label }}");
+  var amountInput = document.getElementById("{{ form.amount.id_for_label }}");
+  var referenceInput = document.getElementById("{{ form.reference.id_for_label }}");
+  var reasonInput = document.getElementById("{{ form.reason.id_for_label }}");
+  var commentInput = document.getElementById("{{ form.comment.id_for_label }}");
+  var evidenceInput = document.getElementById("{{ form.evidence.id_for_label }}");
+
+  function setVal(id, value, isEmpty) {
+    var el = document.getElementById(id);
+    el.textContent = value || "—";
+    el.classList.toggle("empty", !!isEmpty || !value);
+  }
+
+  function kycClass(label) {
+    return "kyc-" + (label || "").toLowerCase().replace(/\s+/g, "-");
+  }
+
+  function updateWalletPanel() {
+    var wallet = walletData[walletSelect.value];
+    var panel = document.getElementById("tr-wallet-panel");
+    if (!wallet) {
+      panel.classList.remove("show");
+      setVal("sm-wallet", "", true);
+      return;
+    }
+    panel.classList.add("show");
+    document.getElementById("wp-username").textContent = wallet.username;
+    document.getElementById("wp-email").textContent = wallet.email;
+    document.getElementById("wp-wallet").textContent = wallet.wallet;
+    document.getElementById("wp-available").textContent = wallet.available_balance + " " + wallet.currency;
+    document.getElementById("wp-pending").textContent = wallet.pending_balance + " " + wallet.currency;
+    var kycEl = document.getElementById("wp-kyc");
+    kycEl.textContent = wallet.kyc_status;
+    kycEl.className = "wp-val " + kycClass(wallet.kyc_status);
+
+    setVal("sm-wallet", wallet.username + " (" + wallet.email + ")");
+    setVal("sm-currency", wallet.currency);
+  }
+
+  function updateRequiredMarkers() {
+    var opType = opTypeSelect.value;
+    var category = categorySelect.value;
+
+    var categoryReq = CATEGORY_REQUIRED.indexOf(opType) !== -1;
+    var referenceReq = REFERENCE_REQUIRED.indexOf(opType) !== -1 ||
+      (REFERENCE_CATEGORY_GATED.indexOf(opType) !== -1 &&
+       REFERENCE_REQUIRED_CATEGORIES.indexOf(category) !== -1);
+    var commentReq = COMMENT_REQUIRED.indexOf(opType) !== -1;
+
+    document.getElementById("tr-req-category").style.display = categoryReq ? "" : "none";
+    document.getElementById("tr-req-reference").style.display = referenceReq ? "" : "none";
+    document.getElementById("tr-req-comment").style.display = commentReq ? "" : "none";
+  }
+
+  function updateSummary() {
+    var opTypeLabel = opTypeSelect.options[opTypeSelect.selectedIndex]
+      ? opTypeSelect.options[opTypeSelect.selectedIndex].text : "";
+    var categoryLabel = categorySelect.options[categorySelect.selectedIndex]
+      ? categorySelect.options[categorySelect.selectedIndex].text : "";
+
+    setVal("sm-optype", opTypeLabel);
+    setVal("sm-amount", amountInput.value);
+    setVal("sm-category", categorySelect.value ? categoryLabel : "");
+    setVal("sm-reference", referenceInput.value);
+    setVal("sm-reason", reasonInput.value);
+    setVal("sm-comment", commentInput.value);
+    setVal("sm-evidence", evidenceInput.files && evidenceInput.files[0] ? evidenceInput.files[0].name : "");
+
+    updateRequiredMarkers();
+  }
+
+  walletSelect.addEventListener("change", function () { updateWalletPanel(); updateSummary(); });
+  opTypeSelect.addEventListener("change", updateSummary);
+  [amountInput, categorySelect, referenceInput, reasonInput, commentInput].forEach(function (el) {
+    el.addEventListener("input", updateSummary);
+    el.addEventListener("change", updateSummary);
+  });
+  evidenceInput.addEventListener("change", updateSummary);
+
+  updateWalletPanel();
+  updateSummary();
+})();
+</script>
+
+{% endblock %}

@@ -1292,6 +1292,9 @@ class TreasuryOperationRequest(models.Model):
             ),
         ]
         permissions = [
+            # O.3a-1 — schema only. Not checked anywhere yet; the
+            # submission view that will enforce it is a later block.
+            ("can_submit_treasury_request", "Can submit (create) treasury request"),
             ("can_review_treasury_request", "Can review (approve/reject) treasury request"),
             ("can_execute_treasury_request", "Can execute treasury request"),
         ]

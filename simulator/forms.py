@@ -4,7 +4,10 @@ from django import forms
 from django.contrib.auth.models import User
 from django.conf import settings
 from django.contrib.auth.password_validation import validate_password
-from .models import TradingAccount, Deposit, MARGIN_ENGINE_TYPES, KYCProfile
+from .models import (
+    TradingAccount, Deposit, MARGIN_ENGINE_TYPES, KYCProfile,
+    TreasuryOperationRequest, Wallet,
+)
 
 
 class LoginForm(forms.Form):
@@ -267,3 +270,176 @@ class KYCProfileForm(forms.ModelForm):
         self.fields["document_number"].required = False
         self.fields["document_back"].required   = False
         self.fields["selfie"].required          = False
+
+
+# ─────────────────────────────────────────────
+# Treasury Private Operations — O.3a-3
+#
+# Isolated form only. No view, URL, template or productive save() exists
+# yet — this class is validated directly via is_valid()/cleaned_data in
+# tests. Nothing here creates an AuditLog or BrokerAuditEvent row, and
+# nothing here is wired into admin.py.
+# ─────────────────────────────────────────────
+
+class WalletChoiceField(forms.ModelChoiceField):
+    """
+    Human-readable wallet lookup for the operator (username/email),
+    instead of a raw wallet_id as the primary UX — without touching
+    Wallet.__str__ (used elsewhere, not authorized to change in this
+    block). Standard ModelChoiceField already gives "wallet obligatorio
+    y existente" for free: required=True is inferred from the model's
+    non-nullable FK, and its queryset makes any non-existent/deleted
+    wallet id fail validation automatically. This subclass only
+    overrides the display label.
+    """
+    def label_from_instance(self, obj):
+        email = (obj.user.email or "").strip()
+        if email:
+            return f"{obj.user.username} ({email})"
+        return obj.user.username
+
+
+# Evidence whitelist — conservative first pass. Extension is the primary
+# gate (client-supplied content_type is never trusted alone); content_type
+# is checked as a second layer only when the uploaded file actually
+# provides one.
+TREASURY_EVIDENCE_ALLOWED_EXTENSIONS = {"pdf", "jpg", "jpeg", "png"}
+TREASURY_EVIDENCE_ALLOWED_CONTENT_TYPES = {
+    "application/pdf", "image/jpeg", "image/png",
+}
+TREASURY_EVIDENCE_MAX_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
+
+
+class TreasuryOperationRequestForm(forms.ModelForm):
+    """
+    O.3a-3 — isolated TreasuryOperationRequest submission form.
+
+    Exposed fields (Meta.fields, operator input): wallet, operation_type,
+    amount, reason, reference, category, comment, evidence.
+
+    Deliberately NOT exposed (never settable by the operator through this
+    form): currency (derived from wallet.currency by a later block, never
+    operator input), status, metadata, wallet_transaction, requested_by,
+    requested_at, approved_by, approved_at, rejected_by, rejected_at,
+    rejection_reason, executed_by, executed_at, failure_reason,
+    cancelled_at, updated_at.
+    """
+    wallet = WalletChoiceField(
+        queryset=Wallet.objects.select_related("user"),
+        label="Wallet",
+    )
+
+    class Meta:
+        model = TreasuryOperationRequest
+        fields = [
+            "wallet", "operation_type", "amount", "reason",
+            "reference", "category", "comment", "evidence",
+        ]
+
+    # Per-operation_type requirement tables (frozen O.3a architecture,
+    # Fase 0 §2/§4) — enforced here, in the service layer, never in the
+    # schema, same discipline TreasuryOperationRequest's own docstring
+    # already documents for reference/category.
+    _CATEGORY_REQUIRED_TYPES = {
+        TreasuryOperationRequest.OP_CREDIT_FUNDS,
+        TreasuryOperationRequest.OP_DEBIT_FUNDS,
+        TreasuryOperationRequest.OP_MANUAL_ADJUSTMENT,
+    }
+    _REFERENCE_REQUIRED_TYPES = {
+        TreasuryOperationRequest.OP_REFUND,
+        TreasuryOperationRequest.OP_IB_COMMISSION,
+        TreasuryOperationRequest.OP_MANUAL_ADJUSTMENT,
+    }
+    _COMMENT_REQUIRED_TYPES = {
+        TreasuryOperationRequest.OP_MANUAL_ADJUSTMENT,
+    }
+    # CREDIT_FUNDS / DEBIT_FUNDS only: reference additionally becomes
+    # required when category is one of these two.
+    _REFERENCE_REQUIRED_CATEGORIES = {
+        TreasuryOperationRequest.CAT_SYSTEM_ERROR,
+        TreasuryOperationRequest.CAT_PROVIDER_DUPLICATE,
+    }
+    _REFERENCE_CATEGORY_GATED_TYPES = {
+        TreasuryOperationRequest.OP_CREDIT_FUNDS,
+        TreasuryOperationRequest.OP_DEBIT_FUNDS,
+    }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # reason is required for all six operation_type. The model field
+        # is blank=True (per-type enforcement lives in the form, never in
+        # the schema), so ModelForm would otherwise default it to
+        # required=False.
+        self.fields["reason"].required = True
+
+    def clean_amount(self):
+        amount = self.cleaned_data.get("amount")
+        if amount is not None and amount <= 0:
+            raise forms.ValidationError("El monto debe ser mayor a cero.")
+        return amount
+
+    def clean_reason(self):
+        reason = (self.cleaned_data.get("reason") or "").strip()
+        if not reason:
+            raise forms.ValidationError("Reason es obligatorio.")
+        return reason
+
+    def clean_reference(self):
+        return (self.cleaned_data.get("reference") or "").strip()
+
+    def clean_comment(self):
+        return (self.cleaned_data.get("comment") or "").strip()
+
+    def clean_evidence(self):
+        evidence = self.cleaned_data.get("evidence")
+        if not evidence:
+            return evidence
+
+        name = getattr(evidence, "name", "") or ""
+        ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        if ext not in TREASURY_EVIDENCE_ALLOWED_EXTENSIONS:
+            raise forms.ValidationError(
+                f"Tipo de archivo no permitido (.{ext or '?'}). "
+                "Solo se aceptan PDF, JPG, JPEG o PNG."
+            )
+
+        content_type = getattr(evidence, "content_type", None)
+        if content_type and content_type not in TREASURY_EVIDENCE_ALLOWED_CONTENT_TYPES:
+            raise forms.ValidationError(
+                f"Tipo de contenido no permitido ({content_type})."
+            )
+
+        size = getattr(evidence, "size", None)
+        if size is not None and size > TREASURY_EVIDENCE_MAX_SIZE_BYTES:
+            raise forms.ValidationError(
+                "El archivo excede el tamaño máximo permitido (5 MB)."
+            )
+
+        return evidence
+
+    def clean(self):
+        cleaned_data = super().clean()
+        operation_type = cleaned_data.get("operation_type")
+        category = cleaned_data.get("category")
+        reference = cleaned_data.get("reference")
+        comment = cleaned_data.get("comment")
+
+        if operation_type in self._CATEGORY_REQUIRED_TYPES and not category:
+            self.add_error(
+                "category", "Category es obligatoria para este tipo de operación.",
+            )
+
+        reference_required = operation_type in self._REFERENCE_REQUIRED_TYPES or (
+            operation_type in self._REFERENCE_CATEGORY_GATED_TYPES
+            and category in self._REFERENCE_REQUIRED_CATEGORIES
+        )
+        if reference_required and not reference:
+            self.add_error(
+                "reference",
+                "Reference es obligatoria para este tipo de operación/categoría.",
+            )
+
+        if operation_type in self._COMMENT_REQUIRED_TYPES and not comment:
+            self.add_error("comment", "Comment es obligatorio para Manual Adjustment.")
+
+        return cleaned_data

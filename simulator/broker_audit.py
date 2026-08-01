@@ -240,6 +240,11 @@ EV_FUNDED_PAYOUT_INTERNAL_FAILED        = "payment.funded_payout_internal_failed
 # — each module owns its own constants, same as everywhere else in this file).
 EV_DEPOSIT_CREDITED = "deposit.credited"
 
+# O.3a-2 — mirrors audit.py's EV_TREASURY_REQUEST_SUBMITTED string exactly,
+# same discipline as EV_DEPOSIT_CREDITED above. Schema-only: no call site
+# exists yet (the submission view that will emit it is a later block).
+EV_TREASURY_REQUEST_SUBMITTED = "treasury.request_submitted"
+
 
 # ─────────────────────────────────────────────────────────────────────────
 # AUDIT-03 — Compliance Audit Trail (KYC).
