@@ -45,7 +45,15 @@ class TreasurySubmitPermissionExistsTests(TestCase):
         self.assertEqual(perm.content_type.model, "treasuryoperationrequest")
         self.assertEqual(perm.content_type.app_label, "simulator")
 
-    def test_all_three_treasury_permissions_coexist(self):
+    def test_all_four_treasury_permissions_coexist(self):
+        """
+        O.3c-4c-1: TreasuryOperationRequest now carries four custom
+        permissions — can_recover_treasury_execution was added and
+        authorized in O.3c-4c. This guard originally hardcoded three;
+        updated to reflect that approved addition, same "guard correctly
+        falsified by the next authorized block" pattern already handled
+        for O.3c-1 -> O.3c-3 (O.3c-3a) and O.3c-4a -> O.3c-4b (O.3c-4b-1).
+        """
         content_type = ContentType.objects.get_for_model(TreasuryOperationRequest)
         codenames = set(
             Permission.objects.filter(content_type=content_type)
@@ -61,12 +69,14 @@ class TreasurySubmitPermissionExistsTests(TestCase):
                 "can_submit_treasury_request",
                 "can_review_treasury_request",
                 "can_execute_treasury_request",
+                "can_recover_treasury_execution",
             },
         )
 
-    def test_meta_permissions_declares_submit_first(self):
+    def test_meta_permissions_declares_submit_first_of_four(self):
         # Schema-level check, independent of DB state: the tuple itself,
-        # not what Django materialized from it.
+        # not what Django materialized from it. can_recover_treasury_
+        # execution (O.3c-4c) appended last, submit still declared first.
         codenames = [c for c, _ in TreasuryOperationRequest._meta.permissions]
         self.assertEqual(
             codenames,
@@ -74,6 +84,7 @@ class TreasurySubmitPermissionExistsTests(TestCase):
                 "can_submit_treasury_request",
                 "can_review_treasury_request",
                 "can_execute_treasury_request",
+                "can_recover_treasury_execution",
             ],
         )
 

@@ -260,6 +260,16 @@ EV_TREASURY_REQUEST_EXECUTION_STARTED = "treasury.request_execution_started"
 EV_TREASURY_REQUEST_EXECUTED          = "treasury.request_executed"
 EV_TREASURY_REQUEST_EXECUTION_FAILED  = "treasury.request_execution_failed"
 
+# O.3c-4a — mirrors audit.py's EV_TREASURY_REQUEST_EXECUTION_RECOVERY_
+# STARTED/MARKED_FAILED/RECOVERY_BLOCKED strings exactly, same discipline
+# as above. Schema-only: no call site exists yet (the inspection/recovery
+# services are later blocks, O.3c-4b/4c). No "reset to APPROVED" event —
+# that recovery action was evaluated and explicitly rejected in the
+# O.3c-4 Fase 0 design (approved).
+EV_TREASURY_REQUEST_EXECUTION_RECOVERY_STARTED = "treasury.request_execution_recovery_started"
+EV_TREASURY_REQUEST_EXECUTION_MARKED_FAILED    = "treasury.request_execution_marked_failed"
+EV_TREASURY_REQUEST_EXECUTION_RECOVERY_BLOCKED = "treasury.request_execution_recovery_blocked"
+
 
 # ─────────────────────────────────────────────────────────────────────────
 # AUDIT-03 — Compliance Audit Trail (KYC).

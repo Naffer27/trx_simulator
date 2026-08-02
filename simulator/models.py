@@ -1309,6 +1309,11 @@ class TreasuryOperationRequest(models.Model):
             ("can_submit_treasury_request", "Can submit (create) treasury request"),
             ("can_review_treasury_request", "Can review (approve/reject) treasury request"),
             ("can_execute_treasury_request", "Can execute treasury request"),
+            # O.3c-4c — dedicated permission for recovering a stuck
+            # EXECUTING request (Mark FAILED only). Deliberately separate
+            # from can_execute_treasury_request (O.3c-4 Fase 0 decision):
+            # recovery is incident response, not financial authorization.
+            ("can_recover_treasury_execution", "Can recover (mark failed) stuck treasury execution"),
         ]
 
     def __str__(self):

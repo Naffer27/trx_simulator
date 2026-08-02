@@ -629,6 +629,13 @@ MAX_WITHDRAWAL_DAILY_USD = int(os.getenv("MAX_WITHDRAWAL_DAILY_USD", "1500"))
 # Minimum single withdrawal amount
 MIN_WITHDRAWAL_USD = int(os.getenv("MIN_WITHDRAWAL_USD", "25"))
 
+# O.3c-4b — Treasury Execution Recovery. Minimum age (seconds) a
+# TreasuryOperationRequest must have spent in EXECUTING, measured from
+# its treasury.request_execution_started audit event, before it is
+# even considered a candidate for recovery inspection. See O.3c-4
+# Fase 0 (approved) for the full design and threshold justification.
+TREASURY_EXECUTION_RECOVERY_MIN_AGE_SECONDS = 600
+
 # Guard: NOWPAYMENTS_IPN_SECRET must be set in production so that deposit and
 # withdrawal callbacks cannot be spoofed. Skipped during `manage.py test`.
 if not DEBUG and not NOWPAYMENTS_IPN_SECRET:
