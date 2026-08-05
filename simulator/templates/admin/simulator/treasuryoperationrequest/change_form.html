@@ -18,5 +18,135 @@
     </a>
   </li>
   {% endif %}
+  {% if show_treasury_execute_button %}
+  <li>
+    <a href="{{ treasury_execute_url }}" class="historylink"
+       style="background:rgba(232,200,74,.15);color:#e8c84a;border:2px solid rgba(232,200,74,.5);
+              border-radius:4px;padding:5px 14px;font-size:.75rem;font-weight:800;
+              text-decoration:none;letter-spacing:.04em;">
+      Execute →
+    </a>
+  </li>
+  {% endif %}
   {{ block.super }}
+{% endblock %}
+
+{% block object-tools %}
+{{ block.super }}
+{% if change %}
+  {% if original.status == "EXECUTED" %}
+  <div style="background:#0f0f1c;border:1px solid rgba(39,174,96,.35);border-radius:8px;
+              padding:14px 18px;margin:0 0 14px 0;">
+    <div style="font-size:.85rem;font-weight:800;color:#27ae60;letter-spacing:.04em;margin-bottom:8px;">
+      ✓ Execution
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px 20px;">
+      <div>
+        <div style="font-size:.62rem;color:#55556a;text-transform:uppercase;letter-spacing:.06em;">WalletTransaction</div>
+        <div style="font-size:.85rem;color:#c8ccd8;font-weight:700;margin-top:2px;">#{{ original.wallet_transaction_id|default:"—" }}</div>
+      </div>
+      <div>
+        <div style="font-size:.62rem;color:#55556a;text-transform:uppercase;letter-spacing:.06em;">Tx Type</div>
+        <div style="font-size:.85rem;color:#c8ccd8;font-weight:700;margin-top:2px;">{{ original.wallet_transaction.get_tx_type_display|default:"—" }}</div>
+      </div>
+      <div>
+        <div style="font-size:.62rem;color:#55556a;text-transform:uppercase;letter-spacing:.06em;">Amount (signed)</div>
+        <div style="font-size:.85rem;color:#c8ccd8;font-weight:700;margin-top:2px;">{{ original.wallet_transaction.amount|default:"—" }}</div>
+      </div>
+      <div>
+        <div style="font-size:.62rem;color:#55556a;text-transform:uppercase;letter-spacing:.06em;">Balance After</div>
+        <div style="font-size:.85rem;color:#c8ccd8;font-weight:700;margin-top:2px;">{{ original.wallet_transaction.balance_after|default:"—" }}</div>
+      </div>
+      <div>
+        <div style="font-size:.62rem;color:#55556a;text-transform:uppercase;letter-spacing:.06em;">Executed By</div>
+        <div style="font-size:.85rem;color:#c8ccd8;font-weight:700;margin-top:2px;">{{ original.executed_by|default:"—" }}</div>
+      </div>
+      <div>
+        <div style="font-size:.62rem;color:#55556a;text-transform:uppercase;letter-spacing:.06em;">Executed At</div>
+        <div style="font-size:.85rem;color:#c8ccd8;font-weight:700;margin-top:2px;">{{ original.executed_at|default:"—" }}</div>
+      </div>
+    </div>
+  </div>
+  {% elif original.status == "FAILED" %}
+  <div style="background:#0f0f1c;border:1px solid rgba(231,76,60,.35);border-radius:8px;
+              padding:14px 18px;margin:0 0 14px 0;">
+    <div style="font-size:.85rem;font-weight:800;color:#e74c3c;letter-spacing:.04em;margin-bottom:8px;">
+      ⚠ Execution Failure
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px 20px;">
+      <div>
+        <div style="font-size:.62rem;color:#55556a;text-transform:uppercase;letter-spacing:.06em;">Failure Reason</div>
+        <div style="font-size:.85rem;color:#c8ccd8;font-weight:700;margin-top:2px;">{{ original.failure_reason|default:"—" }}</div>
+      </div>
+      <div>
+        <div style="font-size:.62rem;color:#55556a;text-transform:uppercase;letter-spacing:.06em;">Executed By</div>
+        <div style="font-size:.85rem;color:#c8ccd8;font-weight:700;margin-top:2px;">{{ original.executed_by|default:"—" }}</div>
+      </div>
+      <div>
+        <div style="font-size:.62rem;color:#55556a;text-transform:uppercase;letter-spacing:.06em;">Executed At</div>
+        <div style="font-size:.85rem;color:#c8ccd8;font-weight:700;margin-top:2px;">{{ original.executed_at|default:"—" }}</div>
+      </div>
+      <div>
+        <div style="font-size:.62rem;color:#55556a;text-transform:uppercase;letter-spacing:.06em;">Origin</div>
+        <div style="font-size:.85rem;color:#c8ccd8;font-weight:700;margin-top:2px;">
+          {% if "[MANUAL RECOVERY]" in original.failure_reason %}
+            ⚠ Manual recovery (not a financial engine failure)
+          {% else %}
+            ⚠ Financial engine failure (InsufficientFunds or ledger error)
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+  {% elif original.status == "EXECUTING" and treasury_recovery_candidate %}
+  <div style="background:#0f0f1c;border:1px solid rgba(230,126,34,.4);border-radius:8px;
+              padding:14px 18px;margin:0 0 14px 0;">
+    <div style="font-size:.85rem;font-weight:800;color:#e67e22;letter-spacing:.04em;margin-bottom:8px;">
+      ⏱ STUCK IN EXECUTING
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px 20px;">
+      <div>
+        <div style="font-size:.62rem;color:#55556a;text-transform:uppercase;letter-spacing:.06em;">Case</div>
+        <div style="font-size:.85rem;color:#c8ccd8;font-weight:700;margin-top:2px;">{{ treasury_recovery_candidate.case }} — {{ treasury_recovery_case_label }}</div>
+      </div>
+      <div>
+        <div style="font-size:.62rem;color:#55556a;text-transform:uppercase;letter-spacing:.06em;">Age</div>
+        <div style="font-size:.85rem;color:#c8ccd8;font-weight:700;margin-top:2px;">{{ treasury_recovery_age_display }} (confidence: {{ treasury_recovery_candidate.age_confidence }})</div>
+      </div>
+      <div>
+        <div style="font-size:.62rem;color:#55556a;text-transform:uppercase;letter-spacing:.06em;">Executed By</div>
+        <div style="font-size:.85rem;color:#c8ccd8;font-weight:700;margin-top:2px;">{{ original.executed_by|default:"—" }}
+          {% if treasury_recovery_candidate.executed_by_is_active is False %}[● inactive]{% elif treasury_recovery_candidate.executed_by_is_active %}[● active]{% endif %}
+        </div>
+      </div>
+      <div>
+        <div style="font-size:.62rem;color:#55556a;text-transform:uppercase;letter-spacing:.06em;">WalletTransaction</div>
+        <div style="font-size:.85rem;color:#c8ccd8;font-weight:700;margin-top:2px;">{% if treasury_recovery_candidate.has_wallet_transaction %}#{{ original.wallet_transaction_id }}{% else %}— none —{% endif %}</div>
+      </div>
+      <div>
+        <div style="font-size:.62rem;color:#55556a;text-transform:uppercase;letter-spacing:.06em;">Eligible</div>
+        <div style="font-size:.85rem;font-weight:700;margin-top:2px;
+          {% if treasury_recovery_candidate.eligible %}color:#27ae60;{% else %}color:#e74c3c;{% endif %}">
+          {% if treasury_recovery_candidate.eligible %}✓ YES{% else %}✗ NO{% endif %}
+        </div>
+      </div>
+    </div>
+    {% if not treasury_recovery_candidate.eligible %}
+    <div style="margin-top:10px;font-size:.72rem;color:#e67e22;">
+      Block Reason: {{ treasury_recovery_candidate.block_reason }}
+    </div>
+    {% endif %}
+    {% if show_treasury_recover_button %}
+    <div style="margin-top:12px;text-align:right;">
+      <a href="{{ treasury_recover_url }}"
+         style="display:inline-block;background:rgba(230,126,34,.15);color:#e67e22;
+                border:2px solid rgba(230,126,34,.5);border-radius:6px;padding:6px 16px;
+                font-size:.75rem;font-weight:800;text-decoration:none;letter-spacing:.04em;">
+        Mark as FAILED
+      </a>
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+{% endif %}
 {% endblock %}

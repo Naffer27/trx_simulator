@@ -2096,6 +2096,36 @@ def _treasury_wallet_confirmation_data():
     return data
 
 
+# O.3c-5b — pure display formatting for the read-only recovery banner
+# and confirmation screen. Neither function decides eligibility, case,
+# or block_reason — those come untouched from inspect_stuck_treasury_
+# execution() (treasury_execution_recovery.py, unmodified). This is
+# presentation only: turning a case code / raw seconds count into
+# operator-facing text, same discipline as _treasury_wallet_
+# confirmation_data() above already applies to wallet balances.
+_TREASURY_RECOVERY_CASE_LABELS = {
+    "CASE_A": "Clean, past age threshold — eligible candidate",
+    "CASE_B": "⚠ wallet_transaction already linked — structurally anomalous, never eligible",
+    "CASE_C": "Age confirmed but below threshold — possibly still in flight",
+    "CASE_D": "Age unknown — no EXECUTION_STARTED event found",
+    "CASE_E": "⚠ EXECUTED/FAILED audit event already exists — audit inconsistency",
+    "CASE_F": "executed_by missing or inactive (informational, does not block eligibility by itself)",
+}
+
+
+def _treasury_recovery_case_label(case):
+    return _TREASURY_RECOVERY_CASE_LABELS.get(case, case)
+
+
+def _treasury_recovery_age_display(age_seconds):
+    if age_seconds is None:
+        return "unknown"
+    total = int(age_seconds)
+    hours, remainder = divmod(total, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
 @admin.register(TreasuryOperationRequest)
 class TreasuryOperationRequestAdmin(admin.ModelAdmin):
     list_display   = (
@@ -2138,6 +2168,14 @@ class TreasuryOperationRequestAdmin(admin.ModelAdmin):
             return True
         if request.user.has_perm("simulator.can_execute_treasury_request"):
             return True
+        # O.3c-5b — a recovery-only operator (holding can_recover_
+        # treasury_execution but none of the other three Treasury
+        # permissions) must also be able to view this read-only detail
+        # page — otherwise the EXECUTING recovery banner and "Mark as
+        # FAILED" button built below would be structurally unreachable
+        # for the exact role they exist for.
+        if request.user.has_perm("simulator.can_recover_treasury_execution"):
+            return True
         return super().has_view_permission(request, obj)
 
     def changelist_view(self, request, extra_context=None):
@@ -2158,6 +2196,34 @@ class TreasuryOperationRequestAdmin(admin.ModelAdmin):
         treasury_request_reject_view() below, which call
         approve_treasury_request()/reject_treasury_request() (O.3b-2)
         unmodified.
+
+        O.3c-5a — same discipline extended to the Execute header
+        button: status == APPROVED, request.user holds
+        can_execute_treasury_request, request.user is neither
+        requested_by nor approved_by, and wallet_transaction is still
+        NULL (the exact 5-condition visibility rule frozen in the
+        O.3c-5 Fase 0 design). Execution itself lives entirely in
+        treasury_request_execute_view() below, which calls
+        execute_treasury_request() (O.3c-3) unmodified. The
+        EXECUTED/FAILED state panel (also O.3c-5a) needs no extra
+        context here — it reads directly off `original` in the
+        template, since every field it displays is already a plain
+        readonly model field.
+
+        O.3c-5b — same discipline extended once more, this time to the
+        EXECUTING recovery banner and its "Mark as FAILED" button.
+        inspect_stuck_treasury_execution() (treasury_execution_
+        recovery.py, unmodified) is called here strictly to build
+        DISPLAY context (case/age/eligible/block_reason) — it is a
+        read-only diagnostic by construction (see its own module
+        docstring: no .save(), no .update(), never imports
+        wallet_ledger.py), so calling it from this read-only view does
+        not duplicate or bypass any authorization the mutation itself
+        (mark_treasury_execution_failed(), called only from
+        treasury_request_recover_view() below) independently
+        re-enforces under its own lock. Button visibility mirrors the
+        4-condition rule frozen in the O.3c-5 Fase 0 design: permission,
+        eligible=True, not requested_by, not approved_by.
         """
         extra_context = extra_context or {}
         instance = TreasuryOperationRequest.objects.filter(pk=object_id).first()
@@ -2175,6 +2241,47 @@ class TreasuryOperationRequestAdmin(admin.ModelAdmin):
                 extra_context["treasury_reject_url"] = reverse(
                     "admin:treasury_request_reject", args=[instance.pk],
                 )
+
+            can_execute = (
+                instance.status == TreasuryOperationRequest.ST_APPROVED
+                and request.user.has_perm("simulator.can_execute_treasury_request")
+                and instance.requested_by_id != request.user.pk
+                and instance.approved_by_id != request.user.pk
+                and instance.wallet_transaction_id is None
+            )
+            if can_execute:
+                extra_context["show_treasury_execute_button"] = True
+                extra_context["treasury_execute_url"] = reverse(
+                    "admin:treasury_request_execute", args=[instance.pk],
+                )
+
+            if instance.status == TreasuryOperationRequest.ST_EXECUTING:
+                from .treasury_execution_recovery import inspect_stuck_treasury_execution
+
+                candidate = next(
+                    (c for c in inspect_stuck_treasury_execution() if c.instance.pk == instance.pk),
+                    None,
+                )
+                if candidate is not None:
+                    extra_context["treasury_recovery_candidate"] = candidate
+                    extra_context["treasury_recovery_case_label"] = _treasury_recovery_case_label(
+                        candidate.case,
+                    )
+                    extra_context["treasury_recovery_age_display"] = _treasury_recovery_age_display(
+                        candidate.age_seconds,
+                    )
+
+                    can_recover = (
+                        request.user.has_perm("simulator.can_recover_treasury_execution")
+                        and candidate.eligible
+                        and instance.requested_by_id != request.user.pk
+                        and instance.approved_by_id != request.user.pk
+                    )
+                    if can_recover:
+                        extra_context["show_treasury_recover_button"] = True
+                        extra_context["treasury_recover_url"] = reverse(
+                            "admin:treasury_request_recover", args=[instance.pk],
+                        )
         return super().change_view(request, object_id, form_url, extra_context)
 
     def get_urls(self):
@@ -2194,6 +2301,16 @@ class TreasuryOperationRequestAdmin(admin.ModelAdmin):
                 "<int:pk>/reject/",
                 self.admin_site.admin_view(self.treasury_request_reject_view),
                 name="treasury_request_reject",
+            ),
+            path(
+                "<int:pk>/execute/",
+                self.admin_site.admin_view(self.treasury_request_execute_view),
+                name="treasury_request_execute",
+            ),
+            path(
+                "<int:pk>/recover/",
+                self.admin_site.admin_view(self.treasury_request_recover_view),
+                name="treasury_request_recover",
             ),
         ]
         return custom + urls
@@ -2404,6 +2521,251 @@ class TreasuryOperationRequestAdmin(admin.ModelAdmin):
             cancel_url=change_url,
         )
         return render(request, "admin/treasury_request_reject.html", context)
+
+    def treasury_request_execute_view(self, request, pk):
+        """
+        O.3c-5a — confirmation screen for execute_treasury_request()
+        (O.3c-3). This method does not reimplement any financial or
+        state-machine logic — it only renders a read-only summary on
+        GET, and on POST calls execute_treasury_request() exactly as
+        built there, unmodified. InsufficientFunds is imported only
+        to translate it into an operator-facing message — this view
+        never imports or calls credit_wallet()/debit_wallet()
+        directly, and never moves money itself.
+
+        Visibility/permission is checked here (view layer) AND,
+        independently, again inside execute_treasury_request() (service
+        layer) — same two-layer defense already used by
+        treasury_request_approve_view()/treasury_request_reject_view()
+        (O.3b-3). A status recheck also happens here on GET (so a stale
+        confirmation screen is never shown for an already-processed
+        request), on top of the service's own recheck under lock.
+        """
+        from django.core.exceptions import PermissionDenied
+        from django.http import Http404
+
+        from .treasury_requests import (
+            TREASURY_EXECUTE_PERMISSION,
+            TreasuryRequestExecutionInconsistent,
+            TreasuryRequestNotApproved,
+            TreasuryRequestSelfExecutionDenied,
+            execute_treasury_request,
+        )
+        from .wallet_ledger import InsufficientFunds
+
+        if not request.user.has_perm(TREASURY_EXECUTE_PERMISSION):
+            raise PermissionDenied(f"Missing permission: {TREASURY_EXECUTE_PERMISSION}")
+
+        instance = TreasuryOperationRequest.objects.filter(pk=pk).first()
+        if instance is None:
+            raise Http404("Treasury request not found.")
+
+        if instance.requested_by_id == request.user.pk or instance.approved_by_id == request.user.pk:
+            raise PermissionDenied(
+                "No puedes ejecutar una solicitud que tú mismo solicitaste o aprobaste."
+            )
+
+        change_url = reverse("admin:simulator_treasuryoperationrequest_change", args=[instance.pk])
+
+        if instance.status != TreasuryOperationRequest.ST_APPROVED:
+            messages.warning(
+                request,
+                f"⚠ Esta solicitud ya no está aprobada (estado actual: "
+                f"{instance.status}) — no se puede ejecutar.",
+            )
+            return redirect(change_url)
+
+        if request.method == "POST":
+            execution_notes = request.POST.get("execution_notes", "")
+            try:
+                executed = execute_treasury_request(
+                    instance, request=request, execution_notes=execution_notes,
+                )
+            except TreasuryRequestNotApproved:
+                messages.warning(
+                    request,
+                    f"⚠ Esta solicitud ya no está aprobada (estado actual: "
+                    f"{instance.status}) — no se puede ejecutar.",
+                )
+            except TreasuryRequestSelfExecutionDenied:
+                raise PermissionDenied(
+                    "No puedes ejecutar una solicitud que tú mismo solicitaste o aprobaste."
+                )
+            except (InsufficientFunds, ValueError):
+                messages.error(
+                    request,
+                    f"⚠ La ejecución falló — fondos insuficientes o monto inválido. "
+                    f"La solicitud #{instance.pk} fue marcada como FAILED. "
+                    "Ver failure_reason en el detalle.",
+                )
+            except TreasuryRequestExecutionInconsistent:
+                messages.error(
+                    request,
+                    "⚠ La ejecución no pudo completarse — el estado de la solicitud "
+                    "cambió de forma inesperada durante el procesamiento. Requiere "
+                    "investigación operativa (ver AuditLog). No se movieron fondos "
+                    "en este intento.",
+                )
+            except TreasuryOperationRequest.DoesNotExist:
+                raise Http404("Treasury request not found.")
+            else:
+                wtx = executed.wallet_transaction
+                messages.success(
+                    request,
+                    f"✓ Treasury Request #{executed.pk} ejecutada — WalletTransaction "
+                    f"#{wtx.pk} creada ({wtx.get_tx_type_display()}). Nuevo balance: "
+                    f"{wtx.balance_after}.",
+                )
+            return redirect(change_url)
+
+        context = dict(
+            self.admin_site.each_context(request),
+            title=f"Execute Treasury Request #{instance.pk}",
+            instance=instance,
+            executing_as=request.user,
+            cancel_url=change_url,
+        )
+        return render(request, "admin/treasury_request_execute.html", context)
+
+    def treasury_request_recover_view(self, request, pk):
+        """
+        O.3c-5b — confirmation screen for mark_treasury_execution_failed()
+        (O.3c-4c). This method does not reimplement any classification
+        or state-machine logic — inspect_stuck_treasury_execution() is
+        called only to render the read-only summary (case/age/eligible/
+        block_reason) on GET, and on POST mark_treasury_execution_
+        failed() is called exactly as built there, unmodified. Neither
+        call ever touches wallet_ledger.py, credit_wallet(), or
+        debit_wallet() — recovery is incident response for a row that
+        never moved money, never a financial operation itself (same
+        invariant treasury_execution_recovery.py's own module docstring
+        states).
+
+        Visibility/permission is checked here (view layer) AND,
+        independently, again inside mark_treasury_execution_failed()
+        (service layer) — same two-layer defense already used by every
+        other Treasury admin view in this file. A status/eligibility
+        recheck also happens here on GET (so a stale confirmation
+        screen is never shown for a request that changed state or is
+        no longer eligible), on top of the service's own pre-lock and
+        post-lock rechecks.
+
+        recovery_reason is validated for non-emptiness HERE, before the
+        service is ever called — makes mark_treasury_execution_failed()'s
+        own ValueError branch structurally unreachable from this call
+        site, same pattern already used by treasury_request_reject_view()
+        making reject_treasury_request()'s ValueError branch unreachable.
+        """
+        from django.core.exceptions import PermissionDenied
+        from django.db import Error as DjangoDBError
+        from django.http import Http404
+
+        from .treasury_execution_recovery import (
+            TREASURY_RECOVER_PERMISSION,
+            TreasuryRequestSelfRecoveryDenied,
+            inspect_stuck_treasury_execution,
+            mark_treasury_execution_failed,
+        )
+        from .treasury_requests import TreasuryRequestExecutionInconsistent
+
+        if not request.user.has_perm(TREASURY_RECOVER_PERMISSION):
+            raise PermissionDenied(f"Missing permission: {TREASURY_RECOVER_PERMISSION}")
+
+        instance = TreasuryOperationRequest.objects.filter(pk=pk).first()
+        if instance is None:
+            raise Http404("Treasury request not found.")
+
+        if instance.requested_by_id == request.user.pk or instance.approved_by_id == request.user.pk:
+            raise PermissionDenied(
+                "No puedes recuperar una solicitud que tú mismo solicitaste o aprobaste."
+            )
+
+        change_url = reverse("admin:simulator_treasuryoperationrequest_change", args=[instance.pk])
+
+        if instance.status != TreasuryOperationRequest.ST_EXECUTING:
+            messages.warning(
+                request,
+                f"⚠ Esta solicitud ya no está en EXECUTING (estado actual: "
+                f"{instance.status}) — no requiere recuperación.",
+            )
+            return redirect(change_url)
+
+        candidate = next(
+            (c for c in inspect_stuck_treasury_execution() if c.instance.pk == instance.pk), None,
+        )
+        if candidate is None:
+            messages.warning(
+                request,
+                "⚠ Esta solicitud ya no está en EXECUTING — no requiere recuperación.",
+            )
+            return redirect(change_url)
+
+        if not candidate.eligible:
+            messages.warning(
+                request,
+                f"⚠ Esta solicitud no es elegible para recuperación: {candidate.block_reason}",
+            )
+            return redirect(change_url)
+
+        if request.method == "POST":
+            recovery_reason = request.POST.get("recovery_reason", "")
+            if not recovery_reason.strip():
+                messages.error(request, "⚠ Recovery Reason es obligatorio.")
+                context = dict(
+                    self.admin_site.each_context(request),
+                    title=f"Recover Stuck Execution #{instance.pk}",
+                    instance=instance,
+                    candidate=candidate,
+                    case_label=_treasury_recovery_case_label(candidate.case),
+                    age_display=_treasury_recovery_age_display(candidate.age_seconds),
+                    recovering_as=request.user,
+                    cancel_url=change_url,
+                    recovery_reason=recovery_reason,
+                )
+                return render(request, "admin/treasury_request_recover.html", context)
+
+            try:
+                mark_treasury_execution_failed(
+                    instance, request=request, recovery_reason=recovery_reason,
+                )
+            except TreasuryRequestSelfRecoveryDenied:
+                raise PermissionDenied(
+                    "No puedes recuperar una solicitud que tú mismo solicitaste o aprobaste."
+                )
+            except TreasuryRequestExecutionInconsistent:
+                messages.error(
+                    request,
+                    "⚠ La recuperación no pudo completarse — el estado de la solicitud "
+                    "cambió de forma inesperada durante el procesamiento (o ya no es "
+                    "elegible). Requiere investigación operativa (ver AuditLog).",
+                )
+            except DjangoDBError:
+                messages.error(
+                    request,
+                    "⚠ La solicitud está siendo procesada activamente por otra "
+                    "operación — intenta nuevamente en unos segundos.",
+                )
+            except TreasuryOperationRequest.DoesNotExist:
+                raise Http404("Treasury request not found.")
+            else:
+                messages.success(
+                    request,
+                    f"✓ Treasury Request #{instance.pk} marcada como FAILED por "
+                    "recuperación manual. No se movieron fondos.",
+                )
+            return redirect(change_url)
+
+        context = dict(
+            self.admin_site.each_context(request),
+            title=f"Recover Stuck Execution #{instance.pk}",
+            instance=instance,
+            candidate=candidate,
+            case_label=_treasury_recovery_case_label(candidate.case),
+            age_display=_treasury_recovery_age_display(candidate.age_seconds),
+            recovering_as=request.user,
+            cancel_url=change_url,
+        )
+        return render(request, "admin/treasury_request_recover.html", context)
 
 
 # ─────────────────────────────────────────────

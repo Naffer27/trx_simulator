@@ -1,0 +1,117 @@
+{% extends "admin/base_site.html" %}
+{% block title %}Recover Stuck Execution #{{ instance.pk }}{% endblock %}
+{% block extrahead %}{{ block.super }}
+<style>
+:root{
+  --bg:#07070f;--panel:#0f0f1c;--panel2:#13131f;--border:#1e1e30;
+  --gold:#e8c84a;--bull:#27ae60;--bear:#e74c3c;--warn:#e67e22;--info:#3498db;
+  --text:#c8ccd8;--muted:#55556a;--r:8px;
+}
+#content{background:var(--bg)!important;color:var(--text);}
+#content h1{color:var(--gold);font-size:1.05rem;letter-spacing:.06em;margin:0;}
+
+.tr-header{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+  padding:14px 18px;margin-bottom:14px;}
+.tr-title{font-size:.95rem;font-weight:800;color:var(--warn);letter-spacing:.04em;}
+.tr-crumb{font-size:.65rem;color:var(--muted);margin-top:2px;text-transform:uppercase;letter-spacing:.06em;}
+
+.tr-summary{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+  padding:16px 18px;margin-bottom:16px;}
+.tr-summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px 20px;}
+.tr-summary .sm-label{font-size:.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;}
+.tr-summary .sm-val{font-size:.85rem;color:var(--text);font-weight:700;margin-top:2px;}
+
+.tr-recovery{background:var(--panel);border:1px solid rgba(230,126,34,.35);border-radius:var(--r);
+  padding:16px 18px;margin-bottom:16px;}
+.tr-recovery .tr-recovery-title{font-size:.72rem;color:var(--warn);text-transform:uppercase;
+  letter-spacing:.06em;font-weight:800;margin-bottom:10px;}
+
+.tr-bignotice{background:rgba(230,126,34,.08);border:2px solid var(--warn);border-radius:var(--r);
+  padding:18px 20px;margin-bottom:16px;text-align:center;}
+.tr-bignotice .line1{font-size:1.05rem;font-weight:800;color:var(--warn);letter-spacing:.01em;}
+.tr-bignotice .line2{font-size:.85rem;color:var(--text);margin-top:6px;}
+
+.tr-section{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+  padding:16px 18px;margin-bottom:14px;}
+.tr-field label{display:block;font-size:.72rem;font-weight:700;color:var(--text);margin-bottom:4px;}
+.tr-field textarea{width:100%;max-width:640px;background:var(--panel2);border:1px solid var(--border);
+  color:var(--text);border-radius:5px;padding:7px 10px;font-size:.8rem;min-height:64px;resize:vertical;}
+.tr-field .tr-help{font-size:.65rem;color:var(--muted);margin-top:4px;}
+
+.tr-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:6px;}
+.tr-btn{display:inline-block;padding:8px 20px;border-radius:6px;font-size:.78rem;font-weight:700;
+  cursor:pointer;border:none;text-decoration:none;letter-spacing:.04em;transition:opacity .15s;}
+.tr-btn:hover{opacity:.85;}
+.tr-btn-warn{background:var(--warn);color:#1a0f00;border:2px solid var(--warn);}
+.tr-btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--border);}
+</style>
+{% endblock %}
+
+{% block content %}
+
+{% if messages %}{% for m in messages %}
+<div class="messagelist"><li class="{{ m.tags }}">{{ m }}</li></div>
+{% endfor %}{% endif %}
+
+<div class="tr-header">
+  <div class="tr-title">⏱ Recover Stuck Execution — Request #{{ instance.pk }}</div>
+  <div class="tr-crumb">TREASURY › TreasuryOperationRequest › #{{ instance.pk }} › Recover</div>
+</div>
+
+<div class="tr-summary">
+  <div class="tr-summary-grid">
+    <div><div class="sm-label">Request ID</div><div class="sm-val">#{{ instance.pk }}</div></div>
+    <div><div class="sm-label">Wallet</div><div class="sm-val">{{ instance.wallet }}</div></div>
+    <div><div class="sm-label">Username</div><div class="sm-val">{{ instance.wallet.user.username }}</div></div>
+    <div><div class="sm-label">Email</div><div class="sm-val">{{ instance.wallet.user.email|default:"—" }}</div></div>
+    <div><div class="sm-label">Operation Type</div><div class="sm-val">{{ instance.get_operation_type_display }}</div></div>
+    <div><div class="sm-label">Currency</div><div class="sm-val">{{ instance.currency|default:instance.wallet.currency }}</div></div>
+    <div><div class="sm-label">Amount</div><div class="sm-val">{{ instance.amount }}</div></div>
+    <div><div class="sm-label">Reference</div><div class="sm-val">{{ instance.reference|default:"—" }}</div></div>
+    <div><div class="sm-label">Requested By</div><div class="sm-val">{{ instance.requested_by|default:"—" }}</div></div>
+    <div><div class="sm-label">Approved By</div><div class="sm-val">{{ instance.approved_by|default:"—" }}</div></div>
+    <div><div class="sm-label">Recovering As</div><div class="sm-val">{{ recovering_as }}</div></div>
+    <div><div class="sm-label">Status</div><div class="sm-val">{{ instance.status }}</div></div>
+  </div>
+</div>
+
+<div class="tr-recovery">
+  <div class="tr-recovery-title">Stuck Execution Diagnostics (read-only)</div>
+  <div class="tr-summary-grid">
+    <div><div class="sm-label">Case</div><div class="sm-val">{{ candidate.case }} — {{ case_label }}</div></div>
+    <div><div class="sm-label">Age</div><div class="sm-val">{{ age_display }}</div></div>
+    <div><div class="sm-label">Age Confidence</div><div class="sm-val">{{ candidate.age_confidence }}</div></div>
+    <div><div class="sm-label">Executed By</div><div class="sm-val">{{ instance.executed_by|default:"—" }}
+      {% if candidate.executed_by_is_active is False %}[● inactive]{% elif candidate.executed_by_is_active %}[● active]{% endif %}
+    </div></div>
+    <div><div class="sm-label">WalletTransaction</div><div class="sm-val">{% if candidate.has_wallet_transaction %}#{{ instance.wallet_transaction_id }}{% else %}— none —{% endif %}</div></div>
+    <div><div class="sm-label">Eligible</div><div class="sm-val">✓ YES</div></div>
+  </div>
+</div>
+
+<div class="tr-bignotice">
+  <div class="line1">This will mark the request FAILED. It will NOT reconcile, reset to APPROVED, or move any money.</div>
+  <div class="line2">This is incident response, not a financial operation.</div>
+</div>
+
+<form method="post" id="tr-recover-form">
+  {% csrf_token %}
+
+  <div class="tr-section">
+    <div class="tr-field">
+      <label for="id_recovery_reason">Recovery Reason (obligatorio)</label>
+      <textarea name="recovery_reason" id="id_recovery_reason" required>{{ recovery_reason|default:"" }}</textarea>
+      <div class="tr-help">Motivo operativo de la recuperación — se registra en el failure_reason y en el log de auditoría.</div>
+    </div>
+  </div>
+
+  <div class="tr-actions">
+    <a href="{{ cancel_url }}" class="tr-btn tr-btn-ghost">Cancel</a>
+    <button type="submit" class="tr-btn tr-btn-warn"
+            onclick="this.form.reportValidity()&&setTimeout(()=>{this.disabled=true;this.innerText='Marking…';},0);">
+      Mark as FAILED
+    </button>
+  </div>
+</form>
+
+{% endblock %}

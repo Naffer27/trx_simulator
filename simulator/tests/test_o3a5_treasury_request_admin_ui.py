@@ -443,15 +443,18 @@ class StandardAddChangeDeleteDeniedOverHttpTests(TestCase):
 
 class NoExecuteCancelUrlTests(TestCase):
     """
-    2d/2e/2f/2g — no Execute/Cancel URL exists anywhere; get_urls()
-    exposes exactly the three custom URLs authorized so far beyond
-    Django's own CRUD routes.
+    2d/2e/2f/2g — no Cancel URL exists anywhere; get_urls() exposes
+    exactly the five custom URLs authorized so far beyond Django's own
+    CRUD routes.
 
     O.3a-5 originally asserted that treasury_request_approve/reject
     ALSO did not exist yet — that was true at the time (this block only
     built submission) but was superseded on purpose by O.3b-3, which
-    legitimately added both. This test now locks down the current,
-    still-accurate boundary: Approve/Reject exist, Execute/Cancel do not.
+    legitimately added both. O.3c-5a superseded it again on purpose,
+    legitimately adding treasury_request_execute. O.3c-5b superseded it
+    once more, legitimately adding treasury_request_recover. This test
+    now locks down the current, still-accurate boundary: Approve/
+    Reject/Execute/Recover exist, Cancel does not.
     """
 
     def test_get_urls_exposes_only_the_authorized_custom_urls(self):
@@ -470,10 +473,14 @@ class NoExecuteCancelUrlTests(TestCase):
         custom_names = {n for n in url_names if not n.startswith("simulator_treasuryoperationrequest_")}
         self.assertEqual(
             custom_names,
-            {"treasury_request_new", "treasury_request_approve", "treasury_request_reject"},
+            {
+                "treasury_request_new", "treasury_request_approve",
+                "treasury_request_reject", "treasury_request_execute",
+                "treasury_request_recover",
+            },
         )
 
-        for hypothetical in ("treasury_request_execute", "treasury_request_cancel"):
+        for hypothetical in ("treasury_request_cancel",):
             with self.assertRaises(NoReverseMatch):
                 _reverse(f"admin:{hypothetical}")
 
