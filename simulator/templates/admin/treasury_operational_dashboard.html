@@ -1,0 +1,229 @@
+{% extends "admin/base_site.html" %}
+{% block title %}Treasury Operational Dashboard{% endblock %}
+{% block content %}
+<style>
+:root{
+  --bg:#0d0d0d;--panel:#141414;--border:#222;--gold:#e8c84a;
+  --bull:#27ae60;--bear:#ef5350;--info:#3498db;--warn:#e67e22;
+  --muted:#666;--text:#e8e8e8;--r:5px;
+}
+*{box-sizing:border-box;}
+body,#content{background:var(--bg)!important;}
+#content{padding:14px 18px!important;}
+
+.td-nav{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap;}
+.td-title{font-size:1rem;font-weight:800;color:var(--gold);letter-spacing:.08em;
+          text-transform:uppercase;flex:1;}
+.td-link{font-size:.7rem;padding:4px 12px;border-radius:3px;text-decoration:none;
+         font-weight:700;letter-spacing:.04em;color:var(--muted);
+         border:1px solid var(--border);background:var(--panel);}
+.td-link:hover{color:var(--gold);border-color:rgba(232,200,74,.4);}
+.td-ts{font-size:.62rem;color:var(--muted);margin-left:auto;}
+.td-error{display:none;color:var(--bear);font-size:.68rem;font-weight:700;}
+
+.td-section{font-size:.6rem;font-weight:700;color:var(--muted);text-transform:uppercase;
+            letter-spacing:.1em;margin:16px 0 6px;}
+
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;margin-bottom:8px;}
+.kpi{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+     padding:10px 12px;position:relative;overflow:hidden;}
+.kpi::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--gold);}
+.kpi.c-bull::before{background:var(--bull);}
+.kpi.c-warn::before{background:var(--warn);}
+.kpi.c-bear::before{background:var(--bear);}
+.kpi.c-muted::before{background:var(--border);}
+.kpi-lbl{font-size:.55rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:5px;}
+.kpi-val{font-size:1.15rem;font-weight:800;color:var(--text);line-height:1.1;}
+
+.td-table{width:100%;border-collapse:collapse;font-size:.72rem;}
+.td-table th{color:var(--muted);font-size:.56rem;text-transform:uppercase;letter-spacing:.06em;
+             padding:5px 8px;border-bottom:1px solid var(--border);text-align:left;font-weight:600;
+             white-space:nowrap;}
+.td-table td{padding:6px 8px;border-bottom:1px solid rgba(255,255,255,.04);color:var(--text);
+             white-space:nowrap;}
+.td-table tr:last-child td{border-bottom:none;}
+.td-panel{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+          padding:10px 12px;overflow-x:auto;margin-bottom:10px;}
+.td-gold{color:var(--gold);font-weight:700;}
+.td-bull{color:var(--bull);font-weight:700;}
+.td-bear{color:var(--bear);font-weight:700;}
+.td-warn{color:var(--warn);font-weight:700;}
+.td-muted{color:var(--muted);}
+.td-a{color:var(--gold);text-decoration:none;font-weight:700;}
+.td-a:hover{text-decoration:underline;}
+
+.td-warnbox{background:rgba(230,126,34,.08);border:1px solid rgba(230,126,34,.3);
+            border-radius:var(--r);padding:10px 14px;margin-bottom:10px;font-size:.7rem;color:var(--text);}
+.td-warnbox ul{margin:4px 0 0 18px;padding:0;}
+.td-warnbox li{margin:2px 0;}
+</style>
+
+<div class="td-nav">
+  <div class="td-title">Treasury Operational Dashboard</div>
+  <a href="{{ changelist_url }}" class="td-link">&larr; Treasury Requests</a>
+  <span id="td-error" class="td-error">⚠ failed to load — retrying…</span>
+  <span id="td-ts" class="td-ts">Loading…</span>
+</div>
+
+<div class="td-warnbox">
+  <strong>Read this before trusting the numbers below:</strong>
+  <ul>
+    <li>Celery Beat may be down — the History section below is only as fresh as the last
+        successful <code>observe-treasury-stuck-executions-15m</code> tick.</li>
+    <li>Current State is computed live, straight from
+        <code>inspect_stuck_treasury_execution()</code>, on every request (subject to a 30s cache) —
+        it does not depend on Celery at all.</li>
+    <li>History depends entirely on the periodic monitor (O.3d-2/O.3d-3) — a gap in History does
+        not mean nothing was stuck, only that the monitor did not run or nothing was eligible for
+        observation during that window.</li>
+  </ul>
+</div>
+
+<div class="td-section">A — Summary</div>
+<div class="kpi-grid">
+  <div class="kpi c-warn"><div class="kpi-lbl">Total EXECUTING</div><div class="kpi-val" id="kpi-total">—</div></div>
+  <div class="kpi c-bull"><div class="kpi-lbl">Total Eligible</div><div class="kpi-val" id="kpi-eligible">—</div></div>
+  <div class="kpi"><div class="kpi-lbl">CASE_A</div><div class="kpi-val" id="kpi-case-a">—</div></div>
+  <div class="kpi"><div class="kpi-lbl">CASE_B</div><div class="kpi-val" id="kpi-case-b">—</div></div>
+  <div class="kpi"><div class="kpi-lbl">CASE_C</div><div class="kpi-val" id="kpi-case-c">—</div></div>
+  <div class="kpi"><div class="kpi-lbl">CASE_D</div><div class="kpi-val" id="kpi-case-d">—</div></div>
+  <div class="kpi"><div class="kpi-lbl">CASE_E</div><div class="kpi-val" id="kpi-case-e">—</div></div>
+  <div class="kpi"><div class="kpi-lbl">CASE_F</div><div class="kpi-val" id="kpi-case-f">—</div></div>
+</div>
+
+<div class="td-section">B — Current State (live)</div>
+<div class="td-panel">
+  <table class="td-table">
+    <thead>
+      <tr>
+        <th>ID</th><th>Op. Type</th><th>Amount</th><th>Wallet</th><th>Wallet User</th>
+        <th>Executed By</th><th>Age</th><th>Age Confidence</th><th>Case</th><th>Eligible</th>
+        <th>Block Reason</th><th>WTx</th><th>Started</th><th>Executed</th><th>Failed</th><th></th>
+      </tr>
+    </thead>
+    <tbody id="td-candidates-body">
+      <tr><td colspan="16" class="td-muted" style="text-align:center;padding:14px;">Loading…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="td-section">C — Observation History (last {{ history_limit }})</div>
+<div class="td-panel">
+  <table class="td-table">
+    <thead>
+      <tr>
+        <th>Timestamp</th><th>ID</th><th>Case</th><th>Severity</th><th>Eligible</th>
+        <th>Age</th><th>Block Reason</th><th>Executed By</th>
+      </tr>
+    </thead>
+    <tbody id="td-history-body">
+      <tr><td colspan="8" class="td-muted" style="text-align:center;padding:14px;">Loading…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+(function(){
+  const DATA_URL = "{{ data_url }}";
+  const POLL_MS  = 12000;
+
+  function esc(s){
+    if (s === null || s === undefined) return "—";
+    return String(s).replace(/[&<>"']/g, c => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;",
+    }[c]));
+  }
+  function boolBadge(v){
+    if (v === true)  return '<span class="td-bull">✓</span>';
+    if (v === false) return '<span class="td-muted">✗</span>';
+    return '<span class="td-muted">—</span>';
+  }
+  function eligibleBadge(v){
+    return v ? '<span class="td-bull">✓ YES</span>' : '<span class="td-bear">✗ NO</span>';
+  }
+  function severityColor(sev){
+    return {INFO:"td-muted", WARNING:"td-warn", HIGH:"td-bear", CRITICAL:"td-bear"}[sev] || "td-muted";
+  }
+
+  function renderCandidates(rows){
+    const body = document.getElementById("td-candidates-body");
+    if (!rows.length){
+      body.innerHTML = '<tr><td colspan="16" class="td-muted" style="text-align:center;padding:14px;">No EXECUTING requests — nothing stuck right now.</td></tr>';
+      return;
+    }
+    body.innerHTML = rows.map(c => {
+      const execBy = c.executed_by_username
+        ? esc(c.executed_by_username) + (c.executed_by_is_active === false ? ' <span class="td-muted">[inactive]</span>' : '')
+        : '<span class="td-muted">—</span>';
+      const recoverLink = c.recover_url
+        ? ` &middot; <a class="td-a" href="${c.recover_url}">Recover →</a>`
+        : "";
+      return `<tr>
+        <td><a class="td-a" href="${c.detail_url}">#${c.treasury_operation_request_id}</a></td>
+        <td>${esc(c.operation_type_display)}</td>
+        <td class="td-gold">${esc(c.amount)}</td>
+        <td>${esc(c.wallet_display)}</td>
+        <td>${esc(c.wallet_user_username)}</td>
+        <td>${execBy}</td>
+        <td>${esc(c.age_display)}</td>
+        <td class="td-muted">${esc(c.age_confidence)}</td>
+        <td>${esc(c.case)}</td>
+        <td>${eligibleBadge(c.eligible)}</td>
+        <td class="td-muted" style="white-space:normal;max-width:260px;">${esc(c.block_reason)}</td>
+        <td>${boolBadge(c.has_wallet_transaction)}</td>
+        <td>${boolBadge(c.has_started_event)}</td>
+        <td>${boolBadge(c.has_executed_event)}</td>
+        <td>${boolBadge(c.has_failed_event)}</td>
+        <td><a class="td-a" href="${c.detail_url}">Detail →</a>${recoverLink}</td>
+      </tr>`;
+    }).join("");
+  }
+
+  function renderHistory(rows){
+    const body = document.getElementById("td-history-body");
+    if (!rows.length){
+      body.innerHTML = '<tr><td colspan="8" class="td-muted" style="text-align:center;padding:14px;">No observations recorded yet.</td></tr>';
+      return;
+    }
+    body.innerHTML = rows.map(e => {
+      const t = new Date(e.timestamp);
+      return `<tr>
+        <td class="td-muted" style="white-space:nowrap;">${t.toLocaleString()}</td>
+        <td>#${e.treasury_operation_request_id}</td>
+        <td>${esc(e.case)}</td>
+        <td class="${severityColor(e.severity)}">${esc(e.severity)}</td>
+        <td>${eligibleBadge(e.eligible)}</td>
+        <td>${esc(e.age_display)}</td>
+        <td class="td-muted" style="white-space:normal;max-width:260px;">${esc(e.block_reason)}</td>
+        <td>${e.executed_by_username ? esc(e.executed_by_username) : '<span class="td-muted">—</span>'}</td>
+      </tr>`;
+    }).join("");
+  }
+
+  function updateUI(d){
+    document.getElementById("td-ts").textContent = "Updated " + new Date(d.ts).toLocaleTimeString();
+    document.getElementById("kpi-total").textContent    = d.summary.total_executing;
+    document.getElementById("kpi-eligible").textContent = d.summary.total_eligible;
+    document.getElementById("kpi-case-a").textContent = d.summary.case_counts.CASE_A ?? 0;
+    document.getElementById("kpi-case-b").textContent = d.summary.case_counts.CASE_B ?? 0;
+    document.getElementById("kpi-case-c").textContent = d.summary.case_counts.CASE_C ?? 0;
+    document.getElementById("kpi-case-d").textContent = d.summary.case_counts.CASE_D ?? 0;
+    document.getElementById("kpi-case-e").textContent = d.summary.case_counts.CASE_E ?? 0;
+    document.getElementById("kpi-case-f").textContent = d.summary.case_counts.CASE_F ?? 0;
+    renderCandidates(d.candidates);
+    renderHistory(d.history);
+    document.getElementById("td-error").style.display = "none";
+  }
+
+  function refresh(){
+    fetch(DATA_URL, {credentials:"same-origin"})
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(updateUI)
+      .catch(() => { document.getElementById("td-error").style.display = "inline"; });
+  }
+
+  refresh();
+  setInterval(refresh, POLL_MS);
+})();
+</script>
+{% endblock %}

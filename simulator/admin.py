@@ -2126,6 +2126,124 @@ def _treasury_recovery_age_display(age_seconds):
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
+# O.3d-4 — Treasury Operational Dashboard. Read-only by construction:
+# "current state" comes straight from inspect_stuck_treasury_execution()
+# (O.3c-4b, unmodified — no eligibility/case logic is re-derived here),
+# "history" comes straight from BrokerAuditEvent rows already persisted
+# by observe_stuck_treasury_executions() (O.3d-2/3, unmodified). This
+# function never calls mark_treasury_execution_failed(), never imports
+# wallet_ledger.py, and never assigns to any TreasuryOperationRequest,
+# Wallet or WalletTransaction field — it only reads and serializes.
+#
+# Deliberately does NOT bake per-viewer authorization (the Recovery
+# link) into this payload — this dict is what gets cached in Redis and
+# shared across every viewer for up to 30s (same pattern as Control
+# Center's _compute_control_data()), and "can THIS user recover THIS
+# row" depends on request.user (self-conflict with requested_by/
+# approved_by), which must never be memoized across different viewers.
+# treasury_operational_dashboard_data() below adds recover_url per
+# request, AFTER the cache lookup, from the cheap requested_by_id/
+# approved_by_id/eligible fields already present in each candidate dict.
+TREASURY_DASHBOARD_HISTORY_LIMIT = 25  # same magnitude as Control Center's recent_events(25)
+
+_TREASURY_CASE_ORDER = ("CASE_A", "CASE_B", "CASE_C", "CASE_D", "CASE_E", "CASE_F")
+
+
+def _compute_treasury_operational_dashboard_data():
+    from django.contrib.auth import get_user_model
+    from django.utils import timezone
+
+    from . import broker_audit as _broker_audit_module
+    from .models import BrokerAuditEvent
+    from .treasury_execution_recovery import inspect_stuck_treasury_execution
+
+    User = get_user_model()
+
+    candidates = inspect_stuck_treasury_execution()
+
+    case_counts = {case: 0 for case in _TREASURY_CASE_ORDER}
+    total_eligible = 0
+    candidate_rows = []
+    for c in candidates:
+        case_counts[c.case] = case_counts.get(c.case, 0) + 1
+        if c.eligible:
+            total_eligible += 1
+
+        instance = c.instance
+        candidate_rows.append({
+            "treasury_operation_request_id": instance.pk,
+            "operation_type": instance.operation_type,
+            "operation_type_display": instance.get_operation_type_display(),
+            "amount": str(instance.amount),
+            "wallet_id": instance.wallet_id,
+            "wallet_display": str(instance.wallet),
+            "wallet_user_username": instance.wallet.user.username,
+            "requested_by_id": instance.requested_by_id,
+            "approved_by_id": instance.approved_by_id,
+            "executed_by_id": instance.executed_by_id,
+            "executed_by_username": instance.executed_by.username if instance.executed_by_id else None,
+            "executed_by_is_active": c.executed_by_is_active,
+            "age_seconds": c.age_seconds,
+            "age_display": _treasury_recovery_age_display(c.age_seconds),
+            "age_confidence": c.age_confidence,
+            "case": c.case,
+            "case_label": _treasury_recovery_case_label(c.case),
+            "eligible": c.eligible,
+            "block_reason": c.block_reason,
+            "has_wallet_transaction": c.has_wallet_transaction,
+            "has_started_event": c.has_started_event,
+            "has_executed_event": c.has_executed_event,
+            "has_failed_event": c.has_failed_event,
+            "detail_url": reverse(
+                "admin:simulator_treasuryoperationrequest_change", args=[instance.pk],
+            ),
+        })
+
+    history_events = list(
+        BrokerAuditEvent.objects
+        .filter(event_type=_broker_audit_module.EV_TREASURY_STUCK_EXECUTION_OBSERVED)
+        .order_by("-timestamp", "-id")[:TREASURY_DASHBOARD_HISTORY_LIMIT]
+    )
+    executed_by_ids = {
+        e.metadata.get("executed_by_id")
+        for e in history_events
+        if e.metadata.get("executed_by_id") is not None
+    }
+    executed_by_usernames = dict(
+        User.objects.filter(pk__in=executed_by_ids).values_list("pk", "username")
+    )
+
+    history_rows = [
+        {
+            "timestamp": e.timestamp.isoformat(),
+            "treasury_operation_request_id": e.metadata.get("treasury_operation_request_id"),
+            "case": e.metadata.get("case"),
+            "case_label": _treasury_recovery_case_label(e.metadata.get("case")),
+            "severity": e.severity,
+            "eligible": e.metadata.get("eligible"),
+            "age_seconds": e.metadata.get("age_seconds"),
+            "age_display": _treasury_recovery_age_display(e.metadata.get("age_seconds")),
+            "block_reason": e.metadata.get("block_reason"),
+            "executed_by_id": e.metadata.get("executed_by_id"),
+            "executed_by_username": executed_by_usernames.get(e.metadata.get("executed_by_id")),
+            "metadata": e.metadata,
+        }
+        for e in history_events
+    ]
+
+    return {
+        "ts": timezone.now().isoformat(),
+        "summary": {
+            "total_executing": len(candidate_rows),
+            "total_eligible": total_eligible,
+            "case_counts": case_counts,
+        },
+        "candidates": candidate_rows,
+        "history": history_rows,
+        "history_limit": TREASURY_DASHBOARD_HISTORY_LIMIT,
+    }
+
+
 @admin.register(TreasuryOperationRequest)
 class TreasuryOperationRequestAdmin(admin.ModelAdmin):
     list_display   = (
@@ -2182,6 +2300,14 @@ class TreasuryOperationRequestAdmin(admin.ModelAdmin):
         extra_context = extra_context or {}
         if request.user.has_perm("simulator.can_submit_treasury_request"):
             extra_context["new_treasury_request_url"] = reverse("admin:treasury_request_new")
+        # O.3d-4 — dashboard link visible only to the same role that can
+        # act on what it shows (Mark as FAILED lives entirely in
+        # treasury_request_recover_view(), O.3c-5b, unmodified — this
+        # link never grants more than that view already grants).
+        if request.user.has_perm("simulator.can_recover_treasury_execution"):
+            extra_context["treasury_operational_dashboard_url"] = reverse(
+                "admin:treasury_operational_dashboard",
+            )
         return super().changelist_view(request, extra_context)
 
     def change_view(self, request, object_id, form_url='', extra_context=None):
@@ -2311,6 +2437,16 @@ class TreasuryOperationRequestAdmin(admin.ModelAdmin):
                 "<int:pk>/recover/",
                 self.admin_site.admin_view(self.treasury_request_recover_view),
                 name="treasury_request_recover",
+            ),
+            path(
+                "operational-dashboard/",
+                self.admin_site.admin_view(self.treasury_operational_dashboard_view),
+                name="treasury_operational_dashboard",
+            ),
+            path(
+                "operational-dashboard/data/",
+                self.admin_site.admin_view(self.treasury_operational_dashboard_data),
+                name="treasury_operational_dashboard_data",
             ),
         ]
         return custom + urls
@@ -2766,6 +2902,99 @@ class TreasuryOperationRequestAdmin(admin.ModelAdmin):
             cancel_url=change_url,
         )
         return render(request, "admin/treasury_request_recover.html", context)
+
+    # ── O.3d-4 — Treasury Operational Dashboard ───────────────────────
+
+    def treasury_operational_dashboard_data(self, request):
+        """
+        JSON live-data endpoint. Redis-cached for 30 s (same pattern as
+        BrokerRevenueSnapshotAdmin.broker_control_data() — raw redis-py,
+        try/except non-fatal on both get and set, DB is the only source
+        of truth); falls back to a direct DB read if Redis is
+        unavailable either way.
+
+        Access restricted to simulator.can_recover_treasury_execution —
+        narrower than this ModelAdmin's own has_view_permission(), by
+        design: this dashboard exists for the role that can act on a
+        stuck execution, not every Treasury role that can merely view
+        the changelist. Superusers pass via Django's own has_perm()
+        contract, no special-casing here.
+
+        recover_url is computed HERE, per request, AFTER the
+        (potentially cached, potentially shared-across-viewers) payload
+        is obtained — never baked into the cached JSON itself. See
+        _compute_treasury_operational_dashboard_data()'s own docstring
+        for why: self-conflict with requested_by/approved_by depends on
+        request.user, which must never be memoized across different
+        viewers sharing one 30s cache entry.
+        """
+        import json
+
+        from django.conf import settings as _s
+        from django.core.exceptions import PermissionDenied
+        from django.http import JsonResponse
+
+        if not request.user.has_perm("simulator.can_recover_treasury_execution"):
+            raise PermissionDenied(
+                "Missing permission: simulator.can_recover_treasury_execution"
+            )
+
+        _KEY = "trx:treasury:operational_dashboard:v1"
+        _TTL = 30
+
+        def _redis():
+            import redis as _r
+            url = (getattr(_s, "REDIS_URL", "") or "").strip() or "redis://127.0.0.1:6379/0"
+            return _r.from_url(url, socket_connect_timeout=1, socket_timeout=1)
+
+        payload = None
+        try:
+            cached = _redis().get(_KEY)
+            if cached:
+                payload = json.loads(cached)
+        except Exception:
+            payload = None
+
+        if payload is None:
+            payload = _compute_treasury_operational_dashboard_data()
+            try:
+                _redis().setex(_KEY, _TTL, json.dumps(payload))
+            except Exception:
+                pass
+
+        for c in payload["candidates"]:
+            c["recover_url"] = None
+            if (
+                c["eligible"]
+                and c["requested_by_id"] != request.user.pk
+                and c["approved_by_id"] != request.user.pk
+            ):
+                c["recover_url"] = reverse(
+                    "admin:treasury_request_recover", args=[c["treasury_operation_request_id"]],
+                )
+
+        return JsonResponse(payload)
+
+    def treasury_operational_dashboard_view(self, request):
+        """HTML shell for the Treasury Operational Dashboard. JS polls
+        /data/ every 10 s. Same permission gate as the data endpoint
+        above — checked again here independently, since this is a
+        separate URL a browser could hit directly."""
+        from django.core.exceptions import PermissionDenied
+
+        if not request.user.has_perm("simulator.can_recover_treasury_execution"):
+            raise PermissionDenied(
+                "Missing permission: simulator.can_recover_treasury_execution"
+            )
+
+        context = dict(
+            self.admin_site.each_context(request),
+            title="Treasury Operational Dashboard",
+            data_url=reverse("admin:treasury_operational_dashboard_data"),
+            changelist_url=reverse("admin:simulator_treasuryoperationrequest_changelist"),
+            history_limit=TREASURY_DASHBOARD_HISTORY_LIMIT,
+        )
+        return render(request, "admin/treasury_operational_dashboard.html", context)
 
 
 # ─────────────────────────────────────────────

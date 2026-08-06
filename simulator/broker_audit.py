@@ -270,6 +270,13 @@ EV_TREASURY_REQUEST_EXECUTION_RECOVERY_STARTED = "treasury.request_execution_rec
 EV_TREASURY_REQUEST_EXECUTION_MARKED_FAILED    = "treasury.request_execution_marked_failed"
 EV_TREASURY_REQUEST_EXECUTION_RECOVERY_BLOCKED = "treasury.request_execution_recovery_blocked"
 
+# O.3d-1 — mirrors audit.py's EV_TREASURY_STUCK_EXECUTION_OBSERVED string
+# exactly, same discipline as above. Schema-only: no call site exists
+# yet (the observation service is a later block, O.3d-2). No monitor,
+# no Celery task, no dashboard, no model and no migration is
+# implemented by this constant.
+EV_TREASURY_STUCK_EXECUTION_OBSERVED = "treasury.stuck_execution_observed"
+
 
 # ─────────────────────────────────────────────────────────────────────────
 # AUDIT-03 — Compliance Audit Trail (KYC).
@@ -850,6 +857,216 @@ def observe_broker_alerts(*, dedup_window_seconds: Optional[int] = None) -> int:
     from .broker_alerts import collect_risk_alerts
     alerts = collect_risk_alerts()
     return record_active_alerts(alerts, dedup_window_seconds=dedup_window_seconds)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# O.3d-2 — Treasury Stuck Execution Observation. Same "observe + dedup +
+# persist" shape as RISK-03's record_alert_event()/observe_broker_alerts()
+# above, reused deliberately rather than inventing a new mechanism:
+# inspect_stuck_treasury_execution() (treasury_execution_recovery.py,
+# unmodified — a pure read, never writes, never touches the wallet
+# ledger) is this domain's equivalent of collect_risk_alerts(), and
+# BrokerAuditObservationLock (the very same singleton row RISK-03
+# already uses) serializes this domain's check-then-create dedup
+# sequence too — the lock holds no business data of its own to conflict
+# over between domains, and a prior review of this codebase already
+# rejected a Redis/cache-only lock for this exact class of problem in
+# favor of this small DB singleton (see the model's own docstring). No
+# new model and no new migration are introduced by this block.
+#
+# This section never calls mark_treasury_execution_failed() and never
+# reaches into wallet-crediting, wallet-debiting or wallet-reconciling
+# code — recording that a request LOOKS stuck is not incident response
+# and is never a financial operation.
+# ─────────────────────────────────────────────────────────────────────────
+
+# Case -> severity mapping approved in the O.3d Fase 0 design. CASE_C
+# ("still in flight, below the age threshold") is deliberately absent —
+# observe_stuck_treasury_executions() filters it out before any
+# candidate reaches this map, so recording it would always be
+# unreachable dead code; if it were ever passed here anyway, .get()
+# returns None and this is treated as "not observed", not an error.
+_TREASURY_STUCK_CASE_SEVERITY_MAP = {
+    "CASE_A": Severity.WARNING,
+    "CASE_B": Severity.HIGH,
+    "CASE_D": Severity.WARNING,
+    "CASE_E": Severity.HIGH,
+    "CASE_F": Severity.INFO,
+}
+
+# How long a given TreasuryOperationRequest pk is considered "already
+# observed" — inspect_stuck_treasury_execution() is stateless and
+# recomputed on every observe_stuck_treasury_executions() run, so
+# without this window the same still-stuck request would create a
+# fresh audit row every tick. Overridable via Django settings, same
+# getattr-with-default pattern as ALERT_DEDUP_WINDOW_SECONDS above —
+# deliberately NOT hardcoded into settings.py itself unless an operator
+# actually needs to override it.
+TREASURY_STUCK_EXECUTION_DEDUP_WINDOW_SECONDS = int(
+    getattr(_settings, "TREASURY_STUCK_EXECUTION_DEDUP_WINDOW_SECONDS", 900)
+)
+
+
+def record_treasury_stuck_execution_observation(candidate, *, dedup_window_seconds: Optional[int] = None):
+    """
+    Records ONE StuckExecutionCandidate (treasury_execution_recovery.
+    py's read-only dataclass, from inspect_stuck_treasury_execution())
+    as a BrokerAuditEvent observation — only for cases with an approved
+    severity mapping (CASE_A/B/D/E/F; CASE_C is never passed here by
+    observe_stuck_treasury_executions()) and only if an observation for
+    the same treasury_operation_request_id was not already recorded
+    within the dedup window. Returns None (no-op, not a failure) if the
+    case isn't mapped or it was already recorded recently.
+
+    Same dedup discipline as record_alert_event(): the check-then-
+    create sequence is held under BrokerAuditObservationLock
+    (select_for_update()) for its entire duration, closing the same
+    TOCTOU race two concurrent Celery workers could otherwise hit. Not
+    meant to be called from any request/dashboard code path — see
+    observe_stuck_treasury_executions() below, the single sanctioned
+    entry point.
+
+    Never modifies TreasuryOperationRequest, never creates or touches a
+    WalletTransaction, never touches a Wallet, and never calls
+    mark_treasury_execution_failed() — this writes exactly one
+    BrokerAuditEvent row (via record_payment_event() -> record_event(),
+    which never raises — see record_event()'s own fail-open contract)
+    and nothing else.
+    """
+    from .models import BrokerAuditEvent, BrokerAuditObservationLock
+
+    severity = _TREASURY_STUCK_CASE_SEVERITY_MAP.get(candidate.case)
+    if severity is None:
+        return None
+
+    window = (
+        TREASURY_STUCK_EXECUTION_DEDUP_WINDOW_SECONDS
+        if dedup_window_seconds is None else dedup_window_seconds
+    )
+
+    instance = candidate.instance
+    observed_at = timezone.now()
+    metadata = {
+        "treasury_operation_request_id": instance.pk,
+        "wallet_id": instance.wallet_id,
+        "wallet_user_id": instance.wallet.user_id,
+        "operation_type": instance.operation_type,
+        "amount": str(instance.amount),
+        "status": instance.status,
+        "case": candidate.case,
+        "eligible": candidate.eligible,
+        "block_reason": candidate.block_reason,
+        "age_seconds": candidate.age_seconds,
+        "age_confidence": candidate.age_confidence,
+        "executed_by_id": instance.executed_by_id,
+        "executed_by_is_active": candidate.executed_by_is_active,
+        "has_wallet_transaction": candidate.has_wallet_transaction,
+        "has_started_event": candidate.has_started_event,
+        "has_executed_event": candidate.has_executed_event,
+        "has_failed_event": candidate.has_failed_event,
+        "observed_at": observed_at.isoformat(),
+        "dedup_window_seconds": window,
+    }
+
+    with transaction.atomic():
+        if window > 0:
+            BrokerAuditObservationLock.objects.get_or_create(pk=1)
+            BrokerAuditObservationLock.objects.select_for_update().get(pk=1)
+
+            cutoff = observed_at - timedelta(seconds=window)
+            already_recorded = BrokerAuditEvent.objects.filter(
+                event_type=EV_TREASURY_STUCK_EXECUTION_OBSERVED,
+                metadata__treasury_operation_request_id=instance.pk,
+                timestamp__gte=cutoff,
+            ).exists()
+            if already_recorded:
+                return None
+
+        return record_payment_event(
+            event_type=EV_TREASURY_STUCK_EXECUTION_OBSERVED,
+            severity=severity,
+            actor_type=ActorType.SYSTEM,
+            description=(
+                f"Treasury request #{instance.pk} stuck in EXECUTING "
+                f"({candidate.case})"
+            ),
+            metadata=metadata,
+            source_module=_SOURCE,
+        )
+
+
+def observe_stuck_treasury_executions(*, min_age_seconds=None, dedup_window_seconds=None) -> int:
+    """
+    O.3d-2 — the single sanctioned operational entry point for
+    persisting Treasury stuck-execution observations. Pulls the current
+    snapshot from treasury_execution_recovery.inspect_stuck_treasury_
+    execution() (a pure read — that module's own documented contract is
+    never touched by this call) and persists one BrokerAuditEvent per
+    candidate whose case has an approved severity mapping, via
+    record_treasury_stuck_execution_observation().
+
+    CASE_C ("still in flight, below the age threshold") is deliberately
+    skipped before it ever reaches the severity map — recording it
+    would create audit noise on every single tick for a request that
+    hasn't actually failed to progress yet.
+
+    Intended to be called exclusively from a periodic Celery task (a
+    later block, O.3d-3) — NOT implemented, registered, or scheduled by
+    this function. NEVER call this from admin.py or any other
+    request-handling code path — observation history must exist
+    independent of whether any staff member has a dashboard open; a
+    GET/poll must never be able to write to the audit trail (same
+    invariant observe_broker_alerts() already documents above).
+
+    Never calls mark_treasury_execution_failed(), never creates or
+    touches a WalletTransaction, never touches a Wallet, and never
+    modifies the TreasuryOperationRequest it observes — structurally:
+    this function and record_treasury_stuck_execution_observation()
+    together never reach into the wallet ledger module and never
+    assign to any model field other than the new BrokerAuditEvent row
+    each write creates.
+
+    Returns the count of NEW rows actually written — mirrors
+    observe_broker_alerts()'s own return contract exactly. Skips both
+    CASE_C and dedup hits without incrementing this count. Never
+    raises on its own account: inspect_stuck_treasury_execution() only
+    raises ValueError for a malformed min_age_seconds (a caller bug,
+    propagated rather than swallowed — same discipline that function
+    already documents); every BrokerAuditEvent write itself is
+    fail-open via record_event()'s own contract.
+    """
+    from .treasury_execution_recovery import inspect_stuck_treasury_execution
+
+    candidates = inspect_stuck_treasury_execution(min_age_seconds=min_age_seconds)
+
+    written = 0
+    for candidate in candidates:
+        if candidate.case == "CASE_C":
+            continue
+
+        event = record_treasury_stuck_execution_observation(
+            candidate, dedup_window_seconds=dedup_window_seconds,
+        )
+        if event is None:
+            continue
+
+        written += 1
+        if event.severity in (Severity.WARNING, Severity.HIGH, Severity.CRITICAL):
+            log.warning(
+                "[broker_audit] treasury stuck-execution observed: "
+                "treasury_request_id=%s case=%s severity=%s eligible=%s age_seconds=%s",
+                candidate.instance.pk, candidate.case, event.severity,
+                candidate.eligible, candidate.age_seconds,
+            )
+        else:
+            log.info(
+                "[broker_audit] treasury stuck-execution observed: "
+                "treasury_request_id=%s case=%s severity=%s eligible=%s age_seconds=%s",
+                candidate.instance.pk, candidate.case, event.severity,
+                candidate.eligible, candidate.age_seconds,
+            )
+
+    return written
 
 
 # ─────────────────────────────────────────────────────────────────────────

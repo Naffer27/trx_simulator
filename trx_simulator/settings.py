@@ -296,6 +296,18 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(minute="*/5"),
         "options":  {"expires": 4 * 60},  # drop if not picked up within 4 min
     },
+    # O.3d-3 — persist Treasury stuck-execution observations into
+    # BrokerAuditEvent, independent of whether the admin ever looks.
+    # Same 15-min cadence as reconcile-deposits/withdrawals above —
+    # comfortably above the 600s (10 min) minimum age threshold
+    # inspect_stuck_treasury_execution() already applies, so a request
+    # is never checked before it could possibly be eligible. See
+    # simulator/broker_audit.py::observe_stuck_treasury_executions().
+    "observe-treasury-stuck-executions-15m": {
+        "task":     "simulator.observe_treasury_stuck_executions",
+        "schedule": crontab(minute="*/15"),
+        "options":  {"expires": 14 * 60},  # drop if not picked up in 14 min
+    },
 }
 
 # Revenue snapshot retention (separate from equity snapshots — longer window for trend history).

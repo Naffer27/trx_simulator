@@ -65,6 +65,14 @@ EV_TREASURY_REQUEST_EXECUTION_RECOVERY_STARTED = "treasury.request_execution_rec
 EV_TREASURY_REQUEST_EXECUTION_MARKED_FAILED    = "treasury.request_execution_marked_failed"
 EV_TREASURY_REQUEST_EXECUTION_RECOVERY_BLOCKED = "treasury.request_execution_recovery_blocked"
 
+# O.3d-1 — Treasury Operational Hardening: stuck-execution observation.
+# Schema-only: no call site exists yet (the observation service is a
+# later block, O.3d-2). Mirrored exactly in broker_audit.py, same
+# discipline as every other Treasury constant above. No monitor, no
+# Celery task, no dashboard, no model and no migration is implemented
+# by this constant.
+EV_TREASURY_STUCK_EXECUTION_OBSERVED = "treasury.stuck_execution_observed"
+
 EV_ADMIN_ACTION      = "admin.action"
 EV_ADMIN_VIEW        = "admin.view"
 

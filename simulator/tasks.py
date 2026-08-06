@@ -1397,3 +1397,51 @@ def observe_broker_risk_alerts_task(self) -> dict:
     elapsed_ms = round((_t.monotonic() - t0) * 1000)
     logger.info("[observe_broker_risk_alerts] written=%d elapsed_ms=%d", written, elapsed_ms)
     return {"written": written, "elapsed_ms": elapsed_ms}
+
+
+# ──────────────────────────────────────────────────────
+# O.3d-3 — the ONLY sanctioned periodic entry point for persisting
+# Treasury stuck-execution observations into BrokerAuditEvent. Runs
+# independent of any admin dashboard — observation history exists
+# whether or not any staff member ever looks. See
+# broker_audit.observe_stuck_treasury_executions() (O.3d-2, unmodified)
+# and CELERY_BEAT_SCHEDULE in settings.py
+# ("observe-treasury-stuck-executions-15m").
+#
+# Same shape as observe_broker_risk_alerts_task above, deliberately:
+# max_retries=0, no default_retry_delay — a task-level retry would
+# accomplish nothing here, because every individual BrokerAuditEvent
+# write inside observe_stuck_treasury_executions() is already
+# fail-open by construction (record_event()'s own contract, verified
+# in O.3d-2's own test suite) and never raises on its own. This task
+# does NOT catch exceptions from the observe_stuck_treasury_executions()
+# call itself: if inspect_stuck_treasury_execution() (a plain read, no
+# fail-open wrapper of its own) ever raises — e.g. a genuine DB
+# connectivity failure — that propagates out of this task uncaught and
+# Celery marks the task failed, exactly the same undocumented-but-real
+# behavior observe_broker_risk_alerts_task already has for the
+# equivalent RISK-03 read. Only the WRITE side is fail-open; the READ
+# side is not silently swallowed here or anywhere in this call chain.
+#
+# This task calls observe_stuck_treasury_executions() and nothing
+# else — never inspect_stuck_treasury_execution() directly, never
+# mark_treasury_execution_failed(), never credit_wallet()/
+# debit_wallet(), and never assigns to any TreasuryOperationRequest,
+# Wallet or WalletTransaction field. It cannot move money, structurally.
+# ──────────────────────────────────────────────────────
+@shared_task(
+    name="simulator.observe_treasury_stuck_executions",
+    bind=True,
+    max_retries=0,
+    acks_late=True,
+    soft_time_limit=25,
+    time_limit=29,
+)
+def observe_treasury_stuck_executions_task(self) -> dict:
+    import time as _t
+    from .broker_audit import observe_stuck_treasury_executions
+    t0 = _t.monotonic()
+    written = observe_stuck_treasury_executions()
+    elapsed_ms = round((_t.monotonic() - t0) * 1000)
+    logger.info("[observe_treasury_stuck_executions] written=%d elapsed_ms=%d", written, elapsed_ms)
+    return {"written": written, "elapsed_ms": elapsed_ms}
