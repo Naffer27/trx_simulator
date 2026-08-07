@@ -2350,6 +2350,12 @@ class TreasuryOperationRequestAdmin(admin.ModelAdmin):
         re-enforces under its own lock. Button visibility mirrors the
         4-condition rule frozen in the O.3c-5 Fase 0 design: permission,
         eligible=True, not requested_by, not approved_by.
+
+        O.3e-3 — Cancel button added with the same discipline, this time
+        mirroring cancel_treasury_request()'s (O.3e-2) two-branch
+        permission dispatch (self-withdrawal vs. administrative
+        cancellation) instead of a single fixed permission. See the
+        can_cancel block below for the exact rule.
         """
         extra_context = extra_context or {}
         instance = TreasuryOperationRequest.objects.filter(pk=object_id).first()
@@ -2366,6 +2372,27 @@ class TreasuryOperationRequestAdmin(admin.ModelAdmin):
                 )
                 extra_context["treasury_reject_url"] = reverse(
                     "admin:treasury_request_reject", args=[instance.pk],
+                )
+
+            # O.3e-3 — Cancel button. Unlike can_review/can_execute above,
+            # the permission required is not fixed: it mirrors the
+            # self-withdrawal vs. administrative-cancellation dispatch
+            # frozen inside cancel_treasury_request() (O.3e-2 Fase 0
+            # Decisions 3/4), so this button appears for the request's
+            # own requested_by (holding can_submit_treasury_request) as
+            # well as for any other holder of can_review_treasury_request
+            # — the exact opposite of can_review's "not requested_by"
+            # exclusion, since self-cancellation is the intended
+            # "self-withdrawal" path here, not a conflict of interest.
+            is_own_request = instance.requested_by_id == request.user.pk
+            can_cancel = instance.status == TreasuryOperationRequest.ST_PENDING and (
+                (is_own_request and request.user.has_perm("simulator.can_submit_treasury_request"))
+                or (not is_own_request and request.user.has_perm("simulator.can_review_treasury_request"))
+            )
+            if can_cancel:
+                extra_context["show_treasury_cancel_button"] = True
+                extra_context["treasury_cancel_url"] = reverse(
+                    "admin:treasury_request_cancel", args=[instance.pk],
                 )
 
             can_execute = (
@@ -2437,6 +2464,11 @@ class TreasuryOperationRequestAdmin(admin.ModelAdmin):
                 "<int:pk>/recover/",
                 self.admin_site.admin_view(self.treasury_request_recover_view),
                 name="treasury_request_recover",
+            ),
+            path(
+                "<int:pk>/cancel/",
+                self.admin_site.admin_view(self.treasury_request_cancel_view),
+                name="treasury_request_cancel",
             ),
             path(
                 "operational-dashboard/",
@@ -2902,6 +2934,91 @@ class TreasuryOperationRequestAdmin(admin.ModelAdmin):
             cancel_url=change_url,
         )
         return render(request, "admin/treasury_request_recover.html", context)
+
+    def treasury_request_cancel_view(self, request, pk):
+        """
+        O.3e-3 — confirmation screen for cancel_treasury_request()
+        (O.3e-2). This method does not reimplement any state-machine
+        logic — it only renders a read-only summary on GET, and on POST
+        calls cancel_treasury_request() exactly as built there,
+        unmodified.
+
+        Unlike approve/reject/execute/recover, the required permission
+        here is NOT fixed — it depends on whether request.user is the
+        request's own requested_by (self-withdrawal, needs
+        TREASURY_SUBMIT_PERMISSION) or someone else (administrative
+        cancellation, needs TREASURY_REVIEW_PERMISSION), mirroring the
+        dispatch frozen inside cancel_treasury_request() itself (O.3e-2
+        Fase 0 Decisions 3/4). Both the button visibility below (in
+        change_view()) and the permission check here re-derive the same
+        two-branch rule independently of the service's own re-check
+        under lock — same two-layer defense already used by every other
+        Treasury admin view in this file.
+
+        cancellation_reason is optional (O.3e-2 Fase 0 decision — never
+        required for either actor), so there is no inline "field
+        required" re-render branch here, unlike
+        treasury_request_reject_view()'s mandatory rejection_reason.
+        """
+        from django.core.exceptions import PermissionDenied
+        from django.http import Http404
+
+        from .treasury_requests import (
+            TREASURY_REVIEW_PERMISSION,
+            TREASURY_SUBMIT_PERMISSION,
+            TreasuryRequestNotPending,
+            cancel_treasury_request,
+        )
+
+        instance = TreasuryOperationRequest.objects.filter(pk=pk).first()
+        if instance is None:
+            raise Http404("Treasury request not found.")
+
+        is_self_withdrawal = instance.requested_by_id == request.user.pk
+        if is_self_withdrawal:
+            if not request.user.has_perm(TREASURY_SUBMIT_PERMISSION):
+                raise PermissionDenied(f"Missing permission: {TREASURY_SUBMIT_PERMISSION}")
+        else:
+            if not request.user.has_perm(TREASURY_REVIEW_PERMISSION):
+                raise PermissionDenied(f"Missing permission: {TREASURY_REVIEW_PERMISSION}")
+
+        change_url = reverse("admin:simulator_treasuryoperationrequest_change", args=[instance.pk])
+
+        if instance.status != TreasuryOperationRequest.ST_PENDING:
+            messages.warning(
+                request,
+                f"⚠ Esta solicitud ya no está pendiente (estado actual: "
+                f"{instance.status}) — no se puede cancelar.",
+            )
+            return redirect(change_url)
+
+        if request.method == "POST":
+            cancellation_reason = request.POST.get("cancellation_reason", "")
+            try:
+                cancel_treasury_request(
+                    instance, request=request, cancellation_reason=cancellation_reason,
+                )
+            except TreasuryRequestNotPending:
+                messages.warning(
+                    request,
+                    f"⚠ Esta solicitud ya no está pendiente (estado actual: "
+                    f"{instance.status}) — no se puede cancelar.",
+                )
+            except TreasuryOperationRequest.DoesNotExist:
+                raise Http404("Treasury request not found.")
+            else:
+                messages.success(request, f"✓ Treasury Request #{instance.pk} cancelada.")
+            return redirect(change_url)
+
+        context = dict(
+            self.admin_site.each_context(request),
+            title=f"Cancel Treasury Request #{instance.pk}",
+            instance=instance,
+            cancelling_as=request.user,
+            is_self_withdrawal=is_self_withdrawal,
+            cancel_url=change_url,
+        )
+        return render(request, "admin/treasury_request_cancel.html", context)
 
     # ── O.3d-4 — Treasury Operational Dashboard ───────────────────────
 

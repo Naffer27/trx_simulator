@@ -93,7 +93,8 @@ _EXECUTION_MAPPING = {
 
 
 class TreasuryRequestNotPending(Exception):
-    """Raised when review is attempted on a non-PENDING request."""
+    """Raised when review or cancellation is attempted on a
+    non-PENDING request."""
 
 
 class TreasuryRequestSelfReviewDenied(Exception):
@@ -440,6 +441,162 @@ def reject_treasury_request(instance, rejection_reason, *, request, review_notes
             "rejected_by_id": locked.rejected_by_id,
             "rejection_reason": locked.rejection_reason,
             "review_notes": review_notes,
+            "previous_status": previous_status,
+            "status": locked.status,
+        },
+    )
+
+    return locked
+
+
+# ─────────────────────────────────────────────
+# Treasury Cancel Workflow — O.3e-2
+#
+# cancel_treasury_request() — the only transition PENDING -> CANCELLED.
+# Frozen Fase 0 decisions (O.3e-1 approved):
+#   1/2. No cancellation_reason field exists on TreasuryOperationRequest
+#        — any reason text is recorded exclusively in this event's own
+#        AuditLog/BrokerAuditEvent detail/metadata, never on the model
+#        (same discipline O.2g-1a's cancelled_at comment already
+#        documents for "who": actor recorded via audit trail only).
+#   3/4. Two, and only two, actors may produce this transition:
+#        (a) requested_by, withdrawing their own still-PENDING request
+#            (self-withdrawal — no self-conflict concept applies here,
+#            unlike approve/reject: this IS the intended self-action);
+#        (b) anyone else holding can_review_treasury_request,
+#            administratively cancelling someone else's PENDING request.
+#        Which permission is actually required depends on
+#        locked.requested_by_id, itself a value of the row being
+#        cancelled — so, unlike approve_treasury_request()/
+#        reject_treasury_request() (whose single fixed permission is
+#        checked before the lock is even acquired), the permission
+#        dispatch here is necessarily resolved INSIDE the lock, right
+#        after re-reading the row, never trusting instance.requested_by_id
+#        from the possibly-stale caller-supplied instance. The
+#        underlying discipline — never check anything security-relevant
+#        against a value that could be stale — is identical to O.3a/
+#        O.3b/O.3c; only the sequencing differs, and only because it
+#        must.
+#   5.   No new permission — reuses TREASURY_SUBMIT_PERMISSION (self-
+#        withdrawal) and TREASURY_REVIEW_PERMISSION (administrative),
+#        both already defined above.
+#   6/7/8/9. Never imports wallet_ledger.py, never calls
+#        execute_treasury_request() or mark_treasury_execution_failed(),
+#        never touches treasury_engine — PENDING is the one status that
+#        is guaranteed to have never had a wallet_transaction, so this
+#        transition cannot move money by construction.
+# ─────────────────────────────────────────────
+
+def cancel_treasury_request(instance, *, request, cancellation_reason=""):
+    """
+    Transition a PENDING TreasuryOperationRequest to CANCELLED.
+
+    Args:
+        instance:             a TreasuryOperationRequest — only its .pk
+                               is used; re-read under lock, never
+                               trusted for status or requested_by (both
+                               could be stale).
+        request:               the current HttpRequest — request.user
+                               must be authenticated, and must be EITHER
+                               the request's own requested_by (holding
+                               TREASURY_SUBMIT_PERMISSION) OR any other
+                               user holding TREASURY_REVIEW_PERMISSION;
+                               request is also forwarded to
+                               audit.log_audit().
+        cancellation_reason:  optional, stripped; recorded only in
+                               AuditLog/BrokerAuditEvent (metadata key
+                               "cancellation_reason") — never on the
+                               model, per Fase 0 Decision 1/2. Never
+                               required (unlike reject_treasury_
+                               request()'s rejection_reason) — a future
+                               UI block (O.3e-3) may still choose to
+                               require it for the administrative path
+                               only; this service does not enforce that.
+
+    Returns:
+        The locked, updated TreasuryOperationRequest instance (CANCELLED).
+
+    Raises:
+        PermissionDenied:               request.user not authenticated,
+                                         or (depending on which actor
+                                         this call resolves to) lacks
+                                         TREASURY_SUBMIT_PERMISSION or
+                                         TREASURY_REVIEW_PERMISSION.
+        TreasuryRequestNotPending:       the request's current status is
+                                         not PENDING (re-checked under
+                                         lock).
+        TreasuryOperationRequest.DoesNotExist: instance.pk no longer
+                                         exists — left to propagate; the
+                                         future view (O.3e-3) translates
+                                         this to a 404.
+    """
+    if not request.user.is_authenticated:
+        raise PermissionDenied("Authentication required to cancel a treasury request.")
+
+    cancellation_reason = (cancellation_reason or "").strip()
+
+    with transaction.atomic():
+        locked = TreasuryOperationRequest.objects.select_for_update().get(pk=instance.pk)
+
+        if locked.status != TreasuryOperationRequest.ST_PENDING:
+            raise TreasuryRequestNotPending(
+                f"TreasuryOperationRequest #{locked.pk} is not pending (status={locked.status})."
+            )
+
+        is_self_withdrawal = locked.requested_by_id == request.user.pk
+        if is_self_withdrawal:
+            if not request.user.has_perm(TREASURY_SUBMIT_PERMISSION):
+                raise PermissionDenied(f"Missing permission: {TREASURY_SUBMIT_PERMISSION}")
+            cancelled_by_role = "requester"
+        else:
+            if not request.user.has_perm(TREASURY_REVIEW_PERMISSION):
+                raise PermissionDenied(f"Missing permission: {TREASURY_REVIEW_PERMISSION}")
+            cancelled_by_role = "supervisor"
+
+        previous_status = locked.status
+        locked.status = TreasuryOperationRequest.ST_CANCELLED
+        locked.cancelled_at = timezone.now()
+        locked.save(update_fields=["status", "cancelled_at"])
+    # ── transaction closed — the CANCELLED transition is committed from here on ──
+
+    audit.log_audit(
+        request, audit.EV_TREASURY_REQUEST_CANCELLED,
+        f"Treasury request #{locked.pk} cancelled ({cancelled_by_role})",
+        detail={
+            "treasury_request_id": locked.pk,
+            "operation_type": locked.operation_type,
+            "wallet_id": locked.wallet_id,
+            "wallet_user_id": locked.wallet.user_id,
+            "amount": str(locked.amount),
+            "requested_by_id": locked.requested_by_id,
+            "cancelled_by_id": request.user.pk,
+            "cancelled_by_role": cancelled_by_role,
+            "cancellation_reason": cancellation_reason,
+            "previous_status": previous_status,
+            "new_status": locked.status,
+        },
+    )
+
+    broker_audit.record_payment_event(
+        event_type=broker_audit.EV_TREASURY_REQUEST_CANCELLED,
+        severity=(
+            broker_audit.Severity.INFO if cancelled_by_role == "requester"
+            else broker_audit.Severity.WARNING
+        ),
+        actor_type=broker_audit.ActorType.STAFF,
+        actor_id=request.user.pk,
+        description=f"Treasury request #{locked.pk} cancelled ({cancelled_by_role})",
+        source_module="simulator.treasury_requests",
+        metadata={
+            "treasury_operation_request_id": locked.pk,
+            "operation_type": locked.operation_type,
+            "wallet_id": locked.wallet_id,
+            "wallet_user_id": locked.wallet.user_id,
+            "amount": str(locked.amount),
+            "requested_by_id": locked.requested_by_id,
+            "cancelled_by_id": request.user.pk,
+            "cancelled_by_role": cancelled_by_role,
+            "cancellation_reason": cancellation_reason,
             "previous_status": previous_status,
             "status": locked.status,
         },

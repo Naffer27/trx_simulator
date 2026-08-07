@@ -277,6 +277,16 @@ EV_TREASURY_REQUEST_EXECUTION_RECOVERY_BLOCKED = "treasury.request_execution_rec
 # implemented by this constant.
 EV_TREASURY_STUCK_EXECUTION_OBSERVED = "treasury.stuck_execution_observed"
 
+# O.3e-1 — mirrors audit.py's EV_TREASURY_REQUEST_CANCELLED string
+# exactly, same discipline as above. Schema-only: no call site exists
+# yet (the cancellation service is a later block, O.3e-2). No new
+# permission, no new model field — Fase 0 Decision 1/2 froze that any
+# cancellation reason text lives exclusively in this event's own
+# AuditLog/BrokerAuditEvent detail/metadata, never on
+# TreasuryOperationRequest itself. No migration is implemented by this
+# constant.
+EV_TREASURY_REQUEST_CANCELLED = "treasury.request_cancelled"
+
 
 # ─────────────────────────────────────────────────────────────────────────
 # AUDIT-03 — Compliance Audit Trail (KYC).

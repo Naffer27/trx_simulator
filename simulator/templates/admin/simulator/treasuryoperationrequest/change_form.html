@@ -28,6 +28,16 @@
     </a>
   </li>
   {% endif %}
+  {% if show_treasury_cancel_button %}
+  <li>
+    <a href="{{ treasury_cancel_url }}" class="historylink"
+       style="background:rgba(230,126,34,.12);color:#e67e22;border:1px solid rgba(230,126,34,.35);
+              border-radius:4px;padding:5px 14px;font-size:.75rem;font-weight:700;
+              text-decoration:none;letter-spacing:.04em;">
+      Cancel Request →
+    </a>
+  </li>
+  {% endif %}
   {{ block.super }}
 {% endblock %}
 

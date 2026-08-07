@@ -443,9 +443,8 @@ class StandardAddChangeDeleteDeniedOverHttpTests(TestCase):
 
 class NoExecuteCancelUrlTests(TestCase):
     """
-    2d/2e/2f/2g — no Cancel URL exists anywhere; get_urls() exposes
-    exactly the seven custom URLs authorized so far beyond Django's own
-    CRUD routes.
+    2d/2e/2f/2g — get_urls() exposes exactly the custom URLs authorized
+    so far beyond Django's own CRUD routes.
 
     O.3a-5 originally asserted that treasury_request_approve/reject
     ALSO did not exist yet — that was true at the time (this block only
@@ -454,9 +453,11 @@ class NoExecuteCancelUrlTests(TestCase):
     legitimately adding treasury_request_execute. O.3c-5b superseded it
     once more, legitimately adding treasury_request_recover. O.3d-4
     superseded it a fourth time, legitimately adding the two read-only
-    Operational Dashboard endpoints. This test now locks down the
-    current, still-accurate boundary: Approve/Reject/Execute/Recover/
-    the two dashboard URLs exist, Cancel does not.
+    Operational Dashboard endpoints. O.3e-3 supersedes it a fifth time,
+    legitimately adding treasury_request_cancel (the confirmation
+    screen for cancel_treasury_request(), O.3e-2). This test now locks
+    down the current, still-accurate boundary: Approve/Reject/Execute/
+    Recover/Cancel/the two dashboard URLs exist — nothing else.
     """
 
     def test_get_urls_exposes_only_the_authorized_custom_urls(self):
@@ -478,14 +479,18 @@ class NoExecuteCancelUrlTests(TestCase):
             {
                 "treasury_request_new", "treasury_request_approve",
                 "treasury_request_reject", "treasury_request_execute",
-                "treasury_request_recover", "treasury_operational_dashboard",
+                "treasury_request_recover", "treasury_request_cancel",
+                "treasury_operational_dashboard",
                 "treasury_operational_dashboard_data",
             },
         )
 
-        for hypothetical in ("treasury_request_cancel",):
-            with self.assertRaises(NoReverseMatch):
-                _reverse(f"admin:{hypothetical}")
+        # O.3e-3 — treasury_request_cancel now legitimately exists (see
+        # class docstring); it takes a required pk arg, so a no-args
+        # reverse() still raises NoReverseMatch, same shape as every
+        # other pk-based custom URL here.
+        with self.assertRaises(NoReverseMatch):
+            _reverse("admin:treasury_request_cancel")
 
 
 class NoAdditionalModelAccessGrantedTests(TestCase):

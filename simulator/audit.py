@@ -73,6 +73,16 @@ EV_TREASURY_REQUEST_EXECUTION_RECOVERY_BLOCKED = "treasury.request_execution_rec
 # by this constant.
 EV_TREASURY_STUCK_EXECUTION_OBSERVED = "treasury.stuck_execution_observed"
 
+# O.3e-1 — Treasury Cancel Workflow. Schema-only: no call site exists
+# yet (the cancellation service is a later block, O.3e-2). Mirrored
+# exactly in broker_audit.py, same discipline as every other Treasury
+# constant above. No new permission, no new model field (Fase 0
+# Decision 1/2: there is no cancellation_reason field on
+# TreasuryOperationRequest — any reason text is recorded exclusively
+# in this event's own AuditLog/BrokerAuditEvent detail/metadata, never
+# on the model), no migration is implemented by this constant.
+EV_TREASURY_REQUEST_CANCELLED = "treasury.request_cancelled"
+
 EV_ADMIN_ACTION      = "admin.action"
 EV_ADMIN_VIEW        = "admin.view"
 
