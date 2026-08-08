@@ -83,6 +83,22 @@ EV_TREASURY_STUCK_EXECUTION_OBSERVED = "treasury.stuck_execution_observed"
 # on the model), no migration is implemented by this constant.
 EV_TREASURY_REQUEST_CANCELLED = "treasury.request_cancelled"
 
+# O.4b-1 — Treasury Permission Assignment Audit. Covers only the existing
+# assign_treasury_role management command path (via="management_command").
+# Mirrored exactly in broker_audit.py, same discipline as every other
+# Treasury constant above. No new permission, no new model field, no
+# migration is implemented by these constants.
+EV_TREASURY_PERMISSION_GRANTED = "treasury.permission_granted"
+EV_TREASURY_PERMISSION_REVOKED = "treasury.permission_revoked"
+
+# O.4b-3 — Treasury Role Concentration Guard. Fired only when a GRANT is
+# refused because it would leave the target holding more than one of
+# the four Treasury permissions (concentration) AND
+# TREASURY_ROLE_CONCENTRATION_BLOCKING=True at call time. Mirrored
+# exactly in broker_audit.py. Revokes are never blocked and never emit
+# this event. No new permission, no new model field, no migration.
+EV_TREASURY_ROLE_CONCENTRATION_BLOCKED = "treasury.role_concentration_blocked"
+
 EV_ADMIN_ACTION      = "admin.action"
 EV_ADMIN_VIEW        = "admin.view"
 

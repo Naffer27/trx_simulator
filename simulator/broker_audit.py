@@ -287,6 +287,21 @@ EV_TREASURY_STUCK_EXECUTION_OBSERVED = "treasury.stuck_execution_observed"
 # constant.
 EV_TREASURY_REQUEST_CANCELLED = "treasury.request_cancelled"
 
+# O.4b-1 — mirrors audit.py's EV_TREASURY_PERMISSION_GRANTED/REVOKED
+# strings exactly, same discipline as above. Covers only the existing
+# assign_treasury_role management command path (via=
+# "management_command") — the Django Admin User-form path is a later
+# block (O.4b-2), not implemented by these constants. No new permission,
+# no new model field, no migration.
+EV_TREASURY_PERMISSION_GRANTED = "treasury.permission_granted"
+EV_TREASURY_PERMISSION_REVOKED = "treasury.permission_revoked"
+
+# O.4b-3 — mirrors audit.py's EV_TREASURY_ROLE_CONCENTRATION_BLOCKED
+# string exactly, same discipline as above. Fired only when a GRANT is
+# refused for concentration under TREASURY_ROLE_CONCENTRATION_BLOCKING
+# =True. Revokes never emit this event.
+EV_TREASURY_ROLE_CONCENTRATION_BLOCKED = "treasury.role_concentration_blocked"
+
 
 # ─────────────────────────────────────────────────────────────────────────
 # AUDIT-03 — Compliance Audit Trail (KYC).

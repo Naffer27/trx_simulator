@@ -386,6 +386,19 @@ TOTP_STAFF_REQUIRED = os.getenv("TOTP_STAFF_REQUIRED", "False").strip().lower() 
 # MoneyBrokerAdminSite.admin_view()).
 TOTP_ADMIN_TREASURY_REQUIRED = os.getenv("TOTP_ADMIN_TREASURY_REQUIRED", "False").strip().lower() in {"1", "true", "yes"}
 
+# O.4b-3 — dedicated, independent flag: when True, a NEW grant of one of
+# the four Treasury permissions is refused if it would leave the target
+# holding more than one of them ("concentration" — O.4b Fase 0 Decision
+# 1). Detection and audit of concentration always happen regardless of
+# this flag; only the BLOCKING behavior is gated by it. Default False —
+# concentrated grants remain allowed (but audited) until this is
+# explicitly enabled, so existing operational workflows and the test
+# suite are unaffected until an operator opts in. Revokes are never
+# blocked by this flag.
+TREASURY_ROLE_CONCENTRATION_BLOCKING = os.getenv(
+    "TREASURY_ROLE_CONCENTRATION_BLOCKING", "False",
+).strip().lower() in {"1", "true", "yes"}
+
 # Load-test bypass — disables HTTP rate limiting for load testing scenarios.
 # MUST be False (default) in production. Only set True in .env.staging during tests.
 # ===============================

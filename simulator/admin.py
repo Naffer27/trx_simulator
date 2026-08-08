@@ -4987,6 +4987,247 @@ admin.site.index_title = "Risk & Dealing Administration"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# O.4b-2 — Treasury Permission Assignment Hardening (closes CRIT-2)
+#
+# TreasuryHardenedUserAdmin replaces Django's stock UserAdmin with one
+# additional, independent restriction: the four Treasury permissions
+# (can_submit/review/execute/recover_treasury_*) and is_superuser can
+# only be granted/revoked by a superuser, and even a superuser cannot
+# change either of those two things on THEIR OWN account through this
+# form (self-grant prevention, O.4b Fase 0 decision 4). Every other
+# field — including every non-Treasury permission — keeps its normal
+# Django behavior for whoever already has auth.change_user, unchanged.
+#
+# Both protections are server-side, not cosmetic: user_permissions is
+# restricted via formfield_for_manytomany()'s queryset (Django's
+# ModelMultipleChoiceField.clean() rejects any submitted Treasury
+# permission id that isn't in that queryset — a raw POST injection
+# fails validation, not just a hidden checkbox), and is_superuser is
+# marked disabled=True on the form for non-superusers (Django's
+# ModelForm ignores submitted values for a disabled field and keeps
+# the instance's current value — this is enforced in form.clean(), not
+# in a template).
+# ─────────────────────────────────────────────────────────────────────────────
+
+from .treasury_permissions import (
+    TREASURY_PERMISSION_CODENAMES,
+    held_treasury_codenames as _held_treasury_codenames,
+    record_concentration_blocked as _record_concentration_blocked,
+    treasury_permission_queryset as _treasury_permission_queryset,
+    would_be_concentrated as _would_be_concentrated,
+)
+
+
+def _audit_admin_treasury_permission_change(*, action, actor, target, permission,
+                                             force_used: bool = False):
+    """
+    O.4b-2 — writes exactly one AuditLog row + one BrokerAuditEvent for a
+    REAL grant or revoke performed through TreasuryHardenedUserAdmin.
+    Reuses the exact event constants introduced in O.4b-1
+    (EV_TREASURY_PERMISSION_GRANTED/REVOKED) — via="django_admin" is the
+    only thing that distinguishes this call site from the management-
+    command one. Never raises: an audit failure here must not surface as
+    a form-save failure, since the permission mutation has already
+    committed by the time this runs (called from save_related(), after
+    super().save_related() has returned).
+
+    action: "granted" | "revoked".
+
+    O.4b-3 — also records the resulting Treasury permission combination
+    and whether it is concentrated, and the current value of
+    TREASURY_ROLE_CONCENTRATION_BLOCKING. force_used is always False
+    here — TreasuryHardenedUserAdmin has no override mechanism (O.4b-3
+    Fase 0: acceptable for this block that --force exists only in the
+    management command; Django Admin always blocks when the flag is on)
+    — the parameter exists only so this function's signature mirrors
+    the CLI one and so a future admin-side override, if ever built,
+    doesn't need a second audit writer.
+    """
+    from django.conf import settings
+
+    from simulator.management.commands.assign_treasury_role import TREASURY_ROLE_CODENAMES
+
+    role = next(
+        (r for r, codename in TREASURY_ROLE_CODENAMES.items() if codename == permission.codename),
+        permission.codename,
+    )
+    resulting_codenames = _held_treasury_codenames(target)
+    resulting_count = len(resulting_codenames)
+
+    detail = {
+        "target_user_id": target.pk,
+        "target_username": target.username,
+        "role": role,
+        "codename": permission.codename,
+        "granted_by": actor.pk,
+        "via": "django_admin",
+        "is_self_grant": target.pk == actor.pk,
+        "resulting_treasury_permission_count": resulting_count,
+        "treasury_permissions": list(resulting_codenames),
+        "concentration_detected": resulting_count > 1,
+        "blocking_enabled": getattr(settings, "TREASURY_ROLE_CONCENTRATION_BLOCKING", False),
+        "force_used": force_used,
+        "actor": actor.pk,
+        "outcome": action,
+    }
+    event_type = (
+        "treasury.permission_granted" if action == "granted" else "treasury.permission_revoked"
+    )
+
+    try:
+        from .models import AuditLog
+        AuditLog.objects.create(
+            event_type=event_type,
+            action=f"Treasury permission '{permission.codename}' ({role}) {action} for user "
+                   f"'{target.username}' via Django Admin (actor: {actor.username})",
+            user=actor,
+            detail=detail,
+        )
+    except Exception:
+        pass
+
+    from . import broker_audit as _audit
+    _audit.record_admin_event(
+        event_type=event_type,
+        severity=_audit.Severity.WARNING,
+        description=f"Treasury permission '{permission.codename}' ({role}) {action} for user "
+                    f"#{target.pk} via Django Admin (actor: #{actor.pk})",
+        actor_id=actor.pk,
+        source_module="simulator.admin.TreasuryHardenedUserAdmin",
+        metadata=detail,
+    )
+
+
+from django.contrib.auth.admin import UserAdmin as _DjangoUserAdmin
+
+
+class TreasuryHardenedUserAdmin(_DjangoUserAdmin):
+    """
+    Subclasses Django's own auth.UserAdmin directly — every existing
+    field/fieldset/behavior (add form, password change view,
+    filter_horizontal, list_display, etc.) stays 100% intact except for
+    the three overrides below.
+    """
+
+    def get_form(self, request, obj=None, **kwargs):
+        # Stash the target user on the request so formfield_for_
+        # manytomany() below (which Django calls with `request` only,
+        # never `obj`) can tell whether this is a self-edit. Read, not
+        # persisted anywhere — a plain request-scoped attribute, gone
+        # once the response is built.
+        request._o4b2_target_user = obj
+        form = super().get_form(request, obj, **kwargs)
+        if not request.user.is_superuser and "is_superuser" in form.base_fields:
+            # Server-side: Django's ModelForm ignores POSTed values for
+            # a disabled field and keeps the instance's current value —
+            # enforced in BoundField/Form.clean(), not a template
+            # attribute. Applies identically whether the non-superuser
+            # is editing themselves or anyone else (O.4b-2 requirement 5).
+            form.base_fields["is_superuser"].disabled = True
+        return form
+
+    def formfield_for_manytomany(self, db_field, request, **kwargs):
+        field = super().formfield_for_manytomany(db_field, request, **kwargs)
+        if db_field.name == "user_permissions" and field is not None:
+            target = getattr(request, "_o4b2_target_user", None)
+            is_self_edit = target is not None and target.pk == request.user.pk
+            if not request.user.is_superuser or is_self_edit:
+                # Excluded from the queryset entirely — not hidden by
+                # CSS/JS. A raw POST containing one of these permission
+                # ids fails ModelMultipleChoiceField.clean() (the id is
+                # not a member of this restricted queryset), so the
+                # whole field is rejected as invalid rather than
+                # silently accepted.
+                field.queryset = field.queryset.exclude(
+                    pk__in=_treasury_permission_queryset().values_list("pk", flat=True),
+                )
+        return field
+
+    def save_related(self, request, form, formsets, change):
+        target = form.instance
+        treasury_pks = set(_treasury_permission_queryset().values_list("pk", flat=True))
+
+        before_ids = (
+            set(target.user_permissions.filter(pk__in=treasury_pks).values_list("pk", flat=True))
+            if change else set()
+        )
+
+        super().save_related(request, form, formsets, change)
+
+        is_self_edit = change and target.pk == request.user.pk
+        restricted = (not request.user.is_superuser) or is_self_edit
+
+        if restricted:
+            # This actor/target combination never had the four Treasury
+            # permissions in the form's queryset at all (see
+            # formfield_for_manytomany above), so save_m2m() above can
+            # only have DROPPED any pre-existing ones (a `.set()` call
+            # replaces the whole relation with what was submitted) —
+            # never added new ones. Restore the exact pre-save state:
+            # no grant, no revoke is possible through this path,
+            # regardless of what was submitted.
+            if before_ids:
+                target.user_permissions.add(*before_ids)
+            return
+
+        # Unrestricted path: a superuser editing someone else. Treasury
+        # permissions WERE in the form's queryset and may have
+        # genuinely changed — diff before/after and audit exactly what
+        # changed, once per permission (O.4b-2 requirement 7).
+        by_pk = {p.pk: p for p in _treasury_permission_queryset()}
+        after_ids = set(
+            target.user_permissions.filter(pk__in=treasury_pks).values_list("pk", flat=True),
+        )
+        added_pks = after_ids - before_ids
+        removed_pks = before_ids - after_ids
+
+        # O.4b-3 — Treasury Role Concentration Guard. super().save_
+        # related() above has already persisted whatever was submitted
+        # (Django's normal .set() semantics) — if blocking is enabled
+        # and the resulting combination would be concentrated because
+        # of a genuinely NEW addition, revert exactly the newly-added
+        # permissions here (never an already-held one, never a revoke),
+        # so the persisted end state matches what the CLI achieves by
+        # never calling .add() in the first place. No admin-side
+        # override exists (O.4b-3 Fase 0: acceptable for this block) —
+        # this always blocks when the flag is on, unconditionally.
+        from django.conf import settings
+
+        blocking_enabled = getattr(settings, "TREASURY_ROLE_CONCENTRATION_BLOCKING", False)
+        if added_pks and blocking_enabled:
+            before_codenames = {by_pk[pk].codename for pk in before_ids}
+            added_codenames = {by_pk[pk].codename for pk in added_pks}
+            if len(before_codenames | added_codenames) > 1:
+                target.user_permissions.remove(*added_pks)
+                for codename in sorted(added_codenames):
+                    _record_concentration_blocked(
+                        actor_id=request.user.pk, target=target, codename=codename,
+                        current_codenames=tuple(sorted(before_codenames)), via="django_admin",
+                    )
+                self.message_user(
+                    request,
+                    "⚠ Treasury role concentration blocked — granting "
+                    f"{', '.join(sorted(added_codenames))} to '{target.username}' would "
+                    f"result in {len(before_codenames | added_codenames)} Treasury "
+                    "permissions. No Treasury permission changes were applied for this user.",
+                    level=messages.WARNING,
+                )
+                added_pks = set()  # nothing net added — do not audit these as granted
+
+        if not added_pks and not removed_pks:
+            return  # no-op (or fully blocked above) — nothing further to audit
+
+        for pk in added_pks:
+            _audit_admin_treasury_permission_change(
+                action="granted", actor=request.user, target=target, permission=by_pk[pk],
+            )
+        for pk in removed_pks:
+            _audit_admin_treasury_permission_change(
+                action="revoked", actor=request.user, target=target, permission=by_pk[pk],
+            )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Admin sidebar reorganization — ADMIN_UI.1
 # Groups all simulator models into named sections without touching registrations,
 # URLs, migrations or any business logic.  Fully reversible: delete this block
@@ -5223,3 +5464,15 @@ class MoneyBrokerAdminSite(admin.AdminSite):
 # All @admin.register() decorators already bound to this object remain intact.
 # URLs remain unchanged. No registrations are affected.
 admin.site.__class__ = MoneyBrokerAdminSite
+
+
+# O.4b-2 — replace Django's default auth.User registration with the
+# hardened one. django.contrib.auth.apps.AuthConfig.ready() registers
+# the stock UserAdmin via autodiscovery before this module finishes
+# importing, so it is unregistered here and re-registered with
+# TreasuryHardenedUserAdmin — same model, same admin.site, only the
+# ModelAdmin class differs.
+from django.contrib.auth.models import User as _AuthUser
+
+admin.site.unregister(_AuthUser)
+admin.site.register(_AuthUser, TreasuryHardenedUserAdmin)
