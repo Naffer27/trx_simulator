@@ -374,6 +374,18 @@ TOTP_ENCRYPTION_KEY = os.getenv("TOTP_ENCRYPTION_KEY", "").strip()
 # Enforce 2FA for all staff/admin users (set True in production after testing)
 TOTP_STAFF_REQUIRED = os.getenv("TOTP_STAFF_REQUIRED", "False").strip().lower() in {"1", "true", "yes"}
 
+# O.4a — dedicated, independent flag: enforce 2FA specifically for Django
+# Admin access by users who hold any of the four Treasury permissions (or
+# are superusers). Deliberately NOT the same flag as TOTP_STAFF_REQUIRED
+# above (which only gates ops_panel_view + the JSON staff APIs, an already
+# frozen/tested contract this block does not touch) — see O.4a Fase 0
+# Decision 1. Default False so the existing admin test suite (which logs
+# in Treasury operators without ever enrolling TOTP) is unaffected until
+# this is explicitly enabled. Not yet consulted anywhere (O.4a-1 only
+# adds the flag and the helper below; O.4a-2 wires it into
+# MoneyBrokerAdminSite.admin_view()).
+TOTP_ADMIN_TREASURY_REQUIRED = os.getenv("TOTP_ADMIN_TREASURY_REQUIRED", "False").strip().lower() in {"1", "true", "yes"}
+
 # Load-test bypass — disables HTTP rate limiting for load testing scenarios.
 # MUST be False (default) in production. Only set True in .env.staging during tests.
 # ===============================

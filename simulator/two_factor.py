@@ -216,3 +216,46 @@ def staff_require_2fa(view_fn):
 
         return view_fn(request, *args, **kwargs)
     return wrapper
+
+
+# ── O.4a — Treasury Admin 2FA gate ─────────────────────────────────────────────
+#
+# treasury_2fa_required() is a pure predicate, not a decorator — O.4a-1 only
+# adds it (and the settings flag it will eventually be paired with,
+# TOTP_ADMIN_TREASURY_REQUIRED); nothing calls it yet. O.4a-2 will wire it
+# into MoneyBrokerAdminSite.admin_view() (simulator/admin.py) as the single
+# choke point for every /admin/ URL. It intentionally does NOT read
+# TOTP_ADMIN_TREASURY_REQUIRED itself — that check belongs to the call site
+# that decides whether the gate is active at all, keeping this function a
+# simple, reusable "is this user a Treasury operator" test.
+#
+# Deliberately independent of staff_require_2fa() above: that decorator's
+# "no confirmed device -> pass through" contract is frozen and tested
+# (test_staff_2fa_enforcement.py) for ops_panel_view/the JSON staff APIs —
+# it is not modified by this addition. The O.4a admin gate (O.4a-2) will
+# treat "no confirmed device" as mandatory enrollment instead, which is why
+# this is a new function rather than a change to staff_require_2fa().
+_TREASURY_2FA_PERMISSIONS = (
+    "simulator.can_submit_treasury_request",
+    "simulator.can_review_treasury_request",
+    "simulator.can_execute_treasury_request",
+    "simulator.can_recover_treasury_execution",
+)
+
+
+def treasury_2fa_required(user) -> bool:
+    """
+    True if `user` must pass the O.4a Treasury Admin 2FA gate: any staff
+    user holding at least one of the four Treasury permissions, or any
+    superuser (checked explicitly rather than relying on has_perm()'s
+    implicit superuser bypass, so a superuser cannot be used to route
+    around the gate — O.4a Fase 0 design, scenario "superuser").
+
+    Never raises: an unauthenticated or non-staff user simply returns
+    False, same defensive shape as staff_require_2fa()'s own check.
+    """
+    if not (getattr(user, "is_authenticated", False) and user.is_staff):
+        return False
+    if user.is_superuser:
+        return True
+    return any(user.has_perm(perm) for perm in _TREASURY_2FA_PERMISSIONS)

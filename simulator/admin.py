@@ -5149,6 +5149,75 @@ class MoneyBrokerAdminSite(admin.AdminSite):
                 )
         return response
 
+    def admin_view(self, view, cacheable=False):
+        """
+        O.4a-2 — wraps Django's own AdminSite.admin_view() (called via
+        super() below, unmodified — this method never reimplements or
+        bypasses its has_permission()/never_cache/csrf_protect behavior)
+        with one additional, independent check: when
+        TOTP_ADMIN_TREASURY_REQUIRED=True, any authenticated staff user
+        for whom treasury_2fa_required() is True (superusers and holders
+        of any of the four Treasury permissions — O.4a Fase 0 §3) must
+        have a verified TOTP session (totp_session_verified()) before
+        reaching the wrapped view.
+
+        admin_view() is called via self.admin_site.admin_view(...) by
+        every single URL registered under /admin/ — Django's own CRUD
+        views AND every custom Treasury view (approve/reject/execute/
+        recover/cancel/dashboard, all registered in this file's
+        get_urls() methods) — so overriding it here is the one place
+        that protects all of them without touching any of those view
+        functions individually (O.4a Fase 0 §6/§11/§12: server-side,
+        not button-hiding; direct URL access is equally protected).
+
+        Deliberately NOT an override of has_permission(): that method is
+        also consulted by AdminSite.login() to decide whether an
+        already-authenticated user gets redirected straight to the index
+        page. Folding the TOTP check into has_permission() would make
+        that redirect decision False for a password-valid-but-not-yet-
+        2FA-verified user, and Django's login() has no TOTP-awareness of
+        its own — the user would be shown the login form again with
+        nowhere to complete the TOTP step, an infinite loop. See O.4a
+        Fase 0 design (rejected alternative). login() itself is not
+        modified by this method.
+
+        With TOTP_ADMIN_TREASURY_REQUIRED=False (the default), this
+        method is a pure passthrough to super().admin_view() — the
+        existing admin behavior is unchanged, byte-for-byte, for every
+        caller (O.4a Fase 0 requirement 2).
+        """
+        original = super().admin_view(view, cacheable)
+
+        def gated(request, *args, **kwargs):
+            from django.conf import settings
+
+            if getattr(settings, "TOTP_ADMIN_TREASURY_REQUIRED", False):
+                user = request.user
+                if getattr(user, "is_authenticated", False) and user.is_staff:
+                    # admin:logout must stay reachable even mid-gate —
+                    # the same exemption Django's own admin_view()
+                    # already grants it against has_permission(), for
+                    # the identical reason (never trap a user with no
+                    # way out).
+                    logout_path = reverse("admin:logout", current_app=self.name)
+                    if request.path != logout_path:
+                        from .two_factor import (
+                            totp_session_verified, treasury_2fa_required,
+                        )
+                        if treasury_2fa_required(user) and not totp_session_verified(request):
+                            from .models import TOTPDevice
+                            request.session["2fa_next"] = request.get_full_path()
+                            has_confirmed_device = TOTPDevice.objects.filter(
+                                user=user, confirmed=True,
+                            ).exists()
+                            if has_confirmed_device:
+                                return redirect("simulator:totp_verify")
+                            return redirect("simulator:totp_setup")
+
+            return original(request, *args, **kwargs)
+
+        return gated
+
 
 # Swap the class on the existing admin.site instance.
 # All @admin.register() decorators already bound to this object remain intact.
