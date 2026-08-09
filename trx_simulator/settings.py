@@ -14,11 +14,16 @@ from django.core.exceptions import ImproperlyConfigured
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")  # si no existe, no rompe
 
+# Shared by every "raise ImproperlyConfigured unless we're inside
+# `manage.py test`" guard in this file (O.4c-1 — previously each guard
+# recomputed this identical expression under a locally-scoped name;
+# centralized here so a new guard never needs to duplicate it again).
+_IN_TEST_RUN = len(sys.argv) > 1 and sys.argv[1] == "test"
+
 # Seguridad / Debug
 _secret_key = os.getenv("DJANGO_SECRET_KEY", "").strip()
 if not _secret_key:
-    _running_tests = len(sys.argv) > 1 and sys.argv[1] == "test"
-    if _running_tests:
+    if _IN_TEST_RUN:
         # Fixed test-only secret. Never used outside `manage.py test`.
         _secret_key = "test-only-secret-key-not-for-production-use-ever"
     else:
@@ -30,6 +35,41 @@ if not _secret_key:
         )
 SECRET_KEY = _secret_key
 DEBUG = os.getenv("DEBUG", "False").strip().lower() in {"1", "true", "yes"}
+
+# ===============================
+# 🌎 Application environment — O.4c-1
+# ===============================
+# APP_ENV is the explicit, single source of truth for which deployment
+# tier this process is running as. Deliberately independent of DEBUG
+# (a misconfigured DEBUG alone must never silently define "is this
+# production") and independent of SENTRY_ENVIRONMENT below (Sentry-only,
+# cosmetic, never gates behavior — O.4c Fase 0 decision, Opción B).
+# Unlike the guards above, an invalid value here is never exempted for
+# `manage.py test` — no legitimate test scenario needs an invalid
+# APP_ENV, and the existing suite never sets this var (default
+# "development" is always valid), so this can never break the suite.
+_VALID_APP_ENVS = {"development", "staging", "production"}
+APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
+if APP_ENV not in _VALID_APP_ENVS:
+    raise ImproperlyConfigured(
+        f"APP_ENV={APP_ENV!r} is not valid. Must be one of: "
+        + ", ".join(sorted(_VALID_APP_ENVS))
+    )
+
+# O.4c-2 — Guard: staging/production must never boot with DEBUG=True.
+# APP_ENV (not DB_NAME, not SENTRY_ENVIRONMENT) is the sole source of
+# truth for this — O.4c Fase 0 §6/§7. Skipped during `manage.py test`
+# via the same centralized _IN_TEST_RUN flag as every other guard in
+# this file, so the local suite (no PostgreSQL available here) keeps
+# running unaffected regardless of which APP_ENV happens to be set.
+if APP_ENV in {"staging", "production"} and DEBUG:
+    if not _IN_TEST_RUN:
+        raise ImproperlyConfigured(
+            f"DEBUG=True is not allowed when APP_ENV={APP_ENV!r}. "
+            "Set DEBUG=False in your .env file for staging/production — "
+            "DEBUG=True leaks stack traces, SQL, and settings on every "
+            "unhandled error."
+        )
 
 # Acceso con código (usado por LoginForm para requerirlo en PROD)
 BROKER_ACCESS_CODE = os.getenv("BROKER_ACCESS_CODE", "").strip()
@@ -106,6 +146,22 @@ ASGI_APPLICATION = "trx_simulator.asgi.application"  # requerido por Channels
 
 # Base de datos — PostgreSQL en producción, SQLite en dev sin DB_NAME
 _db_name = os.getenv("DB_NAME", "")
+
+# O.4c-1 — Guard: staging/production must never silently fall back to
+# SQLite. APP_ENV (not DEBUG) is the source of truth for this — see the
+# "Application environment" block above. Skipped during `manage.py
+# test` via the shared _IN_TEST_RUN flag, same discipline as every
+# other guard in this file — this project's test suite has no local
+# PostgreSQL server available and must keep running on SQLite
+# regardless of APP_ENV (O.4c Fase 0 §8/§TESTS).
+if APP_ENV in {"staging", "production"} and not _db_name:
+    if not _IN_TEST_RUN:
+        raise ImproperlyConfigured(
+            f"DB_NAME must be set when APP_ENV={APP_ENV!r} — SQLite is not "
+            "permitted outside development. Add DB_NAME (and DB_USER/"
+            "DB_PASSWORD/DB_HOST/DB_PORT as needed) to your .env file."
+        )
+
 if _db_name:
     DATABASES = {
         "default": {
@@ -592,8 +648,7 @@ SUPPORT_EMAIL       = os.getenv("SUPPORT_EMAIL", "").strip()
 # Skipped during `manage.py test` so the test runner is never blocked.
 _smtp_in_use = "smtp.EmailBackend" in EMAIL_BACKEND
 if not DEBUG and _smtp_in_use and not EMAIL_HOST:
-    _in_test_run = len(sys.argv) > 1 and sys.argv[1] == "test"
-    if not _in_test_run:
+    if not _IN_TEST_RUN:
         raise ImproperlyConfigured(
             "EMAIL_HOST must be set when DEBUG=False and using the SMTP email backend. "
             "Add EMAIL_HOST to your .env file (e.g. smtp.sendgrid.net, smtp.mailgun.org). "
@@ -676,8 +731,7 @@ TREASURY_EXECUTION_RECOVERY_MIN_AGE_SECONDS = 600
 # Guard: NOWPAYMENTS_IPN_SECRET must be set in production so that deposit and
 # withdrawal callbacks cannot be spoofed. Skipped during `manage.py test`.
 if not DEBUG and not NOWPAYMENTS_IPN_SECRET:
-    _in_test_run = len(sys.argv) > 1 and sys.argv[1] == "test"
-    if not _in_test_run:
+    if not _IN_TEST_RUN:
         raise ImproperlyConfigured(
             "NOWPAYMENTS_IPN_SECRET must be set when DEBUG=False. "
             "Without it, any attacker can spoof deposit and withdrawal callbacks. "
