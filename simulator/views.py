@@ -3176,6 +3176,28 @@ def totp_verify_view(request):
     error = None
 
     if request.method == "POST":
+        from . import broker_audit as _audit
+        from .ratelimit import rate_check, rate_peek
+
+        user_key = f"2fa_verify_fail:u{request.user.pk}"
+
+        # O.4d-2 — enforcement. Pre-check with rate_peek() (never
+        # increments) BEFORE verify_totp_code() is ever called: an
+        # identity already at/over the threshold must not get another
+        # verification attempt, and must not increment the counter
+        # again. The EV_AUTH_RATE_LIMITED event for this activation was
+        # already emitted by the failing attempt that reached the
+        # threshold (below) — never re-emit it here, that would flood
+        # on every repeat 429 within the same window (see O.4d-1's
+        # EV_AUTH_RATE_LIMITED docstring in broker_audit.py).
+        if rate_peek(user_key) >= _audit.AUDIT04A_2FA_VERIFY_FAIL_THRESHOLD:
+            return render(
+                request,
+                "simulator/totp_verify.html",
+                {"error": "Demasiados intentos. Espera unos minutos e inténtalo de nuevo."},
+                status=429,
+            )
+
         code = request.POST.get("code", "").strip()
         if verify_totp_code(device.secret, code):
             mark_session_verified(request)
@@ -3189,15 +3211,12 @@ def totp_verify_view(request):
             # events, not a mirror of every brute-force guess (those stay
             # in security_log() above, unchanged). Only record when a
             # configurable threshold of consecutive failures is crossed,
-            # using the existing Redis counter in ratelimit.py in
-            # OBSERVE-ONLY mode — it counts, it never blocks this retry.
+            # using the existing Redis counter in ratelimit.py.
             # rate_check() is fail-open on Redis failure ((True, 0)), so
             # the threshold simply never fires in that case — same
             # accepted behavior as every other rate_check() caller.
-            from . import broker_audit as _audit
-            from .ratelimit import rate_check
             _, _fail_count = rate_check(
-                f"2fa_verify_fail:u{request.user.pk}",
+                user_key,
                 limit=_audit.AUDIT04A_2FA_VERIFY_FAIL_THRESHOLD,
                 window=_audit.AUDIT04A_2FA_VERIFY_FAIL_WINDOW_SECONDS,
             )
@@ -3210,6 +3229,25 @@ def totp_verify_view(request):
                     description=f"2FA verification failed {_fail_count} times for user #{request.user.pk}",
                     metadata={
                         "consecutive_failures": _fail_count,
+                        "window_seconds": _audit.AUDIT04A_2FA_VERIFY_FAIL_WINDOW_SECONDS,
+                    },
+                )
+                # O.4d-2 — this is the request that CAUSES the next
+                # attempt to be blocked, so the shared cross-surface
+                # rate-limit event fires here (increment side), exactly
+                # once per block-window-activation — same convention as
+                # O.4d-1's admin login.
+                _audit.record_auth_event(
+                    event_type=_audit.EV_AUTH_RATE_LIMITED,
+                    severity=_audit.Severity.WARNING,
+                    user=request.user,
+                    source_module="simulator.views",
+                    description=f"TOTP verification rate-limited for user #{request.user.pk}",
+                    metadata={
+                        "surface": "totp_verify",
+                        "dimension": "user",
+                        "attempt_count": _fail_count,
+                        "threshold": _audit.AUDIT04A_2FA_VERIFY_FAIL_THRESHOLD,
                         "window_seconds": _audit.AUDIT04A_2FA_VERIFY_FAIL_WINDOW_SECONDS,
                     },
                 )

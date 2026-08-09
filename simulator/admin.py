@@ -5349,6 +5349,77 @@ class MoneyBrokerAdminSite(admin.AdminSite):
 
         return custom
 
+    @staticmethod
+    def _admin_login_rate_limit_keys(request):
+        """
+        O.4d-1 — derive the two independent rate-limit dimensions for an
+        admin login attempt. Username is normalized (stripped + lowercased)
+        for the Redis key ONLY — this never touches actual authentication,
+        which remains 100% Django's own case-sensitive behavior, untouched.
+        Truncated to the same max length already used for
+        username_attempted in the existing failure audit event, so a
+        maliciously long "username" can't be used to build unbounded key
+        strings.
+        """
+        from . import broker_audit as _audit
+        from .observability import get_client_ip
+
+        ip = get_client_ip(request)
+        username_raw = (request.POST.get("username", "") or "").strip()
+        username_norm = username_raw.lower()[:_audit.ADMIN_LOGIN_USERNAME_ATTEMPTED_MAX_LENGTH]
+        ip_key = f"admin_login_fail:ip:{ip}"
+        user_key = f"admin_login_fail:user:{username_norm}" if username_norm else None
+        return ip, ip_key, username_norm, user_key
+
+    def _render_admin_login_blocked(self, request):
+        """
+        O.4d-1 — the HTTP 429 response for a pre-check-blocked admin login
+        attempt. Renders the REAL admin login template via 100% public
+        Django APIs — no authentication is attempted, no real credentials
+        are bound to any form:
+
+          - AdminAuthenticationForm(request) is constructed UNBOUND (no
+            data= kwarg) — Django never validates an unbound form, so
+            .clean()/authenticate() are never reached. Its only purpose
+            here is to render the empty username/password fields exactly
+            like a fresh GET would.
+          - messages.error() + the admin templates' own pre-existing
+            {% block messages %} (admin/base.html, never overridden by
+            login.html/base_site.html in this project) surfaces the
+            generic notice — no manual form.add_error()/cleaned_data
+            manipulation needed.
+          - Context mirrors what AdminSite.login()/LoginView.get_context_
+            data() build for a normal GET, using only public methods
+            (self.each_context()) and constants (REDIRECT_FIELD_NAME).
+
+        The message is deliberately generic: it never reveals whether the
+        submitted username exists, whether the password was correct, any
+        permission information, or anything about TOTP device state.
+        """
+        from django.contrib import messages as django_messages
+        from django.contrib.admin.forms import AdminAuthenticationForm
+        from django.contrib.auth import REDIRECT_FIELD_NAME
+        from django.urls import reverse as _reverse
+
+        django_messages.error(
+            request,
+            "Demasiados intentos. Espera unos minutos e inténtalo de nuevo.",
+        )
+        context = {
+            **self.each_context(request),
+            "title": "Log in",
+            "subtitle": None,
+            "app_path": request.get_full_path(),
+            "username": request.user.get_username(),
+            REDIRECT_FIELD_NAME: (
+                request.POST.get(REDIRECT_FIELD_NAME)
+                or request.GET.get(REDIRECT_FIELD_NAME)
+                or _reverse("admin:index", current_app=self.name)
+            ),
+            "form": AdminAuthenticationForm(request),
+        }
+        return render(request, self.login_template or "admin/login.html", context, status=429)
+
     def login(self, request, extra_context=None):
         """
         AUDIT-04b — observes the outcome of Django's own AdminSite.login()
@@ -5362,11 +5433,40 @@ class MoneyBrokerAdminSite(admin.AdminSite):
         credentials but not staff" and "invalid credentials" both simply
         fall into the failed branch below — no separate reason code, by
         design (see AUDIT-04b design doc).
+
+        O.4d-1 — Admin/TOTP Anti-Brute-Force Hardening (closes HIGH-3).
+        Two independent, non-incrementing PRE-CHECKS (rate_peek(), never
+        rate_check()) run before super().login() is ever called on a
+        POST: if either the IP or the (normalized) attempted username is
+        already at or over its threshold, super().login() is skipped
+        entirely — no authentication attempt happens at all for an
+        already-blocked identity — and a 429 is returned via the real
+        admin login template (_render_admin_login_blocked() above).
+
+        Only on a REAL, completed authentication failure (after
+        super().login() has already run and request.user is still
+        anonymous) do the counters increment, via rate_check() — a
+        successful login NEVER touches these counters, so it can never
+        consume the failure budget. This ordering is deliberate and is
+        the entire reason this method does not simply call rate_check()
+        upfront: rate_check() always increments, which would be wrong
+        for a pre-check (see O.4d-1 Fase 0 finding).
         """
+        from . import broker_audit as _audit
+        from .observability import get_client_ip
+        from .ratelimit import rate_check, rate_peek
+
+        if request.method == "POST":
+            ip, ip_key, username_norm, user_key = self._admin_login_rate_limit_keys(request)
+            ip_blocked = rate_peek(ip_key) >= _audit.ADMIN_LOGIN_RATE_LIMIT_IP_THRESHOLD
+            user_blocked = bool(user_key) and (
+                rate_peek(user_key) >= _audit.ADMIN_LOGIN_RATE_LIMIT_USERNAME_THRESHOLD
+            )
+            if ip_blocked or user_blocked:
+                return self._render_admin_login_blocked(request)
+
         response = super().login(request, extra_context)
         if request.method == "POST":
-            from . import broker_audit as _audit
-            from .observability import get_client_ip
             if request.user.is_authenticated:
                 _audit.record_auth_event(
                     event_type=_audit.EV_ADMIN_SITE_LOGIN_SUCCESS,
@@ -5388,6 +5488,54 @@ class MoneyBrokerAdminSite(admin.AdminSite):
                     description="Admin site login failed",
                     metadata={"username_attempted": username_attempted, "ip": get_client_ip(request)},
                 )
+
+                # O.4d-1 — increment ONLY now that we know this attempt
+                # genuinely failed. A successful login never reaches this
+                # branch, so it never consumes the failure budget.
+                ip, ip_key, username_norm, user_key = self._admin_login_rate_limit_keys(request)
+                _, ip_count = rate_check(
+                    ip_key,
+                    limit=_audit.ADMIN_LOGIN_RATE_LIMIT_IP_THRESHOLD,
+                    window=_audit.ADMIN_LOGIN_RATE_LIMIT_IP_WINDOW_SECONDS,
+                )
+                if ip_count == _audit.ADMIN_LOGIN_RATE_LIMIT_IP_THRESHOLD:
+                    _audit.record_auth_event(
+                        event_type=_audit.EV_AUTH_RATE_LIMITED,
+                        severity=_audit.Severity.WARNING,
+                        actor_type=_audit.ActorType.STAFF,
+                        source_module="simulator.admin",
+                        description="Admin login rate limit reached by IP",
+                        metadata={
+                            "surface": "admin_login",
+                            "dimension": "ip",
+                            "ip": ip,
+                            "attempt_count": ip_count,
+                            "threshold": _audit.ADMIN_LOGIN_RATE_LIMIT_IP_THRESHOLD,
+                            "window_seconds": _audit.ADMIN_LOGIN_RATE_LIMIT_IP_WINDOW_SECONDS,
+                        },
+                    )
+                if user_key:
+                    _, user_count = rate_check(
+                        user_key,
+                        limit=_audit.ADMIN_LOGIN_RATE_LIMIT_USERNAME_THRESHOLD,
+                        window=_audit.ADMIN_LOGIN_RATE_LIMIT_USERNAME_WINDOW_SECONDS,
+                    )
+                    if user_count == _audit.ADMIN_LOGIN_RATE_LIMIT_USERNAME_THRESHOLD:
+                        _audit.record_auth_event(
+                            event_type=_audit.EV_AUTH_RATE_LIMITED,
+                            severity=_audit.Severity.WARNING,
+                            actor_type=_audit.ActorType.STAFF,
+                            source_module="simulator.admin",
+                            description="Admin login rate limit reached by username",
+                            metadata={
+                                "surface": "admin_login",
+                                "dimension": "user",
+                                "username_attempted": username_norm,
+                                "attempt_count": user_count,
+                                "threshold": _audit.ADMIN_LOGIN_RATE_LIMIT_USERNAME_THRESHOLD,
+                                "window_seconds": _audit.ADMIN_LOGIN_RATE_LIMIT_USERNAME_WINDOW_SECONDS,
+                            },
+                        )
         return response
 
     def admin_view(self, view, cacheable=False):

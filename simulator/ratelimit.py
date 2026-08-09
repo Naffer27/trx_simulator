@@ -73,6 +73,32 @@ def rate_check(key: str, limit: int, window: int) -> tuple[bool, int]:
         return True, 0
 
 
+def rate_peek(key: str) -> int:
+    """
+    O.4d-1 — read the current count for `key` WITHOUT incrementing it.
+    Strictly read-only: no INCR, no EXPIRE, no Redis mutation of any kind.
+
+    Exists for callers that must check "is this identity already over
+    its limit?" BEFORE doing something consequential (e.g. attempting
+    authentication) — rate_check() cannot answer that question on its
+    own because it always increments as part of checking, which would
+    incorrectly consume budget on every call regardless of outcome.
+
+    Returns 0 if the key is absent, on Redis failure, or under
+    LOAD_TEST_MODE=True — same fail-open discipline as rate_check().
+    Never raises.
+    """
+    if _load_test_mode():
+        return 0
+    try:
+        r = _get_rl_redis()
+        val = r.get(f"{_RL_PREFIX}{key}")
+        return int(val) if val is not None else 0
+    except Exception as exc:
+        _log.warning("[ratelimit] Redis unavailable for rate_peek key=%s — fail-open: %r", key, exc)
+        return 0
+
+
 def _ip_from_request(request) -> str:
     xff = request.META.get("HTTP_X_FORWARDED_FOR", "")
     if xff:

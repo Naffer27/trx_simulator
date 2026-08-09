@@ -435,6 +435,49 @@ EV_ADMIN_SITE_LOGIN_FAILED    = "auth.admin_site_login_failed"
 # attempted admin login username than Django itself would ever accept.
 ADMIN_LOGIN_USERNAME_ATTEMPTED_MAX_LENGTH = 150
 
+# ─────────────────────────────────────────────────────────────────────────
+# O.4d-1 — Admin/TOTP Anti-Brute-Force Hardening (closes HIGH-3).
+#
+# EV_AUTH_RATE_LIMITED is shared across every surface this whole O.4d
+# block ever gates (admin login now; TOTP verify in O.4d-2) — metadata's
+# "surface" field distinguishes them, avoiding a proliferation of
+# near-identical event constants (same discipline as O.4b-3's single
+# EV_TREASURY_ROLE_CONCENTRATION_BLOCKED shared by both the management-
+# command and Django Admin call sites).
+#
+# Fired ONCE per block-window-activation, not on every subsequently
+# blocked request — reuses the exact "fire only when the counter first
+# equals the threshold" convention already established by
+# EV_2FA_VERIFY_FAILED above (AUDIT04A_2FA_VERIFY_FAIL_THRESHOLD), rather
+# than inventing a second Redis marker key: the event is recorded from
+# the FAILURE-handling branch (the Nth failed attempt that causes the
+# NEXT request to become blocked), not from the blocked request itself.
+# Since a blocked request never calls rate_check() again (it is
+# short-circuited by rate_peek() before any counter is touched), the
+# peeked count cannot self-distinguish "first block" from "Nth repeat
+# block" — the increment-side count crossing the threshold exactly once
+# can, with zero new architecture.
+EV_AUTH_RATE_LIMITED = "auth.rate_limited"
+
+# O.4d-1 — admin login. Two independent dimensions checked and enforced
+# together (IP always; username whenever one was submitted). Defaults
+# are the frozen numbers from O.4d Fase 0 Decision 1; settings-
+# overridable using the exact same convention as
+# AUDIT04A_2FA_VERIFY_FAIL_THRESHOLD/WINDOW_SECONDS above, so an
+# operator can tune them without a code change if ever needed.
+ADMIN_LOGIN_RATE_LIMIT_IP_THRESHOLD = int(
+    getattr(_settings, "ADMIN_LOGIN_RATE_LIMIT_IP_THRESHOLD", 8)
+)
+ADMIN_LOGIN_RATE_LIMIT_IP_WINDOW_SECONDS = int(
+    getattr(_settings, "ADMIN_LOGIN_RATE_LIMIT_IP_WINDOW_SECONDS", 300)
+)
+ADMIN_LOGIN_RATE_LIMIT_USERNAME_THRESHOLD = int(
+    getattr(_settings, "ADMIN_LOGIN_RATE_LIMIT_USERNAME_THRESHOLD", 5)
+)
+ADMIN_LOGIN_RATE_LIMIT_USERNAME_WINDOW_SECONDS = int(
+    getattr(_settings, "ADMIN_LOGIN_RATE_LIMIT_USERNAME_WINDOW_SECONDS", 300)
+)
+
 
 # RISK-03 severities this module will record as an audit event when a
 # collector produces one — INFO/LOW/MEDIUM are deliberately not recorded
