@@ -95,6 +95,7 @@ from __future__ import annotations
 
 import logging
 import uuid as _uuid
+from collections import namedtuple
 from datetime import timedelta
 from typing import Optional
 
@@ -276,6 +277,14 @@ EV_TREASURY_REQUEST_EXECUTION_RECOVERY_BLOCKED = "treasury.request_execution_rec
 # no Celery task, no dashboard, no model and no migration is
 # implemented by this constant.
 EV_TREASURY_STUCK_EXECUTION_OBSERVED = "treasury.stuck_execution_observed"
+
+# O.4e-4 — mirrors audit.py's EV_TREASURY_STUCK_EXECUTION_ESCALATED
+# string exactly, same discipline as EV_TREASURY_STUCK_EXECUTION_
+# OBSERVED above: declared in both catalogs for naming consistency, but
+# only ever written from broker_audit.py (log_audit() is never called
+# with it — the escalation service has no HTTP request to attach to,
+# same reasoning as its sibling observation event).
+EV_TREASURY_STUCK_EXECUTION_ESCALATED = "treasury.stuck_execution_escalated"
 
 # O.3e-1 — mirrors audit.py's EV_TREASURY_REQUEST_CANCELLED string
 # exactly, same discipline as above. Schema-only: no call site exists
@@ -476,6 +485,62 @@ ADMIN_LOGIN_RATE_LIMIT_USERNAME_THRESHOLD = int(
 )
 ADMIN_LOGIN_RATE_LIMIT_USERNAME_WINDOW_SECONDS = int(
     getattr(_settings, "ADMIN_LOGIN_RATE_LIMIT_USERNAME_WINDOW_SECONDS", 300)
+)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# O.4e-2 — Celery Beat Heartbeat Staleness Foundation (closes half of
+# HIGH-4, signal "A" only — see docs/TREASURY_INCIDENT_RUNBOOK.md §2 and
+# the O.4e Fase 0 report for the full A/B split this deliberately keeps
+# separate).
+#
+# Signal A ("is Celery Beat actually ticking?") is answered by ONE
+# question: how old is the most recent EV_CELERY_BEAT_HEARTBEAT row?
+# Nothing else. This is deliberately NOT the same question as signal B
+# ("can record_event()/log_audit() write at all right now?") — record_
+# event()'s own except-branch already logs at ERROR level (reaching
+# Sentry via the LoggingIntegration(event_level=ERROR) already wired in
+# init_sentry(), untouched here) whenever a write genuinely raises; that
+# is signal B's (already-existing, passive) mechanism, and O.4e-2 does
+# not extend, wrap, or duplicate it. Conflating the two into a single
+# "audit trail health" signal was explicitly rejected in O.4e Fase 0.
+#
+# EV_CELERY_BEAT_HEARTBEAT is written every tick, by design — unlike
+# EV_TREASURY_STUCK_EXECUTION_OBSERVED/EV_RISK_ALERT_OBSERVED above,
+# there is no "still the same anomaly" to dedup against: every
+# successful tick IS a new fact worth recording, and BrokerAuditEvent
+# rows are never updated in place (see the model's own append-only
+# docstring) — so this intentionally does NOT reuse the
+# BrokerAuditObservationLock/dedup-window pattern from record_alert_
+# event()/record_treasury_stuck_execution_observation() above. One row
+# every CELERY_BEAT_HEARTBEAT_INTERVAL_SECONDS is the expected, accepted
+# cardinality (same unbounded-growth acceptance BrokerAuditEvent already
+# has — it carries no cleanup task, unlike AuditLog's 30-day retention).
+#
+# EV_CELERY_BEAT_STALE is declared here as a catalog constant only —
+# O.4e-2 defines it but no call site writes it yet. inspect_celery_
+# beat_heartbeat_staleness() below is READ-ONLY by explicit requirement
+# (O.4e-2 scope): deciding WHO writes EV_CELERY_BEAT_STALE, WHEN, and
+# with what dedup discipline is wiring work that belongs to O.4e-3
+# together with the health/metrics/Sentry connection — designing that
+# prematurely here, before O.4e-3 has settled the actual consumer, would
+# risk exactly the kind of architecture-before-requirements mistake this
+# whole O.4 track has been built to avoid.
+EV_CELERY_BEAT_HEARTBEAT = "system.celery_beat_heartbeat"
+EV_CELERY_BEAT_STALE     = "system.celery_beat_stale"
+
+# 5-minute cadence — matches the existing beat-heartbeat-5m entry's
+# interval exactly (see CELERY_BEAT_SCHEDULE in settings.py), so the
+# stale threshold below (3x cadence) tolerates one missed tick without
+# false-positiving.
+CELERY_BEAT_HEARTBEAT_INTERVAL_SECONDS = int(
+    getattr(_settings, "CELERY_BEAT_HEARTBEAT_INTERVAL_SECONDS", 300)
+)
+
+# O.4e Fase 0, approved threshold: stale if the most recent heartbeat is
+# older than 15 minutes (3x the 5-minute cadence above).
+CELERY_BEAT_HEARTBEAT_STALE_SECONDS = int(
+    getattr(_settings, "CELERY_BEAT_HEARTBEAT_STALE_SECONDS", 900)
 )
 
 
@@ -1135,6 +1200,331 @@ def observe_stuck_treasury_executions(*, min_age_seconds=None, dedup_window_seco
             )
 
     return written
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# O.4e-4 — Treasury Persistent Stuck Execution Escalation.
+#
+# 100% observational, same discipline as observe_stuck_treasury_
+# executions() above: never touches TreasuryOperationRequest, Wallet,
+# WalletTransaction or InternalTransfer, and imports nothing from the
+# Treasury-execution or wallet-mutation modules. This function's only
+# effect on the world is writing at most one
+# EV_TREASURY_STUCK_EXECUTION_ESCALATED BrokerAuditEvent row per call,
+# per still-eligible request.
+#
+# Persistence is measured from the EARLIEST EV_TREASURY_STUCK_EXECUTION_
+# OBSERVED row already durable for a given request — not from
+# StuckExecutionCandidate.age_seconds (which is None for CASE_D, an
+# unknown-age request that MUST still be able to escalate once it has
+# been repeatedly observed). This is why persistence is computed from
+# observation history rather than reused from inspect_stuck_treasury_
+# execution()'s own age field — the only signal available uniformly
+# across every observable case (A, B, D, E, F). CASE_C is excluded
+# structurally: it never appears in _TREASURY_STUCK_CASE_SEVERITY_MAP,
+# so it never gets an EV_TREASURY_STUCK_EXECUTION_OBSERVED row in the
+# first place, so it can never accumulate a first_observed_at — no
+# extra CASE_C filter is needed here beyond that existing exclusion.
+#
+# Escalation dedup deliberately uses its OWN, longer window
+# (TREASURY_STUCK_EXECUTION_ESCALATION_DEDUP_WINDOW_SECONDS=3600, vs the
+# base observation's 900) — reusing the 900s window here would mean a
+# request stuck for hours keeps re-escalating every 15 minutes forever,
+# exactly the flooding this was designed to avoid (O.4e-4 Fase 0 §C).
+TREASURY_STUCK_EXECUTION_ESCALATION_THRESHOLD_SECONDS = int(
+    getattr(_settings, "TREASURY_STUCK_EXECUTION_ESCALATION_THRESHOLD_SECONDS", 2700)
+)
+TREASURY_STUCK_EXECUTION_ESCALATION_DEDUP_WINDOW_SECONDS = int(
+    getattr(_settings, "TREASURY_STUCK_EXECUTION_ESCALATION_DEDUP_WINDOW_SECONDS", 3600)
+)
+
+
+def _record_treasury_stuck_execution_escalation(
+    candidate, *, first_observed_at, persisted_seconds, dedup_window_seconds=None,
+):
+    """
+    Records ONE escalation BrokerAuditEvent for a StuckExecutionCandidate
+    that has persisted past the escalation threshold — only if no
+    escalation for the same treasury_operation_request_id was already
+    recorded within the (longer, dedicated) escalation dedup window.
+    Returns None (no-op, not a failure) if deduped.
+
+    Same TOCTOU-safe check-then-create discipline as record_treasury_
+    stuck_execution_observation() above: held under
+    BrokerAuditObservationLock (select_for_update()) for its entire
+    duration. Reuses the SAME lock row — sequential acquisition within
+    one task run (observation writes release their transaction before
+    this function ever runs — see observe_treasury_stuck_execution_
+    escalations()'s own docstring), never concurrent, never a deadlock.
+
+    Never modifies TreasuryOperationRequest, never creates or touches a
+    WalletTransaction, never touches a Wallet, and never calls
+    mark_treasury_execution_failed() — writes exactly one
+    BrokerAuditEvent row (via record_payment_event() -> record_event(),
+    fail-open by its own unmodified contract) and nothing else.
+    """
+    from .models import BrokerAuditEvent, BrokerAuditObservationLock
+
+    window = (
+        TREASURY_STUCK_EXECUTION_ESCALATION_DEDUP_WINDOW_SECONDS if dedup_window_seconds is None
+        else dedup_window_seconds
+    )
+
+    instance = candidate.instance
+    now = timezone.now()
+    metadata = {
+        "treasury_operation_request_id": instance.pk,
+        "wallet_id": instance.wallet_id,
+        "wallet_user_id": instance.wallet.user_id,
+        "operation_type": instance.operation_type,
+        "amount": str(instance.amount),
+        "status": instance.status,
+        "case": candidate.case,
+        "first_observed_at": first_observed_at.isoformat(),
+        "persisted_seconds": persisted_seconds,
+        "escalation_threshold_seconds": TREASURY_STUCK_EXECUTION_ESCALATION_THRESHOLD_SECONDS,
+        "dedup_window_seconds": window,
+    }
+
+    with transaction.atomic():
+        if window > 0:
+            BrokerAuditObservationLock.objects.get_or_create(pk=1)
+            BrokerAuditObservationLock.objects.select_for_update().get(pk=1)
+
+            cutoff = now - timedelta(seconds=window)
+            already_recorded = BrokerAuditEvent.objects.filter(
+                event_type=EV_TREASURY_STUCK_EXECUTION_ESCALATED,
+                metadata__treasury_operation_request_id=instance.pk,
+                timestamp__gte=cutoff,
+            ).exists()
+            if already_recorded:
+                return None
+
+        return record_payment_event(
+            event_type=EV_TREASURY_STUCK_EXECUTION_ESCALATED,
+            severity=Severity.CRITICAL,
+            actor_type=ActorType.SYSTEM,
+            description=(
+                f"Treasury request #{instance.pk} has been stuck in EXECUTING "
+                f"for {persisted_seconds:.0f}s since first observed ({candidate.case})"
+            ),
+            metadata=metadata,
+            source_module=_SOURCE,
+        )
+
+
+def observe_treasury_stuck_execution_escalations(
+    *, escalation_threshold_seconds=None, dedup_window_seconds=None,
+) -> int:
+    """
+    O.4e-4 — the single sanctioned operational entry point for
+    persisting Treasury stuck-execution ESCALATIONS into
+    BrokerAuditEvent. Intended to be called from the SAME periodic
+    Celery task as observe_stuck_treasury_executions() (O.3d-3's
+    observe_treasury_stuck_executions_task), AFTER that function has
+    already run and committed — never before, never concurrently: the
+    escalation decision reads the earliest EV_TREASURY_STUCK_EXECUTION_
+    OBSERVED row for each candidate via Min(timestamp), a value that can
+    only stay the same or move further into the past as more
+    observation rows accumulate — so calling this after (rather than
+    before or interleaved with) the base observation is always safe and
+    never produces a different result than calling it slightly later:
+    there is no race to reason about within a single task run, and nothing
+    here mutates a row a concurrent reader could see half-written.
+
+    Never calls inspect_stuck_treasury_execution() through any path
+    other than a fresh, independent call here — never reuses a stale
+    candidate list computed elsewhere, so it always reflects the current
+    live TreasuryOperationRequest state at the moment IT runs (a request
+    a human just recovered a moment earlier will already be gone from
+    this fresh read).
+
+    Never calls mark_treasury_execution_failed(), never creates or
+    touches a WalletTransaction, never touches a Wallet, and never
+    modifies the TreasuryOperationRequest it observes — same structural
+    guarantee as observe_stuck_treasury_executions() above.
+
+    Returns the count of NEW escalation rows actually written. Never
+    raises on its own account beyond what inspect_stuck_treasury_
+    execution() itself could raise (a caller bug, propagated — not
+    swallowed); every BrokerAuditEvent write is fail-open via
+    record_event()'s own contract.
+    """
+    from django.db.models import Min
+
+    from .models import BrokerAuditEvent
+    from .treasury_execution_recovery import inspect_stuck_treasury_execution
+
+    threshold = (
+        TREASURY_STUCK_EXECUTION_ESCALATION_THRESHOLD_SECONDS if escalation_threshold_seconds is None
+        else escalation_threshold_seconds
+    )
+
+    # Only the 5 cases that ever get an EV_TREASURY_STUCK_EXECUTION_
+    # OBSERVED row in the first place (CASE_C is structurally excluded —
+    # see this section's module comment above).
+    candidates = [
+        c for c in inspect_stuck_treasury_execution()
+        if c.case in _TREASURY_STUCK_CASE_SEVERITY_MAP
+    ]
+    if not candidates:
+        return 0
+
+    pks = [c.instance.pk for c in candidates]
+    first_observed_at_by_pk = {
+        row["metadata__treasury_operation_request_id"]: row["first_observed_at"]
+        for row in (
+            BrokerAuditEvent.objects
+            .filter(event_type=EV_TREASURY_STUCK_EXECUTION_OBSERVED, metadata__treasury_operation_request_id__in=pks)
+            .values("metadata__treasury_operation_request_id")
+            .annotate(first_observed_at=Min("timestamp"))
+        )
+    }
+
+    now = timezone.now()
+    written = 0
+    for candidate in candidates:
+        first_observed_at = first_observed_at_by_pk.get(candidate.instance.pk)
+        if first_observed_at is None:
+            continue  # never actually observed yet (e.g. just became a candidate this tick)
+
+        persisted_seconds = (now - first_observed_at).total_seconds()
+        if persisted_seconds < threshold:
+            continue
+
+        event = _record_treasury_stuck_execution_escalation(
+            candidate, first_observed_at=first_observed_at, persisted_seconds=persisted_seconds,
+            dedup_window_seconds=dedup_window_seconds,
+        )
+        if event is None:
+            continue
+
+        written += 1
+        log.error(
+            "[broker_audit] treasury stuck-execution ESCALATED: "
+            "treasury_request_id=%s case=%s persisted_seconds=%.0f",
+            candidate.instance.pk, candidate.case, persisted_seconds,
+        )
+
+    return written
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# O.4e-2 — Celery Beat Heartbeat Staleness Foundation (signal A only)
+# ─────────────────────────────────────────────────────────────────────────
+
+def record_celery_beat_heartbeat() -> Optional[object]:
+    """
+    O.4e-2 — writes exactly one EV_CELERY_BEAT_HEARTBEAT row via the
+    existing record_system_event() wrapper (Category.SYSTEM, ActorType.
+    SYSTEM — a background/automated event, same category convenience
+    wrapper already used elsewhere in this module, unmodified).
+
+    Intended to be called exclusively from a periodic Celery task on a
+    fixed cadence (see simulator/tasks.py) — NOT wired to any Beat
+    schedule entry by this function itself, same separation-of-concerns
+    already established by observe_stuck_treasury_executions() above
+    (a plain function; O.3d-3 did the scheduling).
+
+    No dedup, no lock, no "already recorded" check — deliberately, see
+    the O.4e-2 module-level comment above this section: every tick is a
+    genuinely new fact, not a repeat of a still-true anomaly.
+
+    Never touches TreasuryOperationRequest, Wallet, WalletTransaction or
+    InternalTransfer — structurally cannot, since it only ever calls
+    record_system_event() with a plain description/metadata dict.
+
+    Fail-open via record_system_event() -> record_event()'s own
+    unmodified contract: returns None (never raises) if the write itself
+    fails, exactly like every other caller of record_event() in this
+    module.
+    """
+    now = timezone.now()
+    return record_system_event(
+        event_type=EV_CELERY_BEAT_HEARTBEAT,
+        severity=Severity.INFO,
+        description="Celery Beat heartbeat tick",
+        metadata={"heartbeat_at": now.isoformat()},
+        source_module=_SOURCE,
+    )
+
+
+_HeartbeatStaleness = namedtuple(
+    "HeartbeatStaleness",
+    ["status", "last_heartbeat_at", "age_seconds", "stale_after_seconds"],
+)
+
+
+def inspect_celery_beat_heartbeat_staleness(*, stale_after_seconds: Optional[int] = None):
+    """
+    O.4e-2 — READ-ONLY inspection of Celery Beat's own heartbeat
+    freshness. Answers signal A ("is Beat actually ticking?") and
+    nothing else — does not look at record_event()/log_audit() failure
+    rates, does not look at organic business-event volume (a quiet
+    market/system can legitimately produce zero BrokerAuditEvent rows
+    of any OTHER type without Beat being down at all — see O.4e Fase 0
+    §3), and does not consider anything other than the single most
+    recent EV_CELERY_BEAT_HEARTBEAT row's timestamp.
+
+    Returns a HeartbeatStaleness namedtuple:
+        status:              one of "fresh" / "stale" / "missing"
+                              (deterministic — never raises for a normal
+                              query; a genuine DB error propagates
+                              unwrapped, same discipline as
+                              inspect_stuck_treasury_execution()'s own
+                              read-side, which is NOT fail-open by
+                              design — only the WRITE side is).
+        last_heartbeat_at:    the row's timestamp, or None if "missing".
+        age_seconds:          seconds since last_heartbeat_at, or None
+                              if "missing".
+        stale_after_seconds:  the threshold actually used (echoes back
+                              the argument or the settings-derived
+                              default, for deterministic assertions).
+
+    "missing" (no EV_CELERY_BEAT_HEARTBEAT row has EVER been written)
+    is deliberately distinct from "stale" (a row exists but is older
+    than the threshold) — a fresh install or a test database with no
+    heartbeat history yet is not the same operational condition as a
+    heartbeat that stopped renewing.
+
+    Strictly read-only: issues exactly one SELECT via BrokerAuditEvent's
+    manager, no .create()/.update()/.delete() call anywhere in this
+    function, and imports nothing from the wallet-mutation or Treasury-
+    execution modules — structurally cannot move money or touch
+    Treasury/Wallet state.
+
+    Independent of Redis: reads only from BrokerAuditEvent (PostgreSQL)
+    — if Redis is down, this function is entirely unaffected (see O.4e
+    Fase 0 §6: the staleness signal must not depend on the same
+    infrastructure it might need to report as unhealthy).
+    """
+    from .models import BrokerAuditEvent
+
+    threshold = (
+        CELERY_BEAT_HEARTBEAT_STALE_SECONDS if stale_after_seconds is None
+        else stale_after_seconds
+    )
+
+    latest = (
+        BrokerAuditEvent.objects
+        .filter(event_type=EV_CELERY_BEAT_HEARTBEAT)
+        .order_by("-timestamp")
+        .only("timestamp")
+        .first()
+    )
+
+    if latest is None:
+        return _HeartbeatStaleness(
+            status="missing", last_heartbeat_at=None,
+            age_seconds=None, stale_after_seconds=threshold,
+        )
+
+    age_seconds = (timezone.now() - latest.timestamp).total_seconds()
+    status = "stale" if age_seconds > threshold else "fresh"
+    return _HeartbeatStaleness(
+        status=status, last_heartbeat_at=latest.timestamp,
+        age_seconds=age_seconds, stale_after_seconds=threshold,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────

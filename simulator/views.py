@@ -2649,8 +2649,13 @@ def health_check(request):
 
 # ──────────────────────────────────────────────────────────────
 # Health detail — staff-only subsystem checks
-# GET /api/health/detail/  →  200 {"status":"ok", "db":{...}, "redis":{...}}
-#                          →  503 {"status":"degraded", ...}
+# GET /api/health/detail/  →  200 {"status":"ok", "db":{...}, "redis":{...},
+#                                  "celery_beat":{"status":"fresh"|"stale"|
+#                                  "missing", "age_seconds":<num|null>,
+#                                  "threshold_seconds":900}}
+#                          →  503 {"status":"degraded", ...} (db/redis error,
+#                             or celery_beat "stale" — "missing" does NOT
+#                             degrade the overall status, see O.4e-3)
 #                          →  403 if not staff
 # ──────────────────────────────────────────────────────────────
 def health_detail_view(request):
@@ -2690,6 +2695,39 @@ def health_detail_view(request):
     except Exception as exc:
         results["redis"] = {"status": "error", "detail": str(exc)}
         results["channel_layer"] = "error"
+        ok = False
+
+    # ── Celery Beat heartbeat (O.4e-3) ──
+    # Read-only: inspect_celery_beat_heartbeat_staleness() (O.4e-2) issues
+    # a single SELECT against BrokerAuditEvent (PostgreSQL) — never
+    # writes, so a GET here can never persist any new audit row (the
+    # "stale" catalog event some later block may eventually fire is
+    # deliberately not written from this observation-only call site).
+    # Independent of Redis by construction (see O.4e-2): a Redis outage is
+    # already reflected above by the "redis" block, not by this one.
+    #
+    # "stale" degrades this endpoint's overall status/HTTP code exactly
+    # like a db/redis error would — Beat having stopped ticking is the
+    # same class of "a critical subsystem is not functioning" signal.
+    # "missing" (no heartbeat ever recorded — e.g. the first ~5 minutes
+    # after a fresh deploy, before Beat's first tick lands) is reported
+    # but deliberately does NOT flip `ok` — this decision was confirmed
+    # explicitly before implementation to avoid false positives against
+    # any external monitor polling immediately after a deploy.
+    try:
+        from .broker_audit import inspect_celery_beat_heartbeat_staleness
+        heartbeat = inspect_celery_beat_heartbeat_staleness()
+        results["celery_beat"] = {
+            "status": heartbeat.status,
+            "age_seconds": (
+                round(heartbeat.age_seconds, 1) if heartbeat.age_seconds is not None else None
+            ),
+            "threshold_seconds": heartbeat.stale_after_seconds,
+        }
+        if heartbeat.status == "stale":
+            ok = False
+    except Exception as exc:
+        results["celery_beat"] = {"status": "error", "detail": str(exc)}
         ok = False
 
     payload = {"status": "ok" if ok else "degraded", **results}

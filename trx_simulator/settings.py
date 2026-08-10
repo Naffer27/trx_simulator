@@ -364,6 +364,16 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(minute="*/15"),
         "options":  {"expires": 14 * 60},  # drop if not picked up in 14 min
     },
+    # O.4e-2 — persist a durable EV_CELERY_BEAT_HEARTBEAT row every tick,
+    # independent of "beat-heartbeat-5m" above (that one is a generic
+    # worker round-trip ping with no durable storage). Same 5-minute
+    # cadence — see broker_audit.CELERY_BEAT_HEARTBEAT_INTERVAL_SECONDS
+    # and CELERY_BEAT_HEARTBEAT_STALE_SECONDS (15 min = 3x this cadence).
+    "record-celery-beat-heartbeat-5m": {
+        "task":     "simulator.record_celery_beat_heartbeat",
+        "schedule": crontab(minute="*/5"),
+        "options":  {"expires": 4 * 60},  # drop if not picked up within 4 min
+    },
 }
 
 # Revenue snapshot retention (separate from equity snapshots — longer window for trend history).

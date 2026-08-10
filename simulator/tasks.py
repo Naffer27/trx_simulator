@@ -1423,11 +1423,24 @@ def observe_broker_risk_alerts_task(self) -> dict:
 # equivalent RISK-03 read. Only the WRITE side is fail-open; the READ
 # side is not silently swallowed here or anywhere in this call chain.
 #
-# This task calls observe_stuck_treasury_executions() and nothing
-# else — never inspect_stuck_treasury_execution() directly, never
-# mark_treasury_execution_failed(), never credit_wallet()/
+# This task calls observe_stuck_treasury_executions() and (O.4e-4)
+# observe_treasury_stuck_execution_escalations(), in that order, and
+# nothing else — never inspect_stuck_treasury_execution() directly,
+# never mark_treasury_execution_failed(), never credit_wallet()/
 # debit_wallet(), and never assigns to any TreasuryOperationRequest,
 # Wallet or WalletTransaction field. It cannot move money, structurally.
+#
+# O.4e-4 — escalation runs SECOND, after observation has already
+# committed its own transaction(s). This ordering is required, not
+# incidental: escalation decides persistence from Min(timestamp) over
+# EV_TREASURY_STUCK_EXECUTION_OBSERVED rows, a value that can only stay
+# the same or move further into the past as more rows accumulate —
+# running observation first (so this tick's own row, if any, is already
+# durable) and escalation second cannot produce a different, let alone
+# incorrect, result than running them further apart in time would. Both
+# calls are independent, self-contained, and neither is fail-open at
+# the task level for the same reason observe_stuck_treasury_executions()
+# already documents above — only their own BrokerAuditEvent writes are.
 # ──────────────────────────────────────────────────────
 @shared_task(
     name="simulator.observe_treasury_stuck_executions",
@@ -1439,9 +1452,62 @@ def observe_broker_risk_alerts_task(self) -> dict:
 )
 def observe_treasury_stuck_executions_task(self) -> dict:
     import time as _t
-    from .broker_audit import observe_stuck_treasury_executions
+    from .broker_audit import (
+        observe_stuck_treasury_executions,
+        observe_treasury_stuck_execution_escalations,
+    )
     t0 = _t.monotonic()
     written = observe_stuck_treasury_executions()
+    escalated = observe_treasury_stuck_execution_escalations()
     elapsed_ms = round((_t.monotonic() - t0) * 1000)
-    logger.info("[observe_treasury_stuck_executions] written=%d elapsed_ms=%d", written, elapsed_ms)
+    logger.info(
+        "[observe_treasury_stuck_executions] written=%d escalated=%d elapsed_ms=%d",
+        written, escalated, elapsed_ms,
+    )
+    return {"written": written, "escalated": escalated, "elapsed_ms": elapsed_ms}
+
+
+# ──────────────────────────────────────────────────────
+# O.4e-2 — Celery Beat Heartbeat Staleness Foundation, signal A
+# ("is Beat actually ticking?") only — see broker_audit.py's O.4e-2
+# module comment and docs/TREASURY_INCIDENT_RUNBOOK.md §2 for the full
+# A/B split this deliberately keeps separate.
+#
+# Persists exactly one EV_CELERY_BEAT_HEARTBEAT BrokerAuditEvent row per
+# tick via record_celery_beat_heartbeat() (unmodified — this task adds
+# no logic of its own beyond timing/logging, same shape as every other
+# task in this file). Distinct from the pre-existing "simulator.ping"
+# task (beat-heartbeat-5m in CELERY_BEAT_SCHEDULE) — ping_task's job is
+# a generic worker round-trip check with no durable storage; this task's
+# job is specifically to give inspect_celery_beat_heartbeat_staleness()
+# something durable to read. Not wired into CELERY_BEAT_SCHEDULE by this
+# change itself — see settings.py's own O.4e-2 entry, added alongside
+# this task in the same block.
+#
+# max_retries=0, no default_retry_delay: record_celery_beat_heartbeat()
+# is already fail-open via record_event()'s own contract (never raises)
+# — a task-level retry would accomplish nothing a fresh tick 5 minutes
+# later doesn't already provide.
+#
+# Never calls credit_wallet()/debit_wallet()/execute_treasury_request()/
+# mark_treasury_execution_failed(), never touches TreasuryOperationRequest,
+# Wallet, WalletTransaction or InternalTransfer — cannot move money,
+# structurally.
+# ──────────────────────────────────────────────────────
+@shared_task(
+    name="simulator.record_celery_beat_heartbeat",
+    bind=True,
+    max_retries=0,
+    acks_late=True,
+    soft_time_limit=15,
+    time_limit=19,
+)
+def record_celery_beat_heartbeat_task(self) -> dict:
+    import time as _t
+    from .broker_audit import record_celery_beat_heartbeat
+    t0 = _t.monotonic()
+    event = record_celery_beat_heartbeat()
+    elapsed_ms = round((_t.monotonic() - t0) * 1000)
+    written = event is not None
+    logger.info("[record_celery_beat_heartbeat] written=%s elapsed_ms=%d", written, elapsed_ms)
     return {"written": written, "elapsed_ms": elapsed_ms}

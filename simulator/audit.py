@@ -73,6 +73,14 @@ EV_TREASURY_REQUEST_EXECUTION_RECOVERY_BLOCKED = "treasury.request_execution_rec
 # by this constant.
 EV_TREASURY_STUCK_EXECUTION_OBSERVED = "treasury.stuck_execution_observed"
 
+# O.4e-4 — Treasury Persistent Stuck Execution Escalation. Mirrored
+# exactly in broker_audit.py, same discipline as its sibling
+# EV_TREASURY_STUCK_EXECUTION_OBSERVED above — declared here for
+# catalog naming consistency only; log_audit() is never called with it,
+# the event is only ever written from broker_audit.py's own
+# observational service (no HTTP request to attach to).
+EV_TREASURY_STUCK_EXECUTION_ESCALATED = "treasury.stuck_execution_escalated"
+
 # O.3e-1 — Treasury Cancel Workflow. Schema-only: no call site exists
 # yet (the cancellation service is a later block, O.3e-2). Mirrored
 # exactly in broker_audit.py, same discipline as every other Treasury

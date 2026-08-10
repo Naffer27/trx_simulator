@@ -118,20 +118,27 @@ class CallsServiceExactlyOnceTests(TestCase):
         mock_observe.assert_called_once_with()
 
     def test_never_calls_inspect_stuck_treasury_execution_directly(self):
-        """The task must go through observe_stuck_treasury_executions()
-        only — never reach past it into the read-only inspector
-        itself."""
+        """The task must go through the two sanctioned service
+        functions only — never reach past them into the read-only
+        inspector itself.
+
+        O.4e-4 legitimately changed the expected call count from 1 to
+        2: observe_stuck_treasury_executions() calls the inspector once
+        internally, and observe_treasury_stuck_execution_escalations()
+        (also called by this same task, per O.4e-4's approved wiring)
+        calls it again independently, by design — see that function's
+        own docstring for why a fresh, independent read is required
+        rather than reusing a candidate list computed elsewhere. Both
+        call sites are legitimate, sanctioned service functions; this
+        test confirms the TASK ITSELF never bypasses them to call the
+        inspector directly."""
         with patch(
             "simulator.treasury_execution_recovery.inspect_stuck_treasury_execution",
         ) as mock_inspect:
             mock_inspect.return_value = []
             observe_treasury_stuck_executions_task.apply().get()
 
-        # observe_stuck_treasury_executions() itself calls the inspector
-        # internally — this confirms the TASK doesn't ALSO call it a
-        # second time / directly, by checking it was touched exactly
-        # once (via the one legitimate call site inside the service).
-        mock_inspect.assert_called_once()
+        self.assertEqual(mock_inspect.call_count, 2)
 
     def test_never_calls_mark_treasury_execution_failed(self):
         tor = _make_eligible_executing_request()
@@ -341,7 +348,11 @@ class BeatScheduleTests(SimpleTestCase):
             schedule["observe-broker-risk-alerts-5m"]["schedule"], crontab(minute="*/5"),
         )
 
-        self.assertEqual(len(schedule), 11)  # 10 pre-existing + this block's 1 new entry
+        # 10 pre-existing + this block's 1 new entry + O.4e-2's
+        # "record-celery-beat-heartbeat-5m" (added later, not a defect
+        # here — see test_o4e2_..._celery_beat_heartbeat_foundation.py's
+        # own BeatScheduleTests for that entry's dedicated coverage).
+        self.assertEqual(len(schedule), 12)
 
     def test_no_other_task_names_were_renamed_or_removed(self):
         from django.conf import settings
@@ -397,17 +408,26 @@ class ScopeAndSafetyTests(SimpleTestCase):
         self.assertFalse(forbidden_calls & called, f"found: {forbidden_calls & called}")
         self.assertFalse(forbidden_imports & imported, f"found: {forbidden_imports & imported}")
 
-    def test_only_call_into_broker_audit_is_observe_stuck_treasury_executions(self):
+    def test_only_calls_into_broker_audit_are_observation_and_escalation(self):
         import ast
         import inspect
 
+        # O.4e-4 legitimately superseded this guard: the task now also
+        # calls observe_treasury_stuck_execution_escalations(), in that
+        # documented order, per O.4e-4 Fase 0's approved wiring decision
+        # (reuse the existing task rather than a new Celery task/Beat
+        # entry) — see test_o4e4_...py for the escalation-specific
+        # coverage of both the function itself and its ordering.
         tree = ast.parse(inspect.getsource(observe_treasury_stuck_executions_task))
         broker_audit_imports = []
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom) and node.module and node.module.endswith("broker_audit"):
                 broker_audit_imports.extend(a.name for a in node.names)
 
-        self.assertEqual(broker_audit_imports, ["observe_stuck_treasury_executions"])
+        self.assertEqual(
+            broker_audit_imports,
+            ["observe_stuck_treasury_executions", "observe_treasury_stuck_execution_escalations"],
+        )
 
     def test_no_save_call_in_the_task(self):
         import ast
