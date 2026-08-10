@@ -562,6 +562,37 @@ if LOAD_TEST_MODE:
         "This MUST be False in production."
     )
 
+# O.4c-6 — Guard: production must never boot with LOAD_TEST_MODE=True.
+# Deliberately APP_ENV == "production" only — NOT the usual
+# "APP_ENV in {staging, production}" shape every other O.4c guard uses.
+# MED-3 Fase 0 confirmed this is an intentional deviation, not an
+# oversight: simulator/ratelimit.py's own _load_test_mode() docstring
+# already says "only valid in staging .env files", deploy/.env.staging.
+# template documents it as an expected staging workflow, and
+# load_tests/run_load_test.sh is designed to run against a staging-like
+# deployment. Prohibiting it in staging too would break that already-
+# documented, legitimate load-testing workflow — approved decision,
+# not assumed.
+#
+# Skipped during `manage.py test` via the shared _IN_TEST_RUN flag,
+# same discipline as every other guard in this file — no test in this
+# suite ever runs with APP_ENV=production (LOAD_TEST_MODE is exercised
+# in tests exclusively via override_settings(), a runtime mechanism
+# that never touches this import-time guard).
+#
+# Does not modify rate_check()/rate_peek()/LOAD_TEST_MODE's own
+# semantics in any way — this only decides whether the PROCESS is
+# allowed to start at all when the combination is production+True.
+if APP_ENV == "production" and LOAD_TEST_MODE:
+    if not _IN_TEST_RUN:
+        raise ImproperlyConfigured(
+            "LOAD_TEST_MODE=True is not allowed when APP_ENV='production' — "
+            "it disables all admin-login and TOTP anti-brute-force rate "
+            "limiting (O.4d). Set LOAD_TEST_MODE=False in your .env file. "
+            "LOAD_TEST_MODE=True remains permitted in staging for active "
+            "load-testing sessions — see deploy/.env.staging.template."
+        )
+
 # FOUNDATION-08 — Provider Router Shadow Mode. Observational only: evaluates
 # SymbolSpec -> InstrumentProfile -> ProviderRoutePlan -> ProviderRouter
 # .decide() alongside the live feed and logs agreement/disagreement with
