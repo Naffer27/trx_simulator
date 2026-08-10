@@ -38,10 +38,16 @@ import subprocess
 import sys
 from pathlib import Path
 
+from cryptography.fernet import Fernet
 from django.test import TestCase
 
 _TEST_SECRET = "subprocess-o4c3-checkpoint-key-not-for-production"
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+# O.4c-4 — see test_o4c1_app_env_sqlite_guard.py's identical constant
+# for the full rationale: keeps "boots clean" staging/production
+# subprocesses here from tripping the unrelated, newer
+# TOTP_ENCRYPTION_KEY guard (added after this file).
+_VALID_TOTP_KEY = Fernet.generate_key().decode()
 
 
 def _run(extra_env: dict, argv1: str, assertion: str) -> subprocess.CompletedProcess:
@@ -50,6 +56,7 @@ def _run(extra_env: dict, argv1: str, assertion: str) -> subprocess.CompletedPro
     env["DJANGO_SECRET_KEY"] = _TEST_SECRET
     env.setdefault("EMAIL_HOST", "smtp.example.com")
     env.setdefault("NOWPAYMENTS_IPN_SECRET", "unit-test-ipn-secret")
+    env.setdefault("TOTP_ENCRYPTION_KEY", _VALID_TOTP_KEY)
     env.update(extra_env)
     script = (
         f"import sys; sys.argv = ['manage.py', '{argv1}']; "

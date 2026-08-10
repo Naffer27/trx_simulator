@@ -437,6 +437,48 @@ TOTP_ISSUER_NAME    = os.getenv("TOTP_ISSUER_NAME", "Money Broker")
 # Generate once with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 # Must be 32-byte base64-encoded key. If not set, secrets are stored base64-only (dev mode).
 TOTP_ENCRYPTION_KEY = os.getenv("TOTP_ENCRYPTION_KEY", "").strip()
+
+# O.4c-4 — Guard: staging/production must never boot with a missing or
+# malformed TOTP_ENCRYPTION_KEY. APP_ENV (not DEBUG) is the source of
+# truth for this, same discipline as every other O.4c guard above.
+# Skipped during `manage.py test` via the shared _IN_TEST_RUN flag —
+# the existing O.4c-1/O.4c-2/O.4c-3 subprocess tests already construct
+# APP_ENV=staging/production environments with no real Fernet key
+# configured, to test THEIR OWN guards; without this exemption those
+# already-approved tests would break on an unrelated new guard (MED-3
+# Fase 0 §D — verified against their actual env dicts before writing
+# this, not assumed).
+#
+# Deliberately does NOT import simulator/two_factor.py: that module
+# itself does `from django.conf import settings`, so importing it here
+# would be circular. The Fernet format check is duplicated inline
+# (3 lines) rather than shared — this guard answers a different
+# question ("is boot allowed?") than two_factor.py's own _get_fernet()
+# ("what should this specific encrypt/decrypt call do right now?"),
+# and never touches _encrypt_secret()/_decrypt_secret()/_get_fernet()
+# or any historical b64:/legacy-unprefixed secret — those remain
+# exactly as readable as before regardless of this guard, in every
+# environment, including staging/production once a valid key is set.
+if APP_ENV in {"staging", "production"}:
+    if not _IN_TEST_RUN:
+        if not TOTP_ENCRYPTION_KEY:
+            raise ImproperlyConfigured(
+                f"TOTP_ENCRYPTION_KEY must be set when APP_ENV={APP_ENV!r} — "
+                "without it, new TOTP secrets are stored as reversible base64 "
+                "instead of encrypted. Generate one with: python -c \"from "
+                "cryptography.fernet import Fernet; print(Fernet.generate_key()"
+                ".decode())\" and add it to your .env file."
+            )
+        try:
+            from cryptography.fernet import Fernet as _Fernet
+            _Fernet(TOTP_ENCRYPTION_KEY.encode())
+        except Exception as _exc:
+            raise ImproperlyConfigured(
+                f"TOTP_ENCRYPTION_KEY is not a valid Fernet key (APP_ENV={APP_ENV!r}): "
+                f"{_exc!r}. Generate one with: python -c \"from cryptography.fernet "
+                "import Fernet; print(Fernet.generate_key().decode())\" and add it "
+                "to your .env file — do not use a placeholder value."
+            )
 # Enforce 2FA for all staff/admin users (set True in production after testing)
 TOTP_STAFF_REQUIRED = os.getenv("TOTP_STAFF_REQUIRED", "False").strip().lower() in {"1", "true", "yes"}
 

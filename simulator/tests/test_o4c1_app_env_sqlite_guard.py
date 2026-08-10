@@ -19,21 +19,30 @@ import os
 import subprocess
 import sys
 
+from cryptography.fernet import Fernet
 from django.test import TestCase
 
 _TEST_SECRET = "subprocess-appenv-test-key-not-for-production"
+# O.4c-4 — a valid Fernet key, needed only so that "boots clean" staging/
+# production subprocesses here don't trip the NEW TOTP_ENCRYPTION_KEY
+# guard (added after this file), which is unrelated to what this file
+# actually tests (APP_ENV/DB_NAME). Same "keep the other guards
+# satisfied by default" discipline already used for EMAIL_HOST/
+# NOWPAYMENTS_IPN_SECRET below.
+_VALID_TOTP_KEY = Fernet.generate_key().decode()
 
 
 def _run(extra_env: dict, argv1: str, assertion: str) -> subprocess.CompletedProcess:
     env = dict(os.environ)
     env["DJANGO_SETTINGS_MODULE"] = "trx_simulator.settings"
     env["DJANGO_SECRET_KEY"] = _TEST_SECRET
-    # Keep the two other production guards satisfied by default so this
+    # Keep the other production guards satisfied by default so this
     # file only ever exercises the APP_ENV/DB_NAME guard, never an
     # unrelated one, unless a test explicitly wants to check
     # non-interference (see GuardsRemainIndependentTests below).
     env.setdefault("EMAIL_HOST", "smtp.example.com")
     env.setdefault("NOWPAYMENTS_IPN_SECRET", "unit-test-ipn-secret")
+    env.setdefault("TOTP_ENCRYPTION_KEY", _VALID_TOTP_KEY)
     env.update(extra_env)
     script = (
         f"import sys; sys.argv = ['manage.py', '{argv1}']; "
