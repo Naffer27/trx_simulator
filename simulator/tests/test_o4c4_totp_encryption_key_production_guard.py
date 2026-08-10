@@ -56,6 +56,10 @@ def _run(extra_env: dict, argv1: str, assertion: str) -> subprocess.CompletedPro
     env["NOWPAYMENTS_IPN_SECRET"] = "unit-test-ipn-secret"
     env["DB_NAME"] = "trx_test_db"
     env["DEBUG"] = "False"
+    # O.4c-5 — keeps "boots clean" cases here from tripping the newer,
+    # unrelated REDIS_URL guard (added after this file). Direct
+    # assignment: this project's real .env has a real REDIS_URL set.
+    env["REDIS_URL"] = "redis://127.0.0.1:6379/0"
     env.update(extra_env)
     script = (
         f"import sys; sys.argv = ['manage.py', '{argv1}']; "

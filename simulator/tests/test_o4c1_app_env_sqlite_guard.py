@@ -30,6 +30,12 @@ _TEST_SECRET = "subprocess-appenv-test-key-not-for-production"
 # satisfied by default" discipline already used for EMAIL_HOST/
 # NOWPAYMENTS_IPN_SECRET below.
 _VALID_TOTP_KEY = Fernet.generate_key().decode()
+# O.4c-5 — same rationale, for the NEW REDIS_URL guard (added after this
+# file). Direct assignment, NOT .setdefault(): this project's real .env
+# has a real REDIS_URL set, which .setdefault() would silently fail to
+# override (same failure mode already documented for DEBUG in O.4c-4's
+# own history).
+_VALID_REDIS_URL = "redis://127.0.0.1:6379/0"
 
 
 def _run(extra_env: dict, argv1: str, assertion: str) -> subprocess.CompletedProcess:
@@ -43,6 +49,7 @@ def _run(extra_env: dict, argv1: str, assertion: str) -> subprocess.CompletedPro
     env.setdefault("EMAIL_HOST", "smtp.example.com")
     env.setdefault("NOWPAYMENTS_IPN_SECRET", "unit-test-ipn-secret")
     env.setdefault("TOTP_ENCRYPTION_KEY", _VALID_TOTP_KEY)
+    env["REDIS_URL"] = _VALID_REDIS_URL
     env.update(extra_env)
     script = (
         f"import sys; sys.argv = ['manage.py', '{argv1}']; "

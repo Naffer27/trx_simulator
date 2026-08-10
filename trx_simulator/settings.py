@@ -241,6 +241,37 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # 🔌 Channels (Redis opcional)
 # ===============================
 REDIS_URL = os.getenv("REDIS_URL", "").strip()
+
+# O.4c-5 — Guard: staging/production must never boot with a missing or
+# empty REDIS_URL. APP_ENV (not DEBUG) is the source of truth, same
+# discipline as every other O.4c guard — same shape as the O.4c-1
+# DB_NAME guard specifically (presence-only, no format/content
+# validation — MED-3 Fase 0 §6/§12 concluded REDIS_URL's invalid-format
+# case fails loudly at connection time, unlike TOTP_ENCRYPTION_KEY's
+# silent insecure-fallback case, so format validation isn't needed to
+# close the real risk here).
+#
+# Skipped during `manage.py test` via the shared _IN_TEST_RUN flag —
+# same necessity already demonstrated for DB_NAME/TOTP_ENCRYPTION_KEY:
+# the existing O.4c-1/O.4c-2/O.4c-3/O.4c-4 subprocess tests construct
+# APP_ENV=staging/production environments to test THEIR OWN guards
+# (MED-3 Fase 0 §7 confirmed none of them previously set REDIS_URL
+# explicitly, relying on whatever the real .env happens to have).
+#
+# Deliberately does NOT attempt any Redis connectivity — no client is
+# instantiated, no liveness probe, no network I/O of any kind. This
+# guard validates configuration only; runtime availability is health/
+# monitoring's concern (O.4e), not settings.py's.
+if APP_ENV in {"staging", "production"} and not REDIS_URL:
+    if not _IN_TEST_RUN:
+        raise ImproperlyConfigured(
+            f"REDIS_URL must be set when APP_ENV={APP_ENV!r} — without it, "
+            "Django Channels silently falls back to InMemoryChannelLayer "
+            "(broken across multiple processes/workers) and Celery/RedBeat "
+            "silently default to redis://127.0.0.1:6379/0. Add REDIS_URL to "
+            "your .env file (format: redis://[:password@]host:port/db)."
+        )
+
 if REDIS_URL:
     CHANNEL_LAYERS = {
         "default": {
