@@ -12,6 +12,15 @@
 # or replaces backup_success.json (a failed run must never erase the
 # evidence of the last real success).
 #
+# O.5b: a non-blocking flock (BACKUP_METADATA_PATH/.backup.lock) prevents
+# two concurrent runs of THIS script from ever calling pg_dump at the
+# same time — covers both the systemd-timer-triggered instance and any
+# manual SSH invocation racing with it (systemd's own oneshot
+# serialization only protects the former, not the latter). A rejected
+# second run exits cleanly WITHOUT touching backup_success.json or
+# backup_failure.json — "someone else is already backing up" is not a
+# backup failure, and must never be recorded as one.
+#
 # Usage:
 #   bash deploy/scripts/backup_postgres.sh
 #   BACKUP_DIR=/mnt/backups bash deploy/scripts/backup_postgres.sh
@@ -67,9 +76,12 @@ _json_escape() {
 # filesystem → mv is a real rename(2), not a copy), permissions set
 # BEFORE the rename (never a window where the final file has the wrong
 # mode), sync before the rename for durability against a crash mid-write.
+# Does NOT mkdir -p BACKUP_METADATA_PATH itself (O.5b) — the directory
+# is guaranteed to already exist by the time this can ever be called,
+# created once near the top of the script, before the flock is even
+# attempted (the lock file lives in the same directory).
 _write_metadata_atomic() {
     local target="$1" content="$2" tmp
-    mkdir -p "$BACKUP_METADATA_PATH" 2>/dev/null || return 1
     tmp="$(mktemp "${BACKUP_METADATA_PATH}/.metadata.XXXXXX")" || return 1
     _TMP_FILES+=("$tmp")
     chmod 640 "$tmp" 2>/dev/null || { rm -f "$tmp"; return 1; }
@@ -101,9 +113,33 @@ JSON
 
 die()  { log "ERROR: $*"; _write_failure_metadata "$*"; exit 1; }
 
+# O.5b — controlled exit for lock contention. Deliberately separate from
+# die(): another instance already legitimately backing up is not a
+# backup failure, so this must NEVER call _write_failure_metadata (which
+# would fabricate a misleading failure record) and must NEVER touch
+# backup_success.json either. Exit 0 — systemd must not mark this run as
+# a failed unit for declining to do redundant work.
+_exit_lock_contention() {
+    log "Another backup_postgres.sh run is already in progress (lock: $LOCK_FILE) — exiting without touching any metadata."
+    exit 0
+}
+
 log "=== PostgreSQL backup starting ==="
 log "Database: $DB_NAME @ $DB_HOST:$DB_PORT"
 log "Output:   $FILEPATH"
+
+# ── O.5b — metadata dir must exist BEFORE the lock is attempted ───────
+# (the lock file lives inside BACKUP_METADATA_PATH; die() below also
+# needs this directory ready to write backup_failure.json).
+mkdir -p "$BACKUP_METADATA_PATH" || die "Cannot create backup metadata dir: $BACKUP_METADATA_PATH"
+
+# ── O.5b — mutual exclusion ─────────────────────────────────────────
+# Non-blocking: a concurrent run (systemd timer racing a manual SSH
+# invocation, or any double-trigger) must fail fast, not queue up
+# behind a pg_dump that could still be running hours from now.
+LOCK_FILE="${BACKUP_METADATA_PATH}/.backup.lock"
+exec 200>"$LOCK_FILE"
+flock -n 200 || _exit_lock_contention
 
 # ── Create backup dir ─────────────────────────────────────────
 mkdir -p "$BACKUP_DIR" || die "Cannot create backup dir: $BACKUP_DIR"

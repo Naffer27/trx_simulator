@@ -1,0 +1,71 @@
+# ============================================================
+# backup-postgres.service — Automated PostgreSQL backup (O.5b)
+#
+# oneshot, triggered by backup-postgres.timer (03:00 UTC daily). Runs
+# deploy/scripts/backup_postgres.sh, which itself writes the O.5a
+# durability signal (backup_success.json/backup_failure.json) under
+# BACKUP_METADATA_PATH — surfaced at GET /api/health/detail/.
+#
+# Deliberately independent of Redis/Celery/Daphne — a PostgreSQL backup
+# must be able to run even if the application layer is down. The script
+# is pure bash (pg_dump/pg_restore only) — no venv/Python, so unlike
+# daphne/celery-worker/celery-beat this unit does NOT set
+# DJANGO_SETTINGS_MODULE and does NOT invoke the venv interpreter.
+#
+# Deliberately does NOT declare:
+#   - Requires=postgresql.service — PostgreSQL may be a managed/external
+#     DB with no local systemd unit; only a soft After= ordering hint.
+#   - Any reference to redis.service/celery-worker.service/
+#     celery-beat.service/daphne.service — the whole point of O.5b.
+#   - Wants=network-online.target — O.5b is 100% local (no offsite yet,
+#     that is O.5c).
+#   - Restart=on-failure — a failed daily backup should not auto-retry
+#     against a possibly still-locked/still-recovering DB; the natural
+#     retry cadence is the next day's timer fire. Failure is visible via
+#     journalctl and backup_failure.json (O.5a), not silently retried.
+#
+# Provisioning required before first run (NOT done by this unit):
+#   sudo mkdir -p /var/backups/trx_sim
+#   sudo chown trx_sim:trx_sim /var/backups/trx_sim
+#   sudo chmod 750 /var/backups/trx_sim
+# (/var/log/trx_sim/ is already provisioned by DEPLOY.md/INFRA_PLAN_L1.md
+# for daphne/celery-worker/celery-beat — the backup/ subdirectory under
+# it is created by backup_postgres.sh itself via mkdir -p.)
+#
+# Install: see deploy/systemd/backup-postgres.timer and DEPLOY.md.
+# ============================================================
+
+[Unit]
+Description=trx_sim PostgreSQL backup (O.5b)
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=trx_sim
+Group=trx_sim
+WorkingDirectory=/opt/trx_sim
+
+EnvironmentFile=/opt/trx_sim/.env
+
+ExecStart=/bin/bash /opt/trx_sim/deploy/scripts/backup_postgres.sh
+
+# Generous upper bound in case pg_dump hangs on lock contention — does
+# not replace the flock-based mutual exclusion inside the script itself,
+# just caps a single runaway run. Leaves ~18h of margin before the next
+# scheduled 03:00 UTC fire.
+TimeoutStartSec=21600
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=backup-postgres
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/backups/trx_sim /var/log/trx_sim
+
+# Low CPU/IO priority — courtesy layer so the dump doesn't compete with
+# live traffic; 03:00 UTC is already a low-traffic window regardless.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

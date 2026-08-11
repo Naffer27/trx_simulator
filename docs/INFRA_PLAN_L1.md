@@ -237,15 +237,26 @@ location /media/ {
 
 ### Estrategia completa
 
-| Qué | Local | Offsite | Frecuencia | Retención | Herramienta |
-|---|---|---|---|---|---|
-| PostgreSQL dump | `/var/backups/trx_sim/` | Hetzner Object Storage / S3 | Diario 03:00 UTC | 14 local / 30 offsite | `backup_postgres.sh` + `rclone` |
-| Media files (KYC) | — | Offsite junto con PG | Diario | 30 días | `rclone` |
-| `.env` | No guardar en VPS extra | Gestor de secretos (1Password/Bitwarden) | Ante cada cambio | Permanente | Manual |
-| Redis | `/var/lib/redis/` (AOF+RDB) | No necesario (data efímera) | Automático | 7 días RDB | `redis_persistence.conf` |
-| VPS Snapshot | — | Hetzner Snapshots | Semanal | 4 snapshots | Panel Hetzner |
+| Qué | Local | Offsite | Frecuencia | Retención | Herramienta | Estado |
+|---|---|---|---|---|---|---|
+| PostgreSQL dump | `/var/backups/trx_sim/` | Hetzner Object Storage / S3 | Diario 03:00 UTC | 14 local / 30 offsite | `backup_postgres.sh` + `backup-postgres.timer` (systemd) | Local: **implementado (O.5a/O.5b)**. Offsite: planificado, no implementado |
+| Media files (KYC) | — | Offsite junto con PG | Diario | 30 días | `rclone` | Planificado, no implementado |
+| `.env` | No guardar en VPS extra | Gestor de secretos (1Password/Bitwarden) | Ante cada cambio | Permanente | Manual | Planificado, no implementado |
+| Redis | `/var/lib/redis/` (AOF+RDB) | No necesario (data efímera) | Automático | 7 días RDB | `redis_persistence.conf` | Implementado |
+| VPS Snapshot | — | Hetzner Snapshots | Semanal | 4 snapshots | Panel Hetzner | Planificado, no implementado |
 
-### rclone para offsite
+**PostgreSQL dump — mecanismo local real (O.5a/O.5b):** `backup_postgres.sh`
+escribe el dump + una señal de durabilidad (`backup_success.json`/
+`backup_failure.json`, O.5a) leída por `GET /api/health/detail/` →
+`"backup"`. El disparo diario es un **systemd timer** versionado
+(`deploy/systemd/backup-postgres.service`/`.timer`, O.5b) — deliberadamente
+independiente de Redis/Celery/cron, protegido contra ejecuciones
+concurrentes vía `flock` dentro del propio script. Ver `DEPLOY.md` sección
+"Initial Setup" paso 10 para instalación. La fila de `rclone`/cron debajo
+describe el **offsite todavía no implementado** (O.5c) — no confundir con
+el mecanismo local, que ya es real.
+
+### rclone para offsite (planificado — O.5c, no implementado todavía)
 
 ```bash
 # Instalar

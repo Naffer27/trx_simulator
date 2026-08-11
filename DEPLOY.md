@@ -120,7 +120,39 @@ systemctl daemon-reload
 systemctl enable daphne celery-worker celery-beat
 ```
 
-### 10. Configure Nginx
+### 10. Install the automated backup scheduler (O.5b)
+
+Deliberately independent of Redis/Celery/Daphne — see
+`deploy/systemd/backup-postgres.service` for the full rationale. Requires
+`/var/backups/trx_sim` to exist and be owned by `trx_sim` (unlike
+`/var/log/trx_sim`, this directory is NOT created by step 12 below —
+`backup_postgres.sh` cannot create it itself under an unprivileged user
+if `/var/backups/` itself is root-owned, which it is on most distros).
+
+```bash
+mkdir -p /var/backups/trx_sim
+chown trx_sim:trx_sim /var/backups/trx_sim
+chmod 750 /var/backups/trx_sim
+
+cp /opt/trx_sim/deploy/systemd/backup-postgres.service /etc/systemd/system/
+cp /opt/trx_sim/deploy/systemd/backup-postgres.timer   /etc/systemd/system/
+
+systemctl daemon-reload
+systemctl enable --now backup-postgres.timer
+```
+
+Verify:
+
+```bash
+systemctl status backup-postgres.timer
+systemctl list-timers backup-postgres.timer
+
+# Optional: trigger an immediate run instead of waiting for 03:00 UTC
+systemctl start backup-postgres.service
+journalctl -u backup-postgres.service -n 50
+```
+
+### 11. Configure Nginx
 
 ```bash
 cp /opt/trx_sim/deploy/nginx/trx_sim.conf /etc/nginx/sites-available/trx_sim
@@ -133,20 +165,20 @@ certbot --nginx -d yourdomain.com --non-interactive --agree-tos -m admin@yourdom
 nginx -t && systemctl restart nginx
 ```
 
-### 11. Configure logrotate
+### 12. Configure logrotate
 
 ```bash
 cp /opt/trx_sim/deploy/logrotate/trx_sim /etc/logrotate.d/trx_sim
 ```
 
-### 12. Create log directory
+### 13. Create log directory
 
 ```bash
 mkdir -p /var/log/trx_sim
 chown trx_sim:trx_sim /var/log/trx_sim
 ```
 
-### 13. Start all services
+### 14. Start all services
 
 ```bash
 systemctl start celery-beat
@@ -156,7 +188,7 @@ sleep 3
 systemctl start daphne
 ```
 
-### 14. Verify health
+### 15. Verify health
 
 ```bash
 bash /opt/trx_sim/deploy/scripts/healthcheck.sh
@@ -352,12 +384,27 @@ sudo -u trx_sim /opt/trx_sim/venv/bin/python /opt/trx_sim/manage.py \
 bash /opt/trx_sim/deploy/scripts/backup_postgres.sh
 ```
 
-### PostgreSQL (automated cron — add to trx_sim user crontab)
+A concurrent manual run while the timer-triggered instance is still
+running is safely rejected by the script's own `flock` (O.5b) — it
+exits cleanly without touching any metadata, it does not queue up
+behind the running dump.
 
-```cron
-# Daily backup at 03:00 UTC, keep 14 copies
-0 3 * * * bash /opt/trx_sim/deploy/scripts/backup_postgres.sh >> /var/log/trx_sim/backup.log 2>&1
+### PostgreSQL (automated — systemd timer, O.5b)
+
+Daily at 03:00 UTC, keep 14 copies. **Not** cron, **not** Celery Beat —
+deliberately independent of Redis/Celery so the backup can run even if
+the application layer is down. See step 10 in Initial Setup above for
+installation, and `deploy/systemd/backup-postgres.service` /
+`backup-postgres.timer` for the full unit definitions and rationale.
+
+```bash
+systemctl status backup-postgres.timer
+systemctl list-timers backup-postgres.timer
+journalctl -u backup-postgres.service -n 50
 ```
+
+Backup freshness is surfaced at `GET /api/health/detail/` → `"backup"`
+(O.5a) — `stale`/`error` degrade the endpoint to 503.
 
 ### Redis
 

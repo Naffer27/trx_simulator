@@ -22,8 +22,9 @@
 | `record_celery_beat_heartbeat()` / `inspect_celery_beat_heartbeat_staleness()` | `simulator/broker_audit.py` (O.4e-2) | Tarea periódica Beat (`record-celery-beat-heartbeat-5m`, cada 5 min) que persiste `EV_CELERY_BEAT_HEARTBEAT`; función de lectura pura que calcula fresh/stale/missing contra el umbral de 900s, leyendo solo PostgreSQL (independiente de Redis) |
 | `observe_treasury_stuck_execution_escalations()` | `simulator/broker_audit.py` (O.4e-4) | Llamada por el mismo task que la observación base (`observe_treasury_stuck_executions_task`, en ese orden); escribe `EV_TREASURY_STUCK_EXECUTION_ESCALATED` (severidad CRITICAL, vía `logger.error()`) cuando un candidato lleva ≥2700s persistentemente observado, con dedup de 3600s |
 | `deploy/scripts/healthcheck.sh` | script | `curl /api/health/` + `systemctl is-active` de `daphne`/`celery-worker`/`celery-beat` + `redis-cli ping` + `psql SELECT 1` |
-| `deploy/scripts/backup_postgres.sh` / `restore_postgres.sh` | scripts | Backup/restore `pg_dump`/`pg_restore` ya existentes |
-| Servicios systemd | `deploy/systemd/{daphne,celery-worker,celery-beat}.service` | Nombres reales de servicio: `daphne`, `celery-worker`, `celery-beat` |
+| `deploy/scripts/backup_postgres.sh` / `restore_postgres.sh` | scripts | Backup/restore `pg_dump`/`pg_restore` ya existentes. `backup_postgres.sh` (O.5a/O.5b) escribe `backup_success.json`/`backup_failure.json` bajo `BACKUP_METADATA_PATH` — reflejado en `/api/health/detail/`'s sección `backup` — y usa `flock` no bloqueante para rechazar limpiamente una segunda ejecución concurrente (manual o del timer) sin tocar la metadata existente |
+| `backup-postgres.timer` (O.5b) | systemd, `deploy/systemd/backup-postgres.{service,timer}` | Dispara `backup_postgres.sh` diariamente a las 03:00 UTC — independiente de Redis/Celery/Daphne por diseño, corre aunque esos servicios estén caídos |
+| Servicios systemd | `deploy/systemd/{daphne,celery-worker,celery-beat,backup-postgres}.service` | Nombres reales de servicio: `daphne`, `celery-worker`, `celery-beat`, `backup-postgres` |
 
 ---
 

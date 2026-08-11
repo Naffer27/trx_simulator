@@ -1,0 +1,39 @@
+# ============================================================
+# backup-postgres.timer — daily trigger for backup-postgres.service
+#
+# Fires at 03:00 UTC daily — the only documented cadence (DEPLOY.md,
+# INFRA_PLAN_L1.md). The explicit "UTC" suffix in OnCalendar is required
+# so this does NOT depend on the VPS's local system timezone
+# (timedatectl) — without it, 03:00:00 would resolve against local time,
+# which is ambiguous unless the operator has verified the server is
+# already configured for UTC.
+#
+# Persistent=true: if the VPS was off/rebooting at 03:00 UTC, the backup
+# runs once as soon as the timer becomes active again, instead of
+# silently skipping a full day.
+#
+# Install:
+#   sudo cp deploy/systemd/backup-postgres.service /etc/systemd/system/
+#   sudo cp deploy/systemd/backup-postgres.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now backup-postgres.timer
+#
+# Verify:
+#   systemctl status backup-postgres.timer
+#   systemctl list-timers backup-postgres.timer
+#   sudo systemctl start backup-postgres.service   # optional immediate run
+#   journalctl -u backup-postgres.service -n 50
+# ============================================================
+
+[Unit]
+Description=Daily trigger for trx_sim PostgreSQL backup (O.5b)
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 UTC
+Persistent=true
+RandomizedDelaySec=300
+AccuracySec=1min
+Unit=backup-postgres.service
+
+[Install]
+WantedBy=timers.target
