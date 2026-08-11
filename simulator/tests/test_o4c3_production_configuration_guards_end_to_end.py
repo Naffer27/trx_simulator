@@ -41,7 +41,7 @@ from pathlib import Path
 from cryptography.fernet import Fernet
 from django.test import TestCase
 
-_TEST_SECRET = "subprocess-o4c3-checkpoint-key-not-for-production"
+_TEST_SECRET = "subprocess-o4c3-checkpoint-test-key-not-for-production"
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 # O.4c-4 — see test_o4c1_app_env_sqlite_guard.py's identical constant
 # for the full rationale: keeps "boots clean" staging/production

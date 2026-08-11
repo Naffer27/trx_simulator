@@ -71,6 +71,35 @@ if APP_ENV in {"staging", "production"} and DEBUG:
             "unhandled error."
         )
 
+# O.4c-7 — Guard: staging/production must never boot with a placeholder
+# or low-entropy DJANGO_SECRET_KEY. The presence/empty check above (L.24-36)
+# already runs unconditionally in every real environment — this guard adds
+# a *quality* check on top of it, scoped to staging/production only so a
+# development .env copied straight from .env.example (whose own placeholder
+# is non-empty but weak) keeps working — O.4c-7 Fase 0 §6/§7. The threshold
+# is Django's own SECRET_KEY check (django/core/checks/security/base.py,
+# security.W009: SECRET_KEY_MIN_LENGTH=50, SECRET_KEY_MIN_UNIQUE_CHARACTERS=5,
+# rejecting the `startproject`-generated "django-insecure-" prefix) — not an
+# arbitrary blocklist of known placeholder strings. Skipped during
+# `manage.py test` via the same centralized _IN_TEST_RUN flag as every
+# other guard in this file.
+if APP_ENV in {"staging", "production"}:
+    _sk_unique_chars = len(set(SECRET_KEY))
+    if (
+        len(SECRET_KEY) < 50
+        or _sk_unique_chars < 5
+        or SECRET_KEY.startswith("django-insecure-")
+    ):
+        if not _IN_TEST_RUN:
+            raise ImproperlyConfigured(
+                f"DJANGO_SECRET_KEY does not meet Django's minimum security "
+                f"requirements for APP_ENV={APP_ENV!r} (needs >=50 characters, "
+                f">=5 unique characters, and must not start with "
+                f"'django-insecure-'). Generate a real one with: python -c "
+                f"\"from django.core.management.utils import "
+                f"get_random_secret_key; print(get_random_secret_key())\""
+            )
+
 # Acceso con código (usado por LoginForm para requerirlo en PROD)
 BROKER_ACCESS_CODE = os.getenv("BROKER_ACCESS_CODE", "").strip()
 

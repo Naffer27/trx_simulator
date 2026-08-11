@@ -22,7 +22,7 @@ import sys
 from cryptography.fernet import Fernet
 from django.test import TestCase
 
-_TEST_SECRET = "subprocess-appenv-test-key-not-for-production"
+_TEST_SECRET = "subprocess-appenv-test-key-not-for-production-uses"
 # O.4c-4 — a valid Fernet key, needed only so that "boots clean" staging/
 # production subprocesses here don't trip the NEW TOTP_ENCRYPTION_KEY
 # guard (added after this file), which is unrelated to what this file
