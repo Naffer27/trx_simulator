@@ -16,6 +16,7 @@ db.sqlite3
 credentials.json
 *.dump
 *.sql.gz
+rclone.conf
 
 # compilados / generados
 staticfiles/

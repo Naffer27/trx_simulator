@@ -125,7 +125,7 @@ systemctl enable daphne celery-worker celery-beat
 Deliberately independent of Redis/Celery/Daphne — see
 `deploy/systemd/backup-postgres.service` for the full rationale. Requires
 `/var/backups/trx_sim` to exist and be owned by `trx_sim` (unlike
-`/var/log/trx_sim`, this directory is NOT created by step 12 below —
+`/var/log/trx_sim`, this directory is NOT created by step 14 below —
 `backup_postgres.sh` cannot create it itself under an unprivileged user
 if `/var/backups/` itself is root-owned, which it is on most distros).
 
@@ -152,7 +152,61 @@ systemctl start backup-postgres.service
 journalctl -u backup-postgres.service -n 50
 ```
 
-### 11. Configure Nginx
+### 11. Install the offsite backup verification scheduler (O.5c-2)
+
+Independent of `backup-postgres.timer` by design — see
+`deploy/systemd/backup-offsite.service` for the full rationale (no
+`Requires=`/`After=` ordering between the two, so an offsite hiccup can
+never interfere with the local backup unit or vice versa). Requires the
+DEDICATED `rclone.conf` to be provisioned FIRST — this file is never
+part of this repository and must never contain real credentials
+anywhere that could reach Git:
+
+```bash
+mkdir -p /etc/trx_sim
+cp /opt/trx_sim/deploy/rclone.conf.example /etc/trx_sim/rclone.conf
+chown trx_sim:trx_sim /etc/trx_sim/rclone.conf
+chmod 600 /etc/trx_sim/rclone.conf
+
+# Edit as the trx_sim user (or chown back afterwards) and fill in the
+# real remote credentials — see deploy/rclone.conf.example for the
+# expected shape. Initial operational target is Cloudflare R2 (O.5c
+# Fase 0 approval, decision 1).
+sudo -u trx_sim vi /etc/trx_sim/rclone.conf
+```
+
+Then add to `/opt/trx_sim/.env` (see `.env.example`, O.5c-1) — the
+remote NAME must match whatever section header you used in
+`rclone.conf` above:
+
+```
+RCLONE_CONFIG=/etc/trx_sim/rclone.conf
+RCLONE_REMOTE=<remote name from rclone.conf>
+RCLONE_REMOTE_PATH=trx-sim-backups
+```
+
+Install the units:
+
+```bash
+cp /opt/trx_sim/deploy/systemd/backup-offsite.service /etc/systemd/system/
+cp /opt/trx_sim/deploy/systemd/backup-offsite.timer   /etc/systemd/system/
+
+systemctl daemon-reload
+systemctl enable --now backup-offsite.timer
+```
+
+Verify:
+
+```bash
+systemctl status backup-offsite.timer
+systemctl list-timers backup-offsite.timer
+
+# Optional: trigger an immediate run instead of waiting for ~03:30 UTC
+systemctl start backup-offsite.service
+journalctl -u backup-offsite.service -n 50
+```
+
+### 12. Configure Nginx
 
 ```bash
 cp /opt/trx_sim/deploy/nginx/trx_sim.conf /etc/nginx/sites-available/trx_sim
@@ -165,20 +219,20 @@ certbot --nginx -d yourdomain.com --non-interactive --agree-tos -m admin@yourdom
 nginx -t && systemctl restart nginx
 ```
 
-### 12. Configure logrotate
+### 13. Configure logrotate
 
 ```bash
 cp /opt/trx_sim/deploy/logrotate/trx_sim /etc/logrotate.d/trx_sim
 ```
 
-### 13. Create log directory
+### 14. Create log directory
 
 ```bash
 mkdir -p /var/log/trx_sim
 chown trx_sim:trx_sim /var/log/trx_sim
 ```
 
-### 14. Start all services
+### 15. Start all services
 
 ```bash
 systemctl start celery-beat
@@ -188,7 +242,7 @@ sleep 3
 systemctl start daphne
 ```
 
-### 15. Verify health
+### 16. Verify health
 
 ```bash
 bash /opt/trx_sim/deploy/scripts/healthcheck.sh
@@ -405,6 +459,40 @@ journalctl -u backup-postgres.service -n 50
 
 Backup freshness is surfaced at `GET /api/health/detail/` → `"backup"`
 (O.5a) — `stale`/`error` degrade the endpoint to 503.
+
+### PostgreSQL offsite verification (manual)
+
+```bash
+bash /opt/trx_sim/deploy/scripts/backup_offsite.sh
+```
+
+Reads the current `backup_success.json` (O.5a) and, ONLY after proving
+the remote copy is byte-identical (SHA-256 match against an
+independently downloaded copy) AND restorable (`pg_restore --list` on
+the recovered copy), writes `offsite_success.json` (O.5c-1). Never
+modifies `backup_success.json`/`backup_failure.json`, and never writes
+to or deletes anything under `/var/backups/trx_sim` — the local dump is
+read-only input to this script.
+
+### PostgreSQL offsite verification (automated — systemd timer, O.5c-2)
+
+Daily at ~03:30 UTC (30 minutes after `backup-postgres.timer`'s 03:00
+UTC fire) — deliberately its own independent timer, with no
+`Requires=`/`After=` dependency on `backup-postgres.timer`/`.service`,
+so an offsite hiccup can never interfere with the local backup. See
+step 11 in Initial Setup above for installation (including the required
+`rclone.conf` provisioning), and `deploy/systemd/backup-offsite.service`
+/ `backup-offsite.timer` for the full unit definitions and rationale.
+
+```bash
+systemctl status backup-offsite.timer
+systemctl list-timers backup-offsite.timer
+journalctl -u backup-offsite.service -n 50
+```
+
+Integration with `GET /api/health/detail/` (an `"offsite"` block
+alongside `"backup"`) is O.5c-3 — not yet implemented as of this
+scheduler existing.
 
 ### Redis
 

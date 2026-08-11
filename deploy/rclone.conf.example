@@ -1,0 +1,38 @@
+# ============================================================
+# rclone.conf.example — template for the DEDICATED offsite backup
+# config (O.5c-1)
+#
+# This is a PLACEHOLDER file with fake values — copy it to a location
+# OUTSIDE this git repository (never /opt/trx_sim, never anywhere
+# tracked by git), fill in real credentials, and chmod 600 it.
+#
+#   sudo mkdir -p /etc/trx_sim
+#   sudo cp deploy/rclone.conf.example /etc/trx_sim/rclone.conf
+#   sudo chown trx_sim:trx_sim /etc/trx_sim/rclone.conf
+#   sudo chmod 600 /etc/trx_sim/rclone.conf
+#   sudo -u trx_sim vi /etc/trx_sim/rclone.conf   # fill in real values below
+#
+# The remote NAME (the "[trx-r2]" section header below) is what
+# RCLONE_REMOTE in .env must match — deploy/scripts/backup_offsite.sh
+# never hardcodes a provider; it only knows the remote name you give
+# it here.
+#
+# Initial operational target (O.5c Fase 0 approval, decision 1) is
+# Cloudflare R2, an S3-compatible object storage service — hence
+# "type = s3" / "provider = Cloudflare" below. rclone's s3 backend
+# also supports AWS S3, Backblaze B2 (s3-compatible endpoint), and
+# Hetzner Object Storage with the same "type = s3" shape and a
+# different "provider"/"endpoint" pair — switching later is a config
+# change here, never a code change in backup_offsite.sh.
+#
+# NEVER commit a real, filled-in version of this file to git. See
+# .gitignore — any file literally named "rclone.conf" is excluded.
+# ============================================================
+
+[trx-r2]
+type = s3
+provider = Cloudflare
+access_key_id = REPLACE_WITH_REAL_R2_ACCESS_KEY_ID
+secret_access_key = REPLACE_WITH_REAL_R2_SECRET_ACCESS_KEY
+endpoint = https://REPLACE_WITH_YOUR_ACCOUNT_ID.r2.cloudflarestorage.com
+acl = private

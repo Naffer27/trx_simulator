@@ -1,0 +1,147 @@
+# ============================================================
+# backup-offsite.service — Verified offsite copy of the latest local
+# PostgreSQL backup (O.5c-2)
+#
+# oneshot, triggered by backup-offsite.timer (~03:30 UTC daily, 30min
+# after backup-postgres.timer's own 03:00 UTC fire — re-verified
+# against that unit's actual OnCalendar= before choosing this value,
+# not assumed).
+#
+# Runs deploy/scripts/backup_offsite.sh (O.5c-1) exclusively — see that
+# script for the full strong-verification chain (SHA-256 → upload →
+# remote existence check → independent-scratch download → SHA-256
+# match → pg_restore --list on the RECOVERED copy) it performs before
+# ever writing offsite_success.json. That script is frozen as of
+# O.5c-1 approval — this unit does not change how it behaves, only how
+# and when it is invoked.
+#
+# Deliberately has NO dependency (Requires=/After=/BindsTo=/OnSuccess=/
+# OnFailure=) on backup-postgres.service or backup-postgres.timer —
+# backup_offsite.sh already handles a stale/missing/in-progress local
+# backup cleanly on its own (it reads whatever backup_success.json
+# currently says and fails informatively if there is nothing valid
+# yet), so no systemd-level ordering is needed, and deliberately none
+# is added: an offsite run must never be able to interfere with,
+# block, or become entangled with the local backup unit in any way
+# that could turn an offsite hiccup into a local-backup problem or
+# vice versa (O.5c approved requirement). If today's 03:00 local dump
+# is still running (or failed) when this fires at 03:30, this unit
+# simply offsites whatever the last valid local success was — benign
+# and idempotent (O.5c-1: test_rerun_after_success_is_idempotent) —
+# and catches up automatically at tomorrow's fire once a fresher local
+# success exists.
+#
+# Unlike backup-postgres.service, this unit genuinely needs outbound
+# network (to reach the offsite remote configured in RCLONE_CONFIG) —
+# hence After=/Wants=network-online.target below, which
+# backup-postgres.service deliberately omits (see that unit's own
+# comment) because it has nothing to reach over the network.
+#
+# Sandbox is intentionally TIGHTER than backup-postgres.service's on
+# one axis: ReadWritePaths grants only /var/log/trx_sim (where O.5a's
+# backup_success.json is READ, and where this unit's own
+# offsite_success.json / offsite_failure.json / .offsite.lock are
+# written) — deliberately NOT /var/backups/trx_sim. backup_offsite.sh
+# only ever READS the local dump, never writes or deletes anything
+# under BACKUP_DIR (O.5c-1 approved requirement); under
+# ProtectSystem=strict, everything not explicitly listed in
+# ReadWritePaths is mounted READ-ONLY (not inaccessible) — so
+# /var/backups/trx_sim remains fully readable to this unit with no
+# extra directive, while the kernel itself now refuses any write/
+# delete attempt there even if a future bug in the script tried one.
+# This is enforcement beyond what the script's own logic already
+# guarantees, not a substitute for it.
+#
+# /etc/trx_sim/rclone.conf (the dedicated, gitignored, chmod 600
+# rclone config — O.5c-1 approved decision 3) needs no ReadOnlyPaths
+# entry either: ProtectSystem=strict already leaves /etc mounted
+# read-only-but-readable by default, and standard POSIX permissions
+# (chmod 600, owned by trx_sim:trx_sim — see provisioning below) are
+# what actually gate access — the trx_sim user this unit runs as can
+# read it, no one else can.
+#
+# ProtectHome=true is added here even though backup-postgres.service
+# does not set it — trx_sim is a nologin system user with no
+# legitimate use for /home, /root, or /run/user/*, so this is free
+# defense-in-depth specific to this unit; it does not reduce parity
+# with anything backup-postgres.service actually relies on.
+#
+# RestrictAddressFamilies is added here (and not in
+# backup-postgres.service) because this is, as of O.5c-2, the ONLY
+# unit in this project that legitimately talks to the network — scoped
+# to IPv4/IPv6/Unix sockets (the last needed by local DNS resolver
+# libraries), nothing else. IP-level allowlisting (IPAddressAllow=)
+# was considered and deliberately NOT added: R2 (like any S3-compatible
+# endpoint) sits behind provider-managed/CDN IP ranges that can change
+# without notice, making a static allowlist fragile enough to risk
+# silently breaking every offsite run — a worse outcome than the
+# marginal hardening it would add.
+#
+# No Restart=on-failure — same rationale as backup-postgres.service:
+# a failed offsite attempt retrying immediately against a possibly
+# still-broken remote is unlikely to succeed and would just burn
+# bandwidth; the natural retry cadence is tomorrow's ~03:30 UTC fire.
+# Failure is visible via journalctl and offsite_failure.json (O.5c-1),
+# not silently retried. Type=oneshot already means a nonzero exit from
+# ExecStart marks this unit's last run as failed with no extra
+# directive needed — a real backup_offsite.sh failure is never hidden.
+#
+# Provisioning required before first run (NOT done by this unit):
+#   sudo mkdir -p /etc/trx_sim
+#   sudo cp deploy/rclone.conf.example /etc/trx_sim/rclone.conf
+#   sudo chown trx_sim:trx_sim /etc/trx_sim/rclone.conf
+#   sudo chmod 600 /etc/trx_sim/rclone.conf
+#   sudo -u trx_sim vi /etc/trx_sim/rclone.conf   # fill in real values
+# (edit as trx_sim, or chown afterwards — either way the file must end
+# up owned by trx_sim:trx_sim, mode 600, matching this unit's
+# User=/Group=.)
+# Then add to /opt/trx_sim/.env (see .env.example, O.5c-1):
+#   RCLONE_CONFIG=/etc/trx_sim/rclone.conf
+#   RCLONE_REMOTE=<name of the remote you defined in rclone.conf>
+#   RCLONE_REMOTE_PATH=trx-sim-backups
+#
+# Install: see deploy/systemd/backup-offsite.timer and DEPLOY.md.
+# ============================================================
+
+[Unit]
+Description=trx_sim PostgreSQL offsite backup verification (O.5c-2)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=trx_sim
+Group=trx_sim
+WorkingDirectory=/opt/trx_sim
+
+EnvironmentFile=/opt/trx_sim/.env
+
+ExecStart=/bin/bash /opt/trx_sim/deploy/scripts/backup_offsite.sh
+
+# Covers upload + independent verification download (O.5c-1's strong
+# verification chain transfers the dump TWICE) plus rclone's own
+# internal retries on transient network errors. Generous upper bound
+# in case the remote or the connection is degraded — does not replace
+# backup_offsite.sh's own flock-based mutual exclusion, just caps a
+# single runaway run. Leaves ~22h of margin before the next scheduled
+# ~03:30 UTC fire.
+TimeoutStartSec=7200
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=backup-offsite
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/trx_sim
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# Low CPU/IO priority — same courtesy-layer rationale as
+# backup-postgres.service: this still reads/writes real bytes to disk
+# (the local dump, the verification scratch file) even though the
+# bottleneck is usually network, not disk.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

@@ -2656,11 +2656,24 @@ def health_check(request):
 #                                  "backup":{"status":"ok"|"stale"|"missing"|
 #                                  "error", "age_seconds":<num|null>,
 #                                  "threshold_seconds":129600,
-#                                  "last_success_at":<iso|null>}}
+#                                  "last_success_at":<iso|null>},
+#                                  "offsite_backup":{"status":"fresh"|"stale"|
+#                                  "missing"|"invalid"|"not_configured",
+#                                  "age_seconds":<num|null>,
+#                                  "threshold_seconds":129600|null,
+#                                  "last_verified_at":<iso|null>}}
 #                          →  503 {"status":"degraded", ...} (db/redis error,
-#                             celery_beat "stale", or backup "stale"/"error"
-#                             — celery_beat/backup "missing" does NOT degrade
-#                             the overall status, see O.4e-3 / O.5a)
+#                             celery_beat "stale", backup "stale"/"error", OR
+#                             offsite_backup "stale"/"invalid" (always), OR
+#                             offsite_backup "missing"/"not_configured" WHEN
+#                             settings.APP_ENV == "production" (O.5c-3 — a
+#                             production host must never report healthy
+#                             without ever having proven a recoverable
+#                             offsite copy exists; staging/development keep
+#                             a grace period, visible in the body but not
+#                             degrading) — celery_beat/backup "missing" does
+#                             NOT degrade the overall status, see
+#                             O.4e-3 / O.5a)
 #                          →  403 if not staff
 # ──────────────────────────────────────────────────────────────
 def health_detail_view(request):
@@ -2768,6 +2781,56 @@ def health_detail_view(request):
             ok = False
     except Exception as exc:
         results["backup"] = {"status": "error", "detail": str(exc)}
+        ok = False
+
+    # ── Offsite backup durability signal (O.5c-3) ──
+    # Read-only: inspect_offsite_backup_staleness() reads only a local
+    # JSON file (offsite_success.json under settings.BACKUP_METADATA_PATH)
+    # — never executes rclone, pg_restore, or any subprocess, never makes
+    # a network call, so a GET here still reports offsite freshness even
+    # if R2/Cloudflare is completely unreachable. The strong
+    # cryptographic/remote verification already happened once, durably,
+    # inside backup_offsite.sh (O.5c-1) — this block never repeats it.
+    #
+    # Frozen decision (O.5c-3 approval, explicit — confirmed NOT to
+    # transfer automatically from the backup/celery_beat "missing"
+    # precedent, which is grace-period logic tied to a mechanism not
+    # existing yet, not applicable here since O.5c-2's scheduler already
+    # exists in code regardless of what any given host has provisioned):
+    #   - "fresh"                      → never degrades.
+    #   - "stale" / "invalid"          → ALWAYS degrades (only reachable
+    #     when settings.OFFSITE_CONFIGURED is True in the first place —
+    #     see that setting's own comment for why "not_configured" is
+    #     checked before any file is ever read).
+    #   - "missing" / "not_configured" → degrades ONLY when
+    #     settings.APP_ENV == "production" — a production host must
+    #     never be able to report healthy without ever having proven a
+    #     recoverable offsite copy exists; staging/development report
+    #     the state in the body but it does not flip `ok`.
+    try:
+        from .offsite_monitoring import inspect_offsite_backup_staleness
+        offsite_backup = inspect_offsite_backup_staleness()
+        results["offsite_backup"] = {
+            "status": offsite_backup.status,
+            "age_seconds": (
+                round(offsite_backup.age_seconds, 1)
+                if offsite_backup.age_seconds is not None else None
+            ),
+            "threshold_seconds": offsite_backup.stale_after_seconds,
+            "last_verified_at": (
+                offsite_backup.last_verified_at.isoformat()
+                if offsite_backup.last_verified_at else None
+            ),
+        }
+        if offsite_backup.status in ("stale", "invalid"):
+            ok = False
+        elif (
+            offsite_backup.status in ("missing", "not_configured")
+            and getattr(settings, "APP_ENV", "") == "production"
+        ):
+            ok = False
+    except Exception as exc:
+        results["offsite_backup"] = {"status": "invalid", "detail": str(exc)}
         ok = False
 
     payload = {"status": "ok" if ok else "degraded", **results}

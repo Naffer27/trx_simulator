@@ -466,6 +466,32 @@ BACKUP_METADATA_PATH = os.getenv("BACKUP_METADATA_PATH", "/var/log/trx_sim/backu
 BACKUP_EXPECTED_INTERVAL_SECONDS = int(os.getenv("BACKUP_EXPECTED_INTERVAL_SECONDS", "86400"))
 BACKUP_STALE_SECONDS = int(os.getenv("BACKUP_STALE_SECONDS", "129600"))
 
+# ── Offsite backup verification signal (O.5c-3) ─────────────────────────────────
+# Deliberately filesystem-based, same discipline as BACKUP_* above —
+# simulator/offsite_monitoring.py reads only offsite_success.json under
+# BACKUP_METADATA_PATH (written by deploy/scripts/backup_offsite.sh, O.5c-1),
+# never rclone, never pg_restore, never the network. The strong
+# cryptographic/remote verification already happened once, durably, inside
+# that script — this signal never repeats it.
+#
+# OFFSITE_CONFIGURED reuses the EXISTING RCLONE_REMOTE contract from O.5c-1
+# (the env var backup_offsite.sh itself already refuses to run without) as
+# the sole "is offsite configured here" signal — deliberately not a second,
+# parallel enablement flag (O.5c-3 Fase 0 approval). This value is NEVER
+# used to configure rclone or connect to anything; it exists only so
+# offsite_monitoring.py can distinguish "not_configured" (deliberately no
+# offsite here) from a genuine "missing" (configured, but no verified
+# success has ever landed).
+OFFSITE_CONFIGURED = bool(os.getenv("RCLONE_REMOTE", "").strip())
+
+# Same daily cadence as BACKUP_STALE_SECONDS above — backup-offsite.timer
+# fires once daily at ~03:30 UTC (deploy/systemd/backup-offsite.timer,
+# O.5c-2), 30 minutes after backup-postgres.timer's own 03:00 UTC daily
+# fire — so the identical 1.5x-of-expected-interval formula applies
+# unchanged, derived from the same real cadence, not a new arbitrary number.
+OFFSITE_EXPECTED_INTERVAL_SECONDS = int(os.getenv("OFFSITE_EXPECTED_INTERVAL_SECONDS", "86400"))
+OFFSITE_STALE_SECONDS = int(os.getenv("OFFSITE_STALE_SECONDS", "129600"))
+
 # ===============================
 # 📋 Logging — JSON or verbose
 # ===============================

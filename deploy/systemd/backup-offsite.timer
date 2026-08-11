@@ -1,0 +1,52 @@
+# ============================================================
+# backup-offsite.timer — daily trigger for backup-offsite.service
+# (O.5c-2)
+#
+# Fires at 03:30 UTC daily — 30 minutes after backup-postgres.timer's
+# own 03:00 UTC fire (O.5b; re-verified against that unit's actual
+# OnCalendar= before setting this value, not assumed). The explicit
+# "UTC" suffix is required for the same reason backup-postgres.timer
+# uses it: OnCalendar times without an explicit zone resolve against
+# the VPS's local system timezone, which this project does not assume
+# is UTC.
+#
+# Deliberately its own independent timer — not chained via
+# OnSuccess=/OnFailure= off backup-postgres.service, and not ordered
+# After= it either. See backup-offsite.service's own comment for the
+# full rationale: an offsite run must never be able to interfere with
+# or become entangled with the local backup unit. The 30-minute gap is
+# a scheduling convenience for the common case (today's local dump is
+# usually done well before 03:30), not a hard dependency — if it is
+# not yet done, backup_offsite.sh still runs safely and simply
+# offsites whatever the last valid local success was, catching up
+# automatically the following day.
+#
+# Persistent=true: if the VPS was off/rebooting at 03:30 UTC, the
+# offsite verification runs once as soon as the timer becomes active
+# again, instead of silently skipping a full day.
+#
+# Install:
+#   sudo cp deploy/systemd/backup-offsite.service /etc/systemd/system/
+#   sudo cp deploy/systemd/backup-offsite.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now backup-offsite.timer
+#
+# Verify:
+#   systemctl status backup-offsite.timer
+#   systemctl list-timers backup-offsite.timer
+#   sudo systemctl start backup-offsite.service   # optional immediate run
+#   journalctl -u backup-offsite.service -n 50
+# ============================================================
+
+[Unit]
+Description=Daily trigger for trx_sim PostgreSQL offsite backup verification (O.5c-2)
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 UTC
+Persistent=true
+RandomizedDelaySec=300
+AccuracySec=1min
+Unit=backup-offsite.service
+
+[Install]
+WantedBy=timers.target
