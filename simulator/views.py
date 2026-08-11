@@ -2652,10 +2652,15 @@ def health_check(request):
 # GET /api/health/detail/  →  200 {"status":"ok", "db":{...}, "redis":{...},
 #                                  "celery_beat":{"status":"fresh"|"stale"|
 #                                  "missing", "age_seconds":<num|null>,
-#                                  "threshold_seconds":900}}
+#                                  "threshold_seconds":900},
+#                                  "backup":{"status":"ok"|"stale"|"missing"|
+#                                  "error", "age_seconds":<num|null>,
+#                                  "threshold_seconds":129600,
+#                                  "last_success_at":<iso|null>}}
 #                          →  503 {"status":"degraded", ...} (db/redis error,
-#                             or celery_beat "stale" — "missing" does NOT
-#                             degrade the overall status, see O.4e-3)
+#                             celery_beat "stale", or backup "stale"/"error"
+#                             — celery_beat/backup "missing" does NOT degrade
+#                             the overall status, see O.4e-3 / O.5a)
 #                          →  403 if not staff
 # ──────────────────────────────────────────────────────────────
 def health_detail_view(request):
@@ -2728,6 +2733,41 @@ def health_detail_view(request):
             ok = False
     except Exception as exc:
         results["celery_beat"] = {"status": "error", "detail": str(exc)}
+        ok = False
+
+    # ── Backup durability signal (O.5a) ──
+    # Read-only: inspect_backup_staleness() reads only a local JSON file
+    # (backup_success.json under settings.BACKUP_METADATA_PATH) — no
+    # PostgreSQL, Redis, or Celery import anywhere in that module, so a
+    # GET here still reports backup freshness even if the "db"/"redis"
+    # blocks above are failing (O.5a Fase 0 §8/§12/§13).
+    #
+    # Frozen decision (confirmed before implementation): "stale" and
+    # "error" both degrade the endpoint's overall status/HTTP code exactly
+    # like a db/redis error; "missing" does not — O.5b (the scheduler)
+    # does not exist yet, so "missing" is the expected state until then,
+    # same fresh-deploy-style grace period already established for
+    # celery_beat in O.4e-3. "error" is treated as strictly as "stale"
+    # per explicit instruction: a backup signal that exists but is
+    # corrupt/inconsistent is a real loss of observability, not a
+    # softer condition than staleness.
+    try:
+        from .backup_monitoring import inspect_backup_staleness
+        backup = inspect_backup_staleness()
+        results["backup"] = {
+            "status": backup.status,
+            "age_seconds": (
+                round(backup.age_seconds, 1) if backup.age_seconds is not None else None
+            ),
+            "threshold_seconds": backup.stale_after_seconds,
+            "last_success_at": (
+                backup.last_success_at.isoformat() if backup.last_success_at else None
+            ),
+        }
+        if backup.status in ("stale", "error"):
+            ok = False
+    except Exception as exc:
+        results["backup"] = {"status": "error", "detail": str(exc)}
         ok = False
 
     payload = {"status": "ok" if ok else "degraded", **results}

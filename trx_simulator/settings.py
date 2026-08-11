@@ -443,6 +443,29 @@ REVENUE_SNAPSHOT_RETENTION_DAYS = int(os.getenv("REVENUE_SNAPSHOT_RETENTION_DAYS
 # ── Equity snapshot retention ─────────────────────────────────────────────────
 SNAPSHOT_RETENTION_DAYS = int(os.getenv("SNAPSHOT_RETENTION_DAYS", "7"))
 
+# ── Backup durability signal (O.5a) ────────────────────────────────────────────
+# Deliberately filesystem-based, never PostgreSQL/Redis/Celery/BrokerAuditEvent/
+# AuditLog (O.5a Fase 0 §2/§8/§13) — the signal must stay readable even if the
+# database it protects is down. deploy/scripts/backup_postgres.sh writes
+# backup_success.json/backup_failure.json under this directory;
+# simulator/backup_monitoring.py reads them read-only. Not inside BACKUP_DIR
+# itself (a separate, possibly different-filesystem, retention-pruned
+# directory) — reused from the ReadWritePaths already granted to every
+# systemd .service in deploy/systemd/ under ProtectSystem=strict, so a future
+# backup-postgres.service (O.5b) needs no new filesystem permission.
+BACKUP_METADATA_PATH = os.getenv("BACKUP_METADATA_PATH", "/var/log/trx_sim/backup/")
+
+# Only documented cadence today is daily @ 03:00 UTC (DEPLOY.md, INFRA_PLAN_L1.md).
+# Stale threshold is 1.5x the expected interval, not the 3x used by
+# CELERY_BEAT_HEARTBEAT_STALE_SECONDS above — a 5-minute heartbeat can absorb a
+# missed tick without concern, but a daily backup at 3x (72h) would hide two
+# full consecutive missed days, too permissive given the C1/C2/C4 findings in
+# the Backup/Restore Operational Readiness Fase 0. 36h tolerates the job
+# running a few hours late without a false positive, while still flagging a
+# fully missed day.
+BACKUP_EXPECTED_INTERVAL_SECONDS = int(os.getenv("BACKUP_EXPECTED_INTERVAL_SECONDS", "86400"))
+BACKUP_STALE_SECONDS = int(os.getenv("BACKUP_STALE_SECONDS", "129600"))
+
 # ===============================
 # 📋 Logging — JSON or verbose
 # ===============================
