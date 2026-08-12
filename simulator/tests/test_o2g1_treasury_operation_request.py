@@ -296,8 +296,18 @@ class TreasuryOperationRequestAdminPermissionTests(TestCase):
         self.assertFalse(ma.has_delete_permission(request=None))
 
     def test_all_fields_readonly(self):
+        # O.5e-1 — "evidence" is displayed via the evidence_display() method
+        # instead of the raw field (it now renders a secure-media link
+        # instead of Django's default `.url`-based readonly rendering,
+        # RC-02 closure); "evidence" itself is excluded from the form via
+        # `exclude`, so every OTHER model field is still individually
+        # readonly exactly as before this change. Expected regression, not
+        # a defect: the original intent of this test ("nothing is
+        # editable") still holds.
         ma = TreasuryOperationRequestAdmin(TreasuryOperationRequest, admin_site)
         model_fields = {f.name for f in TreasuryOperationRequest._meta.fields}
+        model_fields.discard("evidence")
+        model_fields.add("evidence_display")
         self.assertEqual(set(ma.readonly_fields), model_fields)
 
     def test_delete_selected_not_available(self):

@@ -29,6 +29,7 @@ from .models import (
     DealingDeskDecision,
 )
 from . import challenge_engine
+from .secure_media import broker_document_secure_widget, kyc_secure_widget
 from .funded_payouts import (
     FundedPayoutAlreadyProcessed,
     InsufficientFundedBalance,
@@ -2252,8 +2253,32 @@ class TreasuryOperationRequestAdmin(admin.ModelAdmin):
     )
     list_filter    = ("operation_type", "status", "category", "requested_at")
     search_fields  = ("wallet__user__username", "reference", "reason")
-    readonly_fields = [f.name for f in TreasuryOperationRequest._meta.fields]
+    # O.5e-1 — "evidence" is swapped for the evidence_display() method
+    # below so this readonly field renders our secure-media link instead
+    # of Django's default readonly FileField rendering (display_for_field,
+    # django/contrib/admin/utils.py), which builds `<a href="{value.url}">`
+    # straight from FileSystemStorage.url() — unauthenticated/unauthorized
+    # under any config that actually serves MEDIA_URL.
+    readonly_fields = [
+        "evidence_display" if f.name == "evidence" else f.name
+        for f in TreasuryOperationRequest._meta.fields
+    ]
+    # Without this, Django's own get_fields()/get_fieldsets() default
+    # machinery re-adds the real "evidence" field alongside
+    # "evidence_display" above (it's no longer in readonly_fields, so
+    # Django treats it as a candidate real form field again) — and, since
+    # has_change_permission() is hard-False, still renders it read-only
+    # via its own default display_for_field(), i.e. the exact raw
+    # `<a href="{MEDIA_URL}...">` link this change was meant to remove.
+    exclude = ("evidence",)
     ordering       = ("-requested_at", "-id")
+
+    @admin.display(description="Evidence")
+    def evidence_display(self, obj):
+        if not obj.evidence:
+            return "—"
+        url = reverse("simulator:secure_treasury_evidence", args=[obj.pk])
+        return format_html('<a href="{}">{}</a>', url, obj.evidence.name)
 
     def has_add_permission(self, request):
         # O.3a-5 — Django's own add form stays blocked forever (Fase 0
@@ -3414,6 +3439,15 @@ class BrokerDocumentAdmin(admin.ModelAdmin):
     list_editable = ('public',)
     search_fields = ('title', 'description')
     ordering      = ('category', 'title')
+
+    def formfield_for_dbfield(self, db_field, request, **kwargs):
+        # O.5e-1 — the stock ClearableFileInput widget links straight to
+        # `.file.url` (raw MEDIA_URL); this swaps in a widget that links to
+        # secure_broker_document_view instead, which re-checks `public`/
+        # staff permissions on every request regardless of this link.
+        if db_field.name == 'file':
+            kwargs['widget'] = broker_document_secure_widget()
+        return super().formfield_for_dbfield(db_field, request, **kwargs)
 
 
 @admin.register(ExpertAdvisor)
@@ -4598,6 +4632,15 @@ class KYCProfileAdmin(admin.ModelAdmin):
     readonly_fields = ("user", "created_at", "updated_at", "submitted_at",
                        "reviewed_at", "reviewed_by")
     ordering       = ("-submitted_at", "-created_at")
+
+    def formfield_for_dbfield(self, db_field, request, **kwargs):
+        # O.5e-1 — the stock ClearableFileInput widget links straight to
+        # `.url` (raw MEDIA_URL); this swaps in a widget that links to
+        # secure_kyc_media_view instead, which re-checks owner/staff
+        # permissions on every request regardless of this link.
+        if db_field.name in ("document_front", "document_back", "selfie"):
+            kwargs["widget"] = kyc_secure_widget(db_field.name)
+        return super().formfield_for_dbfield(db_field, request, **kwargs)
 
     fieldsets = (
         ("Identity", {

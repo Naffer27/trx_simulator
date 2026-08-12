@@ -1893,6 +1893,15 @@ class BrokerDocument(models.Model):
         name = self.filename
         return name.rsplit('.', 1)[-1].upper() if '.' in name else ''
 
+    @property
+    def secure_url(self):
+        # O.5e-1 — never `.file.url` (raw MEDIA_URL, unauthenticated and
+        # unauthorized under any config that actually serves it); this
+        # always resolves through secure_media.secure_broker_document_view,
+        # which re-checks `public`/staff permissions on every request.
+        from django.urls import reverse
+        return reverse("simulator:secure_broker_document", args=[self.pk])
+
 
 class ExpertAdvisor(models.Model):
     EA_CATEGORIES = [

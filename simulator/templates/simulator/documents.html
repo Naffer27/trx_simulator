@@ -57,7 +57,7 @@
     <div class="docs-cat-title">{{ cat_label }}</div>
     <div class="docs-grid">
       {% for doc in docs %}
-      <a href="{{ doc.file.url }}" class="doc-card" target="_blank" rel="noopener">
+      <a href="{{ doc.secure_url }}" class="doc-card" target="_blank" rel="noopener">
         <div class="doc-icon">
           {% if doc.extension == 'PDF' %}<i class="fa-solid fa-file-pdf"></i>
           {% elif doc.extension in 'DOC,DOCX' %}<i class="fa-solid fa-file-word"></i>

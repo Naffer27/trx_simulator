@@ -6,6 +6,11 @@ from .auth_password_views import (
     AuditedPasswordResetConfirmView,
     AuditedPasswordResetView,
 )
+from .secure_media import (
+    secure_broker_document_view,
+    secure_kyc_media_view,
+    secure_treasury_evidence_view,
+)
 from .views import (
     login_view,
     logout_view,
@@ -155,6 +160,19 @@ urlpatterns = [
     path("kyc/",                  kyc_view,            name="kyc"),
     path("profile/",              profile_view,        name="profile"),
     path("support/",              support_view,        name="support"),
+
+    # ── Secure media serving (O.5e-1) ────────────────────────────────────────
+    # Authorized-only file streaming. No route under MEDIA_URL is registered
+    # here or anywhere else — see secure_media.py for the authorization
+    # matrix. None of these accept a filesystem path from the caller: the
+    # int pks resolve a DB row, and <str:field> is checked against a fixed
+    # allowlist inside the view.
+    path("secure-media/kyc/<int:kyc_id>/<str:field>/", secure_kyc_media_view,
+         name="secure_kyc_media"),
+    path("secure-media/treasury-evidence/<int:pk>/", secure_treasury_evidence_view,
+         name="secure_treasury_evidence"),
+    path("secure-media/broker-document/<int:doc_id>/", secure_broker_document_view,
+         name="secure_broker_document"),
 
     # ── Funded payout (H.1) ──────────────────────────────────────────────────
     path("funded/payout/request/", funded_payout_request_view, name="funded_payout_request"),

@@ -193,7 +193,7 @@ chmod 750 /var/log/trx_sim/
 
 | Servicio | Archivo en repo | Acción en L.2 |
 |---|---|---|
-| Nginx | `deploy/nginx/trx_sim.conf` | `cp` + reemplazar `YOUR_DOMAIN` + añadir location `/media/` + `nginx -t && reload` |
+| Nginx | `deploy/nginx/trx_sim.conf` | `cp` + reemplazar `YOUR_DOMAIN` + `nginx -t && reload` — **sin** location `/media/` (ver nota abajo, O.5e-1) |
 | Daphne | `deploy/systemd/daphne.service` | `cp /etc/systemd/system/` + `enable` |
 | Celery Worker | `deploy/systemd/celery-worker.service` | Ídem |
 | Celery Beat | `deploy/systemd/celery-beat.service` | Ídem |
@@ -202,19 +202,25 @@ chmod 750 /var/log/trx_sim/
 | deploy.sh | `deploy/scripts/deploy.sh` | Usar para cada deploy posterior |
 | healthcheck.sh | `deploy/scripts/healthcheck.sh` | Verificar tras cada deploy |
 
-### Nginx — location block para media (pendiente de añadir en L.2)
+### Media (KYC / Treasury evidence / BrokerDocument) — servidos por Django, NUNCA por Nginx (O.5e-1)
 
-Añadir dentro del bloque HTTPS en `trx_sim.conf` antes de la regla de logs:
+**No añadir ningún `location /media/` en `trx_sim.conf`.** Este documento indicaba
+antes añadir un bloque `location /media/ { alias /opt/trx_sim/media/; ... }` —
+esa instrucción quedó obsoleta y fue retirada: la Final Production Readiness
+Review (RC-02) identificó que exponer `/media/` públicamente en Nginx serviría
+KYC documents, Treasury evidence y Broker documents sin ninguna autorización —
+cualquiera que adivinara o enumerara una URL podría descargarlos directamente.
 
-```nginx
-# KYC documents and user uploads
-location /media/ {
-    alias /opt/trx_sim/media/;
-    expires 1h;
-    add_header Cache-Control "private";
-    access_log off;
-}
-```
+O.5e-1 cerró ese hueco: `KYCProfile.document_front/document_back/selfie`,
+`TreasuryOperationRequest.evidence` y `BrokerDocument.file` se sirven
+exclusivamente a través de vistas Django autenticadas/autorizadas bajo
+`/secure-media/...` (`simulator/secure_media.py`), que re-verifican permisos
+en cada request antes de entregar cualquier byte — nunca por nombre de
+archivo, siempre por objeto/modelo. Django sirve esos bytes directamente
+(streaming vía `FileResponse`); `X-Accel-Redirect` queda como optimización
+futura, no implementada. `MEDIA_ROOT`/`MEDIA_URL` en `settings.py` existen
+solo para que Django resuelva rutas internamente — ningún `location` de
+Nginx debe apuntar ahí, ni ahora ni en una futura optimización.
 
 ### Orden de arranque inicial (crítico)
 
@@ -267,7 +273,11 @@ rclone config   # configurar Hetzner Object Storage (S3-compatible)
 30 3 * * * rclone copy /var/backups/trx_sim/ hetzner-s3:trx-sim-backups/ \
   --include "*.dump" --min-age 1m >> /var/log/trx_sim/backup-offsite.log 2>&1
 
-# Media files
+# Media files — backup offsite privado, sin relación con exposición HTTP
+# pública. Planificado como O.5e-2 (no implementado todavía; no confundir
+# con la prohibición de exponer /media/ vía Nginx documentada arriba —
+# este rclone sync copia a un bucket privado, nunca hace MEDIA_ROOT
+# alcanzable por HTTP).
 35 3 * * * rclone sync /opt/trx_sim/media/ hetzner-s3:trx-sim-media/ \
   >> /var/log/trx_sim/backup-media.log 2>&1
 ```
@@ -579,7 +589,7 @@ L.2 cubrirá en orden exacto de ejecución:
 12. `python manage.py collectstatic --noinput`
 13. `python manage.py createsuperuser` (usuario staff inicial)
 14. Instalar servicios systemd — daphne, celery-worker, celery-beat
-15. Configurar Nginx — reemplazar `YOUR_DOMAIN`, añadir location `/media/`, verificar con `nginx -t`
+15. Configurar Nginx — reemplazar `YOUR_DOMAIN`, verificar con `nginx -t` (**no** añadir location `/media/` — ver sección E, O.5e-1: KYC/Treasury evidence/BrokerDocument se sirven vía rutas Django protegidas `/secure-media/...`, nunca vía Nginx)
 16. Certbot SSL — obtener certificado, verificar `certbot.timer` activo
 17. Arrancar servicios en orden correcto (Beat → Worker → Daphne)
 18. `bash deploy/scripts/healthcheck.sh`
