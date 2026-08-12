@@ -1,0 +1,136 @@
+# ============================================================
+# backup-media-offsite.service — Verified offsite archive of MEDIA_ROOT
+# (O.5e-3)
+#
+# oneshot, triggered by backup-media-offsite.timer (~04:00 UTC daily,
+# 30min after backup-offsite.timer's own ~03:30 UTC fire — re-verified
+# against that unit's actual OnCalendar= before choosing this value, not
+# assumed).
+#
+# Runs deploy/scripts/backup_media_offsite.sh (O.5e-2) exclusively — see
+# that script for the full strong-verification chain (deterministic tar
+# archive → SHA-256 → upload → remote existence check →
+# independent-scratch download → SHA-256 match → `tar -tf` on the
+# RECOVERED copy) it performs before ever writing
+# media_backup_success.json. That script is frozen as of O.5e-2
+# approval — this unit does not change how it behaves, only how and when
+# it is invoked.
+#
+# Deliberately NOT copied blindly from backup-offsite.service — the
+# paths this unit actually needs are different in one important way:
+# backup-offsite.service reads /var/backups/trx_sim (a Postgres dump
+# directory) and writes only /var/log/trx_sim; this unit instead reads
+# /opt/trx_sim/media (MEDIA_ROOT — real KYC documents/selfies, Treasury
+# evidence, Broker documents) and ALSO writes only /var/log/trx_sim
+# (backup_media_offsite.sh never writes to, or deletes from, MEDIA_ROOT
+# — read-only input, O.5e-2 approved requirement). ReadOnlyPaths= below
+# makes that explicit rather than relying solely on ProtectSystem=strict
+# leaving it implicitly read-only — the same "read access to MEDIA_ROOT,
+# write access only to metadata/scratch, never arbitrary write access to
+# the rest of the app" boundary the O.5e-3 approval required, enforced
+# by the kernel independent of the script's own logic.
+#
+# Deliberately has NO dependency (Requires=/After=/BindsTo=/OnSuccess=/
+# OnFailure=) on backup-postgres.service, backup-postgres.timer,
+# backup-offsite.service, or backup-offsite.timer — same "never
+# entangled" rationale backup-offsite.service itself documents: a media
+# offsite hiccup must never interfere with the Postgres backup path (or
+# vice versa), and vice versa. The ~30-minute stagger from
+# backup-offsite.timer is a scheduling convenience for the common case
+# (today's Postgres offsite run is usually done well before 04:00), not
+# a hard dependency.
+#
+# Needs outbound network (rclone, same remote/config as O.5c-1) — hence
+# After=/Wants=network-online.target, same as backup-offsite.service.
+# Deliberately independent of Redis/Celery/Daphne — a media backup must
+# be able to run even if the application layer is down, same rationale
+# as backup-postgres.service/backup-offsite.service.
+#
+# Sandbox: ReadWritePaths grants only /var/log/trx_sim (where this
+# unit's own media_backup_success.json / media_backup_failure.json /
+# .media_backup.lock are written, and where O.5a/O.5c's own manifests
+# already live — this script never reads or writes those, see
+# backup_media_offsite.sh's own header). ReadOnlyPaths grants explicit
+# read access to /opt/trx_sim/media (MEDIA_ROOT) — under
+# ProtectSystem=strict this would already be read-only-by-default since
+# it is not in ReadWritePaths, but stating it explicitly documents the
+# intent and keeps it true even if ProtectSystem's own defaults ever
+# change. The rest of /opt/trx_sim (application code, .env, venv) stays
+# read-only under ProtectSystem=strict with no further directive needed
+# — this unit has no legitimate reason to write anywhere in the app
+# tree, and none is granted.
+#
+# ProtectHome=true and RestrictAddressFamilies — same rationale as
+# backup-offsite.service: trx_sim is a nologin system user with no
+# legitimate use for /home; this is (along with backup-offsite.service)
+# one of the units that legitimately talks to the network, scoped to
+# IPv4/IPv6/Unix sockets only.
+#
+# No Restart=on-failure — same rationale as backup-postgres.service/
+# backup-offsite.service: a failed media offsite attempt retrying
+# immediately against a possibly still-broken remote is unlikely to
+# succeed and would just burn bandwidth; the natural retry cadence is
+# tomorrow's ~04:00 UTC fire. Failure is visible via journalctl and
+# media_backup_failure.json (O.5e-2), not silently retried. Type=oneshot
+# already means a nonzero exit from ExecStart marks this unit's last run
+# as failed with no extra directive needed.
+#
+# Provisioning required before first run (NOT done by this unit):
+#   MEDIA_ROOT must already exist (it does, as soon as Django has ever
+#   saved a single upload — BASE_DIR / "media", created automatically by
+#   Django's FileSystemStorage on first write). No new directory
+#   provisioning is required beyond what already exists for the app
+#   itself. The RCLONE_CONFIG/RCLONE_REMOTE provisioning is the SAME one
+#   O.5c-2 already requires (see DEPLOY.md step 11) — media backup
+#   reuses that dedicated rclone.conf and remote, it does not need its
+#   own.
+#
+# Install: see deploy/systemd/backup-media-offsite.timer and DEPLOY.md.
+# ============================================================
+
+[Unit]
+Description=trx_sim media (MEDIA_ROOT) offsite backup verification (O.5e-3)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=trx_sim
+Group=trx_sim
+WorkingDirectory=/opt/trx_sim
+
+EnvironmentFile=/opt/trx_sim/.env
+
+ExecStart=/bin/bash /opt/trx_sim/deploy/scripts/backup_media_offsite.sh
+
+# Covers archive build + upload + independent verification download
+# (O.5e-2's strong verification chain transfers the archive TWICE) plus
+# rclone's own internal retries on transient network errors — same
+# reasoning and same value as backup-offsite.service's TimeoutStartSec.
+# Generous upper bound in case the remote or MEDIA_ROOT is unusually
+# large or the connection is degraded — does not replace
+# backup_media_offsite.sh's own flock-based mutual exclusion, just caps
+# a single runaway run. Leaves ~20h of margin before the next scheduled
+# ~04:00 UTC fire.
+TimeoutStartSec=7200
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=backup-media-offsite
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/opt/trx_sim/media
+ReadWritePaths=/var/log/trx_sim
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# Low CPU/IO priority — same courtesy-layer rationale as
+# backup-postgres.service/backup-offsite.service: this reads real bytes
+# from MEDIA_ROOT (tar) and writes/reads real bytes to disk (the archive
+# scratch file, the verification download) even though the bottleneck is
+# usually network, not disk.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

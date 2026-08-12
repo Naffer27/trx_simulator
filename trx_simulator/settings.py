@@ -492,6 +492,26 @@ OFFSITE_CONFIGURED = bool(os.getenv("RCLONE_REMOTE", "").strip())
 OFFSITE_EXPECTED_INTERVAL_SECONDS = int(os.getenv("OFFSITE_EXPECTED_INTERVAL_SECONDS", "86400"))
 OFFSITE_STALE_SECONDS = int(os.getenv("OFFSITE_STALE_SECONDS", "129600"))
 
+# ── Media offsite backup verification signal (O.5e-3) ───────────────────────
+# Deliberately filesystem-based, same discipline as OFFSITE_* above —
+# simulator/media_monitoring.py reads only media_backup_success.json under
+# BACKUP_METADATA_PATH (written by deploy/scripts/backup_media_offsite.sh,
+# O.5e-2), never rclone, never tar, never the network. Reuses
+# OFFSITE_CONFIGURED as-is for "is media backup configured here" — no new
+# parallel enablement flag, per the same O.5c-3 rationale: media backup's
+# own script refuses to run without RCLONE_REMOTE set, exactly like
+# backup_offsite.sh does, so there is no scenario where one could be
+# configured independently of the other.
+#
+# backup-media-offsite.timer (O.5e-3) fires once daily at ~04:00 UTC —
+# 30 minutes after backup-offsite.timer's own ~03:30 UTC fire (re-verified
+# against that unit's actual OnCalendar= before choosing this value, not
+# assumed) — so the identical 1.5x-of-expected-interval formula already
+# used for BACKUP_STALE_SECONDS/OFFSITE_STALE_SECONDS applies unchanged,
+# derived from the same real daily cadence, not a new arbitrary number.
+MEDIA_BACKUP_EXPECTED_INTERVAL_SECONDS = int(os.getenv("MEDIA_BACKUP_EXPECTED_INTERVAL_SECONDS", "86400"))
+MEDIA_BACKUP_STALE_SECONDS = int(os.getenv("MEDIA_BACKUP_STALE_SECONDS", "129600"))
+
 # ===============================
 # 📋 Logging — JSON or verbose
 # ===============================

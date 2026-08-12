@@ -2661,19 +2661,25 @@ def health_check(request):
 #                                  "missing"|"invalid"|"not_configured",
 #                                  "age_seconds":<num|null>,
 #                                  "threshold_seconds":129600|null,
-#                                  "last_verified_at":<iso|null>}}
+#                                  "last_verified_at":<iso|null>},
+#                                  "media_backup":{"status":"fresh"|"stale"|
+#                                  "missing"|"invalid"|"not_configured",
+#                                  "age_seconds":<num|null>,
+#                                  "threshold_seconds":129600|null,
+#                                  "last_success_at":<iso|null>}}
 #                          →  503 {"status":"degraded", ...} (db/redis error,
 #                             celery_beat "stale", backup "stale"/"error", OR
-#                             offsite_backup "stale"/"invalid" (always), OR
-#                             offsite_backup "missing"/"not_configured" WHEN
-#                             settings.APP_ENV == "production" (O.5c-3 — a
-#                             production host must never report healthy
-#                             without ever having proven a recoverable
-#                             offsite copy exists; staging/development keep
-#                             a grace period, visible in the body but not
-#                             degrading) — celery_beat/backup "missing" does
-#                             NOT degrade the overall status, see
-#                             O.4e-3 / O.5a)
+#                             offsite_backup/media_backup "stale"/"invalid"
+#                             (always), OR offsite_backup/media_backup
+#                             "missing"/"not_configured" WHEN
+#                             settings.APP_ENV == "production" (O.5c-3/
+#                             O.5e-3 — a production host must never report
+#                             healthy without ever having proven a
+#                             recoverable offsite copy exists, Postgres AND
+#                             media both; staging/development keep a grace
+#                             period, visible in the body but not degrading)
+#                             — celery_beat/backup "missing" does NOT
+#                             degrade the overall status, see O.4e-3 / O.5a)
 #                          →  403 if not staff
 # ──────────────────────────────────────────────────────────────
 def health_detail_view(request):
@@ -2831,6 +2837,54 @@ def health_detail_view(request):
             ok = False
     except Exception as exc:
         results["offsite_backup"] = {"status": "invalid", "detail": str(exc)}
+        ok = False
+
+    # ── Media offsite backup durability signal (O.5e-3) ─────────────────
+    # Read-only: inspect_media_backup_staleness() reads only a local JSON
+    # file (media_backup_success.json under settings.BACKUP_METADATA_PATH)
+    # — never executes rclone, tar, or any subprocess, never makes a
+    # network call, so a GET here still reports media-backup freshness
+    # even if the remote is completely unreachable. The strong
+    # cryptographic/remote verification already happened once, durably,
+    # inside backup_media_offsite.sh (O.5e-2) — this block never repeats
+    # it. Exposes only status/age/threshold/last_success_at — never the
+    # archive filename, remote_target, sha256, or any path (those live in
+    # media_backup_success.json itself, readable only by staff with shell
+    # access, never through this JSON endpoint).
+    #
+    # Same degradation policy as "offsite_backup" above, byte-for-byte
+    # (O.5e-3 approval, confirmed consistent with the existing frozen
+    # offsite_backup contract before implementation):
+    #   - "fresh"                      → never degrades.
+    #   - "stale" / "invalid"          → ALWAYS degrades (only reachable
+    #     when settings.OFFSITE_CONFIGURED is True in the first place —
+    #     media backup reuses that exact same flag, no parallel one).
+    #   - "missing" / "not_configured" → degrades ONLY when
+    #     settings.APP_ENV == "production".
+    try:
+        from .media_monitoring import inspect_media_backup_staleness
+        media_backup = inspect_media_backup_staleness()
+        results["media_backup"] = {
+            "status": media_backup.status,
+            "age_seconds": (
+                round(media_backup.age_seconds, 1)
+                if media_backup.age_seconds is not None else None
+            ),
+            "threshold_seconds": media_backup.stale_after_seconds,
+            "last_success_at": (
+                media_backup.last_success_at.isoformat()
+                if media_backup.last_success_at else None
+            ),
+        }
+        if media_backup.status in ("stale", "invalid"):
+            ok = False
+        elif (
+            media_backup.status in ("missing", "not_configured")
+            and getattr(settings, "APP_ENV", "") == "production"
+        ):
+            ok = False
+    except Exception as exc:
+        results["media_backup"] = {"status": "invalid", "detail": str(exc)}
         ok = False
 
     payload = {"status": "ok" if ok else "degraded", **results}

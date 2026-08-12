@@ -1,0 +1,59 @@
+# ============================================================
+# backup-media-offsite.timer — daily trigger for
+# backup-media-offsite.service (O.5e-3)
+#
+# Fires at 04:00 UTC daily — 30 minutes after backup-offsite.timer's own
+# ~03:30 UTC fire (O.5c-2; re-verified against that unit's actual
+# OnCalendar= before setting this value, not assumed), which itself
+# fires 30 minutes after backup-postgres.timer's 03:00 UTC fire (O.5b).
+# Real, existing cadence (not invented):
+#   03:00 UTC — backup-postgres.timer   (local PostgreSQL dump, O.5b)
+#   03:30 UTC — backup-offsite.timer    (Postgres offsite verify, O.5c-2)
+#   04:00 UTC — backup-media-offsite.timer (this unit — media offsite)
+# The explicit "UTC" suffix is required for the same reason the other
+# two timers use it: OnCalendar times without an explicit zone resolve
+# against the VPS's local system timezone, which this project does not
+# assume is UTC.
+#
+# Deliberately its own independent timer — not chained via
+# OnSuccess=/OnFailure= off either Postgres unit, and not ordered After=
+# either one. See backup-media-offsite.service's own comment for the
+# full rationale: a media offsite run must never be able to interfere
+# with, block, or become entangled with either Postgres backup unit in
+# any way. The 30-minute gap from backup-offsite.timer is a scheduling
+# convenience for the common case (today's Postgres offsite run is
+# usually done well before 04:00), not a hard dependency — if it is not
+# yet done, backup_media_offsite.sh still runs safely (it has its own
+# independent flock domain, .media_backup.lock, and never touches
+# anything Postgres-related) and simply verifies whatever MEDIA_ROOT
+# currently contains.
+#
+# Persistent=true: if the VPS was off/rebooting at 04:00 UTC, the media
+# offsite verification runs once as soon as the timer becomes active
+# again, instead of silently skipping a full day.
+#
+# Install:
+#   sudo cp deploy/systemd/backup-media-offsite.service /etc/systemd/system/
+#   sudo cp deploy/systemd/backup-media-offsite.timer   /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now backup-media-offsite.timer
+#
+# Verify:
+#   systemctl status backup-media-offsite.timer
+#   systemctl list-timers backup-media-offsite.timer
+#   sudo systemctl start backup-media-offsite.service   # optional immediate run
+#   journalctl -u backup-media-offsite.service -n 50
+# ============================================================
+
+[Unit]
+Description=Daily trigger for trx_sim media (MEDIA_ROOT) offsite backup verification (O.5e-3)
+
+[Timer]
+OnCalendar=*-*-* 04:00:00 UTC
+Persistent=true
+RandomizedDelaySec=300
+AccuracySec=1min
+Unit=backup-media-offsite.service
+
+[Install]
+WantedBy=timers.target

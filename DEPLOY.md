@@ -206,6 +206,57 @@ systemctl start backup-offsite.service
 journalctl -u backup-offsite.service -n 50
 ```
 
+### 11a. Install the media offsite backup scheduler (O.5e-3)
+
+Reuses the SAME `RCLONE_CONFIG`/`RCLONE_REMOTE` provisioned in step 11
+above — no separate rclone config or remote is needed for media. Only a
+distinct path prefix on that remote (`MEDIA_RCLONE_REMOTE_PATH`, default
+`trx-sim-media-backups`) so media archives never collide with Postgres
+dumps in the same bucket. `MEDIA_ROOT` itself needs no provisioning —
+Django's `FileSystemStorage` already creates it on first upload.
+
+Add to `/opt/trx_sim/.env` (see `.env.example`, O.5e-3) — optional, safe
+defaults shown below apply if omitted:
+
+```
+# MEDIA_RCLONE_REMOTE_PATH=trx-sim-media-backups
+# MEDIA_BACKUP_EXPECTED_INTERVAL_SECONDS=86400
+# MEDIA_BACKUP_STALE_SECONDS=129600
+```
+
+Install the units:
+
+```bash
+cp /opt/trx_sim/deploy/systemd/backup-media-offsite.service /etc/systemd/system/
+cp /opt/trx_sim/deploy/systemd/backup-media-offsite.timer   /etc/systemd/system/
+
+systemctl daemon-reload
+systemctl enable --now backup-media-offsite.timer
+```
+
+Verify:
+
+```bash
+systemctl status backup-media-offsite.timer
+systemctl list-timers backup-media-offsite.timer
+
+# Optional: trigger an immediate run instead of waiting for ~04:00 UTC
+systemctl start backup-media-offsite.service
+journalctl -u backup-media-offsite.service -n 50
+```
+
+Fires daily at ~04:00 UTC — 30 minutes after `backup-offsite.timer`'s own
+~03:30 UTC fire (independent timer, no `Requires=`/`After=` dependency on
+either Postgres backup unit, same "never entangled" design as step 11).
+`MEDIA_ROOT` stays private: this unit only ever READS it
+(`ReadOnlyPaths=/opt/trx_sim/media` — enforced by the kernel, not just by
+`backup_media_offsite.sh`'s own logic) and writes only to
+`/var/log/trx_sim`. This does **not** change how media files are served —
+KYC documents, Treasury evidence, and Broker documents remain reachable
+exclusively through the authenticated/authorized Django routes under
+`/secure-media/...` (O.5e-1); no `location /media/` exists in Nginx and
+none is added by this step.
+
 ### 12. Provision the restore drill role (O.5d-1)
 
 `deploy/scripts/restore_drill.sh` proves a backup is actually
@@ -552,6 +603,50 @@ journalctl -u backup-offsite.service -n 50
 Integration with `GET /api/health/detail/` (an `"offsite"` block
 alongside `"backup"`) is O.5c-3 — not yet implemented as of this
 scheduler existing.
+
+### Media (MEDIA_ROOT) offsite verification (manual)
+
+```bash
+bash /opt/trx_sim/deploy/scripts/backup_media_offsite.sh
+```
+
+Builds a deterministic tar archive of `MEDIA_ROOT` and, ONLY after
+proving the remote copy is byte-identical (SHA-256 match against an
+independently downloaded copy) AND a structurally valid archive
+(`tar -tf` on the recovered copy), writes `media_backup_success.json`
+(O.5e-2). Never modifies or deletes anything under `MEDIA_ROOT` — the
+archive is a scratch artifact only, deleted on every exit path. No
+individual filename (KYC documents included) is ever logged or written
+into the manifest.
+
+### Media offsite verification (automated — systemd timer, O.5e-3)
+
+Daily at ~04:00 UTC (30 minutes after `backup-offsite.timer`'s ~03:30
+UTC fire) — deliberately its own independent timer, with no
+`Requires=`/`After=` dependency on any Postgres backup unit. See step
+11a in Initial Setup above for installation, and
+`deploy/systemd/backup-media-offsite.service` /
+`backup-media-offsite.timer` for the full unit definitions and rationale.
+
+```bash
+systemctl status backup-media-offsite.timer
+systemctl list-timers backup-media-offsite.timer
+journalctl -u backup-media-offsite.service -n 50
+```
+
+Media backup freshness is surfaced at `GET /api/health/detail/` →
+`"media_backup"` (O.5e-3) — `stale`/`invalid` always degrade the
+endpoint to 503; `missing`/`not_configured` degrade it only when
+`APP_ENV=production` (same policy as `"offsite_backup"`). Only
+status/age/threshold/last-success-timestamp are exposed — never a
+filename, remote target, or sha256.
+
+**`MEDIA_ROOT` remains private regardless of this scheduler.** Backing
+it up offsite does not change how it is served: KYC documents, Treasury
+evidence, and Broker documents are reachable exclusively through the
+authenticated/authorized Django routes under `/secure-media/...`
+(O.5e-1) — no `location /media/` exists in Nginx, and none should ever
+be added.
 
 ### PostgreSQL restore drill (manual, O.5d-1/O.5d-2/O.5d-3)
 

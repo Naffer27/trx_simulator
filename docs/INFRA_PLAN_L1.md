@@ -246,7 +246,7 @@ Nginx debe apuntar ahí, ni ahora ni en una futura optimización.
 | Qué | Local | Offsite | Frecuencia | Retención | Herramienta | Estado |
 |---|---|---|---|---|---|---|
 | PostgreSQL dump | `/var/backups/trx_sim/` | Hetzner Object Storage / S3 | Diario 03:00 UTC | 14 local / 30 offsite | `backup_postgres.sh` + `backup-postgres.timer` (systemd) | Local: **implementado (O.5a/O.5b)**. Offsite: planificado, no implementado |
-| Media files (KYC) | — | Offsite junto con PG | Diario | 30 días | `rclone` | Planificado, no implementado |
+| Media files (KYC/Treasury/Broker) | `MEDIA_ROOT` (privado, servido solo vía `/secure-media/...`, O.5e-1) | Hetzner Object Storage / S3 (mismo remote que PG) | Diario ~04:00 UTC | Sin retención local (archivo scratch efímero); offsite verificado en cada corrida | `backup_media_offsite.sh` + `backup-media-offsite.timer` (systemd) | **Implementado (O.5e-2/O.5e-3)** |
 | `.env` | No guardar en VPS extra | Gestor de secretos (1Password/Bitwarden) | Ante cada cambio | Permanente | Manual | Planificado, no implementado |
 | Redis | `/var/lib/redis/` (AOF+RDB) | No necesario (data efímera) | Automático | 7 días RDB | `redis_persistence.conf` | Implementado |
 | VPS Snapshot | — | Hetzner Snapshots | Semanal | 4 snapshots | Panel Hetzner | Planificado, no implementado |
@@ -273,13 +273,16 @@ rclone config   # configurar Hetzner Object Storage (S3-compatible)
 30 3 * * * rclone copy /var/backups/trx_sim/ hetzner-s3:trx-sim-backups/ \
   --include "*.dump" --min-age 1m >> /var/log/trx_sim/backup-offsite.log 2>&1
 
-# Media files — backup offsite privado, sin relación con exposición HTTP
-# pública. Planificado como O.5e-2 (no implementado todavía; no confundir
-# con la prohibición de exponer /media/ vía Nginx documentada arriba —
-# este rclone sync copia a un bucket privado, nunca hace MEDIA_ROOT
-# alcanzable por HTTP).
-35 3 * * * rclone sync /opt/trx_sim/media/ hetzner-s3:trx-sim-media/ \
-  >> /var/log/trx_sim/backup-media.log 2>&1
+# Media files (MEDIA_ROOT) — este ejemplo genérico de cron/rclone sync
+# quedó OBSOLETO: la implementación real (O.5e-2/O.5e-3) no usa cron ni
+# `rclone sync` (comando destructivo, nunca usado por el script real).
+# Ver deploy/scripts/backup_media_offsite.sh + deploy/systemd/
+# backup-media-offsite.service/.timer (systemd, ~04:00 UTC diario,
+# solo rclone copyto/lsf — nunca sync/delete/purge) y DEPLOY.md paso 11a.
+# Backup offsite privado, sin relación con exposición HTTP pública — no
+# confundir con la prohibición de exponer /media/ vía Nginx documentada
+# arriba: este backup copia a un bucket privado, nunca hace MEDIA_ROOT
+# alcanzable por HTTP.
 ```
 
 ### Certbot auto-renewal
