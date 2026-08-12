@@ -125,7 +125,7 @@ systemctl enable daphne celery-worker celery-beat
 Deliberately independent of Redis/Celery/Daphne — see
 `deploy/systemd/backup-postgres.service` for the full rationale. Requires
 `/var/backups/trx_sim` to exist and be owned by `trx_sim` (unlike
-`/var/log/trx_sim`, this directory is NOT created by step 14 below —
+`/var/log/trx_sim`, this directory is NOT created by step 15 below —
 `backup_postgres.sh` cannot create it itself under an unprivileged user
 if `/var/backups/` itself is root-owned, which it is on most distros).
 
@@ -206,7 +206,66 @@ systemctl start backup-offsite.service
 journalctl -u backup-offsite.service -n 50
 ```
 
-### 12. Configure Nginx
+### 12. Provision the restore drill role (O.5d-1)
+
+`deploy/scripts/restore_drill.sh` proves a backup is actually
+restorable by restoring it into a throwaway temporary database, then
+destroying it — it deliberately runs as a **separate, minimally
+privileged** role, never as `trx_sim`. `trx_sim` receives NO new
+privileges for this — it stays exactly as provisioned in step 5.
+
+```bash
+sudo -u postgres psql <<SQL
+CREATE ROLE trx_sim_drill WITH
+    LOGIN
+    PASSWORD 'your_drill_role_password'
+    CREATEDB
+    NOSUPERUSER
+    NOCREATEROLE
+    NOREPLICATION
+    NOINHERIT
+    CONNECTION LIMIT 3;
+
+-- CRITICAL: revoke from PUBLIC, not merely from the named role.
+-- Postgres grants CONNECT to PUBLIC on every database by default;
+-- REVOKE CONNECT ... FROM trx_sim_drill alone is a silent NO-OP as
+-- long as PUBLIC still has it — empirically confirmed during O.5d-1
+-- Fase 0 (revoking only from the named role did NOT prevent it from
+-- connecting; only revoking from PUBLIC did).
+REVOKE CONNECT ON DATABASE trx_sim_staging FROM PUBLIC;
+
+-- Documentation only, not strictly required: trx_sim already retains
+-- CONNECT on its own database via ownership, independent of the
+-- PUBLIC revoke above. Stated explicitly so nobody has to wonder
+-- whether the app broke.
+GRANT CONNECT ON DATABASE trx_sim_staging TO trx_sim;
+SQL
+```
+
+This role can never read, write, own, or drop `trx_sim_staging` — it
+is not the owner (`DROP DATABASE` requires being the owner or
+superuser) and has no `CONNECT` privilege on it at all. It can only
+create and drop databases it itself creates. `restore_drill.sh` adds
+its own additional guards on top (a fixed, internally-generated
+`trx_restore_drill_*` naming scheme, with no override of any kind) —
+see that script's own header comment for the full rationale.
+
+Add to `/opt/trx_sim/.env` (used only when an operator runs the drill
+manually — this is NOT wired into any systemd timer):
+
+```
+RESTORE_DRILL_DB_USER=trx_sim_drill
+RESTORE_DRILL_DB_PASSWORD=your_drill_role_password
+```
+
+Run manually (never scheduled — see O.5d Fase 0 approval, decision 3):
+
+```bash
+sudo -u trx_sim bash -c 'set -a; source /opt/trx_sim/.env; set +a; \
+  bash /opt/trx_sim/deploy/scripts/restore_drill.sh --source local'
+```
+
+### 13. Configure Nginx
 
 ```bash
 cp /opt/trx_sim/deploy/nginx/trx_sim.conf /etc/nginx/sites-available/trx_sim
@@ -219,20 +278,20 @@ certbot --nginx -d yourdomain.com --non-interactive --agree-tos -m admin@yourdom
 nginx -t && systemctl restart nginx
 ```
 
-### 13. Configure logrotate
+### 14. Configure logrotate
 
 ```bash
 cp /opt/trx_sim/deploy/logrotate/trx_sim /etc/logrotate.d/trx_sim
 ```
 
-### 14. Create log directory
+### 15. Create log directory
 
 ```bash
 mkdir -p /var/log/trx_sim
 chown trx_sim:trx_sim /var/log/trx_sim
 ```
 
-### 15. Start all services
+### 16. Start all services
 
 ```bash
 systemctl start celery-beat
@@ -242,7 +301,7 @@ sleep 3
 systemctl start daphne
 ```
 
-### 16. Verify health
+### 17. Verify health
 
 ```bash
 bash /opt/trx_sim/deploy/scripts/healthcheck.sh
@@ -493,6 +552,61 @@ journalctl -u backup-offsite.service -n 50
 Integration with `GET /api/health/detail/` (an `"offsite"` block
 alongside `"backup"`) is O.5c-3 — not yet implemented as of this
 scheduler existing.
+
+### PostgreSQL restore drill (manual, O.5d-1/O.5d-2/O.5d-3)
+
+```bash
+# From the local dump (O.5a) — useful development/staging diagnostic:
+sudo -u trx_sim bash -c 'set -a; source /opt/trx_sim/.env; set +a; \
+  bash /opt/trx_sim/deploy/scripts/restore_drill.sh --source local'
+
+# From the verified OFFSITE copy (O.5c-1) — the ONLY evidence that
+# counts as Production Restore READY:
+sudo -u trx_sim bash -c 'set -a; source /opt/trx_sim/.env; set +a; \
+  bash /opt/trx_sim/deploy/scripts/restore_drill.sh --source offsite'
+```
+
+Proves a backup is actually restorable — not just parseable — by
+restoring it into a throwaway, uniquely-named temporary database
+(`trx_restore_drill_<timestamp>_<random>`, generated internally, never
+overridable) on the same PostgreSQL server, running read-only
+structural checks against it (connectivity, critical tables,
+`django_migrations` populated, AND `manage.py migrate --check --plan`
+— O.5d-3 — confirming the schema is fully compatible with this
+codebase's current migration graph, never applying anything), then
+destroying it. Runs as the dedicated `trx_sim_drill` role (step 12 in
+Initial Setup) — never as `trx_sim`, and structurally unable to read,
+write, own, or drop the real database regardless of any bug in the
+script's own name guards.
+
+`--source offsite` uses EXCLUSIVELY the durable evidence already
+produced by O.5c-1 (`offsite_success.json`) to determine what to
+fetch — there is no way to supply a remote filename, path, or expected
+checksum manually. It downloads a **fresh, independent copy** from the
+offsite remote (never substituting a local dump even if one with the
+same name still exists), verifies its size and SHA-256 against
+`offsite_success.json` exactly, and only then restores and checks it —
+proving recovery is possible using *only* what survives outside the
+VPS. A `--source local` success is a useful diagnostic; only a
+`--source offsite` success demonstrates the VPS could actually be
+rebuilt from nothing.
+
+Deliberately **manual only** — no systemd timer, no cron, no Celery
+schedule (O.5d Fase 0 approval, decision 3): this repo documents the
+restore drill as a gate before real production, not as a recurring
+cadence, and the operation is heavier and touches more sensitive data
+than the backup jobs above.
+
+```bash
+cat /var/log/trx_sim/backup/restore_drill_success.json   # after a run
+# "source": "offsite" plus the full offsite_* entries in
+# "checks_passed" is what "Restore READY" means — a "local" success
+# alone does not.
+```
+
+Not yet integrated into `GET /api/health/detail/` — no cadence is
+documented to derive a non-arbitrary staleness threshold from (O.5d
+Fase 0 §10).
 
 ### Redis
 
