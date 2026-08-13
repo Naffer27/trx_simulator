@@ -315,6 +315,18 @@ bash healthcheck.sh http://127.0.0.1:8001
 # 5. Destruir VPS temporal
 ```
 
+**Media (MEDIA_ROOT) — implementado (O.5e-4):** a diferencia del ejemplo
+manual de Postgres arriba, el restore drill de media ya está
+automatizado: `deploy/scripts/media_restore_drill.sh` (manual, sin
+scheduler, mismo criterio de "gate antes de producción, no cadencia
+recurrente"). Descarga el archive offsite, verifica tamaño/SHA-256/
+estructura tar, extrae en un directorio scratch interno desechable
+(nunca `MEDIA_ROOT`), y verifica `file_count`/contención de symlinks. Ver
+`DEPLOY.md` sección "Media offsite restore drill" para el comando exacto
+y la interpretación de `media_restore_drill_success.json`. **RC-01 no
+queda técnicamente cerrado solo con `media_backup_success.json` — requiere
+al menos una corrida real y exitosa de `media_restore_drill.sh`.**
+
 ---
 
 ## G. Monitoreo

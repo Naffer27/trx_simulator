@@ -703,6 +703,50 @@ Not yet integrated into `GET /api/health/detail/` — no cadence is
 documented to derive a non-arbitrary staleness threshold from (O.5d
 Fase 0 §10).
 
+### Media offsite restore drill (manual, O.5e-4)
+
+```bash
+sudo -u trx_sim bash -c 'set -a; source /opt/trx_sim/.env; set +a; \
+  bash /opt/trx_sim/deploy/scripts/media_restore_drill.sh'
+```
+
+Proves the offsite media archive (O.5e-2) is actually recoverable and
+extractable — not just uploaded — by downloading it fresh into a
+throwaway, uniquely-named scratch directory
+(`trx_media_restore_drill_<timestamp>_<random>`, generated internally,
+never overridable), verifying its size and SHA-256 against
+`media_backup_success.json` exactly, validating the archive structurally
+(`tar -tf`), extracting it, and verifying the extracted `file_count`
+matches the manifest and that every extracted entry (including symlinks)
+stays contained inside the scratch directory. **Never restores onto,
+writes into, or reads from the real `MEDIA_ROOT`** — it is consulted only
+to confirm the scratch directory is not it and not inside it, before
+that directory is ever created. There is no "local" mode: media backups
+keep no local copy to drill against (O.5e-2), so the offsite manifest is
+the only, and therefore mandatory, source.
+
+```bash
+cat /var/log/trx_sim/backup/media_restore_drill_success.json   # after a run
+# "checks_passed" containing "download", "sha256_match", "tar_valid",
+# "extracted", "no_symlink_escape", and "file_count_match" together is
+# what a genuine restore-verified media backup means. No filename, path,
+# or checksum value is ever written into this file — see the script's
+# own header for the exact field list.
+```
+
+Deliberately **manual only** — no systemd timer, no cron (O.5e-4
+approval, same rationale as the Postgres restore drill): this is a
+production-readiness gate, not a recurring cadence. **RC requires at
+least one real, successful offsite media restore drill before
+launch** — a `media_backup_success.json` alone proves the archive was
+uploaded and verified in place; only a successful
+`media_restore_drill.sh` run proves it can actually be recovered and
+extracted from nothing.
+
+Not integrated into `GET /api/health/detail/`, for the same reason as
+the Postgres restore drill (O.5d Fase 0 §10): no cadence to derive a
+non-arbitrary staleness threshold from.
+
 ### Redis
 
 Redis persistence is configured via `deploy/redis_persistence.conf`:
