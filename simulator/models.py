@@ -791,7 +791,17 @@ class AccountProduct(models.Model):
     max_total_margin_pct     = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('50.00'))
 
     # ── Display ────────────────────────────────────────────────────────────────
-    features    = models.JSONField(default=dict)
+    # O.6c-1g — blank=True fixes a latent Django Admin bug present since
+    # this field's original creation (migration 0032): forms.Field's own
+    # empty_values = (None, '', [], (), {}) treats an empty dict as
+    # "nothing entered", so blank=False made Django Admin reject the
+    # field's own legitimate default ({}) as "This field is required"
+    # every time an existing AccountProduct was re-saved unchanged, or a
+    # new one created without touching Features. null stays False and
+    # default=dict is untouched — this only relaxes the FORM-level
+    # requirement, never the DB column or programmatic creation (which
+    # never went through this form validation path in the first place).
+    features    = models.JSONField(default=dict, blank=True)
     is_popular  = models.BooleanField(default=False)
     sort_order  = models.PositiveIntegerField(default=0)
     is_active   = models.BooleanField(default=True)
