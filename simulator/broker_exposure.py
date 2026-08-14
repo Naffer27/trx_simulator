@@ -92,6 +92,37 @@ from .models import Position, TradingAccount
 _ZERO = Decimal("0")
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# O.6c-1 — risk_scope foundation.
+#
+# TradingAccount.account_type values that represent REAL financial risk
+# for Money Broker (wallet-funded, real client money), per the approved
+# O.6c-1 business decision:
+#   - DEMO is excluded: simulated balance, no wallet debit at creation
+#     (see views.py::create_account_view — "Demo accounts: no wallet
+#     debit, uses product.default_balance"). Not real broker risk.
+#   - CHALLENGE is excluded: evaluation/simulation (DD_ENGINE_TYPES).
+#     Its balance/P&L does not represent real broker exposure. The
+#     CHALLENGE_FEE a client pays IS real revenue, but that is a
+#     BrokerLedger/broker_pnl.py concern, not a Position-exposure one —
+#     out of scope for this module (see O.6c-1 report).
+#   - FUNDED is ALSO excluded — not because it is simulated, but because
+#     whether funded-account payouts are financed with real broker
+#     capital is an explicit, unmade business decision (O.6c report,
+#     "decisiones de negocio pendientes", item 1). Never assumed here.
+#   - RETAIL/ECN/STANDARD/CRYPTO are included: the four non-demo product
+#     types created via the real-money path in create_account_view
+#     (wallet -> transfer_to_account, amount >= product.min_deposit).
+#
+# Single, reusable definition — not duplicated per-module. If broker_risk.py
+# or broker_pnl.py ever need this same scope, they should import it from
+# here rather than re-deriving their own account_type set.
+REAL_MONEY_ACCOUNT_TYPES = frozenset({"RETAIL", "ECN", "STANDARD", "CRYPTO"})
+
+RISK_SCOPE_REAL = "real"
+_VALID_RISK_SCOPES = frozenset({RISK_SCOPE_REAL})
+
+
 def _d(v) -> Decimal:
     return v if isinstance(v, Decimal) else Decimal(str(v))
 
@@ -190,6 +221,7 @@ class BrokerExposureBreakdown:
     account_type: "str | None" = None
     status: "str | None" = None
     trader_class: "str | None" = None
+    risk_scope: "str | None" = None
 
     generated_at: "datetime | None" = None
 
@@ -237,6 +269,7 @@ def calculate_broker_exposure(
     status: "str | None" = None,
     trader_class: "str | None" = None,
     exclude_position_ids: "frozenset | None" = None,
+    risk_scope: "str | None" = None,
 ) -> BrokerExposureBreakdown:
     """
     The one aggregation function — every broker_exposure_for_* helper
@@ -258,8 +291,26 @@ def calculate_broker_exposure(
     Option A this project chose over the Option B duplication BOOK-06d
     accepted temporarily — see broker_risk_shadow.py's own module
     docstring for where that duplication was retired).
+
+    risk_scope (O.6c-1, added 2026-08-14): optional, defaults to None —
+    every existing caller (broker_risk.py, broker_alerts.py, admin.py,
+    broker_risk_shadow.py, and the wrappers below) never passes it, so
+    this filter never runs for them — behavior is unchanged, bit for
+    bit, for every caller that predates this parameter. This is
+    deliberate: O.6c-1 only builds the scoping CAPABILITY, it does not
+    migrate any live caller onto it (that is a separate, future block).
+    risk_scope="real" restricts the aggregate to REAL_MONEY_ACCOUNT_TYPES
+    (RETAIL/ECN/STANDARD/CRYPTO) — DEMO, CHALLENGE, and FUNDED accounts
+    are excluded, so their positions (open OR stale-priced) can never
+    contaminate a "real" broker-exposure/pricing-coverage read. Any
+    other value raises ValueError — an unrecognized scope must never be
+    silently ignored (that would mean "no filter" — the exact opposite
+    of an explicit scope's contract).
     """
     from . import pnl_engine
+
+    if risk_scope is not None and risk_scope not in _VALID_RISK_SCOPES:
+        raise ValueError(f"unknown risk_scope: {risk_scope!r}")
 
     # FASE 5 — filters. book_mode/routing is deliberately NOT a filter
     # here: BOOK-01 established no book_mode field is ever persisted on
@@ -278,6 +329,8 @@ def calculate_broker_exposure(
         qs = qs.filter(account__status=status)
     if trader_class is not None:
         qs = qs.filter(account__trader_score__trader_class=trader_class)
+    if risk_scope == RISK_SCOPE_REAL:
+        qs = qs.filter(account__account_type__in=REAL_MONEY_ACCOUNT_TYPES)
 
     positions = list(qs)
     if exclude_position_ids:
@@ -425,6 +478,7 @@ def calculate_broker_exposure(
         by_account=by_account,
         account_id=account_id, account_ids=account_ids, symbol=symbol,
         account_type=account_type, status=status, trader_class=trader_class,
+        risk_scope=risk_scope,
         generated_at=timezone.now(),
     )
 
@@ -432,18 +486,20 @@ def calculate_broker_exposure(
 # ─────────────────────────────────────────────────────────────────────────
 # Convenience wrappers (FASE 3's named contracts)
 # ─────────────────────────────────────────────────────────────────────────
-def broker_exposure_for_symbol(symbol: str) -> BrokerExposureBreakdown:
-    return calculate_broker_exposure(symbol=symbol)
+def broker_exposure_for_symbol(symbol: str, *, risk_scope: "str | None" = None) -> BrokerExposureBreakdown:
+    return calculate_broker_exposure(symbol=symbol, risk_scope=risk_scope)
 
 
-def broker_exposure_for_account(account_id: int) -> BrokerExposureBreakdown:
-    return calculate_broker_exposure(account_id=account_id)
+def broker_exposure_for_account(account_id: int, *, risk_scope: "str | None" = None) -> BrokerExposureBreakdown:
+    return calculate_broker_exposure(account_id=account_id, risk_scope=risk_scope)
 
 
-def broker_exposure_for_accounts(account_ids: list) -> BrokerExposureBreakdown:
-    return calculate_broker_exposure(account_ids=account_ids)
+def broker_exposure_for_accounts(account_ids: list, *, risk_scope: "str | None" = None) -> BrokerExposureBreakdown:
+    return calculate_broker_exposure(account_ids=account_ids, risk_scope=risk_scope)
 
 
-def broker_exposure_snapshot() -> BrokerExposureBreakdown:
-    """Whole-book snapshot, no filters — the top-level dashboard figure."""
-    return calculate_broker_exposure()
+def broker_exposure_snapshot(*, risk_scope: "str | None" = None) -> BrokerExposureBreakdown:
+    """Whole-book snapshot, no filters (unless risk_scope is given) — the
+    top-level dashboard figure. risk_scope defaults to None, preserving
+    today's behavior exactly (see calculate_broker_exposure's docstring)."""
+    return calculate_broker_exposure(risk_scope=risk_scope)
