@@ -176,9 +176,14 @@ def _check(rule, status, message, current=None, requested=None, limit=None) -> R
 # it evaluated (never just the first failure) so the caller/report always
 # sees the full picture, matching FASE 2's "risk_checks" contract.
 # ─────────────────────────────────────────────────────────────────────────
-def validate_symbol_limit(symbol: str, requested_qty: Decimal) -> list:
-    """MAX_SYMBOL_EXPOSURE — broker-wide gross lots on one symbol."""
-    current = _exposure.broker_exposure_for_symbol(symbol).gross_quantity
+def validate_symbol_limit(symbol: str, requested_qty: Decimal, *, risk_scope: "str | None" = None) -> list:
+    """MAX_SYMBOL_EXPOSURE — broker-wide gross lots on one symbol.
+
+    risk_scope (O.6c-1b): optional, defaults to None (full legacy,
+    unscoped aggregate — every existing caller that predates this
+    parameter is unaffected). See validate_new_order()'s docstring for
+    when a caller should pass risk_scope="real"."""
+    current = _exposure.broker_exposure_for_symbol(symbol, risk_scope=risk_scope).gross_quantity
     projected = current + requested_qty
     if projected > MAX_SYMBOL_EXPOSURE_LOTS:
         return [_check(
@@ -194,10 +199,16 @@ def validate_symbol_limit(symbol: str, requested_qty: Decimal) -> list:
     )]
 
 
-def validate_account_limit(account_id: int, requested_qty: Decimal) -> list:
+def validate_account_limit(account_id: int, requested_qty: Decimal, *, risk_scope: "str | None" = None) -> list:
     """MAX_ACCOUNT_EXPOSURE — broker-wide gross lots for one account
-    (across every symbol that account holds)."""
-    current = _exposure.broker_exposure_for_account(account_id).gross_quantity
+    (across every symbol that account holds).
+
+    risk_scope (O.6c-1b): optional, defaults to None. Numerically a
+    no-op here in practice (the query is already filtered to this one
+    account_id, which has exactly one account_type), but threaded
+    through for consistency with the other validators and in case this
+    function is ever reused with a broader account set."""
+    current = _exposure.broker_exposure_for_account(account_id, risk_scope=risk_scope).gross_quantity
     projected = current + requested_qty
     if projected > MAX_ACCOUNT_EXPOSURE_LOTS:
         return [_check(
@@ -440,14 +451,11 @@ def _should_use_dealing_desk_adjusted_exposure(account_id: int) -> bool:
         return False
 
 
-def _resolve_broker_exposure_for_validation(account_id: int):
+def _resolve_broker_exposure_for_validation(account_id: int, *, risk_scope: "str | None" = None):
     """
-    The single decision point for whether validate_new_order() (once a
-    future block wires this in — not done here) should evaluate limits
-    against the official broker-wide exposure or the Dealing-Desk-
-    adjusted one. Not called by validate_new_order() today — this
-    function exists, fully tested in isolation, with zero real callers,
-    exactly as authorized for BOOK-06g.
+    The single decision point for whether validate_new_order() should
+    evaluate limits against the official broker-wide exposure or the
+    Dealing-Desk-adjusted one. Called by validate_new_order() below.
 
     Fail-SAFE, not fail-open in the observational sense: any failure
     here falls back to the official calculation already trusted today
@@ -460,9 +468,20 @@ def _resolve_broker_exposure_for_validation(account_id: int):
     routing_decision__account_id rather than position__account_id
     because RoutingDecision is append-only and never deleted, while
     Position is always deleted on close.
+
+    risk_scope (O.6c-1b): optional, defaults to None (full legacy,
+    unscoped). Threaded through unchanged to every broker_exposure.py
+    call below (official fallback, dealing-desk-adjusted, and the
+    observability comparison) so all three stay computed under the
+    SAME scope — never a scoped adjusted value compared against an
+    unscoped official one, which would make the observability numbers
+    meaningless. Orthogonal to the canary's own exclude_position_ids
+    logic: this changes WHICH ACCOUNTS' positions are eligible at all;
+    the canary changes which of THOSE positions get excluded for being
+    a simulated hedge. Neither one touches the other's behavior.
     """
     if not _should_use_dealing_desk_adjusted_exposure(account_id):
-        return _exposure.broker_exposure_snapshot()
+        return _exposure.broker_exposure_snapshot(risk_scope=risk_scope)
 
     try:
         from .models import DealingDeskDecision
@@ -477,7 +496,7 @@ def _resolve_broker_exposure_for_validation(account_id: int):
             .exclude(position_id__isnull=True)
             .values_list("position_id", flat=True)
         )
-        adjusted = _exposure.calculate_broker_exposure(exclude_position_ids=excluded_ids)
+        adjusted = _exposure.calculate_broker_exposure(exclude_position_ids=excluded_ids, risk_scope=risk_scope)
 
         # BOOK-06h.3 — observability only (closes RC-1 Finding F-05:
         # "no se puede confirmar desde logs con qué frecuencia se usó
@@ -504,7 +523,7 @@ def _resolve_broker_exposure_for_validation(account_id: int):
         # simply has nothing to log for this call, same as the
         # official path.
         try:
-            official = _exposure.calculate_broker_exposure()
+            official = _exposure.calculate_broker_exposure(risk_scope=risk_scope)
             adjusted._dealing_desk_observability = {
                 "excluded_positions_count": official.open_position_count - adjusted.open_position_count,
                 "excluded_notional": official.gross_notional - adjusted.gross_notional,
@@ -525,7 +544,7 @@ def _resolve_broker_exposure_for_validation(account_id: int):
             "[broker_risk] dealing desk exposure resolution failed for account=%s: %r",
             account_id, exc, exc_info=True,
         )
-        return _exposure.broker_exposure_snapshot()
+        return _exposure.broker_exposure_snapshot(risk_scope=risk_scope)
 
 
 def _log_dealing_desk_exposure_usage(account_id, book, *, allowed, reason_code):
@@ -563,6 +582,40 @@ def _log_dealing_desk_exposure_usage(account_id, book, *, allowed, reason_code):
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# O.6c-1b — LIVE RISK SCOPE INTEGRATION.
+#
+# Maps an order's account_type to the risk_scope validate_new_order()
+# should evaluate broker-wide exposure under. REAL money account types
+# (broker_exposure.REAL_MONEY_ACCOUNT_TYPES — RETAIL/ECN/STANDARD/CRYPTO)
+# get risk_scope="real": DEMO/CHALLENGE/FUNDED positions (open OR stale-
+# priced) can never contaminate their pricing coverage or broker-wide
+# limits again — this is the exact fix for the O.6a incident (a healthy
+# REAL BTCUSD order rejected with RISK_PRICING_INCOMPLETE because of
+# stale DEMO/CHALLENGE EUR/USD positions elsewhere in the book).
+#
+# Every OTHER account_type — DEMO, CHALLENGE, FUNDED, or None when a
+# caller doesn't supply one at all — gets None: the full legacy,
+# unscoped, whole-book evaluation, completely UNCHANGED. This is a
+# deliberate choice, not an oversight or a default nobody considered.
+# Two options existed for DEMO/CHALLENGE, per the O.6c-1b design brief:
+#   A. Keep the full legacy (unscoped) behavior, unchanged.
+#   B. Give them a new, separate risk_scope="simulated" (DEMO+CHALLENGE+
+#      FUNDED aggregated, excluding REAL).
+# (A) was chosen. There is no demonstrated incident of a DEMO/CHALLENGE
+# order being wrongly blocked by REAL noise — the only reported case is
+# the reverse — so inventing a second scope value here would be
+# unjustified speculative design. RISK-02's lot/notional limits are not
+# "financial risk protection" in a meaningful sense for accounts with no
+# real money at stake; they are the same broker-wide anti-abuse ceiling
+# these account types have always been evaluated against, left exactly
+# as-is. See the O.6c-1b report for the full analysis.
+def _risk_scope_for_account_type(account_type: "str | None") -> "str | None":
+    if account_type in _exposure.REAL_MONEY_ACCOUNT_TYPES:
+        return _exposure.RISK_SCOPE_REAL
+    return None
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # FASE 4/5 — the single orchestrator every caller should use.
 # ─────────────────────────────────────────────────────────────────────────
 def validate_new_order(
@@ -573,6 +626,7 @@ def validate_new_order(
     qty,
     price=None,
     contract_size=None,
+    account_type: "str | None" = None,
 ) -> RiskLimitDecision:
     """
     Evaluate a prospective new order against every broker-wide risk limit
@@ -584,8 +638,18 @@ def validate_new_order(
     "una sola integración"). It does not open, reject, or mutate anything
     itself — purely a read+decide function, same shape as
     broker_pnl.py/broker_exposure.py before it.
+
+    account_type (O.6c-1b): optional, defaults to None — every caller
+    that predates this parameter (every existing test, and any future
+    caller that doesn't pass it) gets risk_scope=None, i.e. the full
+    legacy unscoped evaluation, unchanged bit for bit. The live caller
+    (consumers.py, inside _db_open_position_atomic) passes the account's
+    own already-locked, already-loaded account_type — no extra query.
+    See _risk_scope_for_account_type()'s docstring above for the exact
+    mapping and the DEMO/CHALLENGE design decision.
     """
     qty_d = qty if isinstance(qty, Decimal) else Decimal(str(qty))
+    risk_scope = _risk_scope_for_account_type(account_type)
 
     # Fetched ONCE, shared by validate_total_limit and validate_position_limit
     # (both used to call broker_exposure_snapshot() independently).
@@ -594,11 +658,14 @@ def validate_new_order(
     # which returns broker_exposure_snapshot() unchanged unless account_id is
     # inside the DEALING_DESK_EXPOSURE_ACCOUNT_IDS canary (flag OFF by
     # default) — fail-safe to the same official snapshot on any error.
-    book = _resolve_broker_exposure_for_validation(account_id)
+    # O.6c-1b: risk_scope is threaded through so the book this order is
+    # evaluated against, and every individual check below, all agree on
+    # the same scope — never a mix of scoped and unscoped reads.
+    book = _resolve_broker_exposure_for_validation(account_id, risk_scope=risk_scope)
 
     checks: list = []
-    checks += validate_symbol_limit(symbol, qty_d)
-    checks += validate_account_limit(account_id, qty_d)
+    checks += validate_symbol_limit(symbol, qty_d, risk_scope=risk_scope)
+    checks += validate_account_limit(account_id, qty_d, risk_scope=risk_scope)
     checks += validate_total_limit(side, qty_d, book, price=price, contract_size=contract_size)
     checks += validate_position_limit(qty_d, book)
 
@@ -623,7 +690,7 @@ def validate_new_order(
 
     margin_after = None
     if price is not None and contract_size is not None:
-        account_exposure = _exposure.broker_exposure_for_account(account_id)
+        account_exposure = _exposure.broker_exposure_for_account(account_id, risk_scope=risk_scope)
         price_d = price if isinstance(price, Decimal) else Decimal(str(price))
         cs_d = contract_size if isinstance(contract_size, Decimal) else Decimal(str(contract_size))
         from .models import TradingAccount

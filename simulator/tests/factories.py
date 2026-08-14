@@ -266,8 +266,14 @@ def make_account_product(
     spread_markup: Decimal = Decimal("0.0000"),
     features: dict | None = None,
     is_active: bool = True,
+    **kwargs,
 ) -> AccountProduct:
-    """Create an AccountProduct (non-challenge account catalog entry)."""
+    """Create an AccountProduct (non-challenge account catalog entry).
+
+    **kwargs: passthrough for any other model field (e.g. O.6c-1e's
+    max_margin_per_trade_pct/max_total_margin_pct) without widening this
+    signature every time a new column is added — same pattern make_account()
+    already uses."""
     if name is None:
         name = f"Product {product_type} {uuid.uuid4().hex[:4]}"
     return AccountProduct.objects.create(
@@ -283,6 +289,7 @@ def make_account_product(
         spread_markup=Decimal(str(spread_markup)),
         features=features if features is not None else {},
         is_active=is_active,
+        **kwargs,
     )
 
 

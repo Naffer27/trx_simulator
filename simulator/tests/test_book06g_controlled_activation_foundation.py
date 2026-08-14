@@ -271,7 +271,12 @@ class ValidateNewOrderUnaffectedTests(TestCase):
         as validate_new_order()'s sole functional change — it is now
         called exactly once per call, with the account_id positional
         arg, superseding this class's original BOOK-06g/06h.1-era
-        assertion that it was never invoked."""
+        assertion that it was never invoked. O.6c-1b added a second,
+        keyword-only risk_scope arg to the resolver (defaults to None,
+        i.e. the identical legacy behavior, whenever validate_new_order()
+        isn't given an account_type — as here) — the call now always
+        carries risk_scope explicitly, so the spy assertion below
+        includes it."""
         make_account(balance=Decimal("100000"))
 
         with patch(
@@ -281,7 +286,7 @@ class ValidateNewOrderUnaffectedTests(TestCase):
             broker_risk.validate_new_order(
                 account_id=1, symbol="BTCUSD", side="BUY", qty=Decimal("0.1"),
             )
-            spy_resolver.assert_called_once_with(1)
+            spy_resolver.assert_called_once_with(1, risk_scope=None)
 
     def test_no_new_imports_of_pnl_or_ledger_modules(self):
         import inspect

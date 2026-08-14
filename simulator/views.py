@@ -943,6 +943,8 @@ def create_account_view(request):
                 max_lot_size_snapshot=product.max_lot_size,
                 margin_call_level_snapshot=product.margin_call_level,
                 stopout_level_snapshot=product.stopout_level,
+                max_margin_per_trade_pct_snapshot=product.max_margin_per_trade_pct,
+                max_total_margin_pct_snapshot=product.max_total_margin_pct,
                 commercial_profile_snapshot=commercial_pricing_fields_from_account_product(product),
             )
             account.refresh_from_db()

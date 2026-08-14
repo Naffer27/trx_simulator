@@ -111,6 +111,14 @@ class TradingAccount(models.Model):
     margin_call_level_snapshot  = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
     stopout_level_snapshot      = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
 
+    # O.6c-1e — configurable margin-concentration policy, frozen at account
+    # creation, same discipline as the snapshots above. null = pre-O.6c-1e
+    # account (or a pre-O.6c-1e product never updated) — the consumer
+    # hydration step falls back to the exact historical global default
+    # (10.00 / 50.00), never a destructive backfill.
+    max_margin_per_trade_pct_snapshot = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    max_total_margin_pct_snapshot     = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+
     # SPREAD-04 — full commercial pricing policy frozen at creation time
     # (see simulator/commercial_pricing.py). null = pre-SPREAD-04 account;
     # the resolver falls back to reconstructing an equivalent profile from
@@ -773,6 +781,15 @@ class AccountProduct(models.Model):
     margin_call_level = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('100.00'))
     stopout_level     = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('50.00'))
 
+    # O.6c-1e — configurable margin-concentration policy. Defaults match the
+    # values every account has used implicitly since Phase 6B.1
+    # (simulator/consumers.py's _DEFAULT_MAX_MARGIN_PER_TRADE_PCT/
+    # _DEFAULT_MAX_TOTAL_MARGIN_PCT) — creating/migrating a product with no
+    # explicit override reproduces today's behavior exactly. See clean()
+    # below for the one mathematical (not commercial) constraint enforced.
+    max_margin_per_trade_pct = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('10.00'))
+    max_total_margin_pct     = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('50.00'))
+
     # ── Display ────────────────────────────────────────────────────────────────
     features    = models.JSONField(default=dict)
     is_popular  = models.BooleanField(default=False)
@@ -786,6 +803,36 @@ class AccountProduct(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.product_type})"
+
+    def clean(self):
+        """O.6c-1e — purely mathematical sanity checks, never a commercial
+        policy choice: no specific percentage is favored or forbidden here,
+        only internally-contradictory/degenerate configurations. A single
+        trade's margin is necessarily a subset of total margin used, so its
+        cap cannot legitimately exceed the total cap it draws from; a
+        zero-or-negative cap would make the account unable to trade at all,
+        which is never a valid state to save silently. No upper bound
+        (e.g. <=100%) is enforced — whether percentages above 100 are ever
+        legitimate is a business decision this audit does not resolve, so
+        none is assumed."""
+        super().clean()
+        errors = {}
+        if self.max_margin_per_trade_pct is not None and self.max_margin_per_trade_pct <= 0:
+            errors["max_margin_per_trade_pct"] = "Debe ser mayor a 0."
+        if self.max_total_margin_pct is not None and self.max_total_margin_pct <= 0:
+            errors["max_total_margin_pct"] = "Debe ser mayor a 0."
+        if (
+            self.max_margin_per_trade_pct is not None
+            and self.max_total_margin_pct is not None
+            and self.max_margin_per_trade_pct > self.max_total_margin_pct
+        ):
+            errors["max_margin_per_trade_pct"] = (
+                "No puede ser mayor que max_total_margin_pct — el margen de una "
+                "sola operación es parte del margen total, nunca puede excederlo."
+            )
+        if errors:
+            from django.core.exceptions import ValidationError
+            raise ValidationError(errors)
 
 
 class ChallengeProduct(models.Model):

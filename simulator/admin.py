@@ -4553,7 +4553,14 @@ class AccountProductAdmin(admin.ModelAdmin):
             ),
         }),
         ("Risk Parameters", {
-            "fields": ("allowed_symbols", "max_lot_size", "margin_call_level", "stopout_level"),
+            "fields": ("allowed_symbols", "max_lot_size", "margin_call_level", "stopout_level",
+                       "max_margin_per_trade_pct", "max_total_margin_pct"),
+            "description": (
+                "max_margin_per_trade_pct / max_total_margin_pct (O.6c-1e): frozen at "
+                "account creation, same as the other Risk Parameters above — editing "
+                "these afterward never retroactively changes existing accounts. "
+                "Defaults (10.00 / 50.00) match the platform's historical global caps."
+            ),
         }),
         ("Display", {
             "fields": ("features", "is_popular", "sort_order"),

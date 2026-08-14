@@ -181,7 +181,11 @@ class ValidateNewOrderSingleLineChangeTests(TestCase):
         must delegate to broker_exposure_snapshot() exactly once and no
         other broker_exposure_for_* helper is touched — i.e. the only
         behavioral difference introduced is which function supplies
-        `book`, never how the rest of validate_new_order() computes."""
+        `book`, never how the rest of validate_new_order() computes.
+        O.6c-1b added a second, keyword-only risk_scope arg to the
+        resolver (defaults to None — identical legacy behavior — whenever
+        validate_new_order() isn't given an account_type, as here); the
+        call now always carries risk_scope explicitly."""
         make_account(balance=Decimal("100000"))
 
         with patch.object(
@@ -191,4 +195,4 @@ class ValidateNewOrderSingleLineChangeTests(TestCase):
             broker_risk.validate_new_order(
                 account_id=1, symbol="BTCUSD", side="BUY", qty=Decimal("0.1"),
             )
-            spy.assert_called_once_with(1)
+            spy.assert_called_once_with(1, risk_scope=None)

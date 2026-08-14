@@ -80,6 +80,8 @@ def _compute_pretrade_margin_guard(
     account_snap: dict,
     spec_max_leverage: int,
     spec_contract_size: float,
+    max_margin_per_trade_pct: float = _DEFAULT_MAX_MARGIN_PER_TRADE_PCT,
+    max_total_margin_pct: float = _DEFAULT_MAX_TOTAL_MARGIN_PCT,
 ) -> tuple[bool, str, str, dict]:
     """
     Pure pre-trade guard — no I/O, no DB, no side effects.
@@ -100,9 +102,20 @@ def _compute_pretrade_margin_guard(
     Checks (in order):
       1. allowed_symbols_snapshot  — symbol whitelist
       2. max_lot_size_snapshot     — product-level hard lot cap
-      3. per-trade margin %        — required_margin / equity ≤ 10 %
-      4. total margin after open % — (used + required) / equity ≤ 50 %
+      3. per-trade margin %        — required_margin / equity ≤ max_margin_per_trade_pct
+      4. total margin after open % — (used + required) / equity ≤ max_total_margin_pct
       5. margin_level projection   — equity / (used + required) ≥ margin_call_level_snapshot
+
+    max_margin_per_trade_pct / max_total_margin_pct (O.6c-1e): optional,
+    default to the module's own historical constants — every caller that
+    predates this parameter (any test, any call site that doesn't pass
+    them) gets IDENTICAL behavior to before O.6c-1e, bit for bit. The two
+    live call sites (consumers.py's fast pre-lock check and the
+    authoritative atomic guard) pass the account's own resolved
+    self.account["max_margin_per_trade_pct"]/["max_total_margin_pct"]
+    (product snapshot, falling back to 10.0/50.0 — see the O.6c-1e
+    hydration comments). No formula changed — only where the two
+    thresholds come from.
     """
     account_lev = max(1, int(account_snap.get("leverage", 50)))
     effective_lev = max(1, min(account_lev, spec_max_leverage))
@@ -117,7 +130,7 @@ def _compute_pretrade_margin_guard(
         "required_margin_pct": round(per_trade_pct, 2),
         "projected_total_margin": round(total_margin_after, 4),
         "projected_total_margin_pct": round(total_margin_pct, 2),
-        "max_total_margin_pct": _DEFAULT_MAX_TOTAL_MARGIN_PCT,
+        "max_total_margin_pct": max_total_margin_pct,
     }
 
     # 1 — Symbol whitelist (None = all symbols allowed)
@@ -144,7 +157,7 @@ def _compute_pretrade_margin_guard(
         )
 
     # 3 — Per-trade margin cap
-    if per_trade_pct > _DEFAULT_MAX_MARGIN_PER_TRADE_PCT:
+    if per_trade_pct > max_margin_per_trade_pct:
         _guard_log = logging.getLogger("simulator.guard")
         _guard_log.warning(
             "[guard] REJECTED margin_per_trade_exceeded | sym=%s qty=%s entry_px=%.2f "
@@ -157,7 +170,7 @@ def _compute_pretrade_margin_guard(
             equity_safe - total_margin_after,
             equity_safe / total_margin_after * 100.0 if total_margin_after > 0 else 0.0,
             per_trade_pct,
-            _DEFAULT_MAX_MARGIN_PER_TRADE_PCT, _DEFAULT_MAX_TOTAL_MARGIN_PCT,
+            max_margin_per_trade_pct, max_total_margin_pct,
             account_lev, spec_max_leverage, effective_lev,
         )
         return (
@@ -166,14 +179,14 @@ def _compute_pretrade_margin_guard(
             (
                 f"Orden rechazada: margen insuficiente. Esta operación requeriría "
                 f"{per_trade_pct:.1f}% de tu equity como margen "
-                f"(límite: {_DEFAULT_MAX_MARGIN_PER_TRADE_PCT:.0f}%). "
+                f"(límite: {max_margin_per_trade_pct:.0f}%). "
                 "Prueba con un lote menor."
             ),
             details,
         )
 
     # 4 — Total margin cap after this trade
-    if total_margin_pct > _DEFAULT_MAX_TOTAL_MARGIN_PCT:
+    if total_margin_pct > max_total_margin_pct:
         _guard_log = logging.getLogger("simulator.guard")
         _guard_log.warning(
             "[guard] REJECTED total_margin_exceeded | sym=%s qty=%s entry_px=%.2f "
@@ -184,14 +197,14 @@ def _compute_pretrade_margin_guard(
             required_margin, total_margin_after,
             equity_safe - total_margin_after,
             per_trade_pct, total_margin_pct,
-            _DEFAULT_MAX_TOTAL_MARGIN_PCT, account_lev, spec_max_leverage, effective_lev,
+            max_total_margin_pct, account_lev, spec_max_leverage, effective_lev,
         )
         return (
             False,
             "total_margin_exceeded",
             (
                 f"Orden rechazada: esta operación excedería el uso máximo de margen "
-                f"permitido ({_DEFAULT_MAX_TOTAL_MARGIN_PCT:.0f}%). "
+                f"permitido ({max_total_margin_pct:.0f}%). "
                 f"Margen total proyectado: {total_margin_pct:.1f}%. "
                 "Cierra posiciones o usa un lote menor."
             ),
@@ -383,7 +396,10 @@ def _compute_atomic_open_guard(
         "required_margin": 0.0, "required_margin_pct": 0.0,
         "projected_total_margin": round(fresh_margin_used, 4),
         "projected_total_margin_pct": 0.0,
-        "max_total_margin_pct": _DEFAULT_MAX_TOTAL_MARGIN_PCT,
+        # O.6c-1e — reflects this account's own configured policy (falls
+        # back to the historical global default via account_snap's own
+        # .get(), same as every other early-rejection info field here).
+        "max_total_margin_pct": account_snap.get("max_total_margin_pct", _DEFAULT_MAX_TOTAL_MARGIN_PCT),
     }
 
     # 0 — Account status gate — the freshest possible read: the very
@@ -426,6 +442,8 @@ def _compute_atomic_open_guard(
     guard_ok, guard_code, guard_msg, guard_details = _compute_pretrade_margin_guard(
         symbol, qty, entry_px, fresh_equity, fresh_margin_used,
         account_snap, spec.max_leverage, spec.contract_size,
+        max_margin_per_trade_pct=account_snap.get("max_margin_per_trade_pct", _DEFAULT_MAX_MARGIN_PER_TRADE_PCT),
+        max_total_margin_pct=account_snap.get("max_total_margin_pct", _DEFAULT_MAX_TOTAL_MARGIN_PCT),
     )
     return {
         "ok": guard_ok,
@@ -632,6 +650,9 @@ class TradingConsumer(AsyncWebsocketConsumer):
             "max_lot_size":       None,
             "margin_call_level":  100.0,
             "stopout_level":      50.0,
+            # O.6c-1e — same fallback discipline as the two lines above.
+            "max_margin_per_trade_pct": 10.0,
+            "max_total_margin_pct":     50.0,
             # SPREAD-04 — account-level commercial pricing fields, resolved
             # once at hydrate time by commercial_pricing.resolve_commercial_
             # pricing_fields(); {} for guest/anonymous sessions (no DB
@@ -1158,6 +1179,8 @@ class TradingConsumer(AsyncWebsocketConsumer):
         _guard_ok, _guard_code, _guard_msg, _guard_details = _compute_pretrade_margin_guard(
             sym, qty, self.exec_price(sym, side), eq_now, mg_now,
             self.account, _spec.max_leverage, _spec.contract_size,
+            max_margin_per_trade_pct=self.account.get("max_margin_per_trade_pct", _DEFAULT_MAX_MARGIN_PER_TRADE_PCT),
+            max_total_margin_pct=self.account.get("max_total_margin_pct", _DEFAULT_MAX_TOTAL_MARGIN_PCT),
         )
         if not _guard_ok:
             await self.send_json({"type": "error", "code": _guard_code, "message": _guard_msg})
@@ -2495,6 +2518,9 @@ class TradingConsumer(AsyncWebsocketConsumer):
         self.account["max_lot_size"]       = acc.get("max_lot_size", None)
         self.account["margin_call_level"]  = acc.get("margin_call_level", 100.0)
         self.account["stopout_level"]      = acc.get("stopout_level", 50.0)
+        # O.6c-1e — same fallback discipline as the two lines above.
+        self.account["max_margin_per_trade_pct"] = acc.get("max_margin_per_trade_pct", 10.0)
+        self.account["max_total_margin_pct"]     = acc.get("max_total_margin_pct", 50.0)
         # SPREAD-04 — cached once here; commission_for()/price_tick() read
         # it back, never re-resolving (no DB per-tick).
         self.account["commercial_pricing_fields"] = acc.get("commercial_pricing_fields", {})
@@ -2606,6 +2632,12 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 "max_lot_size":          float(obj.max_lot_size_snapshot) if obj.max_lot_size_snapshot is not None else None,
                 "margin_call_level":     float(obj.margin_call_level_snapshot or 100),
                 "stopout_level":         float(obj.stopout_level_snapshot or 50),
+                # O.6c-1e — fallback matches _DEFAULT_MAX_MARGIN_PER_TRADE_PCT/
+                # _DEFAULT_MAX_TOTAL_MARGIN_PCT exactly (10.0/50.0) — a NULL
+                # snapshot (every account created before this block existed)
+                # reproduces today's behavior bit for bit.
+                "max_margin_per_trade_pct": float(obj.max_margin_per_trade_pct_snapshot or 10.0),
+                "max_total_margin_pct":     float(obj.max_total_margin_pct_snapshot or 50.0),
                 # SPREAD-04 — commercial pricing: account-level fields resolved
                 # once here (a sync DB context); commission_for()/price_tick()
                 # read them back from self.account, never re-resolving.
@@ -3037,6 +3069,9 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 "allowed_symbols":   self.account.get("allowed_symbols"),
                 "max_lot_size":      self.account.get("max_lot_size"),
                 "margin_call_level": self.account.get("margin_call_level"),
+                # O.6c-1e
+                "max_margin_per_trade_pct": self.account.get("max_margin_per_trade_pct", _DEFAULT_MAX_MARGIN_PER_TRADE_PCT),
+                "max_total_margin_pct":     self.account.get("max_total_margin_pct", _DEFAULT_MAX_TOTAL_MARGIN_PCT),
             }
             guard = _compute_atomic_open_guard(
                 symbol, qty, price, account.status, _account_snap, _spec,
@@ -3071,6 +3106,15 @@ class TradingConsumer(AsyncWebsocketConsumer):
             _risk02 = validate_new_order(
                 account_id=self._db_account_id, symbol=symbol, side=side, qty=qty,
                 price=price, contract_size=_spec.contract_size,
+                # O.6c-1b: the account row is already loaded/locked above
+                # (step 1) — reuse it, never a second query. REAL money
+                # account types (RETAIL/ECN/STANDARD/CRYPTO) get RISK-02
+                # evaluated under risk_scope="real" (DEMO/CHALLENGE/FUNDED
+                # can no longer contaminate their pricing coverage or
+                # broker-wide limits); every other account_type keeps the
+                # full legacy, unscoped evaluation — see
+                # broker_risk.py::_risk_scope_for_account_type().
+                account_type=account.account_type,
             )
             if not _risk02.allowed:
                 log.info(
