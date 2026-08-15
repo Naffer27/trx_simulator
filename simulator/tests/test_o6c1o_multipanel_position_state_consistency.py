@@ -63,6 +63,37 @@ _db_open_sync = TradingConsumer._db_open_position_atomic.__wrapped__
 _db_close_sync = TradingConsumer._db_close_position_atomic.__wrapped__
 
 
+class _FakeFeed:
+    """O.6c-1q — stands in for self._feed (get_feed_manager()), the price
+    authority _unrealized_pnl_total() now reads from instead of
+    self._bid_state/self._ask_state — see O.6c-1p/O.6c-1q. Per-instance
+    and per-symbol configurable (default EUR/USD 1.10000/1.10020) so
+    individual tests can set a specific price without touching the real
+    global FeedManager singleton (which _seed_eurusd_price() seeds
+    separately, for RISK-02's own direct get_feed_manager() call — a
+    different code path from self._feed)."""
+
+    def __init__(self):
+        self._bid = {"EUR/USD": 1.10000}
+        self._ask = {"EUR/USD": 1.10020}
+
+    def set_price(self, symbol, bid, ask):
+        self._bid[symbol] = bid
+        self._ask[symbol] = ask
+
+    def has_price(self, symbol):
+        return symbol in self._bid
+
+    def last_price(self, symbol):
+        return (self._bid.get(symbol, 0.0) + self._ask.get(symbol, 0.0)) / 2
+
+    def last_bid(self, symbol):
+        return self._bid[symbol]
+
+    def last_ask(self, symbol):
+        return self._ask[symbol]
+
+
 def _bare_consumer(account_id) -> TradingConsumer:
     """Same minimal-panel pattern already established in
     test_multipanel_position_sync.py — one dashboard panel's own
@@ -83,19 +114,6 @@ def _bare_consumer(account_id) -> TradingConsumer:
     c._raw_ask_state = {}
     c._pricing_ts_state = {}
     c._pricing_snapshot_state = {}
-
-    class _FakeFeed:
-        def has_price(self, symbol):
-            return True
-
-        def last_price(self, symbol):
-            return 1.10010
-
-        def last_bid(self, symbol):
-            return 1.10000
-
-        def last_ask(self, symbol):
-            return 1.10020
 
     c._feed = _FakeFeed()
     c.account = {
@@ -262,10 +280,9 @@ class NettingMergeSyncTests(TransactionTestCase):
 
         # Neutral current price near the new weighted average (1.15000) —
         # this test is about netting-merge sync, not about accidentally
-        # triggering a real CHALLENGE stopout via an unrelated stale
-        # close_price on panel_b.
-        panel_b._bid_state["EUR/USD"] = 1.15000
-        panel_b._ask_state["EUR/USD"] = 1.15020
+        # triggering a real CHALLENGE stopout. O.6c-1q: _unrealized_pnl_total()
+        # now reads self._feed, not self._bid_state — set it there.
+        panel_b._feed.set_price("EUR/USD", 1.15000, 1.15020)
 
         event = {"type": "position.changed", "action": "update",
                  "position_id": self.pos.pk, "symbol": "EUR/USD"}

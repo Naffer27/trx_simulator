@@ -126,9 +126,17 @@ class UnrealizedPnlWsTests(TestCase):
         self.assertLess(pnl, 100)  # correct value is two orders of magnitude smaller
 
     def test_equity_uses_converted_pnl(self):
+        # O.6c-1q — _unrealized_pnl_total() now sources price from
+        # self._feed (get_feed_manager(), the shared global singleton),
+        # never self._bid_state/close_price() — see O.6c-1p/O.6c-1q.
+        class _FakeFeed:
+            def has_price(self, symbol): return True
+            def last_bid(self, symbol): return 155.100
+            def last_ask(self, symbol): return 155.120
+
         c = _bare_consumer()
+        c._feed = _FakeFeed()
         c._positions = [{"id": 1, "symbol": "USD/JPY", "side": "buy", "qty": 1.0, "avg": 155.000}]
-        c.close_price = lambda sym, side: 155.100
         equity = c.account["balance"] + c._unrealized_pnl_total()
         self.assertAlmostEqual(equity, 10000.0 + 64.47, places=2)
 

@@ -624,6 +624,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
         self._pricing_snapshot_state = {}
         self._order_seq = 1
         self._positions = []
+        self._unpriced_pnl_symbols = []
         self._agg = {}
         self._last_bar_time = {}
 
@@ -1993,11 +1994,44 @@ class TradingConsumer(AsyncWebsocketConsumer):
             out.append(d)
         return out
 
+    def _feed_close_price(self, symbol: str, side: str) -> "float | None":
+        """O.6c-1q — price authority for ACCOUNT-WIDE floating P&L/equity
+        aggregation (_unrealized_pnl_total() below) only — deliberately
+        NOT used by close_price() (order:close/SL/TP/stopout EXECUTION
+        price, a separate, out-of-scope surface — see the O.6c-1q report).
+
+        Reads self._feed (get_feed_manager(), the shared process-global
+        FeedManager singleton — the SAME source RISK-02/broker_exposure.py/
+        the atomic open guard already trust) instead of
+        self._bid_state/self._ask_state (a per-connection cache only ever
+        seeded for the symbol(s) THIS connection's own chart has shown —
+        the O.6c-1p root cause: an account's floating P&L for a position
+        on a symbol this panel never charted would silently fall back to
+        base_price_for(), a synthetic seed constant).
+
+        Returns None — never base_price_for(), never any synthetic value
+        — when self._feed.has_price(symbol) is False. Mirrors
+        broker_exposure.py's own FASE 4 reference-price policy exactly
+        (exclude from the aggregate, never fabricate) for the identical
+        problem at the broker-wide level — not a new/invented policy."""
+        if not self._feed.has_price(symbol):
+            return None
+        return self._feed.last_bid(symbol) if side == "buy" else self._feed.last_ask(symbol)
+
     def _unrealized_pnl_total(self):
         total = 0.0
+        unpriced = []
         for p in self._positions:
-            px = self.close_price(p["symbol"], p["side"])
+            px = self._feed_close_price(p["symbol"], p["side"])
+            if px is None:
+                unpriced.append(p["symbol"])
+                continue
             total += self._unrealized_pnl_for(p, px)
+        # Side-channel, read by _recalc_account_and_push()'s stopout
+        # fail-safe immediately after this call — never a new WS payload
+        # field, never persisted; purely in-memory bookkeeping for this
+        # one connection's own most recent aggregation.
+        self._unpriced_pnl_symbols = sorted(set(unpriced))
         return total
 
     def _unrealized_pnl_for(self, pos, close_px):
@@ -2062,8 +2096,25 @@ class TradingConsumer(AsyncWebsocketConsumer):
         self.account["equity"] = round(self.account["balance"] + self.account["pnl_unreal"], 2)
         free_margin = round(self.account["equity"] - self.account["margin_used"], 2)
 
-        # Real-time stopout — only check if account is currently active
-        if self.account.get("status") == "Activo" and self._positions:
+        # Real-time stopout — only check if account is currently active.
+        # O.6c-1q fail-safe: if ANY open position lacks a fresh FeedManager
+        # price this tick (self._unpriced_pnl_symbols, set by the
+        # _unrealized_pnl_total() call above), self.account["equity"] is
+        # necessarily INCOMPLETE (that position's real PnL — profit or
+        # loss — is simply absent, not zeroed) — skip evaluating stopout
+        # entirely this tick rather than decide on partial data. Mirrors
+        # PANEL-02's own established precedent for the identical dilemma
+        # in the atomic open guard: "the only safe options are 'use a
+        # real, fresh price' or 'refuse to decide' — never invent a
+        # number." The next tick that resolves the missing price(s)
+        # re-evaluates normally — this is not a permanent bypass.
+        if self._unpriced_pnl_symbols:
+            log.warning(
+                "[stopout] skipped this tick for account=%s — unpriced position "
+                "symbol(s) %s (fail-safe: equity is incomplete, not evaluating)",
+                self._db_account_id, self._unpriced_pnl_symbols,
+            )
+        elif self.account.get("status") == "Activo" and self._positions:
             _acct_type = self.account.get("account_type", "CHALLENGE")
             from .risk_engine import check_equity_stopout
             if check_equity_stopout(

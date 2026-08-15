@@ -28,6 +28,18 @@ def _run(coro):
     return asyncio.run(coro)
 
 
+class _FakeFeed:
+    """O.6c-1q — _unrealized_pnl_total() (called directly by _check_tp_sl/
+    _do_stopout/_do_retail_liquidation for their own total_floating_snapshot,
+    independent of _recalc_account_and_push which is mocked in this file)
+    now sources price from self._feed, never self._bid_state — see
+    O.6c-1p/O.6c-1q. This file tests pricing_context capture/forwarding,
+    not PnL correctness, so a fixed, always-fresh price is sufficient."""
+    def has_price(self, symbol): return True
+    def last_bid(self, symbol): return 1.10000
+    def last_ask(self, symbol): return 1.10020
+
+
 def _bare_consumer(**overrides) -> TradingConsumer:
     """A TradingConsumer instance with only the state these methods read —
     never goes through connect()/Channels scope."""
@@ -40,6 +52,7 @@ def _bare_consumer(**overrides) -> TradingConsumer:
     c._raw_ask_state = {}
     c._pricing_ts_state = {}
     c._pricing_snapshot_state = {}
+    c._feed = _FakeFeed()
     c._positions = []
     c._daily_realized_pnl = 0.0
     c._daily_pnl_date = None

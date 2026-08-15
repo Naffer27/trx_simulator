@@ -66,6 +66,17 @@ def _run(coro):
     return asyncio.run(coro)
 
 
+class _FakeFeed:
+    """O.6c-1q — _unrealized_pnl_total() now sources price from self._feed
+    (get_feed_manager(), the shared global singleton), never
+    self._bid_state/close_price() — see O.6c-1p/O.6c-1q. Same fixed price
+    (1.1000/1.1000) this file's _bid_state/_ask_state already used, so
+    every pre-existing numeric expectation in this file is unaffected."""
+    def has_price(self, symbol): return True
+    def last_bid(self, symbol): return 1.1000
+    def last_ask(self, symbol): return 1.1000
+
+
 def _consumer(account_id, balance, positions=None, status="Activo",
               account_type="STANDARD", peak_balance=None):
     c = TradingConsumer.__new__(TradingConsumer)
@@ -78,6 +89,7 @@ def _consumer(account_id, balance, positions=None, status="Activo",
     c._bid_state, c._ask_state = {"EUR/USD": 1.1000}, {"EUR/USD": 1.1000}
     c._raw_bid_state, c._raw_ask_state = {}, {}
     c._pricing_snapshot_state, c._pricing_ts_state = {}, {}
+    c._feed = _FakeFeed()
     c.account = {
         "balance": balance, "equity": balance,
         "peak_balance": peak_balance if peak_balance is not None else balance,
