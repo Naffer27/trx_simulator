@@ -773,45 +773,99 @@ class TradingConsumer(AsyncWebsocketConsumer):
     # ---------------- Streams ----------------
     # ---------------- Shared feed handler ----------------
 
-    async def execution_close(self, event: dict):
-        """Daemon-initiated close pushed via account_{id} channel group.
+    async def position_changed(self, event: dict):
+        """O.6c-1o — MULTIPANEL-01 fix. Generalizes the original
+        execution_close() (kept below as a thin backward-compat alias) to
+        every Position writer identified in O.6c-1n's writer map — WS
+        opens/netting-merges/closes/SL/TP/stopout/liquidation, the Celery
+        daemon, and Django Admin — not just the 2 Celery daemon close
+        paths execution_close originally covered. Pushed via the
+        account_{account_id} Channels group (Redis-backed in production,
+        so this reaches every connection for this account across every
+        Daphne worker) AFTER the writer's own DB transaction has
+        committed — transaction.on_commit() (consumers.py's two atomic
+        methods) / Celery's own post-commit call / Admin's
+        save_model/delete_model — never before, so a rolled-back
+        transaction never publishes this event (see O.6c-1n's "DB COMMIT
+        -> position.changed -> ... -> DB-fresh estado" contract).
 
-        Updates in-memory state atomically then pushes order_close + positions
-        so the live UI reflects the close without requiring a reconnect.
+        Per O.6c-1n Option C: this event is NEVER the source of truth.
+        action/position_id/symbol/etc are metadata only, used below for a
+        fast optimistic patch (so a close/open still feels instant) — but
+        this handler ALWAYS finishes by resyncing self._positions from DB
+        (_refresh_and_send_positions()) and self.account["balance"] via an
+        UN-throttled _db_sync_account_balances() call (bypassing
+        _recalc_account_and_push()'s own 1.2s PANEL-02 throttle, since
+        this is an explicit invalidation signal, not a routine tick),
+        regardless of what the payload said. Idempotent — a duplicate/
+        out-of-order event, or one for a position_id already absent from
+        self._positions, degrades to a harmless no-op DB resync (see
+        test_idempotent_duplicate_event).
         """
+        from . import ws_events
+
+        action      = event.get("action")
         pos_id      = event.get("position_id")
         new_balance = event.get("new_balance")
-        realized    = float(event.get("realized_pnl", 0.0))
         new_status  = event.get("new_status")
+        realized    = event.get("realized_pnl")
 
-        # Remove from in-memory positions list
-        before = len(self._positions)
-        self._positions = [p for p in self._positions if p["id"] != pos_id]
-        if len(self._positions) == before:
-            log.warning("[execution_close] pos %s not found in memory (concurrent close?)", pos_id)
+        if action == ws_events.ACTION_CLOSE and pos_id is not None:
+            # Optimistic in-memory removal — never the final word (see
+            # docstring above); _refresh_and_send_positions() below is
+            # what actually decides self._positions.
+            before = len(self._positions)
+            self._positions = [p for p in self._positions if p["id"] != pos_id]
+            if len(self._positions) == before:
+                log.info("[position_changed] pos %s not in memory (other panel/already synced)", pos_id)
+            if realized is not None:
+                self._track_daily_pnl(float(realized))
 
-        # Apply authoritative DB result
         if new_balance is not None:
             self.account["balance"] = float(new_balance)
         if new_status:
             self.account["status"] = new_status
 
-        self._track_daily_pnl(realized)
+        # Authoritative DB-fresh resync — always runs, regardless of the
+        # payload above. Order matters: positions FIRST (so pnl_unreal,
+        # recomputed next, reflects the corrected position set — never
+        # the stale/optimistic value still sitting in self.account from
+        # before this event), THEN pnl_unreal, THEN balance un-throttled
+        # (PANEL-02's throttle is for routine ticks, not explicit
+        # invalidation signals like this one — _db_sync_account_balances()
+        # persists equity = balance + self.account["pnl_unreal"], so it
+        # MUST run after pnl_unreal is correct or a phantom position's
+        # PnL could leak into the persisted DB column even after the
+        # position itself is gone from self._positions — see
+        # test_equity_persisted_after_sync_excludes_phantom_position).
+        # _last_db_sync is updated so the immediately-following
+        # _recalc_account_and_push() doesn't redundantly re-fetch again.
+        await self._refresh_and_send_positions()
+        self.account["pnl_unreal"] = round(self._unrealized_pnl_total(), 2)
+        try:
+            fresh_balance = await self._db_sync_account_balances()
+        except Exception as exc:
+            fresh_balance = None
+            log.error("[position_changed] balance resync failed for account=%s: %r",
+                      self._db_account_id, exc, exc_info=True)
+        if fresh_balance is not None:
+            self.account["balance"] = fresh_balance
+            self._last_db_sync = time.time()
         await self._recalc_account_and_push()
 
-        await self.send_json({
-            "type":         "order_close",
-            "id":           pos_id,
-            "symbol":       event.get("symbol"),
-            "side":         event.get("side"),
-            "qty":          event.get("qty"),
-            "avg":          event.get("avg"),
-            "close_px":     event.get("close_px"),
-            "reason":       event.get("reason"),
-            "realized_pnl": realized,
-            "ts":           event.get("ts", int(time.time())),
-        })
-        await self._refresh_and_send_positions()
+        if action == ws_events.ACTION_CLOSE and pos_id is not None:
+            await self.send_json({
+                "type":         "order_close",
+                "id":           pos_id,
+                "symbol":       event.get("symbol"),
+                "side":         event.get("side"),
+                "qty":          event.get("qty"),
+                "avg":          event.get("avg"),
+                "close_px":     event.get("close_px"),
+                "reason":       event.get("reason"),
+                "realized_pnl": realized if realized is not None else 0.0,
+                "ts":           event.get("ts", int(time.time())),
+            })
 
         # Stopout / margin-call UI notifications (additive — only for daemon-initiated paths)
         if new_status == "Suspendido":
@@ -826,6 +880,19 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 "reason":  "margin_level_below_50pct",
                 "balance": float(new_balance) if new_balance is not None else 0.0,
             })
+
+    async def execution_close(self, event: dict):
+        """Backward-compat alias for the pre-O.6c-1o event type
+        ("execution.close", Channels-dispatched via the '.'->'_' method
+        name convention). Kept so a stale/in-flight message from a
+        rolling deploy (an old Celery worker process briefly overlapping
+        with new consumer code, or vice versa) still works — translates
+        the old flat payload into position_changed()'s contract and
+        delegates to it, no separate logic to drift out of sync."""
+        from . import ws_events
+        event = dict(event)
+        event.setdefault("action", ws_events.ACTION_CLOSE)
+        await self.position_changed(event)
 
     async def price_tick(self, event: dict):
         """Receives broadcast ticks from FeedManager via channel layer group."""
@@ -878,36 +945,45 @@ class TradingConsumer(AsyncWebsocketConsumer):
         await self._recalc_account_and_push()
 
     async def candle_kline(self, event: dict):
-        """Receives canonical OHLCV from exchange kline stream (Binance @kline_1m).
-        Bypasses server-side aggregation — the exchange owns candle lifecycle."""
+        """Receives canonical 1-minute OHLCV sub-bars from exchange kline
+        streams (Binance @kline_1m / Kraken ohlc-1). Each event is always a
+        1-minute bar (open, still forming, or closed) — this aggregates
+        those 1-minute sub-bars into the connection's selected timeframe
+        using the same bucket formula as the tick aggregator (_on_tick),
+        then reuses _emit_bar() to signal candle_new/candle_update exactly
+        like the non-kline path. For timeframe=1m this reduces to exactly
+        the prior behavior (one sub-bar per bucket, forwarded as-is)."""
         symbol = event.get("symbol")
         if symbol != self.symbol:
             return
         bar = event["data"]
-        t   = int(bar["time"])
-        last = self._last_bar_time.get(symbol)
-        if last is None or t > last:
-            self._last_bar_time[symbol] = t
-            msg_type = "candle_new"
-        else:
-            msg_type = "candle_update"
-        await self.send_json({
-            "type": msg_type, "symbol": symbol,
-            "data": {
-                "time":  t,
-                "open":  float(bar["open"]),
-                "high":  float(bar["high"]),
-                "low":   float(bar["low"]),
-                "close": float(bar["close"]),
-            },
-        })
-        await self.send_json({
-            "type":   "volume_update",
-            "symbol": symbol,
-            "time":   t,
-            "value":  float(bar.get("volume", 0.0)),
-            "color":  "#26a69a" if float(bar["close"]) >= float(bar["open"]) else "#f44336",
-        })
+        minute_t = int(bar["time"])
+        tf_sec = tf_seconds(self.timeframe)
+        bucket = (minute_t // tf_sec) * tf_sec
+
+        acc = self._agg.get(symbol)
+        if acc is None or acc.get("tf_sec") != tf_sec or acc.get("t0") != bucket:
+            acc = {"t0": bucket, "tf_sec": tf_sec, "minute_bars": {}}
+            self._agg[symbol] = acc
+
+        # Binance/Kraken repeat updates for the same still-forming minute with
+        # cumulative OHLCV for that minute — overwrite (never sum) per minute
+        # key, then recompute the bucket's OHLCV from the distinct minutes
+        # seen so far so volume isn't double-counted across repeat updates.
+        acc["minute_bars"][minute_t] = {
+            "o": float(bar["open"]), "h": float(bar["high"]),
+            "l": float(bar["low"]),  "c": float(bar["close"]),
+            "v": float(bar.get("volume", 0.0)),
+        }
+        mbs = acc["minute_bars"]
+        ordered = sorted(mbs)
+        acc["o"] = mbs[ordered[0]]["o"]
+        acc["h"] = max(m["h"] for m in mbs.values())
+        acc["l"] = min(m["l"] for m in mbs.values())
+        acc["c"] = mbs[ordered[-1]]["c"]
+        acc["v"] = sum(m["v"] for m in mbs.values())
+
+        await self._emit_bar(symbol, acc)
 
     # ---------------- Heartbeat ----------------
 
@@ -2429,14 +2505,21 @@ class TradingConsumer(AsyncWebsocketConsumer):
     async def _refresh_and_send_positions(self):
         """MULTIPANEL-01 — the ONE place allowed to emit a full 'positions'
         snapshot. Every panel is its own WebSocket connection with its own
-        TradingConsumer instance and its own self._positions, hydrated once
-        at connect() time and never synced with sibling connections for the
-        same account (no group_send exists for manual order events). A
-        connection that opens/closes/edits a position, or merely switches
-        symbol, could otherwise emit its own possibly-incomplete in-memory
-        view — the frontend then propagates that snapshot to every panel,
-        silently discarding positions opened through OTHER panels (the
-        confirmed root cause of the multipanel "position disappears" bug).
+        TradingConsumer instance and its own self._positions, hydrated at
+        connect() time and re-synced with sibling connections for the same
+        account whenever the book changes (O.6c-1o — position_changed(),
+        pushed via the account_{account_id} Channels group by every
+        Position writer; see ws_events.py). Before O.6c-1o, no such
+        propagation existed for WS-originated opens/closes/SL/TP/stopout/
+        liquidation, only for the 2 Celery daemon close paths — a
+        connection that opened/closed/edited a position, or merely
+        switched symbol, could emit its own possibly-incomplete in-memory
+        view, and the frontend would propagate that snapshot to every
+        panel, silently discarding positions opened through OTHER panels
+        (the original root cause of the multipanel "position disappears"
+        bug). This function itself is unchanged — it remains the sole
+        DB-fresh authority _refresh_and_send_positions()/position_changed()
+        funnel through; O.6c-1o only added WHO calls it and WHEN.
 
         The DB is the single source of truth: this always re-hydrates
         self._positions from Position.objects (account-wide, via the
@@ -3317,6 +3400,23 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 account.balance = _auth_balance
                 account.save(update_fields=["balance"])
 
+            # O.6c-1o — MULTIPANEL-01 fix. Registered as the LAST statement
+            # inside this transaction.atomic() block so a rollback caused
+            # by ANYTHING above (Position write, commission ledger,
+            # routing engine, balance update) correctly discards this
+            # callback — Django's own on_commit guarantee, not
+            # reimplemented here (see test_rollback_no_publish_on_open).
+            # Covers writers #1 (new open) and #2 (netting merge/update)
+            # from the O.6c-1n writer map in one place, since both share
+            # this exact code path (see "existing"/"merged" branch above).
+            from . import ws_events
+            transaction.on_commit(lambda: ws_events.publish_position_changed(
+                self._db_account_id,
+                action=(ws_events.ACTION_UPDATE if merged else ws_events.ACTION_OPEN),
+                position_id=position_id, symbol=symbol, side=side, qty=float(qty),
+                new_balance=float(_auth_balance),
+            ))
+
         log.info("[db_open] pos_id=%s symbol=%s side=%s qty=%s merged=%s balance=%.4f",
                  position_id, symbol, side, qty, merged, float(_auth_balance))
 
@@ -3678,6 +3778,30 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 violations   = []
                 final_status = self.account.get("status", "Activo")
                 final_peak   = self.account.get("peak_balance", float(_nb))
+
+            # O.6c-1o — MULTIPANEL-01 fix. Registered as the LAST statement
+            # inside this transaction.atomic() block (after Trade/Ledger/
+            # BrokerLedger/LiquidityLedger writes, Position delete, balance/
+            # equity update, and the risk/intelligence engine calls) so a
+            # rollback caused by ANY of those correctly discards this
+            # callback — Django's own on_commit guarantee, not
+            # reimplemented here (see test_rollback_no_publish_on_close).
+            # Covers writers #3-7 from the O.6c-1n writer map in one place:
+            # manual close (_order_close), Close All (N× _order_close),
+            # SL/TP (_check_tp_sl), stopout (_do_stopout), retail
+            # liquidation (_do_retail_liquidation) — all four already
+            # converge on this single function, so one call site here is
+            # correct and avoids duplicate events per O.6c-1o's own
+            # instruction to "emitir una sola vez en el punto común".
+            from . import ws_events
+            transaction.on_commit(lambda: ws_events.publish_position_changed(
+                self._db_account_id, action=ws_events.ACTION_CLOSE,
+                position_id=pos_mem["id"], symbol=pos_mem["symbol"],
+                side=pos_mem["side"], qty=pos_mem["qty"], avg=pos_mem["avg"],
+                close_px=close_px, realized_pnl=realized_pnl, reason=reason,
+                trade_id=trade.id, new_balance=float(_safe_balance),
+                new_status=final_status, ts=int(time.time()),
+            ))
 
         log.info("[db_close] OK pos_id=%r trade_id=%r realized=%.4f balance=%.2f status=%s",
                  pos_mem["id"], trade.id, realized_pnl, float(_safe_balance), final_status)

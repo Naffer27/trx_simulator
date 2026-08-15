@@ -1063,29 +1063,29 @@ def scan_positions_task(self) -> dict:
                     # Last close carries the authoritative final status
                     ws_status = effective_final_status if (i == n - 1) else rec["result"].get("new_status", "Activo")
 
+                    # O.6c-1o — MULTIPANEL-01 fix. Generalized to the
+                    # position.changed contract (ws_events.py) — same
+                    # payload shape as before, action="close" is new.
+                    # publish_position_changed() is itself fail-open
+                    # (never raises), so the surrounding try/except here
+                    # is defensive-in-depth, not load-bearing.
                     try:
-                        from asgiref.sync import async_to_sync as _a2s
-                        from channels.layers import get_channel_layer as _gcl
-                        _cl = _gcl()
-                        if _cl:
-                            _a2s(_cl.group_send)(
-                                f"account_{account_id}",
-                                {
-                                    "type":         "execution.close",
-                                    "position_id":  rec["pos_id"],
-                                    "symbol":       rec["symbol"],
-                                    "side":         rec["side"],
-                                    "qty":          rec["qty"],
-                                    "avg":          rec["avg"],
-                                    "close_px":     rec["close_px"],
-                                    "realized_pnl": rec["realized"],
-                                    "reason":       reason_all,
-                                    "trade_id":     rec["result"].get("trade_id"),
-                                    "new_balance":  rec["result"]["new_balance"],
-                                    "new_status":   ws_status,
-                                    "ts":           int(_time.time()),
-                                },
-                            )
+                        from . import ws_events
+                        ws_events.publish_position_changed(
+                            account_id, action=ws_events.ACTION_CLOSE,
+                            position_id=rec["pos_id"],
+                            symbol=rec["symbol"],
+                            side=rec["side"],
+                            qty=rec["qty"],
+                            avg=rec["avg"],
+                            close_px=rec["close_px"],
+                            realized_pnl=rec["realized"],
+                            reason=reason_all,
+                            trade_id=rec["result"].get("trade_id"),
+                            new_balance=rec["result"]["new_balance"],
+                            new_status=ws_status,
+                            ts=int(_time.time()),
+                        )
                     except Exception as _ws_exc:
                         logger.warning("[daemon/%s] WS notify failed pos=%s: %s",
                                        reason_all, rec["pos_id"], _ws_exc)
@@ -1198,31 +1198,27 @@ def scan_positions_task(self) -> dict:
             running_balance = result["new_balance"]
             closed += 1
 
-            # Step 4 — push live WS notification to any connected consumer for this account
+            # Step 4 — push live WS notification to any connected consumer
+            # for this account. O.6c-1o — generalized to the
+            # position.changed contract (ws_events.py), action="close".
             try:
-                from asgiref.sync import async_to_sync as _a2s
-                from channels.layers import get_channel_layer as _gcl
-                _cl = _gcl()
-                if _cl:
-                    _a2s(_cl.group_send)(
-                        f"account_{account_id}",
-                        {
-                            "type":         "execution.close",
-                            "position_id":  pos.id,
-                            "symbol":       pos.symbol,
-                            "side":         pos.side.lower(),
-                            "qty":          float(pos.qty),
-                            "avg":          float(pos.avg_price),
-                            "close_px":     close_px_r,
-                            "realized_pnl": realized,
-                            "reason":       reason,
-                            "trade_id":     result.get("trade_id"),
-                            "new_balance":  result["new_balance"],
-                            "new_status":   result.get("new_status", "Activo"),
-                            "ts":           int(_time.time()),
-                        },
-                    )
-                    logger.debug("[daemon] WS notify sent account_%s pos=%s", account_id, pos.id)
+                from . import ws_events
+                ws_events.publish_position_changed(
+                    account_id, action=ws_events.ACTION_CLOSE,
+                    position_id=pos.id,
+                    symbol=pos.symbol,
+                    side=pos.side.lower(),
+                    qty=float(pos.qty),
+                    avg=float(pos.avg_price),
+                    close_px=close_px_r,
+                    realized_pnl=realized,
+                    reason=reason,
+                    trade_id=result.get("trade_id"),
+                    new_balance=result["new_balance"],
+                    new_status=result.get("new_status", "Activo"),
+                    ts=int(_time.time()),
+                )
+                logger.debug("[daemon] WS notify sent account_%s pos=%s", account_id, pos.id)
             except Exception as _ws_exc:
                 logger.warning("[daemon] WS notify failed pos=%s: %s", pos.id, _ws_exc)
 

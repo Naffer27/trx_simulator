@@ -1071,6 +1071,40 @@ class PositionAdmin(admin.ModelAdmin):
     readonly_fields = ("opened_at",)
     list_editable = ("sl", "tp")
 
+    # O.6c-1o — MULTIPANEL-01 fix, writer #10 (Django Admin) from the
+    # O.6c-1n writer map: Admin was the only Position writer with zero
+    # WS propagation, not even a stub. Both changeform_view and
+    # changelist_view (the list_editable sl/tp inline-save path) wrap
+    # this call in their own transaction.atomic() (Django's own
+    # ModelAdmin — verified, not assumed), so transaction.on_commit()
+    # here is required, not just idiomatic: publishing directly would
+    # fire even if a later step in that same admin transaction rolled
+    # back the save.
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        from django.db import transaction
+        from . import ws_events
+        account_id, position_id, symbol = obj.account_id, obj.pk, obj.symbol
+        transaction.on_commit(lambda: ws_events.publish_position_changed(
+            account_id, action=ws_events.ACTION_UPDATE,
+            position_id=position_id, symbol=symbol,
+        ))
+
+    # Same transaction.atomic() rationale as save_model above. Per O.6c-1o's
+    # explicit instruction: account_id/position_id/symbol are captured
+    # BEFORE delete_model() removes the row — obj.pk/obj.account_id are
+    # None afterward, and the lambda would otherwise close over the
+    # post-delete (empty) values.
+    def delete_model(self, request, obj):
+        from django.db import transaction
+        from . import ws_events
+        account_id, position_id, symbol = obj.account_id, obj.pk, obj.symbol
+        super().delete_model(request, obj)
+        transaction.on_commit(lambda: ws_events.publish_position_changed(
+            account_id, action=ws_events.ACTION_CLOSE,
+            position_id=position_id, symbol=symbol,
+        ))
+
 
 # ─────────────────────────────────────────────
 # Trade
