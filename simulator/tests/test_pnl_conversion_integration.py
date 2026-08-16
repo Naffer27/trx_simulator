@@ -34,6 +34,19 @@ def _run(coro):
     return asyncio.run(coro)
 
 
+class _FakeFeed:
+    """O.6c-1q/O.6c-1s — stands in for self._feed (get_feed_manager()),
+    the price authority _unrealized_pnl_total()/_positions_snapshot() now
+    read from instead of self._bid_state/close_price()."""
+
+    def __init__(self, bid, ask):
+        self._bid, self._ask = bid, ask
+
+    def has_price(self, symbol): return True
+    def last_bid(self, symbol): return self._bid
+    def last_ask(self, symbol): return self._ask
+
+
 def _bare_consumer() -> TradingConsumer:
     c = TradingConsumer.__new__(TradingConsumer)
     c._db_account_id = None  # no DB — pure in-memory PnL only
@@ -129,13 +142,8 @@ class UnrealizedPnlWsTests(TestCase):
         # O.6c-1q — _unrealized_pnl_total() now sources price from
         # self._feed (get_feed_manager(), the shared global singleton),
         # never self._bid_state/close_price() — see O.6c-1p/O.6c-1q.
-        class _FakeFeed:
-            def has_price(self, symbol): return True
-            def last_bid(self, symbol): return 155.100
-            def last_ask(self, symbol): return 155.120
-
         c = _bare_consumer()
-        c._feed = _FakeFeed()
+        c._feed = _FakeFeed(bid=155.100, ask=155.120)
         c._positions = [{"id": 1, "symbol": "USD/JPY", "side": "buy", "qty": 1.0, "avg": 155.000}]
         equity = c.account["balance"] + c._unrealized_pnl_total()
         self.assertAlmostEqual(equity, 10000.0 + 64.47, places=2)
@@ -146,17 +154,20 @@ class PositionsSnapshotBackendPnlTests(TestCase):
     "positions" WS snapshot, per FASE 5."""
 
     def test_snapshot_includes_converted_pnl_for_usd_jpy(self):
+        # O.6c-1s — _positions_snapshot() now sources price from
+        # self._feed_close_price() (self._feed), never close_price()/
+        # self._bid_state — see O.6c-1r/O.6c-1s.
         c = _bare_consumer()
+        c._feed = _FakeFeed(bid=155.100, ask=155.120)
         c._positions = [{"id": 1, "symbol": "USD/JPY", "side": "buy", "qty": 1.0, "avg": 155.000}]
-        c.close_price = lambda sym, side: 155.100
         snap = c._positions_snapshot()
         self.assertEqual(len(snap), 1)
         self.assertAlmostEqual(snap[0]["pnl"], 64.47, places=2)
 
     def test_snapshot_pnl_never_none_on_success(self):
         c = _bare_consumer()
+        c._feed = _FakeFeed(bid=1.101, ask=1.102)
         c._positions = [{"id": 1, "symbol": "EUR/USD", "side": "buy", "qty": 1.0, "avg": 1.1}]
-        c.close_price = lambda sym, side: 1.101
         snap = c._positions_snapshot()
         self.assertIsNotNone(snap[0]["pnl"])
 

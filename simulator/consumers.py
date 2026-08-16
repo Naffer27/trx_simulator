@@ -1813,10 +1813,26 @@ class TradingConsumer(AsyncWebsocketConsumer):
             await self.send_json({"type": "warn", "message": "order_close_not_found"})
             return
 
-        # Step B — compute close values BEFORE any memory mutation
-        sym      = found_pos["symbol"]
-        dec      = step_decimals_for(sym)[1]
-        close_px = round(self.close_price(sym, found_pos["side"]), dec)
+        # Step B — compute close values BEFORE any memory mutation.
+        # O.6c-1s — price authority: self._feed_close_price() (FeedManager
+        # global, O.6c-1q), never close_price()/self._bid_state — see
+        # O.6c-1r's finding that the EXECUTION price here was still
+        # vulnerable to the O.6c-1p fallback. Fail-safe: no fresh price
+        # -> reject the close entirely, before any DB write, before any
+        # memory mutation — the position stays open, exactly as if this
+        # message had never arrived.
+        sym = found_pos["symbol"]
+        dec = step_decimals_for(sym)[1]
+        _raw_close_px = self._feed_close_price(sym, found_pos["side"])
+        if _raw_close_px is None:
+            log.warning("[close] REJECTED pos id=%r sym=%r — no fresh FeedManager price "
+                        "(fail-safe, no synthetic fallback)", found_pos["id"], sym)
+            await self.send_json({
+                "type": "error", "code": "price_unavailable",
+                "message": "no_se_pudo_cerrar_precio_no_disponible",
+            })
+            return
+        close_px = round(_raw_close_px, dec)
         realized = self._realized_pnl_for(found_pos, close_px)
         new_balance = self.account["balance"] + realized
         remaining_floating = (
@@ -1981,13 +1997,21 @@ class TradingConsumer(AsyncWebsocketConsumer):
         so the frontend does not need its own PnL formula to be correct for
         USD/JPY. Never fails the whole snapshot on one bad position — a
         per-position pnl_engine error degrades that item's "pnl" to None,
-        never a fabricated number."""
+        never a fabricated number.
+
+        O.6c-1s — price authority: self._feed_close_price() (FeedManager
+        global, O.6c-1q), never close_price()/self._bid_state. O.6c-1r
+        found this row-level "pnl" field was still computed via the
+        per-connection cache — the exact same fallback-to-base_price_for()
+        bug O.6c-1p/O.6c-1q fixed for the header, just not here yet. No
+        fresh price -> "pnl": None, same degrade path as an exception —
+        never a synthetic value."""
         out = []
         for p in self._positions:
             d = dict(p)
             try:
-                px = self.close_price(p["symbol"], p["side"])
-                d["pnl"] = round(self._unrealized_pnl_for(p, px), 2)
+                px = self._feed_close_price(p["symbol"], p["side"])
+                d["pnl"] = round(self._unrealized_pnl_for(p, px), 2) if px is not None else None
             except Exception as exc:
                 log.debug("[positions_snapshot] pnl calc failed for pos=%s: %r", p.get("id"), exc)
                 d["pnl"] = None
@@ -2201,7 +2225,20 @@ class TradingConsumer(AsyncWebsocketConsumer):
         for p in list(self._positions):
             sym  = p["symbol"]
             dec  = step_decimals_for(sym)[1]
-            cpx  = round(self.close_price(sym, p["side"]), dec)
+            # O.6c-1s — price authority: self._feed_close_price() (FeedManager
+            # global, O.6c-1q), never close_price()/self._bid_state — see
+            # O.6c-1r. Fail-safe: no fresh price -> refuse to liquidate THIS
+            # position (never a fictitious price/loss) — it stays open,
+            # collected into failed_positions exactly like a DB-close
+            # exception already is below, so the account's status/other
+            # positions are unaffected and the next tick retries it.
+            _raw_cpx = self._feed_close_price(sym, p["side"])
+            if _raw_cpx is None:
+                log.warning("[stopout] SKIPPED pos %s sym=%s — no fresh FeedManager price "
+                            "(fail-safe, no synthetic fallback)", p["id"], sym)
+                failed_positions.append(p)
+                continue
+            cpx  = round(_raw_cpx, dec)
             realized = self._realized_pnl_for(p, cpx)
             new_balance = running_balance + realized
             fp_p = self._unrealized_pnl_for(p, cpx)
@@ -2314,7 +2351,18 @@ class TradingConsumer(AsyncWebsocketConsumer):
         for p in list(self._positions):
             sym  = p["symbol"]
             dec  = step_decimals_for(sym)[1]
-            cpx  = round(self.close_price(sym, p["side"]), dec)
+            # O.6c-1s — same price-authority fail-safe as _do_stopout()
+            # above: self._feed_close_price() (FeedManager global), never
+            # close_price()/self._bid_state — see O.6c-1r. No fresh price
+            # -> refuse to liquidate this position (never a fictitious
+            # price/loss); it stays open via failed_positions.
+            _raw_cpx = self._feed_close_price(sym, p["side"])
+            if _raw_cpx is None:
+                log.warning("[margin_call] SKIPPED pos %s sym=%s — no fresh FeedManager price "
+                            "(fail-safe, no synthetic fallback)", p["id"], sym)
+                failed_positions.append(p)
+                continue
+            cpx  = round(_raw_cpx, dec)
             realized = self._realized_pnl_for(p, cpx)
             new_balance = running_balance + realized
             fp_p = self._unrealized_pnl_for(p, cpx)
