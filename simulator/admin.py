@@ -1089,6 +1089,11 @@ class PositionAdmin(admin.ModelAdmin):
             account_id, action=ws_events.ACTION_UPDATE,
             position_id=position_id, symbol=symbol,
         ))
+        # O.6c-1v — OPEN POSITION FEED COVERAGE, writer #8 (Admin
+        # create/edit). mark_position_symbol() is sync/thread-safe — safe
+        # to call directly from this on_commit callback.
+        from market_data.feeds import get_feed_manager
+        transaction.on_commit(lambda: get_feed_manager().mark_position_symbol(symbol))
 
     # Same transaction.atomic() rationale as save_model above. Per O.6c-1o's
     # explicit instruction: account_id/position_id/symbol are captured
@@ -1104,6 +1109,12 @@ class PositionAdmin(admin.ModelAdmin):
             account_id, action=ws_events.ACTION_CLOSE,
             position_id=position_id, symbol=symbol,
         ))
+        # O.6c-1v — OPEN POSITION FEED COVERAGE, writer #8 (Admin delete).
+        # sync_position_symbol_from_db() re-derives from DB — correctly
+        # keeps the feed alive if another Position on the same symbol
+        # still exists.
+        from market_data.feeds import get_feed_manager
+        transaction.on_commit(lambda: get_feed_manager().sync_position_symbol_from_db(symbol))
 
 
 # ─────────────────────────────────────────────

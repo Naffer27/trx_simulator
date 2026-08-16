@@ -93,6 +93,11 @@ class _FakeFeed:
     def last_ask(self, symbol):
         return self._ask[symbol]
 
+    # O.6c-1v — no-op stand-ins, see test_close_path_concurrency_parity.py's
+    # identical addition for the full rationale.
+    def mark_position_symbol(self, symbol): pass
+    def sync_position_symbol_from_db(self, symbol): pass
+
 
 def _bare_consumer(account_id) -> TradingConsumer:
     """Same minimal-panel pattern already established in

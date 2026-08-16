@@ -39,6 +39,16 @@ SIM_LIVE_RETRY_SECS  = int(os.getenv("SIM_LIVE_RETRY_SECS",  "60"))
 # How often (seconds) to resync sim price to real market while in sim mode
 SIM_RESYNC_INTERVAL  = int(os.getenv("SIM_RESYNC_INTERVAL",  "30"))
 
+# O.6c-1v — how often the position-backed feed keepalive re-derives, from
+# Position (the DB authority), which symbols must have a running feed task
+# regardless of chart-subscriber count. Kept comfortably under
+# _PRICE_CACHE_TTL (60s, below) so a symbol whose only chart subscriber
+# just disconnected never has its Redis price go stale before this catches
+# it and keeps the feed task alive.
+POSITION_FEED_RECONCILE_INTERVAL_SECONDS = float(
+    os.getenv("POSITION_FEED_RECONCILE_INTERVAL", "15")
+)
+
 
 # ─── symbol helpers ────────────────────────────────────────────────────────────
 # Thin wrappers — all instrument parameters sourced from the symbol registry.
@@ -146,6 +156,20 @@ class FeedManager:
         # always correctly treated as stale/absent by has_price(), never
         # as fresh.
         self._price_ts: dict[str, float] = {}
+        # O.6c-1v — OPEN POSITION FEED COVERAGE. Symbols with at least one
+        # currently-open Position, as last derived from the DB (the sole
+        # authority — see sync_position_symbol_from_db()/mark_position_symbol()/
+        # _position_feed_reconcile_once() below). A symbol in this set keeps
+        # its feed task alive even with zero chart subscribers — see
+        # unsubscribe()'s guard. Guarded by self._lock (below), same as the
+        # four price dicts, since it's read/written from both the asyncio
+        # event loop and database_sync_to_async threadpool threads.
+        self._position_symbols: set[str] = set()
+        # O.6c-1v — guards ensure_position_feed_reconciliation_started()
+        # against starting its background loop more than once per process,
+        # same idempotency contract as spread_config_cache's
+        # _background_task_started (SPREAD-03) — reused pattern, not a new one.
+        self._position_reconcile_started: bool = False
         # PANEL-02 — guards all reads/writes of the four dicts above. This
         # class's own feed tasks (_broadcast/_resync_price) run on the
         # asyncio event loop thread, but has_price()/last_price()/
@@ -204,6 +228,139 @@ class FeedManager:
         with self._lock:
             return self._asks.get(symbol, _fallback_price(symbol) + _spread(symbol) / 2)
 
+    # ── O.6c-1v — open position feed coverage ──
+    #
+    # A symbol's feed task must stay alive while EITHER of two independent
+    # reference kinds is non-zero: chart_subscribers (self._counts, the
+    # pre-existing mechanism above) OR open_position_references
+    # (self._position_symbols, below). Position is the DB authority for
+    # the second kind — never a connection-scoped counter, since a
+    # Position write can commit from three different processes (this
+    # Daphne worker's own WS consumer, Django Admin in the same process,
+    # or the Celery daemon in a SEPARATE process that never shares this
+    # FeedManager instance's memory at all). See
+    # docs — O.6c-1u section 9 already established Celery cannot reach
+    # this singleton directly; _position_feed_reconcile_once() below is
+    # what makes Celery-driven closes (and a post-restart Daphne process
+    # that has open Positions from before it existed) correctly reflected
+    # here, without depending on any single writer's event firing.
+
+    def has_position_ref(self, symbol: str) -> bool:
+        """True if *symbol* was last known (via mark/unmark/sync/reconcile
+        below) to have at least one open Position — independent of chart
+        subscriber count."""
+        with self._lock:
+            return symbol in self._position_symbols
+
+    def mark_position_symbol(self, symbol: str) -> None:
+        """Record that *symbol* has (at least) one open Position. Sync,
+        thread-safe (self._lock) — callable directly from a
+        database_sync_to_async transaction body (consumers.py) or a plain
+        sync Django Admin method, no event loop required. Idempotent —
+        safe to call on every open/merge, never needs a matching count."""
+        with self._lock:
+            self._position_symbols.add(symbol)
+
+    def unmark_position_symbol(self, symbol: str) -> None:
+        """Inverse of mark_position_symbol() — used only by the
+        reconciliation loop below, which has already confirmed via a
+        fresh DB read that no open Position remains for *symbol*."""
+        with self._lock:
+            self._position_symbols.discard(symbol)
+
+    def sync_position_symbol_from_db(self, symbol: str) -> None:
+        """O.6c-1v — call right after a Position close/delete for
+        *symbol* commits (same process: consumers.py's
+        _db_close_position_atomic, admin.py's PositionAdmin.delete_model).
+        Re-derives presence from Position.objects.filter(symbol=...).exists()
+        rather than decrementing a counter — deliberately immune to
+        double-decrement/missed-decrement bugs across the many close paths
+        (manual, Close All, SL, TP, stopout, retail liquidation) that all
+        converge on _db_close_position_atomic, and correctly keeps the
+        symbol marked when a SECOND open position on the same symbol is
+        still open (test scenario #5)."""
+        from simulator.models import Position
+        still_open = Position.objects.filter(symbol=symbol).exists()
+        with self._lock:
+            if still_open:
+                self._position_symbols.add(symbol)
+            else:
+                self._position_symbols.discard(symbol)
+
+    async def _position_feed_reconcile_once(self) -> None:
+        """O.6c-1v — the DB-authoritative backstop. Re-reads the full set
+        of symbols with an open Position and reconciles self._position_symbols
+        (and, for any newly-discovered symbol, starts its feed task) against
+        it. This is what covers: (a) Celery-driven closes — a different
+        process, can never call mark/unmark/sync above directly; (b) a
+        freshly-restarted Daphne process that has pre-existing open
+        Positions from before it started — the first call after restart
+        naturally discovers them, since self._position_symbols starts
+        empty; (c) a self-healing backstop if any same-process call site
+        above were ever missed. Runs on its own periodic timer
+        (POSITION_FEED_RECONCILE_INTERVAL_SECONDS), entirely decoupled
+        from the tick loop — never an added query per market tick."""
+        from channels.db import database_sync_to_async
+        from channels.layers import get_channel_layer
+        from simulator.models import Position
+
+        def _open_symbols() -> set[str]:
+            return set(Position.objects.values_list("symbol", flat=True).distinct())
+
+        db_symbols = await database_sync_to_async(_open_symbols)()
+        with self._lock:
+            previously_marked = set(self._position_symbols)
+        to_add    = db_symbols - previously_marked
+        to_remove = previously_marked - db_symbols
+        if not to_add and not to_remove:
+            return
+
+        channel_layer = get_channel_layer()
+        for sym in sorted(to_add):
+            self.mark_position_symbol(sym)
+            if channel_layer is not None:
+                self._ensure_running(sym, channel_layer)
+            log.info("[feed] position-backed keepalive started for %s (reconciliation)", sym)
+        for sym in sorted(to_remove):
+            self.unmark_position_symbol(sym)
+            if self._counts.get(sym, 0) <= 0:
+                self._stop(sym)
+                log.info(
+                    "[feed] position-backed keepalive released for %s "
+                    "(no open positions, no chart subscribers)", sym,
+                )
+
+    async def ensure_position_feed_reconciliation_started(self) -> None:
+        """O.6c-1v — idempotent; starts the ONE process-wide periodic
+        reconciliation task, at most once, no matter how many WebSocket
+        connections call this (mirrors spread_config_cache's
+        ensure_background_refresh_started() / SPREAD-03 exactly — reused
+        pattern, not reinvented: flag check + set with no `await` between
+        them, race-free on a single-threaded asyncio event loop). Performs
+        one immediate pass before returning, so a symbol with a
+        pre-existing open Position and no chart subscriber gets its feed
+        task back within this call, not after a full interval."""
+        if self._position_reconcile_started:
+            return
+        self._position_reconcile_started = True
+        await self._position_feed_reconcile_once()
+
+        async def _loop():
+            while True:
+                await asyncio.sleep(POSITION_FEED_RECONCILE_INTERVAL_SECONDS)
+                try:
+                    await self._position_feed_reconcile_once()
+                except Exception as exc:
+                    log.error("[feed] position reconcile failed (non-fatal): %r", exc)
+
+        asyncio.create_task(_loop())
+
+    def reset_position_tracking_for_tests(self) -> None:
+        """Test-only — mirrors spread_config_cache.reset_for_tests()."""
+        with self._lock:
+            self._position_symbols.clear()
+        self._position_reconcile_started = False
+
     async def subscribe(self, symbol: str, channel_layer, channel_name: str) -> None:
         await channel_layer.group_add(self.group_for(symbol), channel_name)
         self._counts[symbol] = self._counts.get(symbol, 0) + 1
@@ -213,7 +370,14 @@ class FeedManager:
         await channel_layer.group_discard(self.group_for(symbol), channel_name)
         count = max(0, self._counts.get(symbol, 1) - 1)
         self._counts[symbol] = count
-        if count <= 0:
+        # O.6c-1v — a symbol with an open Position keeps its feed task
+        # alive even at zero chart subscribers; only actually stop when
+        # BOTH reference kinds are empty. has_position_ref() reflects the
+        # last DB-derived state (kept current by mark_position_symbol/
+        # sync_position_symbol_from_db at every same-process open/close,
+        # and self-healed by the periodic reconciliation backstop) — never
+        # a fresh query on this hot path.
+        if count <= 0 and not self.has_position_ref(symbol):
             self._stop(symbol)
 
     # ── internal ──

@@ -607,6 +607,17 @@ class TradingConsumer(AsyncWebsocketConsumer):
         except Exception as exc:
             log.debug("[connect] spread config cache warm-up failed (non-fatal): %r", exc)
 
+        # O.6c-1v — OPEN POSITION FEED COVERAGE. Idempotent, same pattern
+        # as spread_config_cache above — starts the one process-wide
+        # position-feed reconciliation loop at most once. self._feed isn't
+        # assigned yet at this point in connect() (a few lines below), so
+        # this uses get_feed_manager() directly — same singleton either
+        # way. Must never block or fail the handshake.
+        try:
+            await get_feed_manager().ensure_position_feed_reconciliation_started()
+        except Exception as exc:
+            log.debug("[connect] position feed reconciliation warm-up failed (non-fatal): %r", exc)
+
         # --- Estado inicial (memoria) ---
         self.symbol = "EUR/USD"
         self.timeframe = normalize_tf(q_tf_raw or "1m")
@@ -3515,6 +3526,15 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 position_id=position_id, symbol=symbol, side=side, qty=float(qty),
                 new_balance=float(_auth_balance),
             ))
+            # O.6c-1v — OPEN POSITION FEED COVERAGE, writers #1/#2 (new
+            # open / netting merge) from the same writer map O.6c-1o used.
+            # Registered as its own on_commit (not folded into the
+            # ws_events lambda above) so a failure in one callback can
+            # never prevent the other from running. mark_position_symbol()
+            # is sync and thread-safe — safe to call from the on_commit
+            # callback, which Django runs synchronously right here in this
+            # same database_sync_to_async thread.
+            transaction.on_commit(lambda: self._feed.mark_position_symbol(symbol))
 
         log.info("[db_open] pos_id=%s symbol=%s side=%s qty=%s merged=%s balance=%.4f",
                  position_id, symbol, side, qty, merged, float(_auth_balance))
@@ -3901,6 +3921,14 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 trade_id=trade.id, new_balance=float(_safe_balance),
                 new_status=final_status, ts=int(time.time()),
             ))
+            # O.6c-1v — OPEN POSITION FEED COVERAGE, writers #3-7 (manual
+            # close, Close All, SL, TP, stopout, retail liquidation — all
+            # four call sites of this function). sync_position_symbol_from_db
+            # re-derives from DB rather than decrementing, so a second open
+            # position on the same symbol correctly keeps the feed alive
+            # (test scenario #5). Own on_commit, same isolation rationale
+            # as _db_open_position_atomic's mark_position_symbol above.
+            transaction.on_commit(lambda: self._feed.sync_position_symbol_from_db(pos_mem["symbol"]))
 
         log.info("[db_close] OK pos_id=%r trade_id=%r realized=%.4f balance=%.2f status=%s",
                  pos_mem["id"], trade.id, realized_pnl, float(_safe_balance), final_status)

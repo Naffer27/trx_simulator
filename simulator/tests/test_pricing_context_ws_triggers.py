@@ -38,6 +38,10 @@ class _FakeFeed:
     def has_price(self, symbol): return True
     def last_bid(self, symbol): return 1.10000
     def last_ask(self, symbol): return 1.10020
+    # O.6c-1v — no-op stand-ins, see test_close_path_concurrency_parity.py's
+    # identical addition for the full rationale.
+    def mark_position_symbol(self, symbol): pass
+    def sync_position_symbol_from_db(self, symbol): pass
 
 
 def _bare_consumer(**overrides) -> TradingConsumer:

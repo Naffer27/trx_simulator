@@ -75,6 +75,11 @@ class _FakeFeed:
     def has_price(self, symbol): return True
     def last_bid(self, symbol): return 1.1000
     def last_ask(self, symbol): return 1.1000
+    # O.6c-1v — _db_open/_db_close_position_atomic's on_commit callbacks
+    # call these directly on self._feed; no-ops here since this file's
+    # own assertions are unrelated to feed keepalive tracking.
+    def mark_position_symbol(self, symbol): pass
+    def sync_position_symbol_from_db(self, symbol): pass
 
 
 def _consumer(account_id, balance, positions=None, status="Activo",
