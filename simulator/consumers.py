@@ -978,7 +978,19 @@ class TradingConsumer(AsyncWebsocketConsumer):
         )
         await self.send_json({"type": "tick", "symbol": symbol, "bid": bid, "ask": ask, "time": ts})
         await self._on_tick(symbol, mid, volume=0.0, ts=ts)
-        await self._check_tp_sl(symbol, bid, ask)
+        # O.6c-1aa — UNIFIED RAW EXECUTION. _check_tp_sl() (live WS SL/TP)
+        # now evaluates against raw_bid/raw_ask — the SAME values just
+        # validated by _validate_quote_values() a few lines above, before
+        # broker_price() ever ran — never the client/marked-up bid/ask.
+        # This is the one call-site change that unifies WS SL/TP with
+        # Celery's scan_positions_task (already RAW since O.6c-1w) and
+        # with every other close path (_order_close/_do_stopout/
+        # _do_retail_liquidation, already RAW since O.6c-1s). Closes
+        # O.6c-1u's documented "WS = client, Celery = RAW" inconsistency.
+        # _check_tp_sl()'s own body is unchanged — its side convention
+        # (BUY exits at bid, SELL exits at ask) was already correct, only
+        # the price authority passed in was wrong.
+        await self._check_tp_sl(symbol, raw_bid, raw_ask)
         await self._recalc_account_and_push()
 
     async def candle_kline(self, event: dict):
@@ -1175,8 +1187,34 @@ class TradingConsumer(AsyncWebsocketConsumer):
         return self._ask_state.get(symbol, base_price_for(symbol))
 
     def exec_price(self, symbol: str, side: str) -> float:
-        """Fill price when OPENING: buy fills at ask, sell fills at bid."""
+        """Fill price when OPENING: buy fills at ask, sell fills at bid.
+
+        O.6c-1aa — no longer the financial execution authority. Reads
+        self._bid_state/self._ask_state (client/marked-up, O.6c-1u's
+        documented raw-vs-markup split) — kept defined, unused by any
+        money-moving path in this file as of O.6c-1aa (see
+        _raw_exec_price() below), for any future non-financial/display
+        use. NO call site in this file may use this for a Position,
+        Trade, LedgerEntry, or balance decision."""
         return self.get_ask(symbol) if side == "buy" else self.get_bid(symbol)
+
+    def _raw_exec_price(self, symbol: str, side: str) -> "float | None":
+        """O.6c-1aa — the single financial authority for OPENING a
+        position: BUY -> raw validated ask, SELL -> raw validated bid
+        (the side a real market order actually crosses). Mirrors
+        _feed_close_price()'s (O.6c-1w) fail-safe contract exactly —
+        routes through self._feed.get_validated_quote(symbol), the same
+        structural + Capa A plausibility gate — and returns None on ANY
+        failure (absent/stale/cross-symbol/malformed), never
+        base_price_for(), never self._bid_state/self._ask_state.
+        Side convention is the OPEN-side mirror of _feed_close_price()'s
+        CLOSE-side convention: opening a BUY crosses ask; closing a BUY
+        crosses bid — same symbol, same validated quote, opposite side
+        of the same round trip."""
+        quote = self._feed.get_validated_quote(symbol)
+        if quote is None:
+            return None
+        return quote.ask if side == "buy" else quote.bid
 
     def close_price(self, symbol: str, side: str) -> float:
         """Fill price when CLOSING: buy closes at bid, sell closes at ask."""
@@ -1285,6 +1323,25 @@ class TradingConsumer(AsyncWebsocketConsumer):
             await self.send_json({"type":"error","code":"invalid_order","message":"orden_invalida"})
             return
 
+        # O.6c-1aa — UNIFIED RAW EXECUTION. self._raw_exec_price() is now
+        # the single financial authority for this order — SL/TP
+        # validation, the margin guard, and the price ultimately written
+        # to Position.avg_price all read this SAME value, fetched ONCE.
+        # Never self.exec_price()/self._bid_state/self._ask_state
+        # (client/marked-up) for any of these. Re-checked here (side is
+        # now known, unlike the symbol-only gate above) — None on any
+        # invalid/stale/cross-symbol quote, same fail-safe contract as
+        # _order_close() (O.6c-1w): reject before the rate limiter,
+        # margin guard, risk engine, or DB. Zero Position, zero Trade,
+        # zero LedgerEntry, zero balance/margin change.
+        raw_exec_px = self._raw_exec_price(sym, side)
+        if raw_exec_px is None:
+            await self.send_json({
+                "type": "error", "code": "price_unavailable",
+                "message": "no_se_pudo_abrir_precio_no_disponible",
+            })
+            return
+
         # PANEL-04 — server-side SL/TP validation. Never trust the
         # frontend: a crafted WS payload can send NaN/Infinity/negative/
         # wrong-direction values regardless of what the <input
@@ -1292,7 +1349,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
         # minimum-distance policy is enforced — see _validate_sl_tp's
         # docstring for why.
         _sl_tp_ok, _sl_tp_code, _sl_tp_msg = _validate_sl_tp(
-            side, sl, tp, self.exec_price(sym, side),
+            side, sl, tp, raw_exec_px,
         )
         if not _sl_tp_ok:
             await self.send_json({"type": "error", "code": _sl_tp_code, "message": _sl_tp_msg})
@@ -1311,7 +1368,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
         mg_now = self._margin_used_total()
         _spec  = get_spec(sym)
         _guard_ok, _guard_code, _guard_msg, _guard_details = _compute_pretrade_margin_guard(
-            sym, qty, self.exec_price(sym, side), eq_now, mg_now,
+            sym, qty, raw_exec_px, eq_now, mg_now,
             self.account, _spec.max_leverage, _spec.contract_size,
             max_margin_per_trade_pct=self.account.get("max_margin_per_trade_pct", _DEFAULT_MAX_MARGIN_PER_TRADE_PCT),
             max_total_margin_pct=self.account.get("max_total_margin_pct", _DEFAULT_MAX_TOTAL_MARGIN_PCT),
@@ -1376,7 +1433,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
             })
 
         dec = step_decimals_for(sym)[1]
-        px_exec = round(self.exec_price(sym, side), dec)
+        px_exec = round(raw_exec_px, dec)
 
         # RISK-02 — broker-wide risk limits are evaluated INSIDE
         # _db_open_position_atomic below (step 8.5, under BrokerRiskLock),
@@ -2021,7 +2078,14 @@ class TradingConsumer(AsyncWebsocketConsumer):
             return False, code
         account_lev = max(1, int(self.account.get("leverage", 50)))
         lev = max(1, min(account_lev, spec.max_leverage))
-        entry_px = self.exec_price(symbol, side)
+        # O.6c-1aa — same RAW validated authority as the rest of
+        # _order_new(), never self.exec_price() (client/marked-up).
+        # _order_new() already gates on this before calling here, so
+        # None should not occur in practice — still handled explicitly
+        # (fail-safe, never a synthetic estimate) for any other caller.
+        entry_px = self._raw_exec_price(symbol, side)
+        if entry_px is None:
+            return False, "price_unavailable"
         est_margin = abs(entry_px * qty * spec.contract_size) / lev
         equity = self.account["balance"] + self._unrealized_pnl_total()
         if est_margin > (equity - self._margin_used_total()):
@@ -3502,9 +3566,35 @@ class TradingConsumer(AsyncWebsocketConsumer):
                     )
 
             _commission_d = Decimal(str(commission)) if commission and commission > 0 else Decimal("0")
-            # Authoritative balance: deduct commission from the already-locked
-            # account row, not stale memory.
-            _auth_balance = account.balance - _commission_d
+
+            # O.6c-1aa — EXPLICIT SPREAD FEE. Computed BEFORE any balance
+            # mutation, from the exact same inputs (_effective_pips) and
+            # exact same calculate_spread_revenue() call the pre-O.6c-1aa
+            # code already used for BrokerLedger-only booking — formula
+            # unchanged (O.6c-1z's approved decision). _spread_fee_d is
+            # reused verbatim for BOTH the trader's LedgerEntry(EV_FEE)
+            # debit below and BrokerLedger(REV_SPREAD)'s amount — a
+            # single computed value feeding both writes guarantees exact
+            # parity by construction, never two independently-timed
+            # recomputations that could drift.
+            _spread_cfg     = _get_spread_config(symbol)
+            _base_pips      = float(_spread_cfg.spread_pips) if (_spread_cfg is not None and _spread_cfg.enabled) else 0.0
+            _markup_pips    = float(self.account.get("spread_pips", 0.0) or 0.0)
+            _effective_pips = _base_pips + _markup_pips
+            _spread_rev     = calculate_spread_revenue(symbol, float(qty), _effective_pips) if _effective_pips > 0 else 0.0
+            _spread_fee_d   = Decimal(str(_spread_rev)) if _spread_rev > 0 else Decimal("0")
+
+            # Authoritative balance: deduct commission AND the explicit
+            # spread fee from the already-locked account row, not stale
+            # memory. O.6c-1aa requirement: "NO permitir posición creada
+            # sin su fee correspondiente" — both trader-facing LedgerEntry
+            # writes below are MANDATORY, not wrapped in their own try/
+            # except or nested savepoint (unlike the BrokerLedger writes
+            # further down) — a failure here propagates to this method's
+            # outer transaction.atomic() exactly like Position.objects.
+            # create() earlier in this same method already does: Position
+            # + commission + spread fee + accounting roll back together.
+            _auth_balance = account.balance - _commission_d - _spread_fee_d
 
             if _commission_d > 0:
                 trader_ledger = LedgerEntry.objects.create(
@@ -3514,6 +3604,10 @@ class TradingConsumer(AsyncWebsocketConsumer):
                     balance_after=_auth_balance,
                     meta={"symbol": symbol, "side": side, "db_pos_id": position_id},
                 )
+                # BrokerLedger REV_COMMISSION — best-effort (same
+                # pre-existing isolation: a DB error here must never
+                # block the trade, since the trader's own charge above
+                # already committed to this transaction's write-set).
                 try:
                     BrokerLedger.objects.create(
                         revenue_type=BrokerLedger.REV_COMMISSION,
@@ -3526,39 +3620,54 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 except Exception as _bl_exc:
                     log.warning("[broker_ledger] commission insert failed pos=%s: %s", position_id, _bl_exc)
 
-            # BrokerLedger SPREAD — revenue = (base_pips + account_markup) × pip_size/2 × qty × contract_size
-            # Nested savepoint: spread revenue failure never rolls back the trader transaction.
-            _spread_cfg = _get_spread_config(symbol)
-            _base_pips     = float(_spread_cfg.spread_pips) if (_spread_cfg is not None and _spread_cfg.enabled) else 0.0
-            _markup_pips   = float(self.account.get("spread_pips", 0.0) or 0.0)
-            _effective_pips = _base_pips + _markup_pips
-            if _effective_pips > 0:
+            if _spread_fee_d > 0:
+                # O.6c-1aa — mandatory trader-facing charge, same
+                # EV_FEE choice LedgerEntry.EVENT_CHOICES already defines
+                # (reused — no migration needed). meta.fee_type="spread"
+                # distinguishes this from any other future EV_FEE use.
+                spread_fee_ledger = LedgerEntry.objects.create(
+                    account_id=self._db_account_id,
+                    event_type=LedgerEntry.EV_FEE,
+                    amount=-_spread_fee_d,
+                    balance_after=_auth_balance,
+                    meta={
+                        "fee_type": "spread", "symbol": symbol, "side": side,
+                        "db_pos_id": position_id, "effective_pips": _effective_pips,
+                        "base_pips": _base_pips, "account_markup_pips": _markup_pips,
+                    },
+                )
+                # BrokerLedger REV_SPREAD — best-effort, SAME nested-
+                # savepoint isolation the pre-O.6c-1aa code already used
+                # for this exact write (a DB error here must never
+                # corrupt the outer transaction) — but now linked via
+                # source_ledger to spread_fee_ledger, and using the SAME
+                # _spread_fee_d the trader was just charged — O.6c-1aa's
+                # explicit "trader spread fee debit == broker REV_SPREAD"
+                # requirement, guaranteed by construction, not by a
+                # second computation.
                 try:
                     with transaction.atomic():
-                        _spread_rev = calculate_spread_revenue(
-                            symbol, float(qty), _effective_pips,
+                        BrokerLedger.objects.create(
+                            revenue_type=BrokerLedger.REV_SPREAD,
+                            amount=_spread_fee_d,
+                            source_account_id=self._db_account_id,
+                            source_ledger=spread_fee_ledger,
+                            symbol=symbol,
+                            meta={
+                                "side": side,
+                                "db_pos_id": position_id,
+                                "spread_pips": _effective_pips,
+                                "base_pips": _base_pips,
+                                "account_markup_pips": _markup_pips,
+                            },
                         )
-                        if _spread_rev > 0:
-                            BrokerLedger.objects.create(
-                                revenue_type=BrokerLedger.REV_SPREAD,
-                                amount=Decimal(str(_spread_rev)),
-                                source_account_id=self._db_account_id,
-                                symbol=symbol,
-                                meta={
-                                    "side": side,
-                                    "db_pos_id": position_id,
-                                    "spread_pips": _effective_pips,
-                                    "base_pips": _base_pips,
-                                    "account_markup_pips": _markup_pips,
-                                },
-                            )
                         log.debug("[broker_ledger] spread pos=%s symbol=%s effective_pips=%.4f "
                                   "(base=%.4f markup=%.4f) rev=%.6f",
                                   position_id, symbol, _effective_pips, _base_pips, _markup_pips, _spread_rev)
                 except Exception as _sp_exc:
                     log.warning("[broker_ledger] spread insert failed pos=%s: %s", position_id, _sp_exc)
 
-            if _commission_d > 0:
+            if _commission_d > 0 or _spread_fee_d > 0:
                 account.balance = _auth_balance
                 account.save(update_fields=["balance"])
 
