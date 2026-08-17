@@ -136,28 +136,46 @@ class DashboardPnLContractSizeTests(TestCase):
         self.assertIn("*cs", block)
 
     def test_render_global_positions_uses_contract_size(self):
+        # O.6c-1x — renderGlobalPositions() now routes through
+        # computePositionPnLSafe(r), which itself delegates to
+        # computeRawPnL() (contract-size guarantee verified once in
+        # test_shared_pnl_helpers_use_contract_size above) instead of
+        # computePositionPnL(r, px) with a panel-derived px — the exact
+        # cross-panel price bug O.6c-1x fixed.
         html = self._html()
         self.assertIn("function renderGlobalPositions", html)
-        self.assertIn("computePositionPnL(r, px)", html)
+        self.assertIn("computePositionPnLSafe(r)", html)
 
     def test_trading_tab_position_list_uses_contract_size(self):
         html = self._html()
-        self.assertIn("computePositionPnL(pos, px)", html)
+        self.assertIn("computePositionPnLSafe(pos)", html)
 
     def test_patch_trading_panel_pnl_uses_contract_size(self):
         html = self._html()
         start = html.index("function _patchTradingPanelPnL")
         end = html.index("\n}", start)
         block = html[start:end]
-        self.assertIn("computePositionPnL(pos, px)", block)
+        self.assertIn("computePositionPnLSafe(pos)", block)
 
     def test_quick_close_sheet_uses_contract_size(self):
         html = self._html()
         start = html.index("function openSheet(focus)")
         end = html.index("\n}", start)
         block = html[start:end]
-        self.assertIn("computePositionPnL(pos, px)", block)
+        self.assertIn("computePositionPnLSafe(pos)", block)
         self.assertIn("computeRawPnL(", block)
+
+    def test_computePositionPnLSafe_delegates_to_computeRawPnL(self):
+        """O.6c-1x — the new safe wrapper must inherit the contract-size
+        guarantee via computeRawPnL(), never reimplement the formula."""
+        html = self._html()
+        start = html.index("function computePositionPnLSafe(pos)")
+        end = html.index("\n}", start)
+        block = html[start:end]
+        self.assertIn("computeRawPnL(", block)
+        self.assertNotIn("panel.lastClose", block)
+        self.assertNotIn("srcPanel.lastClose", block)
+        self.assertNotIn("qbPanel.lastClose", block)
 
     def test_no_bare_price_delta_times_qty_without_contract_size(self):
         """Guards against regressing back to `(px-entry)*qty` without `*cs`."""

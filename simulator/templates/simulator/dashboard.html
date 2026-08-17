@@ -1834,6 +1834,32 @@ function computePositionPnL(pos, px){
   if(pos.pnl!=null && isFinite(Number(pos.pnl))) return Number(pos.pnl);
   return computeRawPnL(pos.symbol, pos.side, Number(pos.avg??0), Number(pos.qty??1), px);
 }
+/* O.6c-1x — the ONLY safe path to a position's displayed P&L across the
+   global positions table, trading panel list, quickbar/edit sheet, and
+   the 1.5s live updater. NEVER falls back to panel.lastClose/
+   srcPanel.lastClose/qbPanel.lastClose (panel-scoped — the current
+   chart symbol of whichever panel happens to own the cache entry —
+   not the position's own symbol). That exact mismatch produced a
+   +$62,722,029.83 EUR/USD row using a BTCUSD panel's price.
+   Priority (O.6c-1x approved design):
+     1. backend pos.pnl, if present and finite — used as-is, no lookup.
+     2. pos.pnl==null AND quotesLivePx has a live quote for EXACTLY
+        pos.symbol (normalized lookup — same slash/no-slash pattern
+        already used by renderQuotes()/the watchlist) — computeRawPnL()
+        with THAT price only.
+     3. neither available — returns null. Callers MUST render a safe
+        placeholder (—), never 0, never base_price, never another
+        symbol's price, never a fabricated number.
+   computePositionPnL()/computeRawPnL() themselves are unchanged — this
+   only decides WHICH price (if any) is safe to hand them. */
+function computePositionPnLSafe(pos){
+  if(pos.pnl!=null && isFinite(Number(pos.pnl))) return Number(pos.pnl);
+  const sym=pos.symbol||'';
+  const qe=quotesLivePx[sym]||quotesLivePx[sym.replace('/','')]||null;
+  const px=qe&&isFinite(Number(qe.price))?Number(qe.price):null;
+  if(px==null) return null;
+  return computeRawPnL(sym, pos.side, Number(pos.avg??0), Number(pos.qty??1), px);
+}
 function normalizeLot(sym, v){
   const s=LOT_SPECS[sym]||{step:0.01,min:0.01,dec:2};
   const val=Math.max(s.min, Math.min(100, parseFloat(v)||s.min));
@@ -2926,11 +2952,12 @@ function renderGlobalPositions(){
     const sym=(r.symbol||'').replace('/','');
     const qty=Number(r.qty||1);
     const entry=Number(r.avg??r.entry??0);
-    const srcPanel=allPanels.find(x=>String(x.id)===String(r._pid));
-    const px=srcPanel?.lastClose??0;
-    const raw=computePositionPnL(r, px);
-    const pnlStr=px>0?(raw>=0?'+':'')+`$${Math.abs(raw).toFixed(2)}`:'—';
-    const pnlCls=raw>0.00001?'pos':raw<-0.00001?'neg':'';
+    // O.6c-1x — computePositionPnLSafe() only ever uses backend pos.pnl
+    // or a quote keyed by r.symbol itself; never the owning panel's
+    // currentSymbol price (the cross-panel bug this replaces).
+    const raw=computePositionPnLSafe(r);
+    const pnlStr=raw!=null?(raw>=0?'+':'')+`$${Math.abs(raw).toFixed(2)}`:'—';
+    const pnlCls=raw!=null&&raw>0.00001?'pos':raw!=null&&raw<-0.00001?'neg':'';
     const openedStr=r.opened_at?new Date((r.opened_at||0)*1000).toLocaleTimeString():'-';
     return `<tr data-id="${r.id}" data-pid="${r._pid}">
       <td class="btm-td-${side}">${sym}</td>
@@ -3138,10 +3165,18 @@ function openSheet(focus){
   if(symEl)symEl.textContent=qbPanel.currentSymbol.replace('/','');
   if(sqEl){const side=String(pos?.side||rec.side||'').toUpperCase();const qty=Number(pos?.qty??rec.qty??0).toFixed(2);sqEl.textContent=`${side} ${qty} lotes`;}
   if(pnlEl){
-    const px=qbPanel.lastClose??0;
-    const raw=pos?computePositionPnL(pos, px):computeRawPnL(qbPanel.currentSymbol, rec.side, rec.entry, rec.qty??1, px);
-    pnlEl.textContent=(raw>=0?'+':'')+`$${Math.abs(raw).toFixed(2)}`;
-    pnlEl.className='sheet-pos-pnl'+(raw>0.00001?' pos':raw<-0.00001?' neg':'');
+    // O.6c-1x — a real backend-synced position (pos found) uses
+    // computePositionPnLSafe(), never qbPanel.lastClose (the panel
+    // that happened to be clicked to open this sheet, not necessarily
+    // showing pos.symbol's own chart). The `rec`-only branch (no
+    // synced Position yet — a local pending/temp order line) is
+    // unaffected: rec only ever exists for qbPanel.currentSymbol
+    // itself (_renderLines() only draws lines for the panel's own
+    // active symbol), so qbPanel.lastClose is already correctly
+    // scoped there.
+    const raw=pos?computePositionPnLSafe(pos):computeRawPnL(qbPanel.currentSymbol, rec.side, rec.entry, rec.qty??1, qbPanel.lastClose??0);
+    pnlEl.textContent=raw!=null?(raw>=0?'+':'')+`$${Math.abs(raw).toFixed(2)}`:'—';
+    pnlEl.className='sheet-pos-pnl'+(raw!=null&&raw>0.00001?' pos':raw!=null&&raw<-0.00001?' neg':'');
   }
   sheetSL.value=rec.sl!=null?Number(rec.sl).toFixed(p):'';
   sheetTP.value=rec.tp!=null?Number(rec.tp).toFixed(p):'';
@@ -3366,21 +3401,25 @@ function _syncTradingPanel(){
     const sideColor=side==='buy'?'#26a69a':'#ef5350';
     const sym=(pos.symbol||'').replace('/','');
     const p=priceFormatFor(pos.symbol||'').precision;
-    const panel=allPanels.find(x=>String(x.id)===String(pos._pid));
-    const px=panel?.lastClose??0;
     const entry=Number(pos.avg??0);
-    const raw=computePositionPnL(pos, px);
-    const pnlClass=raw>0.00001?'pos':raw<-0.00001?'neg':'';
+    // O.6c-1x — computePositionPnLSafe() never uses the owning panel's
+    // currentSymbol price; the route display's "current price" is
+    // likewise looked up by pos.symbol itself (same normalized
+    // quotesLivePx pattern), never panel.lastClose.
+    const raw=computePositionPnLSafe(pos);
+    const pnlClass=raw!=null&&raw>0.00001?'pos':raw!=null&&raw<-0.00001?'neg':'';
+    const _qe=quotesLivePx[pos.symbol]||quotesLivePx[(pos.symbol||'').replace('/','')]||null;
+    const px=_qe&&isFinite(Number(_qe.price))?Number(_qe.price):null;
     const slStr=pos.sl!=null?`SL ${Number(pos.sl).toFixed(p)}`:null;
     const tpStr=pos.tp!=null?`TP ${Number(pos.tp).toFixed(p)}`:null;
     const sltp=[slStr,tpStr].filter(Boolean).join(' · ');
-    const routeStr=sltp||`${entry.toFixed(p)} → ${px>0?px.toFixed(p):'—'}`;
+    const routeStr=sltp||`${entry.toFixed(p)} → ${px!=null?px.toFixed(p):'—'}`;
     return `<div class="trd-pos-item" data-id="${pos.id}" data-pid="${pos._pid}" data-side="${side}">
       <div class="trd-pos-item-left">
         <div class="trd-pos-item-sym-line">${sym} <span style="color:${sideColor};font-weight:700;font-size:.72rem;letter-spacing:.03em">${side.toUpperCase()} ${Number(pos.qty??0).toFixed(2)}</span></div>
         <div class="trd-pos-item-route">${routeStr}</div>
       </div>
-      <div class="trd-pos-item-pnl ${pnlClass}">${(raw>=0?'+':'')+`$${Math.abs(raw).toFixed(2)}`}</div>
+      <div class="trd-pos-item-pnl ${pnlClass}">${raw!=null?(raw>=0?'+':'')+`$${Math.abs(raw).toFixed(2)}`:'—'}</div>
     </div>`;
   }).join('');
   list.querySelectorAll('.trd-pos-item').forEach(item=>{
@@ -3398,16 +3437,17 @@ function _patchTradingPanelPnL(){
   const list=document.getElementById('trdPosList');if(!list)return;
   const items=list.querySelectorAll('.trd-pos-item');
   const all=[];const seen=new Set();
-  for(const panel of allPanels)for(const pos of panel.positionsCache){if(!seen.has(pos.id)){seen.add(pos.id);all.push({pos,panel});}}
+  for(const panel of allPanels)for(const pos of panel.positionsCache){if(!seen.has(pos.id)){seen.add(pos.id);all.push(pos);}}
   if(items.length!==all.length){_syncTradingPanel();return;}
   let i=0;
-  for(const {pos,panel} of all){
+  for(const pos of all){
     const item=items[i++];
     if(!item||item.getAttribute('data-id')!==String(pos.id)){_syncTradingPanel();return;}
-    const px=panel?.lastClose??0;
-    const raw=computePositionPnL(pos, px);
+    // O.6c-1x — computePositionPnLSafe(), never the owning panel's
+    // lastClose (panel-scoped, not pos.symbol-scoped).
+    const raw=computePositionPnLSafe(pos);
     const pnlEl=item.querySelector('.trd-pos-item-pnl');
-    if(pnlEl){pnlEl.textContent=(raw>=0?'+':'')+`$${Math.abs(raw).toFixed(2)}`;pnlEl.className=`trd-pos-item-pnl ${raw>0.00001?'pos':raw<-0.00001?'neg':''}`;}
+    if(pnlEl){pnlEl.textContent=raw!=null?(raw>=0?'+':'')+`$${Math.abs(raw).toFixed(2)}`:'—';pnlEl.className=`trd-pos-item-pnl ${raw!=null&&raw>0.00001?'pos':raw!=null&&raw<-0.00001?'neg':''}`;}
   }
 }
 
@@ -3957,12 +3997,14 @@ setInterval(()=>{
     if(!srcPanel)continue;
     const pos=srcPanel.positionsCache.find(x=>String(x.id)===String(posId));
     if(!pos)continue;
-    const px=srcPanel.lastClose??0;if(!px)continue;
-    const raw=computePositionPnL(pos, px);
+    // O.6c-1x — computePositionPnLSafe(), never srcPanel.lastClose
+    // (the panel that owns the cache entry, not necessarily showing
+    // pos.symbol's own chart).
+    const raw=computePositionPnLSafe(pos);
     const cell=tr.querySelector('.btm-td-pnl');
     if(!cell)continue;
-    cell.textContent=(raw>=0?'+':'')+`$${Math.abs(raw).toFixed(2)}`;
-    cell.className=`btm-td-pnl ${raw>0.00001?'pos':raw<-0.00001?'neg':''}`;
+    cell.textContent=raw!=null?(raw>=0?'+':'')+`$${Math.abs(raw).toFixed(2)}`:'—';
+    cell.className=`btm-td-pnl ${raw!=null&&raw>0.00001?'pos':raw!=null&&raw<-0.00001?'neg':''}`;
   }
 },1500);
 
