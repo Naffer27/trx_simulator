@@ -54,7 +54,7 @@ def _provider(name="LP-BTC", spread="5.0", capacity="100000", symbols=None, enab
 class OrderNewLiquidityAuditIntegrationTests(TransactionTestCase):
 
     def setUp(self):
-        _seed_price("BTCUSD", 100.0)
+        _seed_price("BTCUSD", 63000.0)  # O.6c-1w-b: realistic BTCUSD magnitude, Capa A plausibility gate
         self.addCleanup(_clear_price, "BTCUSD")
 
     # ── 1. Éxito ─────────────────────────────────────────────────────────

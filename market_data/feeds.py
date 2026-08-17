@@ -15,6 +15,7 @@ Architecture:
 import asyncio
 import json
 import logging
+import math
 import os
 import random
 import threading
@@ -22,6 +23,7 @@ import time
 import urllib.request
 import urllib.error
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from typing import Callable, Optional
 
 try:
@@ -86,6 +88,90 @@ def _finnhub_sym(symbol: str) -> str:
         a, b = s.split("/", 1)
         return f"FX:{a}{b}"
     return s
+
+
+# ─── O.6c-1w — Price Integrity / Plausibility Gate ──────────────────────────────
+#
+# get_validated_quote() (FeedManager method, below) is the single
+# authoritative point deciding whether a symbol's current quote may be
+# used for ANY financial decision: P&L, equity, margin, manual close,
+# SL/TP, stopout, retail liquidation. Returns None on ANY failure —
+# absence, staleness, structural corruption, or implausible magnitude
+# (Capa A) — NEVER a synthetic/fabricated substitute. Generalizes the
+# "exclude, never fabricate" policy already established by O.6c-1q/
+# O.6c-1s/broker_exposure.py FASE-4 to one choke point, closing the
+# exact O.6c-1t gap: has_price() and last_bid()/last_ask() were 2+
+# independent lock acquisitions, never guaranteed to observe the same
+# instant — a symbol could pass has_price()==True while last_bid()/
+# last_ask() returned a value of a completely different instrument's
+# magnitude (the ~$63,087,429.83 EUR/USD incident).
+#
+# Capa A (approved, O.6c-1w decision): ±1 order of magnitude vs
+# SymbolSpec.base_price. Capa B (tick-to-tick deviation vs
+# last_valid_quote) is explicitly NOT active yet — the architecture
+# (_last_valid_quote, updated on every successful validation) is
+# prepared below, but nothing reads it back for a rejection decision.
+# That threshold is a business/risk decision not yet made.
+
+@dataclass(frozen=True)
+class Quote:
+    """An atomic, internally-coherent price snapshot for one symbol —
+    the ONLY shape get_validated_quote() ever returns. mid is always
+    derived from bid/ask by the validator, never trusted from a
+    separately-written field, so bid/ask/mid coherence holds by
+    construction rather than by convention."""
+    symbol: str
+    bid: float
+    ask: float
+    mid: float
+    timestamp: float
+    source: str  # "binance" | "kraken" | "finnhub" | "sim" | "rest_resync" | "unknown"
+
+
+def _validate_quote_values(symbol: str, bid, ask) -> bool:
+    """O.6c-1w — pure structural + Capa A plausibility check, no
+    FeedManager instance state needed (only the read-only symbol
+    registry). Shared by FeedManager.get_validated_quote() (in-process,
+    Daphne) and tasks.py's _read_cached_price() (Celery, a SEPARATE
+    process reading the same values via Redis) — the one place either
+    of them decides "is this bid/ask usable", so the two can never
+    silently drift apart into different definitions of valid.
+
+    Structural (sections 3 of the O.6c-1w design — no business number
+    involved): both finite (rejects NaN/±Infinity), both > 0, ask >= bid.
+
+    Capa A (section 4, O.6c-1w-approved): the candidate must be within
+    one order of magnitude of SymbolSpec.base_price for *symbol* — the
+    exact, reproducible check that would have rejected the ~63088
+    BTCUSD-magnitude value observed for EUR/USD in O.6c-1t
+    (log10(63088/1.17) ≈ 4.7, far outside ±1)."""
+    if bid is None or ask is None:
+        return False
+    if not (isinstance(bid, (int, float)) and isinstance(ask, (int, float))):
+        return False
+    if isinstance(bid, bool) or isinstance(ask, bool):
+        return False  # bool is a subclass of int — never a real quote value
+    if not (math.isfinite(bid) and math.isfinite(ask)):
+        return False
+    if bid <= 0 or ask <= 0:
+        return False
+    if ask < bid:
+        return False
+
+    mid = (bid + ask) / 2.0
+    try:
+        base = _fallback_price(symbol)
+    except KeyError:
+        return False  # unknown symbol — never guess a plausibility band
+    if not (math.isfinite(base) and base > 0):
+        return False
+    try:
+        if abs(math.log10(mid / base)) > 1.0:
+            return False
+    except ValueError:
+        return False  # defensive only — mid<=0 already rejected above
+
+    return True
 
 
 # ─── Redis price cache (cross-process, for daemon/Celery access) ───────────────
@@ -170,6 +256,23 @@ class FeedManager:
         # same idempotency contract as spread_config_cache's
         # _background_task_started (SPREAD-03) — reused pattern, not a new one.
         self._position_reconcile_started: bool = False
+        # O.6c-1w — which provider produced the current _prices/_bids/
+        # _asks entry for each symbol ("binance"/"kraken"/"finnhub"/
+        # "sim"/"rest_resync") — pure traceability metadata returned on
+        # Quote.source, never itself a validity criterion. Written
+        # alongside the four price dicts (same lock, same call), read
+        # together with them in get_validated_quote()'s single atomic
+        # snapshot.
+        self._price_source: dict[str, str] = {}
+        # O.6c-1w — updated ONLY inside get_validated_quote(), only on
+        # the success path (a quote that passed every structural +
+        # Capa A check). Architecture prepared for Capa B (tick-to-tick
+        # deviation vs. this value) — O.6c-1w's approved decision is
+        # that NOTHING reads this back for a rejection decision yet;
+        # that threshold is a business/risk decision not yet made. See
+        # last_valid_quote() below for the (currently informational
+        # only) accessor.
+        self._last_valid_quote: dict[str, "Quote"] = {}
         # PANEL-02 — guards all reads/writes of the four dicts above. This
         # class's own feed tasks (_broadcast/_resync_price) run on the
         # asyncio event loop thread, but has_price()/last_price()/
@@ -227,6 +330,59 @@ class FeedManager:
     def last_ask(self, symbol: str) -> float:
         with self._lock:
             return self._asks.get(symbol, _fallback_price(symbol) + _spread(symbol) / 2)
+
+    # ── O.6c-1w — Price Integrity / Plausibility Gate ──
+
+    def get_validated_quote(self, symbol: str, max_age_seconds: float = _PRICE_CACHE_TTL) -> "Quote | None":
+        """O.6c-1w — the single authoritative point deciding whether
+        *symbol*'s current quote may be used for ANY financial
+        decision: P&L, equity, margin, manual close, SL/TP, stopout,
+        retail liquidation. Returns None on ANY failure — absence,
+        staleness, structural corruption, or implausible magnitude
+        (Capa A) — NEVER has_price()/last_bid()/last_ask()'s synthetic
+        fallback. See the module-level docstring above _validate_quote_
+        values() for the full rationale and the exact O.6c-1t incident
+        this closes.
+
+        Reads timestamp + bid + ask + source as ONE snapshot under
+        self._lock — the atomicity has_price()+last_bid()+last_ask()
+        (3 separate lock acquisitions) never had. mid is derived from
+        bid/ask here, never read from self._prices — bid/ask/mid
+        coherence holds by construction.
+
+        On success, records the Quote into self._last_valid_quote —
+        Capa B architecture, not yet read back for any rejection
+        decision (O.6c-1w's explicit, approved scope)."""
+        with self._lock:
+            ts = self._price_ts.get(symbol)
+            if ts is None:
+                return None
+            if (time.time() - ts) > max_age_seconds:
+                return None
+            bid = self._bids.get(symbol)
+            ask = self._asks.get(symbol)
+            source = self._price_source.get(symbol, "unknown")
+
+        if not _validate_quote_values(symbol, bid, ask):
+            return None
+
+        quote = Quote(
+            symbol=symbol, bid=bid, ask=ask, mid=(bid + ask) / 2.0,
+            timestamp=ts, source=source,
+        )
+        with self._lock:
+            self._last_valid_quote[symbol] = quote
+        return quote
+
+    def last_valid_quote(self, symbol: str) -> "Quote | None":
+        """O.6c-1w — the most recent Quote that passed
+        get_validated_quote()'s full validation for *symbol*, if any.
+        Informational only today (Capa B is not active) — nothing in
+        this codebase currently reads this back for a rejection
+        decision; exposed as its own accessor so that future work (and
+        tests) can inspect it without reaching into a private dict."""
+        with self._lock:
+            return self._last_valid_quote.get(symbol)
 
     # ── O.6c-1v — open position feed coverage ──
     #
@@ -428,6 +584,12 @@ class FeedManager:
             self._bids.pop(symbol, None)
             self._asks.pop(symbol, None)
             self._price_ts.pop(symbol, None)
+            # O.6c-1w — reset alongside the four price dicts above, same
+            # reasoning: a stopped feed's stale metadata/last-valid-quote
+            # must never be mistaken for current state if the symbol's
+            # feed task restarts later.
+            self._price_source.pop(symbol, None)
+            self._last_valid_quote.pop(symbol, None)
         self._counts.pop(symbol, None)
 
     async def _broadcast_kline(self, symbol: str, cl, bar: dict) -> None:
@@ -524,14 +686,16 @@ class FeedManager:
         log.error("[feed] All kline history sources failed for %s %s", symbol, interval)
         return []
 
-    async def _broadcast(self, symbol: str, cl, bid: float, ask: float, ts: int) -> None:
+    async def _broadcast(self, symbol: str, cl, bid: float, ask: float, ts: int,
+                          source: str = "live") -> None:
         _, dec = _step_dec(symbol)
         mid = round((bid + ask) / 2, dec)
         with self._lock:
-            self._bids[symbol]     = bid
-            self._asks[symbol]     = ask
-            self._prices[symbol]   = mid
-            self._price_ts[symbol] = time.time()
+            self._bids[symbol]         = bid
+            self._asks[symbol]         = ask
+            self._prices[symbol]       = mid
+            self._price_ts[symbol]     = time.time()
+            self._price_source[symbol] = source  # O.6c-1w — Quote.source metadata
         # Write to Redis so cross-process readers (Celery daemon) can access prices.
         await _write_price_cache(symbol, bid, ask)
         # FOUNDATION-13 — records only a timestamp (no bid/ask/mid) in the
@@ -839,7 +1003,7 @@ class FeedManager:
                 spr = _spread(symbol)
                 bid = round(mid - spr / 2, dec)
                 ask = round(mid + spr / 2, dec)
-                await self._broadcast(symbol, channel_layer, bid, ask, int(time.time()))
+                await self._broadcast(symbol, channel_layer, bid, ask, int(time.time()), source="sim")
                 await asyncio.sleep(interval)
             except asyncio.CancelledError:
                 raise
@@ -890,7 +1054,7 @@ class FeedManager:
                             b = float(data.get("b") or 0.0)
                             a = float(data.get("a") or 0.0)
                             if a > b > 0:
-                                await self._broadcast(symbol, channel_layer, b, a, int(time.time()))
+                                await self._broadcast(symbol, channel_layer, b, a, int(time.time()), source="binance")
                                 if not tick_reported and on_first_tick is not None:
                                     tick_reported = True
                                     try:
@@ -981,7 +1145,7 @@ class FeedManager:
                             bid = float(data["b"][0])
                             ask = float(data["a"][0])
                             if ask > bid > 0:
-                                await self._broadcast(symbol, channel_layer, bid, ask, int(time.time()))
+                                await self._broadcast(symbol, channel_layer, bid, ask, int(time.time()), source="kraken")
                                 if not tick_reported and on_first_tick is not None:
                                     tick_reported = True
                                     try:
@@ -1054,7 +1218,7 @@ class FeedManager:
                             bid = round(px - spr / 2, dec)
                             ask = round(px + spr / 2, dec)
                             ts  = int((t.get("t") or time.time() * 1000) / 1000)
-                            await self._broadcast(symbol, channel_layer, bid, ask, ts)
+                            await self._broadcast(symbol, channel_layer, bid, ask, ts, source="finnhub")
                             if not tick_reported and on_first_tick is not None:
                                 tick_reported = True
                                 try:
@@ -1095,10 +1259,11 @@ class FeedManager:
             spr    = _spread(symbol)
             mid    = round(price, dec)
             with self._lock:
-                self._prices[symbol]   = mid
-                self._bids[symbol]     = round(mid - spr / 2, dec)
-                self._asks[symbol]     = round(mid + spr / 2, dec)
-                self._price_ts[symbol] = time.time()
+                self._prices[symbol]       = mid
+                self._bids[symbol]         = round(mid - spr / 2, dec)
+                self._asks[symbol]         = round(mid + spr / 2, dec)
+                self._price_ts[symbol]     = time.time()
+                self._price_source[symbol] = "rest_resync"  # O.6c-1w
             log.info("[feed] resynced %s → %.4f", symbol, mid)
         else:
             # Keep whatever we have; only fall to hardcoded if nothing stored.

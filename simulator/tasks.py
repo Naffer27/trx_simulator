@@ -20,11 +20,24 @@ _PRICE_CACHE_KEY_PREFIX = "trx:price"
 def _read_cached_price(symbol: str) -> tuple[float | None, float | None]:
     """
     Read bid/ask written by FeedManager from Redis.
-    Returns (bid, ask) as floats, or (None, None) if keys are missing or stale.
+    Returns (bid, ask) as floats, or (None, None) if keys are missing,
+    stale, or structurally/plausibility invalid.
     Must never raise — any failure is safe-returns (None, None).
+
+    O.6c-1w — Celery runs in a SEPARATE process from Daphne/FeedManager
+    and can never call get_validated_quote() directly (no shared
+    memory); this is the one place the daemon reads a price at all, so
+    it must apply the SAME validation FeedManager.get_validated_quote()
+    applies in-process — reuses _validate_quote_values() (the shared,
+    pure function both call) rather than a second, independently
+    maintained copy of the rules. A malformed Redis value (a NaN/
+    Infinity string survives float() unchanged; a corrupted/cross-
+    symbol write would survive too) must never reach scan_positions_
+    task's P&L/close/stopout/liquidation logic.
     """
     try:
         import redis as _redis
+        from market_data.feeds import _validate_quote_values
         url = (getattr(settings, "REDIS_URL", "") or "").strip() or "redis://127.0.0.1:6379/0"
         r = _redis.from_url(url, socket_connect_timeout=1, socket_timeout=1)
         bid_raw = r.get(f"{_PRICE_CACHE_KEY_PREFIX}:bid:{symbol}")
@@ -32,7 +45,15 @@ def _read_cached_price(symbol: str) -> tuple[float | None, float | None]:
         if bid_raw is None or ask_raw is None:
             logger.debug("[price_cache] stale/missing keys for %s", symbol)
             return (None, None)
-        return (float(bid_raw), float(ask_raw))
+        bid, ask = float(bid_raw), float(ask_raw)
+        if not _validate_quote_values(symbol, bid, ask):
+            logger.warning(
+                "[price_cache] structurally invalid or implausible price "
+                "rejected for %s: bid=%r ask=%r — treating as unavailable",
+                symbol, bid, ask,
+            )
+            return (None, None)
+        return (bid, ask)
     except Exception as exc:
         logger.debug("[price_cache] read failed for %s: %r", symbol, exc)
         return (None, None)

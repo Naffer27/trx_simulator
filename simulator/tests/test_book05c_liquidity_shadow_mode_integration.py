@@ -140,7 +140,7 @@ class RecordLiquidityDecisionWriterTests(TestCase):
 class OrderNewLiquidityShadowModeTests(TransactionTestCase):
 
     def setUp(self):
-        _seed_price("BTCUSD", 100.0)
+        _seed_price("BTCUSD", 63000.0)  # O.6c-1w-b: realistic BTCUSD magnitude, Capa A plausibility gate
         self.addCleanup(_clear_price, "BTCUSD")
 
     @override_settings(ROUTING_ENGINE_ENABLED=True, LIQUIDITY_ENGINE_ENABLED=False)

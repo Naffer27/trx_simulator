@@ -49,6 +49,13 @@ class _FakeFeed:
     # identical addition for the full rationale.
     def mark_position_symbol(self, symbol): pass
     def sync_position_symbol_from_db(self, symbol): pass
+    # O.6c-1w — see test_close_path_concurrency_parity.py's identical
+    # addition for the full rationale.
+    def get_validated_quote(self, symbol):
+        from market_data.feeds import Quote
+        bid, ask = self.last_bid(symbol), self.last_ask(symbol)
+        return Quote(symbol=symbol, bid=bid, ask=ask, mid=(bid + ask) / 2,
+                     timestamp=0.0, source="fake")
 
 
 def _bare_consumer() -> TradingConsumer:

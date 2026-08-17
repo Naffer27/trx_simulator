@@ -162,7 +162,7 @@ class DbRecordRoutingAuditEventUnitTests(TestCase):
 class OrderNewRoutingAuditIntegrationTests(TransactionTestCase):
 
     def setUp(self):
-        _seed_price("BTCUSD", 100.0)
+        _seed_price("BTCUSD", 63000.0)  # O.6c-1w-b: realistic BTCUSD magnitude, Capa A plausibility gate
         _seed_price("EUR/USD", 1.0800)
         self.addCleanup(_clear_price, "BTCUSD")
         self.addCleanup(_clear_price, "EUR/USD")

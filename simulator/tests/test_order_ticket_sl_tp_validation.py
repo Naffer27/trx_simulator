@@ -168,6 +168,21 @@ def _consumer(account_id, netting_mode=False):
         "commercial_pricing_fields": {},
     }
     c._feed = get_feed_manager()
+    # O.6c-1w-b — _order_new() now requires self._feed.get_validated_quote(sym)
+    # to pass before accepting an order (RAW MARKET QUOTE -> VALIDATE ->
+    # broker markup -> execution). Seed the REAL FeedManager singleton with
+    # the SAME EUR/USD price already set in _bid_state/_ask_state above (the
+    # markup-derived, per-connection cache) so this shared helper — used by
+    # ~10 other test files via `from .test_order_ticket_sl_tp_validation
+    # import _consumer` — keeps working unchanged; same technique already
+    # established for the _FakeFeed-based helpers in O.6c-1q/1s/1v/1w's own
+    # test files. Idempotent, fresh timestamp every call.
+    with c._feed._lock:
+        c._feed._bids["EUR/USD"]         = 1.1000
+        c._feed._asks["EUR/USD"]         = 1.1000
+        c._feed._prices["EUR/USD"]       = 1.1000
+        c._feed._price_ts["EUR/USD"]     = time.time()
+        c._feed._price_source["EUR/USD"] = "test_seed"
     c.send_json = AsyncMock()
     return c
 

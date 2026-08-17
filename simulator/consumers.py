@@ -8,7 +8,7 @@ from channels.db import database_sync_to_async
 from django.db import transaction
 from django.utils import timezone
 
-from market_data.feeds import get_feed_manager
+from market_data.feeds import get_feed_manager, _validate_quote_values
 from market_data.symbol_specs import get_spec, allowed_symbols, kline_symbols
 from .models import TradingAccount, Position, Trade, LedgerEntry, BrokerLedger
 from .spread_engine import broker_price, calculate_spread_revenue, _get_config as _get_spread_config
@@ -916,6 +916,31 @@ class TradingConsumer(AsyncWebsocketConsumer):
         mid     = event["mid"]
         ts      = event["time"]
 
+        # O.6c-1w-b — RAW MARKET QUOTE -> VALIDATE -> broker markup ->
+        # execution. Same structural + Capa A validation as
+        # get_validated_quote() (_validate_quote_values — shared, never a
+        # second copy of the rules), applied HERE, before broker_price()
+        # ever runs. Closes O.6c-1w's residual gap: order:new/exec_price()
+        # and _check_tp_sl() (live WS SL/TP) read self._bid_state/
+        # self._ask_state — the markup-derived, per-connection cache —
+        # rather than self._feed.get_validated_quote() directly (O.6c-1u's
+        # documented raw-vs-markup split; that split itself is untouched
+        # here, see the O.6c-1w-b report). An invalid raw tick is skipped
+        # ENTIRELY: self._bid_state/self._ask_state are not updated (so
+        # exec_price() can never read a value derived from it), and
+        # _check_tp_sl() — called only from here, its sole call site — is
+        # never invoked for this tick, so no SL/TP fires on it. The chart
+        # simply does not advance this one tick; the next valid tick
+        # resumes normally — same "wait for the next valid quote" policy
+        # already established for every other O.6c-1w-protected path.
+        if not _validate_quote_values(symbol, raw_bid, raw_ask):
+            log.warning(
+                "[price_tick] REJECTED invalid/implausible raw quote for %s: "
+                "bid=%r ask=%r — markup/execution/SL-TP not applied this tick",
+                symbol, raw_bid, raw_ask,
+            )
+            return
+
         # SPREAD-04 — one resolution of the commercial pricing profile per
         # tick, DB-free (spread_config_cache + the account-level fields
         # already cached at hydrate time). Both broker_price()'s clamp and
@@ -1220,6 +1245,27 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
         if sym not in _ALLOWED_SYMBOLS:
             await self.send_json({"type": "error", "code": "invalid_symbol", "message": "simbolo_no_permitido"})
+            return
+
+        # O.6c-1w-b — RAW MARKET QUOTE -> VALIDATE -> broker markup ->
+        # execution. exec_price() below reads self._bid_state/
+        # self._ask_state (markup-derived, per-connection). price_tick()
+        # (O.6c-1w-b) already refuses to write into that cache from an
+        # invalid raw tick, but this connection may never have received
+        # ANY tick yet for *sym* — e.g. immediately after connect/
+        # change_symbol, before the first live tick arrives
+        # (_seed_price_state() seeds directly from the raw feed,
+        # unvalidated). Checking the RAW feed's CURRENT validity here,
+        # before anything else, closes that cold-start gap — same
+        # "reject if no valid quote" contract _order_close() already has
+        # (O.6c-1w), same error code. Returns before touching the rate
+        # limiter, margin guard, risk engine, or DB — zero Position,
+        # zero Trade, zero LedgerEntry, zero balance/margin change.
+        if self._feed.get_validated_quote(sym) is None:
+            await self.send_json({
+                "type": "error", "code": "price_unavailable",
+                "message": "no_se_pudo_abrir_precio_no_disponible",
+            })
             return
 
         # Rate limit: max 10 new orders per 10 seconds per account (Redis sliding window)
@@ -2030,28 +2076,34 @@ class TradingConsumer(AsyncWebsocketConsumer):
         return out
 
     def _feed_close_price(self, symbol: str, side: str) -> "float | None":
-        """O.6c-1q — price authority for ACCOUNT-WIDE floating P&L/equity
-        aggregation (_unrealized_pnl_total() below) only — deliberately
-        NOT used by close_price() (order:close/SL/TP/stopout EXECUTION
-        price, a separate, out-of-scope surface — see the O.6c-1q report).
+        """Price authority for every financial use of a close/settlement
+        price: row P&L, account-wide floating P&L/equity aggregation
+        (_unrealized_pnl_total() below), manual close, Close All, SL,
+        TP, stopout, and retail liquidation — all six call sites funnel
+        through this one function (O.6c-1q established the account-wide
+        aggregation case; O.6c-1s migrated the remaining five execution/
+        display call sites onto it; this docstring previously claimed
+        the opposite for the execution call sites — stale since O.6c-1s,
+        corrected here).
 
-        Reads self._feed (get_feed_manager(), the shared process-global
-        FeedManager singleton — the SAME source RISK-02/broker_exposure.py/
-        the atomic open guard already trust) instead of
-        self._bid_state/self._ask_state (a per-connection cache only ever
-        seeded for the symbol(s) THIS connection's own chart has shown —
-        the O.6c-1p root cause: an account's floating P&L for a position
-        on a symbol this panel never charted would silently fall back to
-        base_price_for(), a synthetic seed constant).
+        O.6c-1w — routes through self._feed.get_validated_quote(symbol),
+        the single authoritative point deciding whether a quote may be
+        used financially at all: structural validity (finite, positive,
+        ask>=bid) AND Capa A plausibility (within one order of magnitude
+        of SymbolSpec.base_price) — not just presence
+        (has_price()==True), which O.6c-1t demonstrated is NOT
+        sufficient on its own (a BTCUSD-magnitude value was observed
+        under the EUR/USD key, has_price()==True the whole time).
 
-        Returns None — never base_price_for(), never any synthetic value
-        — when self._feed.has_price(symbol) is False. Mirrors
-        broker_exposure.py's own FASE 4 reference-price policy exactly
-        (exclude from the aggregate, never fabricate) for the identical
-        problem at the broker-wide level — not a new/invented policy."""
-        if not self._feed.has_price(symbol):
+        Returns None — never base_price_for(), never any synthetic
+        value, never a value that failed validation — on ANY failure.
+        Mirrors broker_exposure.py's own FASE 4 reference-price policy
+        exactly (exclude, never fabricate), now generalized through one
+        choke point rather than repeated per call site."""
+        quote = self._feed.get_validated_quote(symbol)
+        if quote is None:
             return None
-        return self._feed.last_bid(symbol) if side == "buy" else self._feed.last_ask(symbol)
+        return quote.bid if side == "buy" else quote.ask
 
     def _unrealized_pnl_total(self):
         total = 0.0

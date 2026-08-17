@@ -98,6 +98,18 @@ class _FakeFeed:
     def mark_position_symbol(self, symbol): pass
     def sync_position_symbol_from_db(self, symbol): pass
 
+    # O.6c-1w — mirrors this fake's own has_price()/last_bid()/last_ask()
+    # exactly, so every existing numeric expectation in this file is
+    # unaffected; see test_close_path_concurrency_parity.py's identical
+    # addition for the full rationale.
+    def get_validated_quote(self, symbol):
+        if not self.has_price(symbol):
+            return None
+        from market_data.feeds import Quote
+        bid, ask = self.last_bid(symbol), self.last_ask(symbol)
+        return Quote(symbol=symbol, bid=bid, ask=ask, mid=(bid + ask) / 2,
+                     timestamp=0.0, source="fake")
+
 
 def _bare_consumer(account_id) -> TradingConsumer:
     """Same minimal-panel pattern already established in
