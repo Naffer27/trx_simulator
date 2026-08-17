@@ -256,6 +256,14 @@ class FeedManager:
         # same idempotency contract as spread_config_cache's
         # _background_task_started (SPREAD-03) — reused pattern, not a new one.
         self._position_reconcile_started: bool = False
+        # O.6c-1ac — the actual asyncio.Task running the periodic
+        # reconciliation loop, once created. Exists specifically so
+        # _position_reconcile_started's truthfulness can be verified
+        # (flag True must always imply this is not None) instead of the
+        # flag alone being trusted — see ensure_position_feed_
+        # reconciliation_started()'s try/finally below and
+        # is_position_reconciliation_alive().
+        self._position_reconcile_task: "asyncio.Task | None" = None
         # O.6c-1w — which provider produced the current _prices/_bids/
         # _asks entry for each symbol ("binance"/"kraken"/"finnhub"/
         # "sim"/"rest_resync") — pure traceability metadata returned on
@@ -443,6 +451,15 @@ class FeedManager:
             else:
                 self._position_symbols.discard(symbol)
 
+    async def sync_position_symbol_from_db_async(self, symbol: str) -> None:
+        """O.6c-1ac — async wrapper around sync_position_symbol_from_db()
+        for call sites that run on the asyncio event loop and cannot call
+        the ORM directly (unsubscribe()'s race guard, below). Same
+        DB-authoritative re-derivation, same query, no new logic — just a
+        safe way to reach it from an async method."""
+        from channels.db import database_sync_to_async
+        await database_sync_to_async(self.sync_position_symbol_from_db)(symbol)
+
     async def _position_feed_reconcile_once(self) -> None:
         """O.6c-1v — the DB-authoritative backstop. Re-reads the full set
         of symbols with an open Position and reconciles self._position_symbols
@@ -495,27 +512,65 @@ class FeedManager:
         them, race-free on a single-threaded asyncio event loop). Performs
         one immediate pass before returning, so a symbol with a
         pre-existing open Position and no chart subscriber gets its feed
-        task back within this call, not after a full interval."""
+        task back within this call, not after a full interval.
+
+        O.6c-1ac — FAIL-RECOVERABLE LIFECYCLE. O.6c-1ab found that the
+        original version awaited the first reconcile pass with no
+        try/except AFTER already setting the idempotency flag: any
+        exception (a real DB error, or even asyncio.CancelledError from
+        a connect() that got interrupted mid-handshake) skipped the
+        `asyncio.create_task(_loop())` line entirely, leaving the flag
+        permanently True with no retry loop ever created — reconciliation
+        dead for the rest of the process's life, recoverable only by a
+        full restart. The first pass is now wrapped in try/finally: the
+        loop task is created in the `finally` clause, so it always gets
+        created exactly once, whether the first pass succeeded, raised a
+        business exception, or was cancelled. self._position_reconcile_
+        task holds the real task object so the flag's truthfulness
+        ("a retry loop exists") can be verified directly instead of
+        trusted blindly — see is_position_reconciliation_alive()."""
         if self._position_reconcile_started:
             return
         self._position_reconcile_started = True
-        await self._position_feed_reconcile_once()
+        try:
+            await self._position_feed_reconcile_once()
+        except Exception as exc:
+            log.error(
+                "[feed] initial position reconcile failed (non-fatal) — "
+                "the periodic retry loop will still start: %r", exc,
+            )
+        finally:
+            async def _loop():
+                while True:
+                    await asyncio.sleep(POSITION_FEED_RECONCILE_INTERVAL_SECONDS)
+                    try:
+                        await self._position_feed_reconcile_once()
+                    except Exception as exc:
+                        log.error("[feed] position reconcile failed (non-fatal): %r", exc)
 
-        async def _loop():
-            while True:
-                await asyncio.sleep(POSITION_FEED_RECONCILE_INTERVAL_SECONDS)
-                try:
-                    await self._position_feed_reconcile_once()
-                except Exception as exc:
-                    log.error("[feed] position reconcile failed (non-fatal): %r", exc)
+            self._position_reconcile_task = asyncio.create_task(_loop())
 
-        asyncio.create_task(_loop())
+    def is_position_reconciliation_alive(self) -> bool:
+        """O.6c-1ac — True only if the periodic reconciliation loop task
+        genuinely exists and has not finished/crashed. Lets callers
+        (tests, diagnostics) verify _position_reconcile_started's claim
+        instead of trusting the flag alone — the exact gap O.6c-1ab's
+        audit found: a flag that could be True with no loop behind it."""
+        task = self._position_reconcile_task
+        return task is not None and not task.done()
 
     def reset_position_tracking_for_tests(self) -> None:
         """Test-only — mirrors spread_config_cache.reset_for_tests()."""
         with self._lock:
             self._position_symbols.clear()
         self._position_reconcile_started = False
+        task = self._position_reconcile_task
+        if task is not None and not task.done():
+            try:
+                task.cancel()
+            except Exception:
+                pass
+        self._position_reconcile_task = None
 
     async def subscribe(self, symbol: str, channel_layer, channel_name: str) -> None:
         await channel_layer.group_add(self.group_for(symbol), channel_name)
@@ -534,7 +589,25 @@ class FeedManager:
         # and self-healed by the periodic reconciliation backstop) — never
         # a fresh query on this hot path.
         if count <= 0 and not self.has_position_ref(symbol):
-            self._stop(symbol)
+            # O.6c-1ac — RACE GUARD. has_position_ref() reflects the last
+            # DB-derived state, but that state can genuinely lag a real
+            # open Position during bootstrap or a concurrent connect():
+            # ensure_position_feed_reconciliation_started() sets its
+            # idempotency flag synchronously and then awaits a DB hop —
+            # a second, concurrent connect() (default symbol subscribe
+            # immediately followed by change_symbol/unsubscribe, exactly
+            # O.6c-1ab's documented race) can see the flag already set,
+            # skip its own reconciliation, and reach this point before
+            # the FIRST caller's DB query has returned and marked
+            # _position_symbols. This is the only place in the hot tick
+            # path a DB read is added — and only right here, only once,
+            # only when a symbol's LAST remaining reference is about to
+            # be released and the cache doesn't already know about a
+            # Position. Position (DB) stays the sole authority; no
+            # manual counter is introduced.
+            await self.sync_position_symbol_from_db_async(symbol)
+            if self._counts.get(symbol, 0) <= 0 and not self.has_position_ref(symbol):
+                self._stop(symbol)
 
     # ── internal ──
 
