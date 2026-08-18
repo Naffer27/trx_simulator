@@ -90,7 +90,7 @@ class MatchAndDriftTests(TestCase):
     def test_contract_size_drift_is_flagged_and_strict_fails(self):
         make_instrument(
             symbol="EURUSD", display_name="EUR/USD", base_currency="EUR",
-            market_data_provider=Instrument.PROVIDER_FINNHUB, provider_symbol="FX:EURUSD",
+            market_data_provider=Instrument.PROVIDER_FINNHUB, provider_symbol="OANDA:EUR_USD",
             trading_enabled=True,
             contract_size=Decimal("1.0000"),  # wildly different from SymbolSpec's 100000
         )
@@ -147,7 +147,7 @@ class MatchAndDriftTests(TestCase):
     def test_display_name_only_drift_does_not_fail_strict(self):
         make_instrument(
             symbol="EURUSD", display_name="Euro Dollar (legacy)", base_currency="EUR",
-            market_data_provider=Instrument.PROVIDER_FINNHUB, provider_symbol="FX:EURUSD",
+            market_data_provider=Instrument.PROVIDER_FINNHUB, provider_symbol="OANDA:EUR_USD",
             trading_enabled=True,
             pip_size=Decimal("0.0001"), tick_size=Decimal("0.00001"), price_decimals=5,
             lot_step=Decimal("0.01"), min_lot=Decimal("0.01"), max_lot=Decimal("100.00"),

@@ -89,7 +89,7 @@ class CatalogDriftLevelTests(_IsolatedTestCase):
     def test_flag_on_critical_drift(self):
         make_instrument(
             symbol="EURUSD", display_name="EUR/USD", base_currency="EUR",
-            market_data_provider=Instrument.PROVIDER_FINNHUB, provider_symbol="FX:EURUSD",
+            market_data_provider=Instrument.PROVIDER_FINNHUB, provider_symbol="OANDA:EUR_USD",
             trading_enabled=True, contract_size=Decimal("1.0000"),
         )
         self.assertEqual(catalog_drift_level("EUR/USD"), CatalogDriftLevel.CRITICAL)

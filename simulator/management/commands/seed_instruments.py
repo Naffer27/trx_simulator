@@ -27,7 +27,7 @@ INSTRUMENTS = [
         "default_spread": Decimal("1.5000"), "spread_unit": Instrument.SPREAD_PIPS,
         "commission_per_lot": Decimal("0.00"), "commission_pct": Decimal("0.000000"),
         "max_leverage": 500, "margin_mode": Instrument.MARGIN_LEVERAGE, "pnl_mode": Instrument.PNL_STANDARD,
-        "market_data_provider": Instrument.PROVIDER_FINNHUB, "provider_symbol": "FX:EURUSD",
+        "market_data_provider": Instrument.PROVIDER_FINNHUB, "provider_symbol": "OANDA:EUR_USD",
         "trading_enabled": True, "session": "24/5",
     },
     {
@@ -39,7 +39,7 @@ INSTRUMENTS = [
         "default_spread": Decimal("1.8000"), "spread_unit": Instrument.SPREAD_PIPS,
         "commission_per_lot": Decimal("0.00"), "commission_pct": Decimal("0.000000"),
         "max_leverage": 500, "margin_mode": Instrument.MARGIN_LEVERAGE, "pnl_mode": Instrument.PNL_STANDARD,
-        "market_data_provider": Instrument.PROVIDER_FINNHUB, "provider_symbol": "FX:GBPUSD",
+        "market_data_provider": Instrument.PROVIDER_FINNHUB, "provider_symbol": "OANDA:GBP_USD",
         "trading_enabled": True, "session": "24/5",
     },
     {
@@ -51,7 +51,7 @@ INSTRUMENTS = [
         "default_spread": Decimal("1.8000"), "spread_unit": Instrument.SPREAD_PIPS,
         "commission_per_lot": Decimal("0.00"), "commission_pct": Decimal("0.000000"),
         "max_leverage": 500, "margin_mode": Instrument.MARGIN_LEVERAGE, "pnl_mode": Instrument.PNL_INVERSE,
-        "market_data_provider": Instrument.PROVIDER_FINNHUB, "provider_symbol": "FX:USDJPY",
+        "market_data_provider": Instrument.PROVIDER_FINNHUB, "provider_symbol": "OANDA:USD_JPY",
         "trading_enabled": True, "session": "24/5",
     },
     {
@@ -63,7 +63,7 @@ INSTRUMENTS = [
         "default_spread": Decimal("1.7000"), "spread_unit": Instrument.SPREAD_PIPS,
         "commission_per_lot": Decimal("0.00"), "commission_pct": Decimal("0.000000"),
         "max_leverage": 500, "margin_mode": Instrument.MARGIN_LEVERAGE, "pnl_mode": Instrument.PNL_STANDARD,
-        "market_data_provider": Instrument.PROVIDER_FINNHUB, "provider_symbol": "FX:AUDUSD",
+        "market_data_provider": Instrument.PROVIDER_FINNHUB, "provider_symbol": "OANDA:AUD_USD",
         "trading_enabled": True, "session": "24/5",
     },
     # ── Crypto (enabled) ─────────────────────────────────────────────────────
@@ -101,7 +101,7 @@ INSTRUMENTS = [
         "default_spread": Decimal("2.0000"), "spread_unit": Instrument.SPREAD_PIPS,
         "commission_per_lot": Decimal("0.00"), "commission_pct": Decimal("0.000000"),
         "max_leverage": 500, "margin_mode": Instrument.MARGIN_LEVERAGE, "pnl_mode": Instrument.PNL_INVERSE,
-        "market_data_provider": Instrument.PROVIDER_FINNHUB, "provider_symbol": "FX:USDCAD",
+        "market_data_provider": Instrument.PROVIDER_FINNHUB, "provider_symbol": "OANDA:USD_CAD",
         "trading_enabled": False, "session": "24/5",
     },
     {
@@ -113,7 +113,7 @@ INSTRUMENTS = [
         "default_spread": Decimal("1.8000"), "spread_unit": Instrument.SPREAD_PIPS,
         "commission_per_lot": Decimal("0.00"), "commission_pct": Decimal("0.000000"),
         "max_leverage": 500, "margin_mode": Instrument.MARGIN_LEVERAGE, "pnl_mode": Instrument.PNL_INVERSE,
-        "market_data_provider": Instrument.PROVIDER_FINNHUB, "provider_symbol": "FX:USDCHF",
+        "market_data_provider": Instrument.PROVIDER_FINNHUB, "provider_symbol": "OANDA:USD_CHF",
         "trading_enabled": False, "session": "24/5",
     },
     {
@@ -125,7 +125,7 @@ INSTRUMENTS = [
         "default_spread": Decimal("2.0000"), "spread_unit": Instrument.SPREAD_PIPS,
         "commission_per_lot": Decimal("0.00"), "commission_pct": Decimal("0.000000"),
         "max_leverage": 500, "margin_mode": Instrument.MARGIN_LEVERAGE, "pnl_mode": Instrument.PNL_STANDARD,
-        "market_data_provider": Instrument.PROVIDER_FINNHUB, "provider_symbol": "FX:NZDUSD",
+        "market_data_provider": Instrument.PROVIDER_FINNHUB, "provider_symbol": "OANDA:NZD_USD",
         "trading_enabled": False, "session": "24/5",
     },
     # ── Crypto (disabled) ────────────────────────────────────────────────────

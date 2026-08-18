@@ -82,7 +82,12 @@ _reg(SymbolSpec(
     spread=0.00015,     # 1.5 pips — competitive retail ECN
     commission_pct=0.0, # pure-spread model
     max_leverage=500,
-    finnhub_symbol="FX:EURUSD",
+    # O.6c-1ae — "FX:EURUSD" is rejected by Finnhub's realtime WS trade
+    # stream ({"msg":"Invalid symbol FX:EURUSD","type":"error"}, verified
+    # live against the account's API key). "FX:" is a valid prefix for
+    # other Finnhub endpoints but not this one; the WS trade stream wants
+    # "OANDA:EUR_USD" — verified live (received a real "trade" message).
+    finnhub_symbol="OANDA:EUR_USD",
 ))
 
 _reg(SymbolSpec(
@@ -93,7 +98,10 @@ _reg(SymbolSpec(
     spread=0.00018,     # 1.8 pips
     commission_pct=0.0,
     max_leverage=500,
-    finnhub_symbol="FX:GBPUSD",
+    # O.6c-1ae — verified live: OANDA:GBP_USD returns a real Finnhub WS
+    # trade message; the previous "FX:GBPUSD" form is the same class of
+    # bug as EUR/USD's (see that spec's comment).
+    finnhub_symbol="OANDA:GBP_USD",
 ))
 
 _reg(SymbolSpec(
@@ -104,7 +112,9 @@ _reg(SymbolSpec(
     spread=0.018,       # 1.8 JPY pips
     commission_pct=0.0,
     max_leverage=500,
-    finnhub_symbol="FX:USDJPY",
+    # O.6c-1ae — verified live: OANDA:USD_JPY returns a real Finnhub WS
+    # trade message; "FX:USDJPY" is the same wrong-prefix bug as EUR/USD.
+    finnhub_symbol="OANDA:USD_JPY",
     quote_currency="JPY",   # was left at the "USD" default — base=USD/quote=JPY is inverse-PnL (FOUNDATION-06b)
 ))
 
@@ -116,7 +126,9 @@ _reg(SymbolSpec(
     spread=0.00017,     # 1.7 pips
     commission_pct=0.0,
     max_leverage=500,
-    finnhub_symbol="FX:AUDUSD",
+    # O.6c-1ae — verified live: OANDA:AUD_USD returns a real Finnhub WS
+    # trade message; "FX:AUDUSD" is the same wrong-prefix bug as EUR/USD.
+    finnhub_symbol="OANDA:AUD_USD",
 ))
 
 # ─── Forex — Additional Pairs (defined, not yet enabled in backend) ───────────
@@ -127,7 +139,9 @@ _reg(SymbolSpec(
     tick_size=0.00001, pip_size=0.0001, price_decimals=5,
     base_price=1.37000, sim_drift=0.0008,
     spread=0.00020, commission_pct=0.0, max_leverage=500,
-    finnhub_symbol="FX:USDCAD", enabled=False,
+    # O.6c-1ae — verified live: OANDA:USD_CAD returns a real Finnhub WS
+    # trade message; "FX:USDCAD" is the same wrong-prefix bug as EUR/USD.
+    finnhub_symbol="OANDA:USD_CAD", enabled=False,
     quote_currency="CAD",   # was left at the "USD" default (FOUNDATION-06b)
 ))
 
@@ -137,7 +151,9 @@ _reg(SymbolSpec(
     tick_size=0.00001, pip_size=0.0001, price_decimals=5,
     base_price=0.90000, sim_drift=0.0008,
     spread=0.00018, commission_pct=0.0, max_leverage=500,
-    finnhub_symbol="FX:USDCHF", enabled=False,
+    # O.6c-1ae — verified live: OANDA:USD_CHF returns a real Finnhub WS
+    # trade message; "FX:USDCHF" is the same wrong-prefix bug as EUR/USD.
+    finnhub_symbol="OANDA:USD_CHF", enabled=False,
     quote_currency="CHF",   # was left at the "USD" default (FOUNDATION-06b)
 ))
 
@@ -147,7 +163,9 @@ _reg(SymbolSpec(
     tick_size=0.00001, pip_size=0.0001, price_decimals=5,
     base_price=0.62000, sim_drift=0.0007,
     spread=0.00020, commission_pct=0.0, max_leverage=500,
-    finnhub_symbol="FX:NZDUSD", enabled=False,
+    # O.6c-1ae — verified live: OANDA:NZD_USD returns a real Finnhub WS
+    # trade message; "FX:NZDUSD" is the same wrong-prefix bug as EUR/USD.
+    finnhub_symbol="OANDA:NZD_USD", enabled=False,
 ))
 
 # ─── Crypto ───────────────────────────────────────────────────────────────────

@@ -1277,11 +1277,35 @@ class FeedManager:
                     ping_interval=20, ping_timeout=20,
                     close_timeout=10, max_queue=256,
                 ) as ws:
-                    consecutive_failures = 0
                     await ws.send(json.dumps({"type": "subscribe", "symbol": finnhub_sym}))
                     async for raw in ws:
                         msg = json.loads(raw)
-                        if msg.get("type") != "trade":
+                        msg_type = msg.get("type")
+                        if msg_type == "error":
+                            # O.6c-1ae — Finnhub protocol-level error
+                            # (invalid symbol, auth, rate-limit, ...).
+                            # The connection stays open and no "trade"
+                            # will ever follow for a rejected
+                            # subscription — silently `continue`-ing
+                            # past this (pre-O.6c-1ae behavior) left
+                            # this loop parked in `async for raw in ws`
+                            # forever: no exception, no _broadcast, no
+                            # fallback to sim. Raising here feeds the
+                            # SAME consecutive_failures/MAX_FAILURES/
+                            # on_terminal_failure machinery below as a
+                            # real connection failure, so this gives up
+                            # and lets _try_live_legacy fall through to
+                            # the sim loop within a bounded number of
+                            # attempts instead of hanging indefinitely.
+                            err_text = msg.get("msg", "")
+                            log.error(
+                                "[feed] Finnhub protocol error for %s (%s): %s",
+                                symbol, finnhub_sym, err_text,
+                            )
+                            raise RuntimeError(
+                                f"finnhub_protocol_error symbol={finnhub_sym}: {err_text}"
+                            )
+                        if msg_type != "trade":
                             continue
                         for t in msg.get("data", []):
                             px = float(t.get("p") or 0.0)
@@ -1292,6 +1316,18 @@ class FeedManager:
                             ask = round(px + spr / 2, dec)
                             ts  = int((t.get("t") or time.time() * 1000) / 1000)
                             await self._broadcast(symbol, channel_layer, bid, ask, ts, source="finnhub")
+                            # O.6c-1ae — reset only on a genuine trade, not
+                            # on a bare successful TCP/WS handshake (moved
+                            # off the `async with` entry above). A symbol
+                            # Finnhub permanently rejects at the protocol
+                            # level (bad mapping, revoked auth) reconnects
+                            # successfully every single attempt — resetting
+                            # here on connect alone made consecutive_
+                            # failures never accumulate past 1, so
+                            # MAX_FAILURES was never reached and this loop
+                            # retried forever instead of giving up and
+                            # letting _try_live_legacy fall back to sim.
+                            consecutive_failures = 0
                             if not tick_reported and on_first_tick is not None:
                                 tick_reported = True
                                 try:

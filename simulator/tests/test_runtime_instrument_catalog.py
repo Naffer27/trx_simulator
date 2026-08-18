@@ -63,7 +63,7 @@ class DriftDetectionTests(TestCase):
     def test_detects_a_real_critical_drift(self):
         make_instrument(
             symbol="EURUSD", display_name="EUR/USD", base_currency="EUR",
-            market_data_provider=Instrument.PROVIDER_FINNHUB, provider_symbol="FX:EURUSD",
+            market_data_provider=Instrument.PROVIDER_FINNHUB, provider_symbol="OANDA:EUR_USD",
             trading_enabled=True, contract_size=Decimal("1.0000"),  # wildly different
         )
         report = check_runtime_catalog_drift("EUR/USD")
@@ -97,7 +97,7 @@ class LoggingTests(TestCase):
     def test_critical_drift_logs_a_warning(self):
         make_instrument(
             symbol="EURUSD", display_name="EUR/USD", base_currency="EUR",
-            market_data_provider=Instrument.PROVIDER_FINNHUB, provider_symbol="FX:EURUSD",
+            market_data_provider=Instrument.PROVIDER_FINNHUB, provider_symbol="OANDA:EUR_USD",
             trading_enabled=True, contract_size=Decimal("1.0000"),
         )
         with self.assertLogs("simulator.ws", level="WARNING") as captured:
@@ -115,7 +115,7 @@ class LoggingTests(TestCase):
     def test_log_contains_no_secrets(self):
         make_instrument(
             symbol="EURUSD", display_name="EUR/USD", base_currency="EUR",
-            market_data_provider=Instrument.PROVIDER_FINNHUB, provider_symbol="FX:EURUSD",
+            market_data_provider=Instrument.PROVIDER_FINNHUB, provider_symbol="OANDA:EUR_USD",
             trading_enabled=True, contract_size=Decimal("1.0000"),
         )
         with self.assertLogs("simulator.ws", level="WARNING") as captured:
