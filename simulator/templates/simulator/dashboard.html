@@ -1924,7 +1924,7 @@ function showQB(panel,posId){
     if(pos){
       const side=String(pos.side||'').toUpperCase();
       const sym=(pos.symbol||panel.currentSymbol).replace('/','');
-      const qty=Number(pos.qty??0).toFixed(2);
+      const qty=Number(pos.qty??0).toFixed(getLotDecimals(pos.symbol||panel.currentSymbol));
       qbInfo.textContent=`${side} ${sym} ${qty}`;
     }else{qbInfo.textContent='Modificar posición';}
   }
@@ -2344,6 +2344,32 @@ class TradingPanel {
       // see the 'error' branch above for why this can't be unconditional.
       if(orderTicketPanel===this)_resolveOrderTicket();
       const side=(msg.side||'').toLowerCase();
+      // O.6c — order_ack.order_id is the REAL backend Position id for
+      // this fill, sent by consumers.py right after the DB commit
+      // (before the 'positions' snapshot). Remove the pendingTmp
+      // placeholder line by identity (symbol+side, oldest first) instead
+      // of the price-tolerance match in _reconcilePending() — the O.6c
+      // audit showed that match can miss by tens of dollars (client-side
+      // lastClose at click time vs. the server's raw execution price),
+      // leaving a permanent orphaned line. The upcoming 'positions'
+      // snapshot draws the real line for order_id via _renderLines()/
+      // _drawLines() unconditionally, so removing the placeholder here
+      // — and transferring its "selected" state to the real id, exactly
+      // like a successful _reconcilePending() match already did — is
+      // enough; never leaves two entry lines for the same fill.
+      if(msg.order_id!=null){
+        const _pIdx=this.pendingTmp.findIndex(t=>t.symbol===msg.symbol&&t.side===side);
+        if(_pIdx!==-1){
+          const [_matched]=this.pendingTmp.splice(_pIdx,1);
+          this._removeLines(_matched.tmpId);
+          this.selectedPosIds.delete(_matched.tmpId);
+          if(this.lastSelectedId===_matched.tmpId){
+            this.selectedPosIds.add(String(msg.order_id));
+            this.lastSelectedId=String(msg.order_id);
+          }
+          refreshQB();
+        }
+      }
       const px=msg.price??msg.fill_price??this.lastClose;
       const fmt=px!=null?Number(px).toFixed(priceFormatFor(this.currentSymbol).precision):null;
       execToast(side==='sell'?'sell':'buy',side==='sell'?'SELL ejecutado':'BUY ejecutado',fmt?`@ ${fmt}`:'');
@@ -2511,7 +2537,7 @@ class TradingPanel {
     for(const p of(rows||[]))if(p.symbol===this.currentSymbol)this._drawLines(String(p.id),p);
     this._applyLineStyles();
   }
-  _clearLines(){Array.from(this.linesById.keys()).forEach(id=>this._removeLines(id));this.linesById.clear();}
+  _clearLines(){Array.from(this.linesById.keys()).forEach(id=>this._removeLines(id));this.linesById.clear();this.pendingTmp=[];}
   _removeLines(id){const rec=this.linesById.get(String(id));if(!rec)return;[rec.plEntry,rec.plSL,rec.plTP].forEach(l=>l&&this.candleSeries?.removePriceLine(l));this.linesById.delete(String(id));}
   _drawLines(id,pos){
     if(!this.candleSeries)return;
@@ -2652,7 +2678,7 @@ class TradingPanel {
       handleScale:{mouseWheel:true,pinch:true,axisPressedMouseMove:{time:true,price:true}},
       handleScroll:{mouseWheel:true,pressedMouseMove:true,horzTouchDrag:true,vertTouchDrag:true}
     });
-    this.candleSeries=this.chart.addCandlestickSeries({upColor:'#26a69a',downColor:'#ef5350',wickUpColor:'#26a69a',wickDownColor:'#ef5350',borderUpColor:'#26a69a',borderDownColor:'#ef5350',priceFormat:priceFormatFor(this.currentSymbol)});
+    this.candleSeries=this.chart.addCandlestickSeries({upColor:'#26a69a',downColor:'#ef5350',wickUpColor:'#26a69a',wickDownColor:'#ef5350',borderUpColor:'#26a69a',borderDownColor:'#ef5350',priceFormat:priceFormatFor(this.currentSymbol),priceLineVisible:false});
     const VS=`vol-${this.id}`;
     this.volumeSeries=this.chart.addHistogramSeries({priceScaleId:VS,priceFormat:{type:'volume'},priceLineVisible:false,lastValueVisible:false,color:'rgba(255,255,255,0.07)'});
     this.chart.priceScale(VS).applyOptions({scaleMargins:{top:0.82,bottom:0},visible:false,borderVisible:false});
@@ -2751,10 +2777,27 @@ class TradingPanel {
       execToast('close','❌ Error de conexión','No se pudo enviar la orden');
       return;
     }
+    // O.6c — defensive cleanup: the 'sending' guard above means only one
+    // order is ever really in flight, so pendingTmp should already be
+    // empty here. If a leftover entry exists anyway (order_ack missed,
+    // stale state from before this fix), drop it now rather than let it
+    // accumulate as a permanent orphaned line indistinguishable from the
+    // new one about to be drawn.
+    if(this.pendingTmp.length){
+      for(const stale of this.pendingTmp){this._removeLines(stale.tmpId);this.selectedPosIds.delete(stale.tmpId);}
+      this.pendingTmp=[];
+    }
     const tmpId=`tmp-${Date.now()}`;
-    this._drawLines(tmpId,{id:tmpId,symbol:this.currentSymbol,side,avg:this.lastClose,sl:slV,tp:tpV});
+    // O.6c — visual standard: no PriceLine is drawn for a pending order.
+    // pendingTmp keeps only bookkeeping (symbol/side/tmpId) so order_ack's
+    // reconciliation (above) and the reject-path cleanup ('error' branch)
+    // still have an id to match and clear — both already no-op safely on
+    // a tmpId with no linesById entry. selectedPosIds/lastSelectedId are
+    // still set here (bookkeeping only, no chart line attached) purely so
+    // order_ack's existing "transfer selection to the real id" logic keeps
+    // selecting/highlighting the position the instant it's confirmed.
     this.selectedPosIds.clear();this.selectedPosIds.add(tmpId);this.lastSelectedId=tmpId;
-    this._applyLineStyles();this.pendingTmp.push({tmpId,symbol:this.currentSymbol,side,avg:this.lastClose});
+    this.pendingTmp.push({tmpId,symbol:this.currentSymbol,side,avg:this.lastClose});
     setTimeout(()=>showQB(this,tmpId),50);
   }
 }
@@ -2962,7 +3005,7 @@ function renderGlobalPositions(){
     return `<tr data-id="${r.id}" data-pid="${r._pid}">
       <td class="btm-td-${side}">${sym}</td>
       <td class="btm-td-${side}">${side.toUpperCase()}</td>
-      <td align="right">${qty.toFixed(2)}</td>
+      <td align="right">${qty.toFixed(getLotDecimals(r.symbol))}</td>
       <td align="right">${fmt(entry,p)}</td>
       <td align="right">${r.sl!=null?fmt(r.sl,p):'-'}</td>
       <td align="right">${r.tp!=null?fmt(r.tp,p):'-'}</td>
@@ -3163,7 +3206,7 @@ function openSheet(focus){
   const sqEl=document.getElementById('sheetSideQty');
   const pnlEl=document.getElementById('sheetPnL');
   if(symEl)symEl.textContent=qbPanel.currentSymbol.replace('/','');
-  if(sqEl){const side=String(pos?.side||rec.side||'').toUpperCase();const qty=Number(pos?.qty??rec.qty??0).toFixed(2);sqEl.textContent=`${side} ${qty} lotes`;}
+  if(sqEl){const side=String(pos?.side||rec.side||'').toUpperCase();const qty=Number(pos?.qty??rec.qty??0).toFixed(getLotDecimals(pos?.symbol||qbPanel.currentSymbol));sqEl.textContent=`${side} ${qty} lotes`;}
   if(pnlEl){
     // O.6c-1x — a real backend-synced position (pos found) uses
     // computePositionPnLSafe(), never qbPanel.lastClose (the panel
@@ -3416,7 +3459,7 @@ function _syncTradingPanel(){
     const routeStr=sltp||`${entry.toFixed(p)} → ${px!=null?px.toFixed(p):'—'}`;
     return `<div class="trd-pos-item" data-id="${pos.id}" data-pid="${pos._pid}" data-side="${side}">
       <div class="trd-pos-item-left">
-        <div class="trd-pos-item-sym-line">${sym} <span style="color:${sideColor};font-weight:700;font-size:.72rem;letter-spacing:.03em">${side.toUpperCase()} ${Number(pos.qty??0).toFixed(2)}</span></div>
+        <div class="trd-pos-item-sym-line">${sym} <span style="color:${sideColor};font-weight:700;font-size:.72rem;letter-spacing:.03em">${side.toUpperCase()} ${Number(pos.qty??0).toFixed(getLotDecimals(pos.symbol||''))}</span></div>
         <div class="trd-pos-item-route">${routeStr}</div>
       </div>
       <div class="trd-pos-item-pnl ${pnlClass}">${raw!=null?(raw>=0?'+':'')+`$${Math.abs(raw).toFixed(2)}`:'—'}</div>
@@ -3479,7 +3522,7 @@ function _syncHistorialPanel(){
     const dt=new Date(t.ts);
     const dateStr=`${dt.getFullYear()}.${String(dt.getMonth()+1).padStart(2,'0')}.${String(dt.getDate()).padStart(2,'0')}`;
     const timeStr=dt.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit',second:'2-digit'});
-    const qtyStr=t.qty!=null?Number(t.qty).toFixed(2):'';
+    const qtyStr=t.qty!=null?Number(t.qty).toFixed(getLotDecimals(t.symbol||'')):'';
     return `<div class="hst-flat-row">
       <div class="hst-flat-top">
         <span><span class="hst-flat-sym">${sym} </span><span class="hst-flat-${side}">${side}${qtyStr?' '+qtyStr:''}</span></span>
