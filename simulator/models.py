@@ -1513,6 +1513,38 @@ class TraderScore(models.Model):
 
     last_evaluated    = models.DateTimeField(null=True, blank=True)
 
+    # ─────────────────────────────────────────────────────────────────
+    # BOOK-06k.1 — Routing Profile Policy V2 foundation. Purely additive,
+    # nullable/defaulted fields — zero impact on any existing row, zero
+    # change to how routing_profile itself is read or written today.
+    # The legacy engine (intelligence_engine.py::update_intelligence(),
+    # unchanged by this block) remains the SOLE writer of routing_profile
+    # until a future, separately-authorized activation block. See
+    # simulator/routing_profile_policy.py for the pure engine that
+    # produces the values these fields would eventually store.
+    #
+    # v2_routing_profile is deliberately NOT the same field as
+    # routing_profile: during shadow mode, routing_profile keeps being
+    # overwritten by the legacy engine on every close with no hysteresis
+    # (unchanged, documented behavior) — comparing V2's own candidate
+    # against that constantly-moving field would make V2's histéresis
+    # meaningless. v2_routing_profile is V2's own, self-referential
+    # "confirmed" state, decoupled from the legacy column.
+    candidate_routing_profile = models.CharField(
+        max_length=20, choices=ROUTING_CHOICES, null=True, blank=True, default=None,
+    )
+    candidate_streak = models.PositiveSmallIntegerField(default=0)
+    v2_routing_profile = models.CharField(
+        max_length=20, choices=ROUTING_CHOICES, null=True, blank=True, default=None,
+    )
+    v2_routing_profile_changed_at = models.DateTimeField(null=True, blank=True)
+    routing_profile_evidence_snapshot = models.JSONField(default=dict, blank=True)
+    # 0 = never evaluated by V2 (every existing row today). >=1 = the V2
+    # engine_version that produced the last evaluation — independent axis
+    # from routing_profile itself, never reused to version the legacy
+    # engine (which has no version field of its own).
+    routing_profile_engine_version = models.PositiveSmallIntegerField(default=0)
+
     def __str__(self):
         return f"Score #{self.account_id} {self.trader_class} win={self.win_rate}%"
 
