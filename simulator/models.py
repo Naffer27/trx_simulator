@@ -2954,3 +2954,165 @@ class DealingDeskDecision(models.Model):
             f"is_simulated_hedge={self.is_simulated_hedge} "
             f"@ {self.decided_at:%Y-%m-%d %H:%M:%S}"
         )
+
+
+# ─────────────────────────────────────────────
+# FIX-02A.1 — Payout Safety & Provider Abstraction Foundation
+#
+# WithdrawalRequest = the economic obligation (unchanged, see that class's
+# own docstring). PayoutAttempt = one concrete attempt to settle that
+# obligation through a provider. 1 WithdrawalRequest : N PayoutAttempt.
+#
+# This model is purely additive foundation — no provider is integrated
+# yet (FIX-02A.2), admin/views/callback are not rewired to use it yet
+# (FIX-02A.3), and there is no reconciliation service yet (FIX-02A.4).
+# See "FIX-02A — Design Lock Correction Final" for the full rationale.
+# ─────────────────────────────────────────────
+
+# Module-level (not class-level) so Meta.constraints' condition=Q(...) can
+# see it — a nested Meta class body cannot resolve names from the outer
+# class's own body, only module-level and its own names.
+_PAYOUT_ATTEMPT_NON_TERMINAL_STATUSES = ("created", "submitted", "processing", "unknown")
+_PAYOUT_ATTEMPT_TERMINAL_STATUSES     = ("completed", "failed")
+
+
+class PayoutAttempt(models.Model):
+    """
+    One concrete attempt to pay out a WithdrawalRequest through a provider.
+
+    Status semantics (provider-agnostic — see payout_state_machine.py for
+    the authoritative transition table):
+      CREATED    — logical starting point. Never durably committed on its
+                   own in the normal flow: create_and_submit_payout_attempt()
+                   inserts the row already as SUBMITTED in one write, so no
+                   other process ever observes a row sitting at CREATED.
+                   Kept in the enum for state-machine completeness and for
+                   a future provider whose validation step genuinely takes
+                   time before submission.
+      SUBMITTED  — persisted BEFORE any outbound network call. Means "we
+                   cannot prove the provider did NOT receive this" — never
+                   "the provider received it". This is the deliberately
+                   conservative point-of-no-return marker that lets a crash
+                   at any point during/after the network call still find
+                   pre-existing evidence in the DB.
+      PROCESSING — provider acknowledged receipt (HTTP 2xx + a reference).
+      UNKNOWN    — our own code caught a timeout/connection/parse error
+                   AFTER submitted_at was already committed. Never treated
+                   as FAILED. Same operational handling as a SUBMITTED row
+                   that has gone stale past an age threshold (see the
+                   reconciliation service, FIX-02A.4 — not built here).
+      COMPLETED  — terminal, confirmed success.
+      FAILED     — terminal, confirmed failure (by callback or by explicit
+                   human reconciliation with evidence — never automatic
+                   from UNKNOWN, never automatic from a timeout).
+
+    Invariants enforced at the DB level (see Meta.constraints):
+      - idempotency_key is globally unique.
+      - (withdrawal_request, attempt_number) is unique.
+      - At most one NON-terminal PayoutAttempt (CREATED/SUBMITTED/
+        PROCESSING/UNKNOWN) may exist per withdrawal_request at a time —
+        a partial unique index, condition=Q(status__in=NON_TERMINAL_STATUSES).
+
+    Never touches Wallet directly. Creating or transitioning a
+    PayoutAttempt never calls credit_wallet()/debit_wallet() and never
+    creates a WalletTransaction — the wallet was already debited once,
+    at WithdrawalRequest creation time, and refunds (future blocks) only
+    ever happen through credit_wallet(TX_CORRECTION) triggered by a
+    CONFIRMED FAILED, never from here.
+    """
+
+    STATUS_CREATED    = "created"
+    STATUS_SUBMITTED  = "submitted"
+    STATUS_PROCESSING = "processing"
+    STATUS_COMPLETED  = "completed"
+    STATUS_FAILED     = "failed"
+    STATUS_UNKNOWN    = "unknown"
+
+    STATUS_CHOICES = [
+        (STATUS_CREATED,    "Created"),
+        (STATUS_SUBMITTED,  "Submitted"),
+        (STATUS_PROCESSING, "Processing"),
+        (STATUS_COMPLETED,  "Completed"),
+        (STATUS_FAILED,     "Failed"),
+        (STATUS_UNKNOWN,    "Unknown"),
+    ]
+
+    NON_TERMINAL_STATUSES = _PAYOUT_ATTEMPT_NON_TERMINAL_STATUSES
+    TERMINAL_STATUSES     = _PAYOUT_ATTEMPT_TERMINAL_STATUSES
+
+    withdrawal_request = models.ForeignKey(
+        "WithdrawalRequest", on_delete=models.PROTECT,
+        related_name="payout_attempts",
+    )
+
+    provider       = models.CharField(max_length=32)
+    attempt_number = models.PositiveIntegerField()
+    idempotency_key = models.CharField(max_length=128, unique=True)
+
+    # Provider references — populated only once the provider acknowledges
+    # (PROCESSING). Empty string, not null, mirrors WithdrawalRequest's own
+    # np_batch_id/np_payout_id convention.
+    provider_reference = models.CharField(max_length=100, blank=True, default="", db_index=True)
+    provider_batch_id  = models.CharField(max_length=100, blank=True, default="", db_index=True)
+
+    # What we asked for — immutable once created, never overwritten by a
+    # provider response (that goes in provider_amount instead).
+    requested_amount_usd = models.DecimalField(max_digits=12, decimal_places=2)
+    requested_asset      = models.CharField(max_length=20)
+    requested_network     = models.CharField(max_length=20, blank=True, default="")
+    destination_address  = models.CharField(max_length=200)
+
+    # What the provider confirmed — null until acknowledged.
+    provider_amount = models.DecimalField(max_digits=24, decimal_places=10, null=True, blank=True)
+
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_CREATED, db_index=True)
+
+    submitted_at    = models.DateTimeField(null=True, blank=True)
+    acknowledged_at = models.DateTimeField(null=True, blank=True)
+    completed_at    = models.DateTimeField(null=True, blank=True)
+    failed_at       = models.DateTimeField(null=True, blank=True)
+
+    last_error          = models.TextField(blank=True, default="")
+    raw_provider_status  = models.CharField(max_length=40, blank=True, default="")
+
+    reconciliation_checked_at = models.DateTimeField(null=True, blank=True)
+    reconciled_at              = models.DateTimeField(null=True, blank=True)
+
+    # Both set together by create_and_submit_payout_attempt() today (CREATED
+    # and SUBMITTED happen in the same call) — kept as separate fields for a
+    # future async submission flow where they could diverge.
+    created_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="created_payout_attempts",
+    )
+    submitted_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="submitted_payout_attempts",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["withdrawal_request", "status"], name="pa_wr_status_idx"),
+            models.Index(fields=["created_at"], name="pa_created_at_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["withdrawal_request", "attempt_number"],
+                name="pa_unique_wr_attempt_number",
+            ),
+            models.UniqueConstraint(
+                fields=["withdrawal_request"],
+                condition=models.Q(status__in=_PAYOUT_ATTEMPT_NON_TERMINAL_STATUSES),
+                name="pa_one_active_attempt_per_wr",
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"PayoutAttempt #{self.id} wr={self.withdrawal_request_id} "
+            f"attempt={self.attempt_number} provider={self.provider} [{self.status}]"
+        )
