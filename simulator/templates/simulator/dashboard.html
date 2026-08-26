@@ -2138,6 +2138,13 @@ class TradingPanel {
       // scale; they must never carry over to a different instrument.
       const slEl=document.getElementById('sl'), tpEl=document.getElementById('tp');
       if(slEl)slEl.value=''; if(tpEl)tpEl.value='';
+      // FIX-01 — symbol change alters notional/margin: refresh the risk preview
+      const _qtyNow=parseFloat(document.getElementById('qty')?.value)||0;
+      if(_qtyNow>0){
+        const _localRisk=computeRiskLocal(_qtyNow);
+        if(_localRisk)updateRiskPanel(_localRisk);
+        this._requestRiskPreview(_qtyNow);
+      }
     }
     if(this.ws?.readyState===WebSocket.OPEN){
       this.ws.send(JSON.stringify({action:'change_symbol',symbol:this.currentSymbol}));
@@ -2236,6 +2243,10 @@ class TradingPanel {
 
   _loadHistory=debounce(()=>{if(this.ws?.readyState===WebSocket.OPEN)this.ws.send(JSON.stringify({action:'load_history',symbol:this.currentSymbol,timeframe:this.currentTF}));},180);
 
+  /* FIX-01 — authoritative risk preview (risk_engine.py::evaluate_position_risk,
+     contract_size-correct). Debounced so qty keystrokes don't flood the socket. */
+  _requestRiskPreview=debounce((qty)=>{if(this.ws?.readyState===WebSocket.OPEN)this.ws.send(JSON.stringify({action:'order:risk_preview',symbol:this.currentSymbol,qty}));},200);
+
   _handleMsg(msg){
     if(msg.type==='info'||msg.type==='warn'){this.setStatus((msg.type==='info'?'ℹ️ ':'⚠️ ')+(msg.message||''));return;}
     if(msg.type==='error'){
@@ -2283,7 +2294,13 @@ class TradingPanel {
       return;
     }
     if(msg.type==='risk_preview'){
-      updateRiskPanel(msg);
+      // FIX-01 — drop a response that arrived after the user switched panel,
+      // switched symbol, or changed qty (including clearing it) while this
+      // request was in flight. Numeric comparison with an epsilon — never
+      // string comparison — so '0.10' (input) vs 0.1 (msg.qty) still matches.
+      const _qtyNow=parseFloat(document.getElementById('qty')?.value);
+      const _qtyMatches=Number.isFinite(_qtyNow)&&Number.isFinite(msg.qty)&&Math.abs(_qtyNow-msg.qty)<1e-9;
+      if(this===activePanel&&msg.symbol===this.currentSymbol&&_qtyMatches)updateRiskPanel(msg);
       return;
     }
 
@@ -3633,6 +3650,10 @@ const _RL_COLORS={LOW:'#26a69a',MEDIUM:'#ffc107',HIGH:'#ff9800',EXTREME:'#ef5350
 const _RL_BAR={LOW:12,MEDIUM:45,HIGH:78,EXTREME:100};
 const _RL_LABELS={LOW:'Riesgo Bajo',MEDIUM:'Riesgo Moderado',HIGH:'Riesgo Alto — se requiere confirmación',EXTREME:'Riesgo Extremo — operación bloqueada'};
 
+/* FIX-01 — instant client-side estimate only, shown while the debounced
+   'order:risk_preview' round-trip is in flight. risk_engine.py::
+   evaluate_position_risk() (via _requestRiskPreview/'risk_preview') is the
+   authoritative source and overwrites this the moment its response lands. */
 function computeRiskLocal(qty){
   const msg=window._lastAccountMsg;
   const panel=activePanel;
@@ -3643,7 +3664,7 @@ function computeRiskLocal(qty){
   const price=panel.lastClose||0;
   if(!price||!equity)return null;
   const sym=panel.currentSymbol||'';
-  const notional=qty*price;
+  const notional=qty*price*getContractSize(sym);
   const newMargin=notional/Math.max(1,lev);
   const exposurePct=notional/equity*100;
   const marginAfterPct=(margin+newMargin)/equity*100;
@@ -3690,6 +3711,7 @@ if(_qtyEl){
     if(qty<=0){const p=document.getElementById('riskPanel');if(p)p.style.display='none';return;}
     const local=computeRiskLocal(qty);
     if(local)updateRiskPanel(local);
+    activePanel?._requestRiskPreview?.(qty);
   });
 }
 

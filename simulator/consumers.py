@@ -2022,7 +2022,10 @@ class TradingConsumer(AsyncWebsocketConsumer):
         margin = self._margin_used_total()
         lev = max(1, int(self.account.get("leverage", 50)))
         assessment = await self._db_evaluate_risk(sym, qty, equity, margin, lev)
-        await self.send_json({"type": "risk_preview", **assessment})
+        # FIX-01: echo the request's symbol/qty so the client can drop a
+        # response that arrives after the user switched symbol or panel —
+        # no formula/business-rule change, just request/response correlation.
+        await self.send_json({"type": "risk_preview", "symbol": sym, "qty": qty, **assessment})
 
     @database_sync_to_async
     def _db_evaluate_risk(self, symbol: str, lot_size: float,
