@@ -28,7 +28,7 @@ from django.test import TestCase, RequestFactory
 from django.utils import timezone
 
 from simulator.models import (
-    Deposit, Wallet, WalletTransaction, WithdrawalRequest, TOTPDevice,
+    Deposit, PayoutAttempt, Wallet, WalletTransaction, WithdrawalRequest, TOTPDevice,
 )
 from simulator.tests.factories import make_user, make_wallet, make_kyc_approved, make_deposit
 from simulator.wallet_ledger import (
@@ -423,7 +423,7 @@ class AdminApproveIdempotencyTest(TestCase):
 
     @patch("simulator.tasks.send_email_async.delay")
     @patch("simulator.nowpayments.estimate_price", return_value=Decimal("0.001"))
-    @patch("simulator.nowpayments.create_payout", return_value={
+    @patch("simulator.nowpayments.create_payout_with_token", return_value={
         "id": "batch_01", "status": "CREATED",
         "withdrawals": [{"id": "pay_01"}],
     })
@@ -451,9 +451,27 @@ class AdminApproveIdempotencyTest(TestCase):
 
     @patch("simulator.tasks.send_email_async.delay")
     @patch("simulator.nowpayments.estimate_price", return_value=Decimal("0.001"))
-    @patch("simulator.nowpayments.create_payout", side_effect=Exception("NP down"))
-    def test_approve_api_failure_rolls_back_to_pending(self, _payout, _price, _email):
-        """If the NP API call fails, WR must be reset to PENDING so admin can retry."""
+    @patch("simulator.nowpayments.create_payout_with_token", side_effect=Exception("NP down"))
+    def test_approve_api_failure_stays_processing_never_pending(self, mock_payout, _price, _email):
+        """
+        FIX-02A.2 — superseded assertion. Before FIX-02A.2, a NowPayments
+        failure after the PENDING->APPROVED claim rolled WithdrawalRequest
+        back to PENDING — the exact bug FIX-02A.2 was authorized to close
+        (a subsequent admin retry could then produce a second real payout
+        for a request NowPayments may have already received ambiguously).
+
+        Post-FIX-02A.2: once a PayoutAttempt exists (created inside TXN1,
+        before any provider call), WithdrawalRequest.status is NEVER
+        reverted to 'pending' again. An ambiguous/ill-typed failure from
+        create_payout_with_token() — the real boundary NowPaymentsAdapter
+        calls after the FIX-02A.2 JWT-blocker fix, one real auth call
+        followed by the one real payout POST, patched here (as simulated
+        here — a bare Exception, not a typed requests error) — is
+        classified ProviderResponseError by NowPaymentsAdapter and lands
+        the PayoutAttempt in UNKNOWN, which maps to
+        WithdrawalRequest.status == 'processing' — never a silent
+        rollback that invites an unsafe re-approval.
+        """
         from simulator.admin import approve_withdrawals, WithdrawalRequestAdmin
         from django.contrib.admin.sites import AdminSite
 
@@ -461,10 +479,16 @@ class AdminApproveIdempotencyTest(TestCase):
         qs = WithdrawalRequest.objects.filter(pk=self.wr.pk)
         approve_withdrawals(ma, _admin_request(self.admin), qs)
 
+        self.assertEqual(mock_payout.call_count, 1, "create_payout_with_token must have been called exactly once")
+
         self.wr.refresh_from_db()
         self.assertEqual(
-            self.wr.status, WithdrawalRequest.STATUS_PENDING,
-            "WR must be rolled back to PENDING when NowPayments call fails",
+            self.wr.status, WithdrawalRequest.STATUS_PROCESSING,
+            "WR must stay 'processing' (UNKNOWN semantics) — never roll back to 'pending' "
+            "once a PayoutAttempt exists (FIX-02A.2 closes the unsafe-retry window).",
+        )
+        self.assertEqual(
+            PayoutAttempt.objects.filter(withdrawal_request=self.wr, status=PayoutAttempt.STATUS_UNKNOWN).count(), 1,
         )
 
 

@@ -443,7 +443,7 @@ class WithdrawalAdminAuditLogTests(TestCase):
 
     @patch("simulator.tasks.send_email_async.delay")
     @patch("simulator.nowpayments.estimate_price", return_value=Decimal("0.001"))
-    @patch("simulator.nowpayments.create_payout", return_value={
+    @patch("simulator.nowpayments.create_payout_with_token", return_value={
         "id": "batch_01", "status": "CREATED",
         "withdrawals": [{"id": "pay_01"}],
     })

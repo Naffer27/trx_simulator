@@ -295,15 +295,22 @@ def estimate_price(amount_usd, currency_to: str) -> Decimal:
     return Decimal(str(estimated))
 
 
-def create_payout(
+def create_payout_with_token(
     address: str,
     currency: str,
     amount_crypto: Decimal | float,
     withdrawal_id: int,
     callback_url: str,
+    token: str,
 ) -> dict:
     """
-    POST /v1/payout — send crypto from NowPayments balance to user address.
+    POST /v1/payout — send crypto from NowPayments balance to user address,
+    using an already-obtained JWT. Never calls _get_jwt_token() itself —
+    this is the exact real network call a caller can await knowing no
+    prior/redundant auth round-trip happened inside this function (FIX-02A.2
+    — extracted so a caller can hold auth and payout-submission as two
+    clearly separate, individually-classifiable steps, instead of the
+    single opaque call create_payout() below still provides).
 
     currency is a DB key (e.g. 'btc'); translated to NP code via to_np_code().
     amount_crypto is the quantity in that crypto (NOT USD).
@@ -312,7 +319,6 @@ def create_payout(
       { id (batch_id), status, withdrawals: [{id, status, address, currency, amount}] }
     """
     np_code     = to_np_code(currency)
-    token       = _get_jwt_token()
     resolved_cb = _resolve_callback_url(callback_url)
 
     wd_entry: dict = {
@@ -354,6 +360,23 @@ def create_payout(
         data.get("status", "?"),
     )
     return data
+
+
+def create_payout(
+    address: str,
+    currency: str,
+    amount_crypto: Decimal | float,
+    withdrawal_id: int,
+    callback_url: str,
+) -> dict:
+    """
+    POST /v1/payout — back-compat wrapper, unchanged public signature and
+    behavior for existing callers (funded_payouts.py::approve_internal_payout
+    is the only one). Fetches its own token, exactly as before FIX-02A.2's
+    JWT refactor — callers of this function see no difference whatsoever.
+    """
+    token = _get_jwt_token()
+    return create_payout_with_token(address, currency, amount_crypto, withdrawal_id, callback_url, token)
 
 
 # ─────────────────────────────────────────

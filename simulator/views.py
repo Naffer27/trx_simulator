@@ -2504,138 +2504,34 @@ def withdraw_payout_callback(request):
     NP payout IPN body:
       { "id": batch_id, "status": "...", "withdrawals": [{id, status, ...}] }
 
-    On FINISHED → mark completed.
-    On FAILED   → refund wallet via TX_CORRECTION.
+    FIX-02A.2 — signature verification and payload parsing now go
+    through NowPaymentsAdapter.parse_webhook() (same
+    nowpayments.verify_ipn_signature(), unmodified). Each normalized
+    event is applied via payout_orchestrator.apply_provider_webhook_event(),
+    which resolves correlation (PayoutAttempt post-.2, FUNDED_INTERNAL,
+    or legacy pre-.2 WithdrawalRequest — see that module for the full
+    precedence algorithm) and applies the correct transition/refund.
     """
     if request.method != "POST":
         return JsonResponse({"error": "Method not allowed"}, status=405)
+
+    from .payout_orchestrator import apply_provider_webhook_event
+    from .payout_providers import NowPaymentsAdapter
 
     body = request.body
     sig  = request.headers.get("x-nowpayments-sig", "")
     logger.info("[payout_cb] IPN received body_len=%d sig=%s…", len(body), sig[:16] if sig else "(none)")
 
-    if not _np.verify_ipn_signature(body, sig):
-        logger.warning("[payout_cb] IPN REJECTED — signature invalid")
+    adapter = NowPaymentsAdapter()
+    events = adapter.parse_webhook(body, request.headers)
+    if events is None:
+        logger.warning("[payout_cb] IPN REJECTED — invalid signature or malformed body")
         return JsonResponse({"error": "Invalid signature"}, status=400)
 
-    logger.info("[payout_cb] IPN signature VERIFIED")
+    logger.info("[payout_cb] IPN signature VERIFIED — %d event(s)", len(events))
 
-    try:
-        data = json.loads(body)
-    except json.JSONDecodeError:
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
-
-    batch_id      = str(data.get("id", ""))
-    batch_status  = data.get("status", "")
-    withdrawals_d = data.get("withdrawals", [])
-    logger.info("[payout_cb] batch_id=%s status=%s items=%d", batch_id, batch_status, len(withdrawals_d))
-
-    _NP_TO_STATUS = {
-        "FINISHED": WithdrawalRequest.STATUS_COMPLETED,
-        "FAILED":   WithdrawalRequest.STATUS_FAILED,
-        "ROLLING":  WithdrawalRequest.STATUS_PROCESSING,
-        "CREATED":  WithdrawalRequest.STATUS_PROCESSING,
-    }
-
-    for wd in withdrawals_d:
-        payout_id  = str(wd.get("id", ""))
-        np_status  = str(wd.get("status", "")).upper()
-        new_status = _NP_TO_STATUS.get(np_status)
-        if not new_status:
-            continue
-
-        wr = WithdrawalRequest.objects.filter(np_payout_id=payout_id).first()
-        if not wr and batch_id:
-            wr = WithdrawalRequest.objects.filter(np_batch_id=batch_id).first()
-        if not wr:
-            logger.warning("[payout_cb] no withdrawal found payout_id=%s batch_id=%s", payout_id, batch_id)
-            continue
-
-        with transaction.atomic():
-            wr = WithdrawalRequest.objects.select_for_update().get(pk=wr.pk)
-            # All three terminal statuses are irreversible — skip idempotently.
-            # FAILED was previously missing, allowing duplicate FAILED IPNs to double-refund.
-            _TERMINAL = (
-                WithdrawalRequest.STATUS_COMPLETED,
-                WithdrawalRequest.STATUS_REJECTED,
-                WithdrawalRequest.STATUS_FAILED,
-            )
-            if wr.status in _TERMINAL:
-                logger.info("[payout_cb] already final wr_id=%d status=%s — skip", wr.id, wr.status)
-                continue
-
-            update = {"status": new_status, "np_payout_status": wd.get("status", "")}
-            if payout_id and not wr.np_payout_id:
-                update["np_payout_id"] = payout_id
-
-            # ── FUNDED_INTERNAL path — no wallet touch ────────────────────────
-            try:
-                fpr_linked = wr.funded_payout_internal
-            except FundedPayoutRequest.DoesNotExist:
-                fpr_linked = None
-
-            if fpr_linked is not None:
-                handle_internal_payout_webhook(fpr_linked, wr, new_status, payout_id)
-                WithdrawalRequest.objects.filter(pk=wr.pk).update(**update)
-                continue  # skip regular wallet refund/credit block
-
-            # ── Regular withdrawal path ───────────────────────────────────────
-            if new_status == WithdrawalRequest.STATUS_FAILED:
-                wallet, _ = get_or_create_wallet(wr.user)
-                credit_wallet(
-                    wallet.id,
-                    wr.amount_usd,
-                    WalletTransaction.TX_CORRECTION,
-                    note=f"Refund — payout #{payout_id} failed",
-                )
-                logger.info("[payout_cb] REFUNDED wr_id=%d amount=%s", wr.id, wr.amount_usd)
-                log_audit(
-                    request, EV_WITHDRAW_FAILED,
-                    f"Withdrawal #{wr.id} FAILED by NowPayments — payout {payout_id}",
-                    detail={
-                        "withdrawal_id": wr.id,
-                        "payout_id": payout_id,
-                        "np_status": np_status,
-                        "amount_usd": str(wr.amount_usd),
-                    },
-                )
-                log_audit(
-                    request, EV_WITHDRAW_REFUNDED,
-                    f"Withdrawal #{wr.id} refunded ${wr.amount_usd} after payout failure",
-                    detail={
-                        "withdrawal_id": wr.id,
-                        "payout_id": payout_id,
-                        "amount_usd": str(wr.amount_usd),
-                        "wallet_id": wallet.id,
-                    },
-                )
-                try:
-                    from .withdrawal_emails import send_withdrawal_status_email, EVENT_FAILED
-                    send_withdrawal_status_email(wr, EVENT_FAILED)
-                except Exception as mail_exc:
-                    logger.warning("[payout_cb] failed email queuing failed wr=%d: %s", wr.id, mail_exc)
-
-            elif new_status == WithdrawalRequest.STATUS_COMPLETED:
-                logger.info("[payout_cb] COMPLETED wr_id=%d payout_id=%s", wr.id, payout_id)
-                log_audit(
-                    request, EV_WITHDRAW_COMPLETE,
-                    f"Withdrawal #{wr.id} COMPLETED — ${wr.amount_usd}",
-                    detail={
-                        "withdrawal_id": wr.id,
-                        "payout_id": payout_id,
-                        "amount_usd": str(wr.amount_usd),
-                        "crypto_amount": str(wr.crypto_amount),
-                        "currency": wr.crypto_currency,
-                        "wallet_address": _mask_wallet(wr.wallet_address),
-                    },
-                )
-                try:
-                    from .withdrawal_emails import send_withdrawal_status_email, EVENT_COMPLETED
-                    send_withdrawal_status_email(wr, EVENT_COMPLETED)
-                except Exception as mail_exc:
-                    logger.warning("[payout_cb] completed email queuing failed wr=%d: %s", wr.id, mail_exc)
-
-            WithdrawalRequest.objects.filter(pk=wr.pk).update(**update)
+    for event in events:
+        apply_provider_webhook_event(event, request=request)
 
     return JsonResponse({"ok": True})
 

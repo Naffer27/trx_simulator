@@ -1747,85 +1747,63 @@ def _mask_wallet(addr: str) -> str:
 
 @admin.action(description="✅ Aprobar — enviar pago crypto vía NowPayments")
 def approve_withdrawals(modeladmin, request, queryset):
-    from . import nowpayments as _np
-    from .wallet_ledger import get_or_create_wallet
-    from .models import WalletTransaction
-    from django.core.mail import send_mail
-    from django.conf import settings as _cfg
+    """
+    FIX-02A.2 — reduced to: minimal pre-check, call the orchestrator,
+    present the outcome. No NowPayments payload construction, no
+    requests-exception interpretation, no direct write of provider
+    refs, and — the regression this block exists to close — NO rollback
+    to 'pending' after the payout attempt has been created. See
+    simulator/payout_orchestrator.py::submit_withdrawal_to_provider()
+    for the actual sequence (estimate -> TXN1 -> create_payout -> TXN2).
+    """
     from django.urls import reverse as _rev
-    from django.db import transaction as _tx
+
+    from .payout_orchestrator import EstimateFailed, WithdrawalAlreadyClaimed, submit_withdrawal_to_provider
+    from .payout_providers import NowPaymentsAdapter
+    from .payout_state_machine import ActivePayoutAttemptExists
 
     pending = queryset.filter(status=WithdrawalRequest.STATUS_PENDING)
     if not pending.exists():
         modeladmin.message_user(request, "No hay retiros pendientes seleccionados.", messages.WARNING)
         return
 
-    ok, errs = 0, []
+    adapter = NowPaymentsAdapter()
+    cb_url = request.build_absolute_uri(_rev("simulator:withdraw_payout_callback"))
+
+    ok, unknown, errs = 0, 0, []
     for wr in pending:
         try:
-            # Atomically claim the WR as APPROVED before making the external API call.
-            # Only one concurrent admin session can win this update; the loser gets
-            # claimed=0 and skips, preventing duplicate payouts.
-            with _tx.atomic():
-                claimed = WithdrawalRequest.objects.select_for_update().filter(
-                    pk=wr.pk,
-                    status=WithdrawalRequest.STATUS_PENDING,
-                ).update(
-                    status      = WithdrawalRequest.STATUS_APPROVED,
-                    reviewed_by = request.user,
-                    reviewed_at = now(),
-                )
-            if not claimed:
-                _wlog.warning("[admin] approve wr #%d skipped — status changed concurrently", wr.pk)
-                continue
-
-            crypto_amount = _np.estimate_price(wr.amount_usd, wr.crypto_currency)
-            cb_url = request.build_absolute_uri(
-                reverse("simulator:withdraw_payout_callback")
+            result = submit_withdrawal_to_provider(
+                wr, adapter=adapter, actor=request.user, callback_url=cb_url, request=request,
             )
-            data      = _np.create_payout(wr.wallet_address, wr.crypto_currency, crypto_amount, wr.id, cb_url)
-            batch_wds = data.get("withdrawals", [])
-            batch_id  = str(data.get("id", ""))
-            payout_id = str(batch_wds[0].get("id", "")) if batch_wds else ""
-
-            WithdrawalRequest.objects.filter(pk=wr.pk).update(
-                status           = WithdrawalRequest.STATUS_PROCESSING,
-                np_batch_id      = batch_id,
-                np_payout_id     = payout_id,
-                np_payout_status = str(data.get("status", "")),
-                crypto_amount    = crypto_amount,
-            )
-            from .audit import log_audit, EV_WITHDRAW_APPROVED
-            log_audit(
-                request, EV_WITHDRAW_APPROVED,
-                f"Withdrawal #{wr.id} approved by {request.user.username} — ${wr.amount_usd}",
-                detail={
-                    "withdrawal_id": wr.id,
-                    "amount_usd": str(wr.amount_usd),
-                    "currency": wr.crypto_currency,
-                    "np_batch_id": batch_id,
-                    "np_payout_id": payout_id,
-                    "reviewed_by": request.user.username,
-                },
-            )
-            try:
-                from .withdrawal_emails import send_withdrawal_status_email, EVENT_APPROVED
-                send_withdrawal_status_email(wr, EVENT_APPROVED)
-            except Exception as mail_exc:
-                _wlog.warning("[admin] approve email queuing failed wr=%d: %s", wr.id, mail_exc)
-            ok += 1
-
+        except (WithdrawalAlreadyClaimed, ActivePayoutAttemptExists) as exc:
+            _wlog.warning("[admin] approve wr #%d skipped — %s", wr.pk, exc)
+            continue
+        except EstimateFailed as exc:
+            _wlog.error("[admin] approve wr #%d estimate failed: %s", wr.pk, exc)
+            errs.append(f"#{wr.id}: no se pudo estimar el monto — reintenta. Detalle: {exc}")
+            continue
         except Exception as exc:
-            _wlog.error("[admin] approve withdrawal #%d failed: %s", wr.id, exc, exc_info=True)
-            # Roll back to PENDING so admin can retry
-            WithdrawalRequest.objects.filter(
-                pk=wr.pk,
-                status=WithdrawalRequest.STATUS_APPROVED,
-            ).update(status=WithdrawalRequest.STATUS_PENDING)
-            errs.append(f"#{wr.id}: {exc}")
+            _wlog.error("[admin] approve withdrawal #%d failed unexpectedly: %s", wr.id, exc, exc_info=True)
+            errs.append(f"#{wr.id}: error inesperado — {exc}")
+            continue
+
+        if result["outcome"] == "processing":
+            ok += 1
+        elif result["outcome"] == "unknown":
+            unknown += 1
+        else:  # "failed" — rejected pre-send, already refunded by the orchestrator
+            errs.append(f"#{wr.id}: rechazado por el provider antes de enviarse — reembolsado automáticamente.")
 
     if ok:
         modeladmin.message_user(request, f"{ok} retiro(s) aprobados y enviados.", messages.SUCCESS)
+    if unknown:
+        modeladmin.message_user(
+            request,
+            f"{unknown} retiro(s) quedaron en estado ambiguo (sin confirmación del provider) — "
+            "requieren reconciliación. NO reintentar manualmente.",
+            messages.WARNING,
+        )
     for e in errs:
         modeladmin.message_user(request, f"Error — {e}", messages.ERROR)
 
