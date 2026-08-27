@@ -351,8 +351,11 @@ class BeatScheduleTests(SimpleTestCase):
         # 10 pre-existing + this block's 1 new entry + O.4e-2's
         # "record-celery-beat-heartbeat-5m" (added later, not a defect
         # here — see test_o4e2_..._celery_beat_heartbeat_foundation.py's
-        # own BeatScheduleTests for that entry's dedicated coverage).
-        self.assertEqual(len(schedule), 12)
+        # own BeatScheduleTests for that entry's dedicated coverage) +
+        # FIX-02A.4's 2 new entries ("reconcile-unknown-payouts-15m",
+        # "replay-payout-webhook-events-5m" — provider-agnostic UNKNOWN
+        # reconciliation / durable webhook replay).
+        self.assertEqual(len(schedule), 14)
 
     def test_no_other_task_names_were_renamed_or_removed(self):
         from django.conf import settings

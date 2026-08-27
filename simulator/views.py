@@ -2504,18 +2504,28 @@ def withdraw_payout_callback(request):
     NP payout IPN body:
       { "id": batch_id, "status": "...", "withdrawals": [{id, status, ...}] }
 
-    FIX-02A.2 — signature verification and payload parsing now go
-    through NowPaymentsAdapter.parse_webhook() (same
-    nowpayments.verify_ipn_signature(), unmodified). Each normalized
-    event is applied via payout_orchestrator.apply_provider_webhook_event(),
-    which resolves correlation (PayoutAttempt post-.2, FUNDED_INTERNAL,
-    or legacy pre-.2 WithdrawalRequest — see that module for the full
-    precedence algorithm) and applies the correct transition/refund.
+    FIX-02A.4 — every event parsed out of a signature-verified body is
+    durably persisted (PayoutWebhookEvent) BEFORE correlation is
+    attempted — closes the crash window that previously existed between
+    "we verified this is a real provider event" and "we finished
+    applying it" (a webhook that WOULD have correlated, but whose
+    process died mid-request, was previously lost exactly like an
+    orphan). HMAC verification always happens first — an invalid
+    signature never reaches the durable inbox. Each event is then run
+    through the same pipeline (payout_orchestrator.process_webhook_event())
+    a durable replay uses — no separate "live" logic to keep in sync.
+    One event failing unexpectedly never breaks the rest of the batch
+    or the HTTP response — the durable row (if created) stays PENDING
+    and the periodic replay task picks it up.
     """
     if request.method != "POST":
         return JsonResponse({"error": "Method not allowed"}, status=405)
 
-    from .payout_orchestrator import apply_provider_webhook_event
+    from .audit import EV_WITHDRAW_WEBHOOK_ORPHANED, log_audit
+    from .payout_orchestrator import (
+        Ambiguous, DataIntegrityViolation, Orphan,
+        get_or_create_webhook_event, process_webhook_event,
+    )
     from .payout_providers import NowPaymentsAdapter
 
     body = request.body
@@ -2531,7 +2541,26 @@ def withdraw_payout_callback(request):
     logger.info("[payout_cb] IPN signature VERIFIED — %d event(s)", len(events))
 
     for event in events:
-        apply_provider_webhook_event(event, request=request)
+        try:
+            webhook_event, created = get_or_create_webhook_event(event)
+            _, target = process_webhook_event(webhook_event.pk, request=request)
+            if created and isinstance(target, (Orphan, Ambiguous, DataIntegrityViolation)):
+                log_audit(
+                    request, EV_WITHDRAW_WEBHOOK_ORPHANED,
+                    f"PayoutWebhookEvent #{webhook_event.pk} could not be correlated on "
+                    f"first delivery — {type(target).__name__}: {target.reason}",
+                    detail={
+                        "webhook_event_id": webhook_event.pk, "provider": event.provider,
+                        "provider_reference": event.provider_reference,
+                        "provider_batch_id": event.provider_batch_id,
+                    },
+                )
+        except Exception:
+            logger.exception(
+                "[payout_cb] unexpected error processing event provider=%s ref=%s batch=%s",
+                event.provider, event.provider_reference, event.provider_batch_id,
+            )
+            continue
 
     return JsonResponse({"ok": True})
 

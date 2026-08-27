@@ -3055,6 +3055,23 @@ class PayoutAttempt(models.Model):
     provider_reference = models.CharField(max_length=100, blank=True, default="", db_index=True)
     provider_batch_id  = models.CharField(max_length=100, blank=True, default="", db_index=True)
 
+    # FIX-02A.4 — durable external identity PREPARED to be sent to the
+    # provider (as opposed to idempotency_key, which is internal-only —
+    # never sent to, never recognized by, any provider; see that field's
+    # own docstring). Persisted at creation time, immutable afterward.
+    # Deliberately a SEPARATE field/semantics from idempotency_key even
+    # though it is generated from the same deterministic string by
+    # default — a future adapter that needs a different external format
+    # (length/charset constraints, provider-issued UUID, etc.) writes
+    # its own value here without ever touching idempotency_key. Empty
+    # for every row created before this field existed, and for any
+    # provider whose adapter never populates it (NowPayments today never
+    # sends it — capabilities["supports_external_idempotency"] is False).
+    # ALWAYS scoped by `provider` in lookups — see the partial unique
+    # constraint below: the same request_id string is a different
+    # external instruction under a different provider.
+    provider_request_id = models.CharField(max_length=128, blank=True, default="", db_index=True)
+
     # What we asked for — immutable once created, never overwritten by a
     # provider response (that goes in provider_amount instead).
     requested_amount_usd = models.DecimalField(max_digits=12, decimal_places=2)
@@ -3109,10 +3126,131 @@ class PayoutAttempt(models.Model):
                 condition=models.Q(status__in=_PAYOUT_ATTEMPT_NON_TERMINAL_STATUSES),
                 name="pa_one_active_attempt_per_wr",
             ),
+            # FIX-02A.4 — namespaced by provider, NOT globally unique:
+            # provider="nowpayments", request_id="123" and
+            # provider="our_treasury", request_id="123" are different
+            # external instructions and must be allowed to coexist.
+            models.UniqueConstraint(
+                fields=["provider", "provider_request_id"],
+                condition=~models.Q(provider_request_id=""),
+                name="pa_unique_provider_request_id",
+            ),
         ]
 
     def __str__(self):
         return (
             f"PayoutAttempt #{self.id} wr={self.withdrawal_request_id} "
             f"attempt={self.attempt_number} provider={self.provider} [{self.status}]"
+        )
+
+
+class PayoutWebhookEvent(models.Model):
+    """
+    FIX-02A.4 — durable, provider-agnostic inbox for every HMAC-valid
+    payout webhook event, not just ones that fail to correlate.
+
+    Written by views.py::withdraw_payout_callback for EVERY event
+    parsed out of a signature-verified webhook body (Design Lock: "no
+    persistir primero y verificar HMAC después — HMAC siempre primero"
+    — an invalid signature never reaches this model at all). Whether
+    the event correlates immediately (the common case) or not, it is
+    persisted BEFORE correlation is attempted — closing the crash
+    window between "we verified this is a real provider event" and
+    "we finished applying it" that existed before this block (a webhook
+    that WOULD have correlated, but whose process died mid-request, was
+    previously lost exactly like an orphan).
+
+    correlation_status:
+      PENDING        — not yet resolved (or resolved but the transition
+                        hasn't been confirmed applied yet — see
+                        process_webhook_event() in payout_orchestrator.py).
+                        Eligible for periodic automatic replay.
+      RESOLVED       — the underlying financial transition (or explicit
+                        no-op — Funded/legacy/Ambiguous paths, or a
+                        genuinely already-terminal PayoutAttempt) has
+                        been confirmed APPLIED. Set only by
+                        process_webhook_event() AFTER the authoritative
+                        handler returns successfully — never before.
+      MANUAL_REVIEW  — automatic replay paused after
+                        settings.PAYOUT_WEBHOOK_MAX_AUTO_RETRIES.
+                        Means ONLY "stop auto-retrying" — still durable,
+                        still visible, still replayable if re-queued,
+                        NEVER purged, NEVER treated as resolved/ignored.
+
+    PENDING and MANUAL_REVIEW rows are NEVER purged by any retention
+    job, regardless of age — only RESOLVED rows, older than
+    settings.PAYOUT_WEBHOOK_EVENT_RESOLVED_RETENTION_DAYS, are ever
+    cleanup-eligible (Design Lock — "UNRESOLVED VALID FINANCIAL EVENTS
+    MUST NOT BE LOST").
+
+    Provider-agnostic by construction: no NowPayments-specific field or
+    status name anywhere in this model — raw_status/raw_payload carry
+    whatever the concrete provider sent, verbatim.
+    """
+    STATUS_PENDING       = "pending"
+    STATUS_RESOLVED       = "resolved"
+    STATUS_MANUAL_REVIEW  = "manual_review"
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING,      "Pending"),
+        (STATUS_RESOLVED,     "Resolved"),
+        (STATUS_MANUAL_REVIEW, "Manual Review"),
+    ]
+
+    provider            = models.CharField(max_length=32)
+    # Deterministic fingerprint of (provider, refs, status, canonical
+    # payload) — see payout_providers.py::compute_webhook_event_fingerprint().
+    # NEVER derived from a local timestamp (must survive redelivery,
+    # restarts, multiple workers). unique=True is what makes durable
+    # inbox insertion race-safe (create + IntegrityError -> fetch).
+    event_fingerprint    = models.CharField(max_length=64, unique=True)
+
+    provider_reference   = models.CharField(max_length=100, blank=True, default="", db_index=True)
+    provider_batch_id    = models.CharField(max_length=100, blank=True, default="", db_index=True)
+    provider_request_id  = models.CharField(max_length=128, blank=True, default="", db_index=True)
+
+    raw_status         = models.CharField(max_length=40, blank=True, default="")
+    # Already-normalized PayoutAttempt.STATUS_* value (computed once by
+    # the adapter's parse_webhook(), same as ProviderPayoutEvent.normalized_status)
+    # — stored so replay can reconstruct the event without re-deriving
+    # provider-specific raw-status mappings.
+    normalized_status  = models.CharField(max_length=20, blank=True, default="")
+    raw_payload        = models.JSONField(default=dict, blank=True)
+
+    received_at = models.DateTimeField(auto_now_add=True)
+
+    correlation_status = models.CharField(
+        max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING, db_index=True,
+    )
+    # PROTECT — resolving/replaying must never be able to silently lose
+    # the link to the PayoutAttempt it ultimately affected, and deleting
+    # a PayoutAttempt is already blocked everywhere else in this system.
+    correlated_attempt = models.ForeignKey(
+        "PayoutAttempt", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="webhook_events",
+    )
+
+    retry_count    = models.PositiveIntegerField(default=0)
+    next_retry_at  = models.DateTimeField(null=True, blank=True, db_index=True)
+    last_error      = models.TextField(blank=True, default="")
+
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-received_at"]
+        indexes = [
+            models.Index(fields=["provider", "correlation_status"], name="pwe_provider_status_idx"),
+            models.Index(fields=["provider_reference"], name="pwe_provider_reference_idx"),
+            models.Index(fields=["provider_batch_id"], name="pwe_provider_batch_idx"),
+            models.Index(fields=["correlation_status", "next_retry_at"], name="pwe_status_next_retry_idx"),
+        ]
+
+    def __str__(self):
+        return (
+            f"PayoutWebhookEvent #{self.id} provider={self.provider} "
+            f"ref={self.provider_reference or self.provider_batch_id or '(none)'} "
+            f"[{self.correlation_status}]"
         )

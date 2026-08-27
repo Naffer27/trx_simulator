@@ -17,11 +17,13 @@ No capability is claimed unless the current nowpayments.py demonstrably
 supports it: status_query and cancel are both False — no GET endpoint
 for payout status/cancellation exists anywhere in this codebase.
 """
+import hashlib
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
+from enum import Enum
 
 import requests
 from django.utils import timezone
@@ -89,6 +91,38 @@ class ProviderPayoutEvent:
     raw_status: str
     provider_amount: Decimal | None
     occurred_at: datetime
+    # FIX-02A.4 — this individual event's own raw sub-payload (e.g. one
+    # withdrawals[] entry), NOT the whole batch body. Used only to
+    # compute a per-event fingerprint that can't collide with a sibling
+    # event from the same delivery — see compute_webhook_event_fingerprint().
+    # Defaulted so existing call sites (tests constructing this dataclass
+    # directly) keep working unmodified.
+    raw_event_payload: dict = field(default_factory=dict)
+
+
+# ─────────────────────────────────────────────
+# FIX-02A.4 — provider-agnostic active-reconciliation contract.
+# The reconciliation service (payout_orchestrator.py) NEVER sees a
+# provider-specific status string — only these normalized outcomes.
+# ─────────────────────────────────────────────
+
+class PayoutLookupOutcome(str, Enum):
+    FOUND_PROCESSING = "found_processing"
+    FOUND_COMPLETED  = "found_completed"
+    FOUND_FAILED     = "found_failed"
+    NOT_FOUND        = "not_found"
+    UNAVAILABLE      = "unavailable"   # provider down/timeout/transient error
+    AMBIGUOUS        = "ambiguous"     # response present but not confidently mappable
+    UNSUPPORTED      = "unsupported"   # this adapter has no lookup capability at all
+
+
+@dataclass(frozen=True)
+class PayoutLookupResult:
+    outcome: PayoutLookupOutcome
+    provider_reference: str = ""
+    provider_batch_id: str = ""
+    raw_provider_status: str = ""
+    raw_metadata: dict = field(default_factory=dict)
 
 
 # Mirrors the _NP_TO_STATUS mapping already used in views.py today,
@@ -105,7 +139,19 @@ _RAW_STATUS_TO_NORMALIZED = {
 
 class NowPaymentsAdapter:
     provider_name = "nowpayments"
-    capabilities = {"status_query": False, "cancel": False}
+    # FIX-02A.4 — explicit, desambiguated capabilities (replaces the old
+    # ambiguous status_query/cancel pair). Every flag here is backed by
+    # a demonstrated absence in nowpayments.py: no GET /v1/payout*
+    # endpoint of any kind exists in this codebase, and
+    # create_payout_with_token()'s payload never includes any
+    # id/order_id/reference field the provider could later recognize.
+    capabilities = {
+        "supports_external_idempotency":          False,
+        "supports_lookup_by_provider_reference":   False,
+        "supports_lookup_by_provider_request_id":  False,
+        "supports_lookup_by_batch":                False,
+        "supports_webhooks":                       True,
+    }
 
     def estimate(self, amount_usd, asset) -> Decimal:
         """
@@ -178,6 +224,20 @@ class NowPaymentsAdapter:
             raw_status=raw_status,
         )
 
+    def lookup_payout(self, attempt) -> PayoutLookupResult:
+        """
+        FIX-02A.4 — active reconciliation lookup. NowPayments, as
+        integrated in this codebase, has no GET endpoint for payout
+        status by any key (confirmed: no such function exists in
+        nowpayments.py, capabilities above are all False) — this is a
+        real, verified limitation of THIS adapter, not a limitation of
+        the reconciliation core. Always returns UNSUPPORTED, never
+        attempts any HTTP call. Do NOT invent an endpoint here — if
+        NowPayments ever adds one, implement it against real,
+        documented behavior, not a guess.
+        """
+        return PayoutLookupResult(outcome=PayoutLookupOutcome.UNSUPPORTED)
+
     def parse_webhook(self, raw_body: bytes, headers) -> list[ProviderPayoutEvent] | None:
         """
         Verifies the HMAC signature (nowpayments.verify_ipn_signature(),
@@ -213,5 +273,57 @@ class NowPaymentsAdapter:
                 raw_status=raw_status,
                 provider_amount=None,
                 occurred_at=occurred_at,
+                raw_event_payload=wd,
             ))
         return events
+
+
+# ─────────────────────────────────────────────
+# FIX-02A.4 — durable inbox fingerprint. Provider-aware, deterministic,
+# never based on a local timestamp — must survive redelivery, restarts,
+# multiple workers.
+# ─────────────────────────────────────────────
+
+def _canonical_json(obj) -> str:
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"))
+
+
+def compute_webhook_event_fingerprint(event: ProviderPayoutEvent) -> str:
+    """
+    Computed from the individual event's own identifying fields PLUS
+    its own raw sub-payload (event.raw_event_payload) — not the whole
+    batch body. A single webhook delivery can carry multiple
+    ProviderPayoutEvent entries (NowPayments: one per withdrawals[]
+    item); each gets its own fingerprint because each entry's own
+    raw_event_payload differs (at minimum by that entry's own `id`).
+    Redelivery of the exact same event reproduces the exact same
+    fingerprint (same inputs), which is what makes dedup on retry work.
+    """
+    fingerprint_input = "|".join([
+        event.provider,
+        event.provider_batch_id,
+        event.provider_reference,
+        event.raw_status,
+        _canonical_json(event.raw_event_payload),
+    ])
+    return hashlib.sha256(fingerprint_input.encode("utf-8")).hexdigest()
+
+
+# ─────────────────────────────────────────────
+# FIX-02A.4 — provider registry. Lives here, not in payout_orchestrator.py,
+# so the orchestrator/reconciliation core never imports a concrete
+# adapter class by name — only get_adapter_for_provider(). No circular
+# import risk: this module already imports nothing from
+# payout_orchestrator.py.
+# ─────────────────────────────────────────────
+
+_PROVIDER_REGISTRY = {
+    "nowpayments": NowPaymentsAdapter,
+}
+
+
+def get_adapter_for_provider(provider_name: str):
+    try:
+        return _PROVIDER_REGISTRY[provider_name]()
+    except KeyError:
+        raise ValueError(f"No adapter registered for provider={provider_name!r}")

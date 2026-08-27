@@ -46,7 +46,18 @@ ALLOWED_TRANSITIONS = {
     _S.STATUS_CREATED:    {_S.STATUS_SUBMITTED},
     _S.STATUS_SUBMITTED:  {_S.STATUS_PROCESSING, _S.STATUS_UNKNOWN, _S.STATUS_FAILED},
     _S.STATUS_PROCESSING: {_S.STATUS_COMPLETED, _S.STATUS_FAILED},
-    _S.STATUS_UNKNOWN:    {_S.STATUS_COMPLETED, _S.STATUS_FAILED},
+    # FIX-02A.4 — UNKNOWN -> PROCESSING added. Closes a real preexisting
+    # bug: a webhook/reconciliation event confirming the provider still
+    # has the payout in flight (ROLLING/CREATED-equivalent) previously
+    # had no valid transition out of UNKNOWN for that outcome, and
+    # transition_payout_attempt() raised InvalidPayoutAttemptTransition
+    # — uncaught by withdraw_payout_callback, surfacing as a 500 to the
+    # provider. Semantically safe: PROCESSING is strictly MORE
+    # information than UNKNOWN (positive provider confirmation instead
+    # of none), never a downgrade. PROCESSING -> UNKNOWN deliberately
+    # stays absent — degrading a positive confirmation with no new
+    # negative evidence is never legitimate.
+    _S.STATUS_UNKNOWN:    {_S.STATUS_PROCESSING, _S.STATUS_COMPLETED, _S.STATUS_FAILED},
     _S.STATUS_COMPLETED:  set(),
     _S.STATUS_FAILED:     set(),
 }
@@ -100,6 +111,22 @@ def transition_payout_attempt(attempt, new_status, *, reason="", raw_provider_st
         attempt.failed_at = now
     attempt.save()
     return attempt
+
+
+def is_submitted_aged(attempt, *, threshold_seconds, now=None):
+    """
+    FIX-02A.4 — pure predicate, no DB write. True when a SUBMITTED
+    PayoutAttempt has been sitting past the point where a normal
+    HTTP response (success or failure) should already have arrived —
+    see settings.PAYOUT_SUBMITTED_AGED_THRESHOLD_SECONDS for the
+    threshold's derivation. Callers (the reconciliation service) are
+    responsible for actually transitioning it (SUBMITTED -> UNKNOWN is
+    already an allowed transition, no state-machine change needed).
+    """
+    if attempt.status != PayoutAttempt.STATUS_SUBMITTED or attempt.submitted_at is None:
+        return False
+    now = now or timezone.now()
+    return (now - attempt.submitted_at).total_seconds() >= threshold_seconds
 
 
 # ─────────────────────────────────────────────
@@ -196,6 +223,20 @@ def _make_idempotency_key(withdrawal_request_id, attempt_number):
     return f"moneybroker-wr{withdrawal_request_id}-attempt{attempt_number}"
 
 
+def _make_provider_request_id(withdrawal_request_id, attempt_number):
+    """
+    FIX-02A.4 — deterministic default for PayoutAttempt.provider_request_id.
+    Same STRING as _make_idempotency_key() by default, but a genuinely
+    SEPARATE field/semantics (see PayoutAttempt.provider_request_id's
+    own docstring) — this is the value PREPARED to be sent to the
+    provider as an external/idempotency identifier, never read back
+    from idempotency_key at lookup time. A future adapter needing a
+    different external format writes its own value into this column
+    instead; this function only supplies the default at creation time.
+    """
+    return f"moneybroker-wr{withdrawal_request_id}-attempt{attempt_number}"
+
+
 def create_and_submit_payout_attempt(
     withdrawal_request, *,
     provider, requested_asset, destination_address, requested_amount_usd,
@@ -256,6 +297,7 @@ def create_and_submit_payout_attempt(
             provider=provider,
             attempt_number=attempt_number,
             idempotency_key=_make_idempotency_key(wr.pk, attempt_number),
+            provider_request_id=_make_provider_request_id(wr.pk, attempt_number),
             requested_amount_usd=requested_amount_usd,
             requested_asset=requested_asset,
             requested_network=requested_network,

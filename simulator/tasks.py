@@ -188,6 +188,93 @@ def reconcile_withdrawals_task(self, hours_back: int = 48) -> dict:
 
 
 # ──────────────────────────────────────────────────────
+# FIX-02A.4 — UNKNOWN payout reconciliation (provider-agnostic).
+# Never talks to a provider module directly — delegates entirely to
+# payout_orchestrator.reconcile_unknown_payout_attempts(), which itself
+# only ever reaches a provider through payout_providers.get_adapter_for_
+# provider(). This task knows nothing about NowPayments or any other
+# concrete provider.
+# ──────────────────────────────────────────────────────
+@shared_task(
+    name="simulator.reconcile_unknown_payouts",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=120,
+)
+def reconcile_unknown_payouts_task(self, batch_size: int = 100) -> dict:
+    """
+    Aged SUBMITTED -> UNKNOWN, then active provider-agnostic lookup for
+    UNKNOWN attempts whose adapter declares a lookup capability. Never
+    creates a payout, never retries create_payout, never refunds except
+    through the same confirmed-FAILED path already used everywhere
+    else. See payout_orchestrator.reconcile_unknown_payout_attempts().
+    """
+    from .payout_orchestrator import reconcile_unknown_payout_attempts
+
+    result = reconcile_unknown_payout_attempts(batch_size=batch_size)
+    logger.info(
+        "[reconcile_unknown_payouts] aged_to_unknown=%d checked=%d resolved=%d still_unknown=%d",
+        result["aged_to_unknown"], result["checked"], result["resolved"], result["still_unknown"],
+    )
+    return result
+
+
+# ──────────────────────────────────────────────────────
+# FIX-02A.4 — durable payout webhook replay (provider-agnostic).
+# Only ever touches PayoutWebhookEvent + payout_orchestrator's own
+# resolve_payout_target()/process_webhook_event() — never a provider
+# module directly.
+# ──────────────────────────────────────────────────────
+@shared_task(
+    name="simulator.replay_payout_webhook_events",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=60,
+)
+def replay_payout_webhook_events_task(self, batch_size: int = 100) -> dict:
+    """
+    Picks only PENDING PayoutWebhookEvent rows whose next_retry_at is
+    due (or unset — first attempt), re-runs correlation via the SAME
+    process_webhook_event() pipeline the live callback uses. Never
+    touches MANUAL_REVIEW rows (automatic replay paused for those —
+    still durable, still visible, never purged). Never touches RESOLVED
+    rows.
+    """
+    from django.db.models import Q
+    from django.utils import timezone
+    from .audit import EV_WITHDRAW_WEBHOOK_REPLAY_RESOLVED, log_audit
+    from .models import PayoutWebhookEvent
+    from .payout_orchestrator import process_webhook_event
+
+    now = timezone.now()
+    candidate_ids = list(
+        PayoutWebhookEvent.objects.filter(
+            correlation_status=PayoutWebhookEvent.STATUS_PENDING,
+        ).filter(
+            Q(next_retry_at__isnull=True) | Q(next_retry_at__lte=now)
+        ).values_list("pk", flat=True)[:batch_size]
+    )
+
+    resolved_count = 0
+    for event_id in candidate_ids:
+        webhook_event, target = process_webhook_event(event_id)
+        webhook_event.refresh_from_db()
+        if webhook_event.correlation_status == PayoutWebhookEvent.STATUS_RESOLVED:
+            resolved_count += 1
+            log_audit(
+                None, EV_WITHDRAW_WEBHOOK_REPLAY_RESOLVED,
+                f"PayoutWebhookEvent #{event_id} resolved via replay",
+                detail={"webhook_event_id": event_id, "provider": webhook_event.provider},
+            )
+
+    logger.info(
+        "[replay_payout_webhook_events] candidates=%d resolved=%d",
+        len(candidate_ids), resolved_count,
+    )
+    return {"candidates": len(candidate_ids), "resolved": resolved_count}
+
+
+# ──────────────────────────────────────────────────────
 # EQUITY SNAPSHOTS — time-series financial state capture
 # ──────────────────────────────────────────────────────
 @shared_task(

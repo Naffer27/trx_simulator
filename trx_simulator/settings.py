@@ -359,6 +359,25 @@ CELERY_BEAT_SCHEDULE = {
         "args":     (48,),   # hours_back=48
         "options":  {"expires": 14 * 60},
     },
+    # FIX-02A.4 — provider-agnostic UNKNOWN payout reconciliation, every
+    # 15 min (same cadence as reconcile-withdrawals-15m above — no
+    # commercial figure, matches the established pattern for this class
+    # of read-mostly audit task).
+    "reconcile-unknown-payouts-15m": {
+        "task":     "simulator.reconcile_unknown_payouts",
+        "schedule": crontab(minute="*/15"),
+        "options":  {"expires": 14 * 60},
+    },
+    # FIX-02A.4 — durable payout webhook replay, every 5 min. More
+    # frequent than reconciliation because it's cheap (local data only,
+    # unless the provider adapter supports active lookup) — closes the
+    # crash-recovery / late-correlation window quickly without hammering
+    # any provider.
+    "replay-payout-webhook-events-5m": {
+        "task":     "simulator.replay_payout_webhook_events",
+        "schedule": crontab(minute="*/5"),
+        "options":  {"expires": 4 * 60},
+    },
     # Heartbeat ping every 5 min — confirms beat + worker are alive
     "beat-heartbeat-5m": {
         "task":     "simulator.ping",
@@ -932,6 +951,58 @@ NOWPAYMENTS_PASSWORD      = os.getenv("NOWPAYMENTS_PASSWORD", "")
 MAX_WITHDRAWAL_DAILY_USD = int(os.getenv("MAX_WITHDRAWAL_DAILY_USD", "1500"))
 # Minimum single withdrawal amount
 MIN_WITHDRAWAL_USD = int(os.getenv("MIN_WITHDRAWAL_USD", "25"))
+
+# FIX-02A.4 — Payout reconciliation / durable webhook inbox settings.
+# A malformed or unsafely-low env value must never crash Django startup
+# and must never enable aggressive polling of the provider — clamp to a
+# documented safe floor and log a warning instead of raising.
+def _payout_reconciliation_int_env(name, default, minimum=None):
+    import logging as _logging
+    raw = os.getenv(name, "")
+    if not raw.strip():
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        _logging.getLogger("simulator.payout_reconciliation").warning(
+            "[settings] %s=%r is not a valid integer — using default %d", name, raw, default,
+        )
+        return default
+    if minimum is not None and value < minimum:
+        _logging.getLogger("simulator.payout_reconciliation").warning(
+            "[settings] %s=%d is below the safe minimum (%d) — clamping to %d",
+            name, value, minimum, minimum,
+        )
+        return minimum
+    return value
+
+
+# Aged SUBMITTED -> UNKNOWN. Default derived from the real payout POST
+# HTTP timeout (nowpayments.py create_payout_with_token: timeout=30) —
+# a 10x margin, not a commercial figure. Floor of 60s (not 30s): another
+# worker must never classify a SUBMITTED attempt as aged while the
+# original POST could still legitimately be mid-timeout.
+PAYOUT_SUBMITTED_AGED_THRESHOLD_SECONDS = _payout_reconciliation_int_env(
+    "PAYOUT_SUBMITTED_AGED_THRESHOLD_SECONDS", 300, minimum=60,
+)
+
+# Durable webhook replay — exponential backoff base/cap and max automatic
+# retries before a still-orphan PayoutWebhookEvent moves PENDING -> MANUAL_REVIEW
+# (never deleted, never purged, never auto-replayed again — see PayoutWebhookEvent).
+PAYOUT_WEBHOOK_REPLAY_BASE_SECONDS = _payout_reconciliation_int_env(
+    "PAYOUT_WEBHOOK_REPLAY_BASE_SECONDS", 300, minimum=60,
+)
+PAYOUT_WEBHOOK_REPLAY_MAX_SECONDS = _payout_reconciliation_int_env(
+    "PAYOUT_WEBHOOK_REPLAY_MAX_SECONDS", 21600, minimum=PAYOUT_WEBHOOK_REPLAY_BASE_SECONDS,
+)
+PAYOUT_WEBHOOK_MAX_AUTO_RETRIES = _payout_reconciliation_int_env(
+    "PAYOUT_WEBHOOK_MAX_AUTO_RETRIES", 10, minimum=1,
+)
+# Only RESOLVED PayoutWebhookEvent rows are ever retention-eligible — same
+# 30-day figure already used by cleanup-audit-log-daily, not a new policy.
+PAYOUT_WEBHOOK_EVENT_RESOLVED_RETENTION_DAYS = _payout_reconciliation_int_env(
+    "PAYOUT_WEBHOOK_EVENT_RESOLVED_RETENTION_DAYS", 30, minimum=1,
+)
 
 # O.3c-4b — Treasury Execution Recovery. Minimum age (seconds) a
 # TreasuryOperationRequest must have spent in EXECUTING, measured from

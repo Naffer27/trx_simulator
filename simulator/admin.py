@@ -13,7 +13,7 @@ from django.db import transaction
 from .models import (
     TradingAccount, Position, Trade, LedgerEntry,
     Purchase, Deposit, WithdrawalRequest, Wallet, WalletTransaction, InternalTransfer,
-    PayoutAttempt,
+    PayoutAttempt, PayoutWebhookEvent,
     TreasuryOperationRequest,
     RiskRule, DrawdownSnapshot, TradingViolation, TraderScore,
     BrokerSnapshot, SymbolExposure, TraderClassExposure,
@@ -2042,17 +2042,57 @@ class PayoutAttemptAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         return False
 
+    # FIX-02A.4 — added provider_request_id and the two reconciliation
+    # timestamps to list_display so UNKNOWN attempts and their
+    # reconciliation history are visible to operations without shell/DB
+    # access. Still 100% view-only — no action added.
     list_display = (
         "id", "withdrawal_request", "attempt_number", "provider", "status",
-        "provider_reference", "provider_batch_id", "requested_amount_usd",
-        "created_at", "submitted_at",
+        "provider_reference", "provider_batch_id", "provider_request_id",
+        "requested_amount_usd", "created_at", "submitted_at",
+        "reconciliation_checked_at", "reconciled_at",
     )
     list_filter = ("status", "provider", "created_at")
     search_fields = (
         "withdrawal_request__id", "provider_reference", "provider_batch_id",
-        "idempotency_key", "withdrawal_request__user__username",
+        "provider_request_id", "idempotency_key", "withdrawal_request__user__username",
     )
     ordering = ("-created_at",)
+
+
+@admin.register(PayoutWebhookEvent)
+class PayoutWebhookEventAdmin(admin.ModelAdmin):
+    """
+    FIX-02A.4 — strictly view-only durable webhook inbox. Same
+    has_add/change/delete_permission=False pattern as PayoutAttemptAdmin
+    (FIX-02A.3) — no action mutates correlation_status/PayoutAttempt/
+    Wallet from here. No "reconcile now" action in this block (Design
+    Lock — not needed to close FIX-02A.4; if ever added, it must call
+    payout_orchestrator.process_webhook_event(), never mutate fields
+    directly).
+    """
+    readonly_fields = [f.name for f in PayoutWebhookEvent._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    list_display = (
+        "id", "provider", "provider_reference", "provider_batch_id", "raw_status",
+        "correlation_status", "retry_count", "received_at", "next_retry_at", "resolved_at",
+        "correlated_attempt",
+    )
+    list_filter = ("correlation_status", "provider", "received_at")
+    search_fields = (
+        "provider_reference", "provider_batch_id", "provider_request_id",
+        "event_fingerprint", "correlated_attempt__id",
+    )
+    ordering = ("-received_at",)
 
 
 # ─────────────────────────────────────────────

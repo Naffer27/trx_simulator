@@ -213,6 +213,13 @@ class ParseWebhookTests(SimpleTestCase):
         self.assertEqual(events[0].provider, "nowpayments")
 
     def test_capabilities_are_false(self):
+        # FIX-02A.4 — capabilities redesigned into explicit, desambiguated
+        # flags (Design Lock: no ambiguous supports_idempotency_key).
+        # NowPayments today: none of the lookup/external-idempotency
+        # capabilities exist; webhooks are the only real capability.
         adapter = NowPaymentsAdapter()
-        self.assertEqual(adapter.capabilities["status_query"], False)
-        self.assertEqual(adapter.capabilities["cancel"], False)
+        self.assertEqual(adapter.capabilities["supports_external_idempotency"], False)
+        self.assertEqual(adapter.capabilities["supports_lookup_by_provider_reference"], False)
+        self.assertEqual(adapter.capabilities["supports_lookup_by_provider_request_id"], False)
+        self.assertEqual(adapter.capabilities["supports_lookup_by_batch"], False)
+        self.assertEqual(adapter.capabilities["supports_webhooks"], True)

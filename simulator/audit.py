@@ -35,6 +35,16 @@ EV_WITHDRAW_COMPLETE = "withdrawal.completed"
 EV_WITHDRAW_FAILED   = "withdrawal.failed"
 EV_WITHDRAW_REFUNDED = "withdrawal.refunded"
 
+# FIX-02A.4 — UNKNOWN reconciliation / durable webhook inbox. Deliberately
+# sparse: routine "still unknown, nothing changed" cycles are NOT logged
+# here (would spam AuditLog every 15 min per unresolved attempt) — only
+# genuine state transitions and terminal replay outcomes are.
+EV_WITHDRAW_AGED_SUBMITTED_TO_UNKNOWN = "withdrawal.reconciliation.aged_submitted_to_unknown"
+EV_WITHDRAW_RECONCILIATION_RESOLVED   = "withdrawal.reconciliation.resolved"
+EV_WITHDRAW_WEBHOOK_ORPHANED          = "withdrawal.webhook.orphaned"
+EV_WITHDRAW_WEBHOOK_REPLAY_RESOLVED   = "withdrawal.webhook.replay_resolved"
+EV_WITHDRAW_WEBHOOK_MANUAL_REVIEW     = "withdrawal.webhook.manual_review"
+
 EV_ACCOUNT_FUNDED    = "account.funded"
 EV_ACCOUNT_WITHDRAWN = "account.withdrawn"
 EV_ACCOUNT_CREATED   = "account.created"
