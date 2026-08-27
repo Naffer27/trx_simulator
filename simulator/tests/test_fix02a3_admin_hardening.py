@@ -148,35 +148,68 @@ def _run_locked_retry(fn, barrier, results, index, max_retries=40):
 
 
 def _run_reject_until_resolved(ma, admin_user, wr_pk, barrier, results, index, max_retries=60):
-    """reject_withdrawals catches its own per-row OperationalError
-    internally (existing, unchanged behavior — see its outer `except
-    Exception` and admin.py's error-message pattern) and does NOT
-    propagate it to the caller — unlike submit_withdrawal_to_provider.
-    Under SQLite's coarse table-level locking (see module docstring),
-    a losing thread's single call can therefore return normally having
-    silently failed to mutate anything (same as an operator whose click
-    hit a transient DB error and would just press the action again).
-    This retries the ACTION ITSELF, not an exception, until the row is
-    observably no longer PENDING — proving the real property under
-    test (exactly one winner, exactly one refund) without depending on
-    SQLite offering row-level lock contention it structurally cannot."""
+    """reject_withdrawals catches OperationalError internally ONLY inside
+    its per-row try/except (admin.py, the block starting right after
+    `for wr in pending:`) — NOT around `pending.exists()` or around the
+    queryset evaluation that `for wr in pending:` itself triggers (Django
+    fetches all matching rows the moment the for-loop begins iterating,
+    before that row's try: is ever reached). Under SQLite's coarse
+    table-level locking (see module docstring), either of those two
+    reads can raise `OperationalError: database table is locked` and it
+    WILL propagate out of reject_withdrawals() uncaught — confirmed by
+    direct trace against the real function source, not assumed. An
+    earlier version of this helper called reject_withdrawals() with no
+    try/except of its own around that call, on the (wrong) assumption
+    that reject_withdrawals swallowed everything itself — that let the
+    OperationalError escape the thread target entirely, which Python's
+    threading module reports to stderr via its default excepthook
+    ("Exception in thread ...") but does NOT propagate to join() or fail
+    the test — results[index] was simply never set, and this test file's
+    own assertions on `results` were the only thing that could have
+    caught it (they do now; see below). Fixed here, in test code only,
+    by wrapping the WHOLE call — not just relying on the function's own
+    partial internal handling — exactly per FIX-02A.3's post-commit
+    concurrency-test-anomaly design lock: any OperationalError whose
+    message contains "locked" is a known transient SQLite artifact and
+    gets a bounded retry of the full action; anything else, or exceeding
+    max_retries, is recorded as ("error", exc) so the assertions below
+    fail the test loudly instead of silently leaving results[index] as
+    None. Reuses the repo's existing per-thread list-index convention
+    (test_atomic_guard_lock_order.py, test_fix02a2_submission.py) rather
+    than introducing a Queue — each thread only ever writes its own
+    unique index, which is already thread-safe under the GIL."""
     from unittest.mock import patch
     with connection.cursor() as cur:
         cur.execute("PRAGMA busy_timeout = 30000;")
     barrier.wait(timeout=5)
+    attempt = 0
     try:
         with patch("simulator.tasks.send_email_async.delay"):
-            for _ in range(max_retries):
-                reject_withdrawals(
-                    ma, _admin_request(admin_user),
-                    WithdrawalRequest.objects.filter(pk=wr_pk),
-                )
+            while True:
+                attempt += 1
+                try:
+                    reject_withdrawals(
+                        ma, _admin_request(admin_user),
+                        WithdrawalRequest.objects.filter(pk=wr_pk),
+                    )
+                except OperationalError as exc:
+                    if "locked" not in str(exc).lower() or attempt >= max_retries:
+                        results[index] = ("error", exc)
+                        return
+                    time.sleep(random.uniform(0.005, 0.03))
+                    continue
+                except Exception as exc:  # pragma: no cover - diagnostic safety net
+                    results[index] = ("error", exc)
+                    return
+
                 status = WithdrawalRequest.objects.values_list("status", flat=True).get(pk=wr_pk)
                 if status != WithdrawalRequest.STATUS_PENDING:
                     results[index] = ("resolved", status)
                     return
+                if attempt >= max_retries:
+                    results[index] = ("exhausted", None)
+                    return
                 time.sleep(random.uniform(0.005, 0.03))
-        results[index] = ("exhausted", None)
     finally:
         connection.close()
 
@@ -628,6 +661,13 @@ class RejectWithdrawalsConcurrencyTests(TransactionTestCase):
             t.start()
         for t in threads:
             t.join(timeout=10)
+
+        # Neither worker may have died silently (see _run_reject_until_
+        # resolved's docstring — this is exactly the escape this design
+        # lock closes) — a real thread crash must fail this test, not
+        # just leave the DB in a state that happens to still look valid.
+        self.assertIn(results[0][0], ("ok", "claimed"), f"approve thread reported an error: {results}")
+        self.assertEqual(results[1][0], "resolved", f"reject thread reported an error: {results}")
 
         wr.refresh_from_db()
         wallet.refresh_from_db()
