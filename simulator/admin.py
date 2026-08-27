@@ -13,6 +13,7 @@ from django.db import transaction
 from .models import (
     TradingAccount, Position, Trade, LedgerEntry,
     Purchase, Deposit, WithdrawalRequest, Wallet, WalletTransaction, InternalTransfer,
+    PayoutAttempt,
     TreasuryOperationRequest,
     RiskRule, DrawdownSnapshot, TradingViolation, TraderScore,
     BrokerSnapshot, SymbolExposure, TraderClassExposure,
@@ -1813,10 +1814,25 @@ approve_withdrawals = superuser_required_action(approve_withdrawals)
 
 @admin.action(description="❌ Rechazar — devolver fondos al wallet")
 def reject_withdrawals(modeladmin, request, queryset):
+    """
+    FIX-02A.3 — lock order corrected to match the global invariant
+    (Design Lock Correction #2, FIX-02A.2): Wallet -> WithdrawalRequest
+    whenever Wallet participates (no PayoutAttempt exists for a PENDING
+    WithdrawalRequest, so it never enters this chain). Previously this
+    locked WithdrawalRequest first and only reached Wallet's own lock
+    indirectly inside credit_wallet() — the exact inverse order used by
+    _apply_confirmed_failure_with_refund() in payout_orchestrator.py.
+    No live deadlock was ever provable (reject only ever touches PENDING
+    rows, which never have a PayoutAttempt, so it never contended with
+    that function) — but the whole point of a single global lock order
+    is to not have to re-derive that argument every time new code is
+    added. wallet_id is resolved via an UNLOCKED preview read first
+    (get_or_create_wallet) and never trusted for anything but which row
+    to lock next — the real decision is re-derived after both locks are
+    held, exactly like _apply_confirmed_failure_with_refund does.
+    """
     from .wallet_ledger import credit_wallet, get_or_create_wallet
     from .models import WalletTransaction
-    from django.core.mail import send_mail
-    from django.conf import settings as _cfg
     from django.db import transaction as _tx
 
     pending = queryset.filter(status=WithdrawalRequest.STATUS_PENDING)
@@ -1827,8 +1843,19 @@ def reject_withdrawals(modeladmin, request, queryset):
     count = 0
     for wr in pending:
         try:
+            # Preview — NO lock. Only resolves which Wallet row to lock
+            # next; never trusted for any decision below.
+            wallet_preview, _ = get_or_create_wallet(wr.user)
+            wallet_id = wallet_preview.id
+
             with _tx.atomic():
-                # Re-check status under a row lock — prevents double-rejection race.
+                # 1. Wallet first — global lock order.
+                Wallet.objects.select_for_update().get(pk=wallet_id)
+
+                # 2. WithdrawalRequest second — re-check status under
+                #    the row lock, prevents double-rejection race AND
+                #    an approve-vs-reject race (see module docstring
+                #    above and FIX-02A.3 design lock).
                 wr_locked = WithdrawalRequest.objects.select_for_update().filter(
                     pk=wr.pk,
                     status=WithdrawalRequest.STATUS_PENDING,
@@ -1837,18 +1864,28 @@ def reject_withdrawals(modeladmin, request, queryset):
                     _wlog.warning("[admin] reject wr #%d skipped — status changed concurrently", wr.pk)
                     continue
 
-                wallet, _ = get_or_create_wallet(wr.user)
-                credit_wallet(
-                    wallet.id,
-                    wr.amount_usd,
-                    WalletTransaction.TX_CORRECTION,
-                    note=f"Refund — retiro #{wr.id} rechazado por admin",
-                    initiated_by=request.user,
-                )
-                WithdrawalRequest.objects.filter(pk=wr.pk).update(
+                # Transition before the money movement — same ordering
+                # convention _apply_confirmed_failure_with_refund uses.
+                WithdrawalRequest.objects.filter(pk=wr_locked.pk).update(
                     status      = WithdrawalRequest.STATUS_REJECTED,
                     reviewed_by = request.user,
                     reviewed_at = now(),
+                )
+
+                # Re-locks the SAME Wallet row already held above —
+                # re-entrant select_for_update() on a row this same
+                # transaction already locked is a no-op (documented in
+                # wallet_ledger.py, already relied on by
+                # _apply_confirmed_failure_with_refund). If this raises,
+                # the whole atomic() block rolls back — the WR update
+                # above is undone too, so a WR can never end up
+                # REJECTED without its refund landing in the same commit.
+                credit_wallet(
+                    wallet_id,
+                    wr_locked.amount_usd,
+                    WalletTransaction.TX_CORRECTION,
+                    note=f"Refund — retiro #{wr_locked.id} rechazado por admin",
+                    initiated_by=request.user,
                 )
 
             from .audit import log_audit, EV_WITHDRAW_REJECTED
@@ -1927,11 +1964,30 @@ class WithdrawalRequestAdmin(admin.ModelAdmin):
     date_hierarchy = "created_at"
     actions       = [approve_withdrawals, reject_withdrawals]
 
-    readonly_fields = (
-        "user", "amount_usd", "crypto_currency", "wallet_address",
-        "debit_tx", "np_payout_id", "np_batch_id", "np_payout_status",
-        "crypto_amount", "reviewed_by", "reviewed_at", "created_at", "updated_at",
-    )
+    # FIX-02A.3 — read-only total. Derivado de _meta.fields (no una lista
+    # manual) para que status/admin_note y cualquier campo futuro del
+    # modelo queden readonly automáticamente, sin depender de que alguien
+    # recuerde actualizar esta lista. Ni superuser edita ningún campo
+    # desde este form — la única vía de transición son las actions
+    # approve_withdrawals/reject_withdrawals de abajo, ambas ya
+    # autorizadas por payout_orchestrator.py (approve) o por el
+    # servicio interno auditado (reject). Mismo patrón que WalletAdmin
+    # (admin.py, más abajo).
+    readonly_fields = [f.name for f in WithdrawalRequest._meta.fields]
+
+    def has_add_permission(self, request):
+        # FIX-02A.3 — un WithdrawalRequest solo se crea vía withdraw_view()
+        # (débito de wallet + creación atómica); no existe un flujo válido
+        # de creación manual desde admin.
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        # FIX-02A.3 — no confiar solo en el PROTECT de PayoutAttempt.
+        # withdrawal_request: un WR sin PayoutAttempt (recién creado,
+        # o legacy pre-FIX-02A.2) sí sería borrable por ese mecanismo,
+        # destruyendo evidencia del debit_tx ya aplicado. Bloqueado
+        # explícitamente para todos, incluyendo superuser.
+        return False
 
     fieldsets = (
         ("Request", {
@@ -1951,6 +2007,52 @@ class WithdrawalRequestAdmin(admin.ModelAdmin):
             "fields":  ("created_at", "updated_at"),
         }),
     )
+
+
+@admin.register(PayoutAttempt)
+class PayoutAttemptAdmin(admin.ModelAdmin):
+    """
+    FIX-02A.3 — strictly view-only. PayoutAttempt is the source of truth
+    for provider correlation (resolve_payout_target(), payout_orchestrator.py),
+    idempotency (idempotency_key) and the state machine
+    (payout_state_machine.py). Editing any field manually here could
+    corrupt webhook correlation, idempotency, reconciliation or the
+    financial state derived from it — so every mutation path is closed,
+    including for superuser. Operations/support gets visibility without
+    shell/DB access; nothing else. Same has_add/change/delete_permission
+    pattern already proven in TreasuryOperationRequestAdmin (admin.py,
+    further below) — has_view_permission is intentionally NOT overridden:
+    that class's own override only ADDS custom-permission grants on top
+    of Django's default (its last line falls back to
+    super().has_view_permission()) — PayoutAttempt has no custom
+    permission set, so the default (view_payoutattempt OR
+    change_payoutattempt grants view; superuser always passes) is
+    correct as-is, and combines with has_change_permission=False to
+    render Django's native read-only detail view (disabled widgets, no
+    Save button) rather than a 403.
+    """
+    readonly_fields = [f.name for f in PayoutAttempt._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    list_display = (
+        "id", "withdrawal_request", "attempt_number", "provider", "status",
+        "provider_reference", "provider_batch_id", "requested_amount_usd",
+        "created_at", "submitted_at",
+    )
+    list_filter = ("status", "provider", "created_at")
+    search_fields = (
+        "withdrawal_request__id", "provider_reference", "provider_batch_id",
+        "idempotency_key", "withdrawal_request__user__username",
+    )
+    ordering = ("-created_at",)
 
 
 # ─────────────────────────────────────────────
