@@ -779,7 +779,16 @@ class AccountProduct(models.Model):
     allowed_symbols   = models.JSONField(null=True, blank=True)
     max_lot_size      = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     margin_call_level = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('100.00'))
-    stopout_level     = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('50.00'))
+    # FIX-03 — Money Broker V1 policy default is 100/70 (was 100/50).
+    # Only governs an AccountProduct created WITHOUT an explicit value
+    # from here on — never retroactive: existing AccountProduct rows
+    # keep whatever value they already have, and every already-created
+    # TradingAccount is fully insulated by its own frozen
+    # stopout_level_snapshot regardless of this default (see
+    # migrations/0036_product_runtime_rules.py, left untouched — its own
+    # default=Decimal('50.00') is historically accurate and must not be
+    # edited).
+    stopout_level     = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('70.00'))
 
     # O.6c-1e — configurable margin-concentration policy. Defaults match the
     # values every account has used implicitly since Phase 6B.1

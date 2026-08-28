@@ -523,7 +523,15 @@ class TradingAccountAdmin(admin.ModelAdmin):
     search_fields = ("user__username", "user__email")
     # On change forms: peak_balance and drawdown are read-only computed values.
     # On add forms they are excluded entirely (save() auto-derives them from balance).
-    readonly_fields = ("created_at", "peak_balance", "drawdown", "margin_panel")
+    # FIX-03 — margin_call_level_snapshot/stopout_level_snapshot added,
+    # read-only, purely for operational visibility (support/ops could not
+    # previously see which frozen policy a given account actually has
+    # without a shell/DB query). No edit path — never in a non-readonly
+    # fieldset, no action added.
+    readonly_fields = (
+        "created_at", "peak_balance", "drawdown", "margin_panel",
+        "margin_call_level_snapshot", "stopout_level_snapshot",
+    )
 
     # ── Add form: only the fields the operator actually needs to fill in ──
     _ADD_FIELDSETS = (
@@ -565,7 +573,7 @@ class TradingAccountAdmin(admin.ModelAdmin):
         }),
         ("Retail — Margin Engine", {
             "description": "Estado en tiempo real del motor de margen. Solo para cuentas RETAIL.",
-            "fields": ("margin_panel",),
+            "fields": ("margin_panel", "margin_call_level_snapshot", "stopout_level_snapshot"),
         }),
         ("Metadatos", {
             "classes": ("collapse",),

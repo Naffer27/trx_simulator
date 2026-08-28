@@ -887,9 +887,15 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 "reason": event.get("reason"),
             })
         elif event.get("reason") == "daemon_margin_call" and not self._positions:
+            # FIX-03 — the condition still matches the daemon's own reason
+            # string ("daemon_margin_call", set in tasks.py — out of this
+            # block's authorized scope, unchanged); only the OUTGOING
+            # WS event this connection relays to other tabs is corrected:
+            # was "account:margin_call" with a hardcoded "50pct" string —
+            # the real trigger is stopout_level, not a fixed 50%.
             await self.send_json({
-                "type":    "account:margin_call",
-                "reason":  "margin_level_below_50pct",
+                "type":    "account:stopout",
+                "reason":  "margin_level_below_stopout",
                 "balance": float(new_balance) if new_balance is not None else 0.0,
             })
 
@@ -2277,7 +2283,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 tier=self.account.get("tier", "10K"),
                 account_type=_acct_type,
                 margin_used=self.account.get("margin_used", 0.0),
-                stopout_level=self.account.get("stopout_level", 50.0),
+                stopout_level=self.account.get("stopout_level", 70.0),
             ):
                 from .models import MARGIN_ENGINE_TYPES
                 if _acct_type in MARGIN_ENGINE_TYPES:
@@ -2328,6 +2334,12 @@ class TradingConsumer(AsyncWebsocketConsumer):
             "daily_dd_pct": daily_dd_pct,
             "daily_pnl": round(daily_pnl, 2),
             "margin_level": margin_level,
+            # FIX-03 — authoritative thresholds from THIS account's own
+            # frozen snapshot (self.account, hydrated from TradingAccount.
+            # margin_call_level_snapshot/stopout_level_snapshot) — never
+            # the live AccountProduct, never a hardcoded UI constant.
+            "margin_call_level": self.account.get("margin_call_level", 100.0),
+            "stopout_level":     self.account.get("stopout_level", 70.0),
             "bid": bid,
             "ask": ask,
             "spread": spread,
@@ -2464,10 +2476,14 @@ class TradingConsumer(AsyncWebsocketConsumer):
         })
 
     async def _do_retail_liquidation(self) -> None:
-        """RETAIL margin call — close all positions, account stays ACTIVE.
-        Triggers when margin_level < stopout_level. Unlike _do_stopout, no suspension."""
-        _stopout_threshold = self.account.get("stopout_level", 50.0)
-        log.warning("[margin_call] margin_level<%.0f%% equity=%.2f margin=%.2f account #%s",
+        """FIX-03 — RETAIL stop-out (margin-level liquidation): close all
+        positions, account stays ACTIVE. Triggers when margin_level <
+        stopout_level — this is Stop-Out, not Margin Call (Margin Call is
+        the separate order-entry gate in _compute_pretrade_margin_guard();
+        it never closes positions). Unlike _do_stopout (DD engine), no
+        account suspension."""
+        _stopout_threshold = self.account.get("stopout_level", 70.0)
+        log.warning("[stopout] margin_level<%.0f%% equity=%.2f margin=%.2f account #%s",
                     _stopout_threshold, self.account["equity"],
                     self.account.get("margin_used", 0.0), self._db_account_id)
         closed_items = []
@@ -2488,7 +2504,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
             # price/loss); it stays open via failed_positions.
             _raw_cpx = self._feed_close_price(sym, p["side"])
             if _raw_cpx is None:
-                log.warning("[margin_call] SKIPPED pos %s sym=%s — no fresh FeedManager price "
+                log.warning("[stopout] SKIPPED pos %s sym=%s — no fresh FeedManager price "
                             "(fail-safe, no synthetic fallback)", p["id"], sym)
                 failed_positions.append(p)
                 continue
@@ -2501,17 +2517,17 @@ class TradingConsumer(AsyncWebsocketConsumer):
             pricing_context_close = self._capture_pricing_context(sym, profile=pricing_ctx.PROFILE_WS_MARGIN_CALL)
             try:
                 result = await self._db_close_position_atomic(
-                    p, cpx, "margin_call", realized, new_balance, new_equity,
+                    p, cpx, "stopout", realized, new_balance, new_equity,
                     pricing_context_close=pricing_context_close,
                 )
             except Exception as exc:
-                log.error("[margin_call] DB close failed pos %s: %s", p["id"], exc)
+                log.error("[stopout] DB close failed pos %s: %s", p["id"], exc)
                 failed_positions.append(p)
                 continue
 
             # PANEL-03 — position is gone from DB either way once we reach
             # here — never re-add to failed_positions.
-            outcome = self._handle_close_result(p, result, cpx, "margin_call", realized, now_ts)
+            outcome = self._handle_close_result(p, result, cpx, "stopout", realized, now_ts)
             if outcome is None:
                 saw_stale_close = True
             else:
@@ -2536,7 +2552,12 @@ class TradingConsumer(AsyncWebsocketConsumer):
             await self.send_json({"type": "order_close", **c})
         await self._refresh_and_send_positions()
         await self.send_json({
-            "type": "account:margin_call",
+            # FIX-03 — was "account:margin_call": the trigger is
+            # stopout_level, not margin_call_level — Margin Call never
+            # closes positions (see _compute_pretrade_margin_guard). Zero
+            # real consumers of the old name existed (confirmed during
+            # audit), so no compatibility shim.
+            "type": "account:stopout",
             "reason": "margin_level_below_stopout",
             "stopout_level": _stopout_threshold,
             "balance": round(self.account["balance"], 2),
@@ -2558,6 +2579,8 @@ class TradingConsumer(AsyncWebsocketConsumer):
             "total_dd_pct": 0.0, "daily_dd_pct": 0.0,
             "daily_pnl": round(self._daily_realized_pnl, 2),
             "margin_level": 0.0,
+            "margin_call_level": self.account.get("margin_call_level", 100.0),
+            "stopout_level": self.account.get("stopout_level", 70.0),
             "bid": round(self.get_bid(self.symbol), dec),
             "ask": round(self.get_ask(self.symbol), dec),
             "spread": 0.0,
@@ -2828,8 +2851,17 @@ class TradingConsumer(AsyncWebsocketConsumer):
         self.account["spread_pips"]        = acc.get("spread_pips", 0.0)
         self.account["allowed_symbols"]    = acc.get("allowed_symbols", None)
         self.account["max_lot_size"]       = acc.get("max_lot_size", None)
+        # FIX-03 — V1 policy is 100/70. These two .get(..., X) fallbacks
+        # are purely defensive (acc always carries a real value here —
+        # _db_read_account() already resolved obj.stopout_level_snapshot
+        # or 50 for a genuinely legacy NULL-snapshot row; that "or 50" is
+        # the one place pre-Phase-6B no-retroactivity is preserved and
+        # must NOT change). If this key were ever truly absent from acc
+        # (a bug, not a data case), defaulting to the current platform
+        # policy (70) is the deliberately-chosen, internally-consistent
+        # fallback — matches every other stopout_level fallback below.
         self.account["margin_call_level"]  = acc.get("margin_call_level", 100.0)
-        self.account["stopout_level"]      = acc.get("stopout_level", 50.0)
+        self.account["stopout_level"]      = acc.get("stopout_level", 70.0)
         # O.6c-1e — same fallback discipline as the two lines above.
         self.account["max_margin_per_trade_pct"] = acc.get("max_margin_per_trade_pct", 10.0)
         self.account["max_total_margin_pct"]     = acc.get("max_total_margin_pct", 50.0)

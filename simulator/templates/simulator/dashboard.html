@@ -2275,6 +2275,20 @@ class TradingPanel {
       showRiskAlert(reasons[msg.reason]||'⛔ Cuenta Suspendida: '+String(msg.reason||''),true);
       return;
     }
+    if(msg.type==='account:stopout'){
+      /* FIX-03 — RETAIL stop-out (margin_level < stopout_level): all
+         positions were force-closed, account stays Active (no
+         suspension, unlike account:suspended above). Delivered both to
+         this connection directly (_do_retail_liquidation) and, via
+         Channels group relay, to this user's other open tabs
+         (position_changed) — same handler covers both, no separate code
+         path needed. This replaces the old (removed) event name that
+         wrongly implied Margin Call itself closes positions — the real
+         trigger is stopout_level; Margin Call never closes positions. */
+      const _sol=msg.stopout_level!=null?Number(msg.stopout_level).toFixed(0)+'%':'el límite';
+      showRiskAlert('⛔ STOP-OUT — Posiciones liquidadas (nivel de margen por debajo de '+_sol+')',true);
+      return;
+    }
     if(msg.type==='account:violated'){
       showRiskAlert('🚫 Cuenta Violada: '+String(msg.reason||msg.status||''),true);
       return;
@@ -3114,8 +3128,15 @@ function renderAccount(msg){
   });
 
   // ── Margin Level ──
+  // FIX-03 — thresholds are authoritative, from THIS account's own
+  // frozen snapshot (backend account:update payload), never hardcoded.
+  // Boundaries match the backend exactly (risk_engine.py/consumers.py,
+  // both strict '<'): ml < stopout_level → CRITICAL;
+  // stopout_level <= ml <= margin_call_level → WARNING; ml > margin_call_level → NORMAL.
+  const _mcl=Number(msg.margin_call_level??100),_sol=Number(msg.stopout_level??70);
+  const _mlColor=(ml)=>ml<=0?'':(ml<_sol?'#ef5350':(ml<=_mcl?'#ff9800':''));
   const mlEl=document.getElementById('accMarginLevel');
-  if(mlEl){const ml=Number(msg.margin_level??0);mlEl.textContent=margin>0?ml.toFixed(1)+'%':'∞';mlEl.style.color=ml>0&&ml<150?'#ef5350':ml<300?'#ff9800':'';}
+  if(mlEl){const ml=Number(msg.margin_level??0);mlEl.textContent=margin>0?ml.toFixed(1)+'%':'∞';mlEl.style.color=margin>0?_mlColor(ml):'';}
 
   // ── Daily / Total DD ──
   const ddyEl=document.getElementById('accDailyDD'),ddtEl=document.getElementById('accTotalDD');
@@ -3147,7 +3168,9 @@ function renderAccount(msg){
     const ml = Number(msg.margin_level ?? 0);
     if(margin > 0){
       mb.ml.textContent = ml.toFixed(1) + '%';
-      mb.ml.className   = 'mb-value' + (ml < 100 ? ' danger' : ml < 200 ? ' warn' : ' pos');
+      // FIX-03 — same authoritative boundaries as accMarginLevel above
+      // (ml < stopout_level → danger; <= margin_call_level → warn; else pos).
+      mb.ml.className   = 'mb-value' + (ml < _sol ? ' danger' : ml <= _mcl ? ' warn' : ' pos');
     } else {
       mb.ml.textContent = '∞';
       mb.ml.className   = 'mb-value pos';
@@ -3199,7 +3222,7 @@ function renderAccount(msg){
   const arMU=document.getElementById('arMarginUsed'); if(arMU)arMU.textContent=usd(margin);
   const arFM=document.getElementById('arFreeMargin'); if(arFM)arFM.textContent=usd(free);
   const arML=document.getElementById('arMarginLevel');
-  if(arML){const ml=Number(msg.margin_level??0);arML.textContent=margin>0?ml.toFixed(1)+'%':'∞';arML.style.color=ml>0&&ml<150?'#ef5350':ml<300?'#ff9800':'';}
+  if(arML){const ml=Number(msg.margin_level??0);arML.textContent=margin>0?ml.toFixed(1)+'%':'∞';arML.style.color=margin>0?_mlColor(ml):'';}
   // product name live update from WS (overrides server-rendered value)
   const arPN=document.getElementById('arProductName');
   if(arPN&&msg.product_name)arPN.textContent=msg.product_name;
