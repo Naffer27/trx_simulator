@@ -430,7 +430,9 @@ class TradingAccountAdmin(admin.ModelAdmin):
         total_margin = sum(float(p.avg_price) * float(p.qty) / lev for p in positions)
         equity = float(obj.equity or obj.balance or 0)
         balance = float(obj.balance or 0)
-        mg = compute_margin_state(equity, total_margin)
+        mcl = float(obj.margin_call_level_snapshot or 100)
+        sol = float(obj.stopout_level_snapshot or 50)
+        mg = compute_margin_state(equity, total_margin, stopout_level=sol)
 
         used_pct = mg["used_margin_pct"]
         mlevel = mg["margin_level"]
@@ -444,8 +446,11 @@ class TradingAccountAdmin(admin.ModelAdmin):
             bar_color, status_label = "#27ae60", "NORMAL"
 
         bar_w = min(int(used_pct), 100)
-        ml_color = ("#e74c3c" if (mlevel > 0 and mlevel < 100)
-                    else "#e67e22" if (mlevel > 0 and mlevel < 150)
+        # FIX-04: Margin Level color mirrors the client-side boundary
+        # contract exactly (< SOL → CRITICAL, <= MCL → WARNING, else NORMAL) —
+        # sourced from the account's real snapshot, no more 100/150 literals.
+        ml_color = ("#e74c3c" if (mlevel > 0 and mlevel < sol)
+                    else "#e67e22" if (mlevel > 0 and mlevel <= mcl)
                     else "#27ae60")
 
         def _kv(label, val, color="#c8ccd8"):
@@ -464,6 +469,8 @@ class TradingAccountAdmin(admin.ModelAdmin):
             + _kv("Margin Level",
                   f"{mlevel:.0f}%" if mg["margin_used"] > 0 else "—",
                   ml_color if mg["margin_used"] > 0 else "#55556a")
+            + _kv("Margin Call", f"{mcl:.0f}%")
+            + _kv("Stop-Out", f"{sol:.0f}%")
             + _kv("Maintenance Req.", f"${mg['maintenance_margin']:,.2f}")
             + _kv("Liq. Distance",
                   f"${mg['liquidation_distance']:,.2f}",
@@ -1027,7 +1034,9 @@ class TradingAccountAdmin(admin.ModelAdmin):
             lev = max(1, account.leverage or 50)
             total_mg = sum(float(p.avg_price) * float(p.qty) / lev for p in open_positions)
             eq_f = float(account.equity or account.balance or 0)
-            _mg = compute_margin_state(eq_f, total_mg)
+            mcl = float(account.margin_call_level_snapshot or 100)
+            sol = float(account.stopout_level_snapshot or 50)
+            _mg = compute_margin_state(eq_f, total_mg, stopout_level=sol)
             used_pct = _mg["used_margin_pct"]
             if used_pct >= _MARGIN_THRESHOLDS["DANGER"]:
                 _mg["status_label"], _mg["status_color"] = "DANGER", "#e74c3c"
@@ -1037,11 +1046,15 @@ class TradingAccountAdmin(admin.ModelAdmin):
                 _mg["status_label"], _mg["status_color"] = "WARNING", "#f1c40f"
             else:
                 _mg["status_label"], _mg["status_color"] = "NORMAL", "#27ae60"
+            # FIX-04: same boundary contract as margin_panel — < SOL critical,
+            # <= MCL warning, else normal — real snapshot, no 100/150 literals.
             _mg["margin_level_color"] = (
-                "#e74c3c" if (_mg["margin_level"] > 0 and _mg["margin_level"] < 100)
-                else "#e67e22" if (_mg["margin_level"] > 0 and _mg["margin_level"] < 150)
+                "#e74c3c" if (_mg["margin_level"] > 0 and _mg["margin_level"] < sol)
+                else "#e67e22" if (_mg["margin_level"] > 0 and _mg["margin_level"] <= mcl)
                 else "#27ae60"
             )
+            _mg["margin_call_level"] = mcl
+            _mg["stopout_level"] = sol
             retail_margin = _mg
 
         context = dict(

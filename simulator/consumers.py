@@ -2304,11 +2304,23 @@ class TradingConsumer(AsyncWebsocketConsumer):
         equity_val = self.account["equity"]
         margin_level = round(equity_val / margin_used * 100, 2) if margin_used > 0 else 0.0
 
-        from .risk_engine import compute_margin_state
-        _ms = compute_margin_state(equity_val, margin_used)
-        used_margin_pct   = _ms["used_margin_pct"]
-        maintenance_margin = _ms["maintenance_margin"]
-        liquidation_distance = _ms["liquidation_distance"]
+        # FIX-04: maintenance_margin/liquidation_distance are a RETAIL-only
+        # metric derived from the account's real stopout_level — _acct_type
+        # above is only assigned inside the elif branch at line ~2277, so it
+        # cannot be reused here; re-derive account_type fresh instead.
+        from .models import MARGIN_ENGINE_TYPES
+        _account_type_for_margin = self.account.get("account_type", "CHALLENGE")
+        if _account_type_for_margin in MARGIN_ENGINE_TYPES:
+            from .risk_engine import compute_margin_state
+            _ms = compute_margin_state(
+                equity_val, margin_used,
+                stopout_level=self.account.get("stopout_level", 50.0),
+            )
+            used_margin_pct   = _ms["used_margin_pct"]
+            maintenance_margin = _ms["maintenance_margin"]
+            liquidation_distance = _ms["liquidation_distance"]
+        else:
+            used_margin_pct = maintenance_margin = liquidation_distance = 0.0
 
         dec = step_decimals_for(self.symbol)[1]
         bid = round(self.get_bid(self.symbol), dec)

@@ -120,15 +120,26 @@ def _get_crypto_max_lot(account) -> Decimal:
     return _CRYPTO_MAX_LOT.get(tier, Decimal("0.25"))
 
 
-def compute_margin_state(equity: float, total_margin_used: float, new_margin: float = 0.0) -> dict:
+def compute_margin_state(
+    equity: float,
+    total_margin_used: float,
+    new_margin: float = 0.0,
+    *,
+    stopout_level: float,
+) -> dict:
     """
     Pure margin calculator for the RETAIL broker engine. No DB, no side effects.
 
     Standard broker margin accounting:
-      margin_level   = equity / margin_used × 100  (stopout typically at < 50%)
+      margin_level   = equity / margin_used × 100
       used_margin_pct = margin_used / equity × 100
-      maintenance     = 50% of total margin required
+      maintenance     = equity required exactly at the account's real
+                         Stop-Out threshold (margin_after × stopout_level/100)
       free_margin     = equity − margin_used
+
+    stopout_level is keyword-only and has NO default: every caller must
+    resolve the account's real stopout_level_snapshot (or its established
+    legacy fallback) before calling — this function never guesses it.
     """
     equity = max(float(equity), 0.01)
     total_margin_used = float(total_margin_used)
@@ -137,7 +148,7 @@ def compute_margin_state(equity: float, total_margin_used: float, new_margin: fl
     free_margin = equity - margin_after
     used_margin_pct = (margin_after / equity * 100.0) if equity > 0 else 100.0
     margin_level = (equity / margin_after * 100.0) if margin_after > 0 else 0.0
-    maintenance_margin = margin_after * 0.5
+    maintenance_margin = margin_after * (float(stopout_level) / 100.0)
     liquidation_distance = max(0.0, equity - maintenance_margin)
     return {
         "margin_used":          round(total_margin_used, 2),
@@ -209,7 +220,10 @@ def evaluate_position_risk(account, symbol: str, lot_size: float,
         # ── RETAIL: margin-based risk engine ────────────────────────────────
         # Primary metric: used_margin_pct = (margin_used + new_margin) / equity.
         # Exposure is still computed and returned as a secondary analytic.
-        margin_data = compute_margin_state(equity, current_margin_used, new_margin)
+        margin_data = compute_margin_state(
+            equity, current_margin_used, new_margin,
+            stopout_level=float(account.stopout_level_snapshot or 50),
+        )
         used_pct = margin_data["used_margin_pct"]
         if used_pct >= _MARGIN_THRESHOLDS["DANGER"]:    # > 80 %
             risk_level = "EXTREME"

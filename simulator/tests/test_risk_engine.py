@@ -39,7 +39,10 @@ class TestComputeMarginState(SimpleTestCase):
       margin_level    = equity / margin_used  × 100
       used_margin_pct = margin_after / equity × 100
       free_margin     = equity − margin_after
-      maintenance     = margin_after × 0.5
+      maintenance     = margin_after × (stopout_level / 100)  [FIX-04]
+
+    stopout_level is keyword-only and REQUIRED (no default) — FIX-04 design
+    lock: no caller may silently fall back to the old global 50%.
     """
 
     def test_no_open_positions_zero_margin(self):
@@ -47,7 +50,8 @@ class TestComputeMarginState(SimpleTestCase):
         Sin posiciones abiertas: margin_used=0, new_margin=0.
         margin_level=0 (guardia 0/0), used_pct=0, free_margin=equity.
         """
-        s = compute_margin_state(equity=10_000.0, total_margin_used=0.0, new_margin=0.0)
+        s = compute_margin_state(equity=10_000.0, total_margin_used=0.0, new_margin=0.0,
+                                  stopout_level=50.0)
         self.assertEqual(s["margin_used"],     0.0)
         self.assertEqual(s["margin_after"],    0.0)
         self.assertEqual(s["used_margin_pct"], 0.0)
@@ -56,31 +60,74 @@ class TestComputeMarginState(SimpleTestCase):
 
     def test_used_margin_pct(self):
         """equity=10 000, margin_used=2 000 → used_margin_pct = 20.0%."""
-        s = compute_margin_state(equity=10_000.0, total_margin_used=2_000.0)
+        s = compute_margin_state(equity=10_000.0, total_margin_used=2_000.0, stopout_level=50.0)
         self.assertAlmostEqual(s["used_margin_pct"], 20.0, places=2)
 
     def test_margin_level(self):
         """equity=10 000, margin_used=2 000 → margin_level = 500.0%."""
-        s = compute_margin_state(equity=10_000.0, total_margin_used=2_000.0)
+        s = compute_margin_state(equity=10_000.0, total_margin_used=2_000.0, stopout_level=50.0)
         self.assertAlmostEqual(s["margin_level"], 500.0, places=2)
 
     def test_free_margin_includes_new_margin(self):
         """free_margin = equity − (margin_used + new_margin)."""
-        s = compute_margin_state(equity=10_000.0, total_margin_used=1_000.0, new_margin=500.0)
+        s = compute_margin_state(equity=10_000.0, total_margin_used=1_000.0, new_margin=500.0,
+                                  stopout_level=50.0)
         self.assertAlmostEqual(s["margin_after"], 1_500.0, places=2)
         self.assertAlmostEqual(s["free_margin"],  8_500.0, places=2)
 
-    def test_maintenance_margin_is_half_of_margin_after(self):
-        """maintenance_margin = margin_after × 0.5."""
-        s = compute_margin_state(equity=10_000.0, total_margin_used=4_000.0)
-        self.assertAlmostEqual(s["maintenance_margin"], 2_000.0, places=2)
+    def test_maintenance_margin_uses_stopout_level(self):
+        """maintenance_margin = margin_after × (stopout_level / 100) — FIX-04."""
+        s50 = compute_margin_state(equity=10_000.0, total_margin_used=4_000.0, stopout_level=50.0)
+        self.assertAlmostEqual(s50["maintenance_margin"], 2_000.0, places=2)
+
+        s70 = compute_margin_state(equity=10_000.0, total_margin_used=4_000.0, stopout_level=70.0)
+        self.assertAlmostEqual(s70["maintenance_margin"], 2_800.0, places=2)
+
+    def test_stopout_level_is_mandatory(self):
+        """Omitir stopout_level debe fallar con TypeError — sin default silencioso."""
+        with self.assertRaises(TypeError):
+            compute_margin_state(equity=10_000.0, total_margin_used=1_000.0)
 
     def test_equity_zero_clamped_no_exception(self):
         """equity=0 se clamp a 0.01 internamente — no ZeroDivisionError."""
-        s = compute_margin_state(equity=0.0, total_margin_used=1_000.0)
+        s = compute_margin_state(equity=0.0, total_margin_used=1_000.0, stopout_level=50.0)
         self.assertIn("used_margin_pct", s)
         # used_pct = 1000/0.01*100 → valor muy alto, pero sin excepción
         self.assertGreater(s["used_margin_pct"], 0.0)
+
+    def test_negative_equity_clamp_unchanged(self):
+        """FIX-04 no toca el clamp equity=max(equity,0.01) — mismo comportamiento con equity negativo."""
+        s = compute_margin_state(equity=-500.0, total_margin_used=1_000.0, stopout_level=70.0)
+        self.assertIn("used_margin_pct", s)
+        self.assertGreater(s["used_margin_pct"], 0.0)
+
+    def test_zero_margin_liquidation_distance_equals_equity(self):
+        """used_margin=0 → maintenance_margin=0, liquidation_distance=equity (sin clamp adicional)."""
+        s = compute_margin_state(equity=5_000.0, total_margin_used=0.0, stopout_level=70.0)
+        self.assertEqual(s["maintenance_margin"], 0.0)
+        self.assertEqual(s["liquidation_distance"], 5_000.0)
+
+    def test_numeric_contract_stopout_70(self):
+        """
+        Contrato numérico exacto FIX-04: used_margin=1000, stopout_level=70.
+        maintenance_margin=700 en todos los casos; liquidation_distance cruza 0
+        exactamente en equity=700 (boundary < estricto → 700 mismo NO dispara).
+        """
+        s1 = compute_margin_state(equity=1500.0, total_margin_used=1000.0, stopout_level=70.0)
+        self.assertAlmostEqual(s1["maintenance_margin"], 700.0, places=2)
+        self.assertAlmostEqual(s1["liquidation_distance"], 800.0, places=2)
+
+        s2 = compute_margin_state(equity=1000.0, total_margin_used=1000.0, stopout_level=70.0)
+        self.assertAlmostEqual(s2["maintenance_margin"], 700.0, places=2)
+        self.assertAlmostEqual(s2["liquidation_distance"], 300.0, places=2)
+
+        s3 = compute_margin_state(equity=700.0, total_margin_used=1000.0, stopout_level=70.0)
+        self.assertAlmostEqual(s3["maintenance_margin"], 700.0, places=2)
+        self.assertAlmostEqual(s3["liquidation_distance"], 0.0, places=2)
+
+        s4 = compute_margin_state(equity=699.99, total_margin_used=1000.0, stopout_level=70.0)
+        self.assertAlmostEqual(s4["maintenance_margin"], 700.0, places=2)
+        self.assertAlmostEqual(s4["liquidation_distance"], 0.0, places=2)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

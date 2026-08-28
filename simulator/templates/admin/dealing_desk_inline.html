@@ -327,16 +327,24 @@
           {{ retail_margin.margin_level|floatformat:0 }}%
         </span>
       </div>
-      {# Level bar: cap display at 300%, stopout zone highlighted #}
+      {# Level bar: cap display at 300%. Stop-Out zone and Margin Call marker
+         are derived from this account's real snapshot (retail_margin.stopout_level /
+         retail_margin.margin_call_level) — FIX-04 removed the old fixed-50%
+         hardcode. The 150% mark (if shown) is a non-enforcement buffer reference. #}
       <div style="position:relative;background:rgba(255,255,255,.05);border-radius:4px;height:6px;overflow:hidden;">
         <div style="position:absolute;left:0;top:0;height:6px;background:#e74c3c;opacity:.2;
-             width:{% widthratio 50 300 100 %}%;"></div>
+             width:{% widthratio retail_margin.stopout_level 300 100 %}%;" title="Stop-Out zone"></div>
+        <div style="position:absolute;left:{% widthratio retail_margin.margin_call_level 300 100 %}%;top:0;
+             height:6px;width:2px;background:#e67e22;" title="Margin Call level"></div>
+        <div style="position:absolute;left:{% widthratio 150 300 100 %}%;top:0;
+             height:6px;width:1px;background:rgba(255,255,255,.35);" title="150% buffer reference"></div>
         <div style="width:{% if retail_margin.margin_level > 300 %}100{% else %}{% widthratio retail_margin.margin_level 300 100 %}{% endif %}%;
              height:6px;border-radius:4px;background:{{ retail_margin.margin_level_color }};"></div>
       </div>
       <div style="display:flex;justify-content:space-between;margin-top:3px;">
-        <span style="font-size:.6rem;color:#e74c3c;">0% STOPOUT</span>
-        <span style="font-size:.6rem;color:#e67e22;">100% WARN</span>
+        <span style="font-size:.6rem;color:#e74c3c;">{{ retail_margin.stopout_level|floatformat:0 }}% STOP-OUT</span>
+        <span style="font-size:.6rem;color:#e67e22;">{{ retail_margin.margin_call_level|floatformat:0 }}% MARGIN CALL</span>
+        <span style="font-size:.6rem;color:rgba(255,255,255,.5);">150% buffer reference</span>
         <span style="font-size:.6rem;color:#27ae60;">300%+ SAFE</span>
       </div>
     </div>
