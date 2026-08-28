@@ -200,6 +200,13 @@ class OrderNewLiquidityAuditIntegrationTests(TransactionTestCase):
 
         _run(consumer._order_new({"symbol": "BTCUSD", "side": "buy", "qty": 0.1}))
 
+        # Every other test in this file asserts this before touching DB
+        # state — this one didn't, so a silently-rejected order (e.g. a
+        # WS "price_unavailable"/"extreme_risk" error) surfaced only as an
+        # opaque BrokerAuditEvent.DoesNotExist downstream instead of a
+        # clear diagnostic. Restores the file's own established pattern.
+        self.assertIsNone(_first_error(consumer))
+
         event = BrokerAuditEvent.objects.get(category=Category.LIQUIDITY)
         self.assertEqual(
             set(event.metadata.keys()),

@@ -177,10 +177,15 @@ def _run_reject_until_resolved(ma, admin_user, wr_pk, barrier, results, index, m
     None. Reuses the repo's existing per-thread list-index convention
     (test_atomic_guard_lock_order.py, test_fix02a2_submission.py) rather
     than introducing a Queue — each thread only ever writes its own
-    unique index, which is already thread-safe under the GIL."""
+    unique index, which is already thread-safe under the GIL.
+
+    TEST-INFRA hardening: the `PRAGMA busy_timeout` cursor.execute() used
+    to run once, before this retry loop, entirely unprotected — the exact
+    same class of "database table is locked" OperationalError could
+    escape there too, with no except around it at all. It's now issued
+    inside the loop's own try, retried by the SAME bounded mechanism as
+    reject_withdrawals() rather than a second, separate retry path."""
     from unittest.mock import patch
-    with connection.cursor() as cur:
-        cur.execute("PRAGMA busy_timeout = 30000;")
     barrier.wait(timeout=5)
     attempt = 0
     try:
@@ -188,6 +193,10 @@ def _run_reject_until_resolved(ma, admin_user, wr_pk, barrier, results, index, m
             while True:
                 attempt += 1
                 try:
+                    # See docstring — folded into the same retry as
+                    # reject_withdrawals() below, not a second try/except.
+                    with connection.cursor() as cur:
+                        cur.execute("PRAGMA busy_timeout = 30000;")
                     reject_withdrawals(
                         ma, _admin_request(admin_user),
                         WithdrawalRequest.objects.filter(pk=wr_pk),
@@ -625,6 +634,10 @@ class RejectWithdrawalsConcurrencyTests(TransactionTestCase):
             t.join(timeout=15)
 
         for r in results:
+            self.assertIsNotNone(
+                r, f"worker did not report an outcome (results={results}) — "
+                   "a thread died without writing to its results[index] slot",
+            )
             self.assertEqual(r[0], "resolved", f"unexpected thread outcome: {results}")
 
         wr.refresh_from_db()
