@@ -2041,6 +2041,12 @@ class TradingPanel {
     this.chart=null; this.candleSeries=null; this.volumeSeries=null; this.priceLine=null;
     this.stayLive=true; this.agg={sizeSec:900,curStart:null,o:null,h:null,l:null,c:null,vol:0};
     this.lastClose=null; this.prevClose=null; this.prevCandleClose=null; this.bid=null; this.ask=null; this.spread=0;
+    // FIX-05C — REAL LIVE QUOTE STATE, distinct from lastClose (candle/
+    // history state, see the write sites below). Only a real tick
+    // (source!=null && source!=="sim") ever sets these. liveSource is kept
+    // purely for audit/debugging — no code path branches on its value
+    // beyond the fail-closed check made at write time.
+    this.liveMid=null; this.liveSource=null; this.prevLiveMid=null;
     this.positionsCache=[]; this.linesById=new Map(); this.selectedPosIds=new Set();
     this.lastSelectedId=null; this.pendingTmp=[]; this.dragging=null;
     this._bars=[];       // canonical OHLCV bar store — source of truth for indicators
@@ -2129,6 +2135,9 @@ class TradingPanel {
     this._clearOscillatorData();
     if(isMobile())updatePanelTabs();
     this.lastClose=null; this.prevClose=null; this.prevCandleClose=null; this.bid=this.ask=null; this._resetAgg();
+    // FIX-05C — a new symbol has no live quote yet either; the old
+    // symbol's liveMid must never leak into the new instrument's ticket.
+    this.liveMid=null; this.liveSource=null; this.prevLiveMid=null;
     hideQB();
     // Reset lot to min for new symbol and update input attrs if this is the active panel
     this.mobileLot=getLotMin(this.currentSymbol);
@@ -2168,15 +2177,41 @@ class TradingPanel {
     if(this===activePanel)updateGlobalWSStatus(t);
   }
 
+  /* FIX-05C — history/candle_update call this with lastClose (candle/
+     history state). It intentionally no longer touches priceLine/pxTag/
+     glow — those represent the LIVE current price and must only ever
+     move from a real tick (see _updateLiveQuoteDisplay). PnL titles/RR/
+     the mobile PnL patch are backend- or position-driven, not px-driven,
+     so they stay wired to every candle/history/tick event same as before. */
   setPrice(px,prev){
-    if(!this.priceLine)return;
+    this._updatePnLTitles();
+    this._updateRR();
+    if(this===activePanel&&isMobile()&&_currentTab==='trading')_patchTradingPanelPnL();
+  }
+
+  /* FIX-05C — the ONLY writer of priceLine/pxTag/glow. Called exclusively
+     after a real, trusted tick sets this.liveMid (see the tick handler),
+     and when re-activating a panel that already has one (setActive). Never
+     called from history/candle_update — before the first real tick,
+     priceLine/pxTag/glow simply stay at their initial/untouched state
+     (no fabricated live line from candle/history close). */
+  _updateLiveQuoteDisplay(){
+    if(!this.priceLine||this.liveMid==null)return;
+    const px=this.liveMid,prev=this.prevLiveMid;
     const p=priceFormatFor(this.currentSymbol).precision;
     this.priceLine.applyOptions({price:px,title:this.currentSymbol.replace('/','')});
     if(this.pxTag){this.pxTag.textContent=Number(px).toFixed(p);const up=prev==null||px>=prev;this.pxTag.classList.toggle('green',up);this.pxTag.classList.toggle('red',!up);}
-    this._updatePnLTitles(px);
     this._drawGlow(px);
-    this._updateRR();
-    if(this===activePanel&&isMobile()&&_currentTab==='trading')_patchTradingPanelPnL();
+  }
+
+  /* FIX-05C — the single guard for "is there a real, tradeable quote right
+     now". Backend remains the final financial authority regardless — this
+     only prevents the ticket from being submittable while the client has
+     nothing real to show/confirm against. */
+  _hasLiveFinancialQuote(){
+    return this.liveSource!=null && this.liveSource!=='sim'
+        && Number.isFinite(this.bid) && Number.isFinite(this.ask) && this.ask>=this.bid
+        && Number.isFinite(this.liveMid);
   }
 
   _resetAgg(){this.agg={sizeSec:tfToSec(this.currentTF),curStart:null,o:null,h:null,l:null,c:null,vol:0};}
@@ -2184,12 +2219,16 @@ class TradingPanel {
   _recomputeSpread(){const pf=priceFormatFor(this.currentSymbol);this.spread=(this.currentSymbol.includes('BTC')||this.currentSymbol.includes('ETH'))?(pf.minMove*30):(this.currentSymbol.endsWith('/JPY')?pf.minMove*4:pf.minMove*2);}
 
   _updateBidAsk(){
+    // FIX-05C — this.bid/this.ask are now written ONLY by a real tick
+    // (see the tick handler below) and cleared to null on
+    // reconnect/symbol-change; there is no longer any fallback path that
+    // can set them from lastClose/candle/history. So "hasTick" here is
+    // exactly "do we have a real live quote right now" — no synthetic
+    // mid/spread fabrication when it's false; bid/ask simply render "—".
     const pf=priceFormatFor(this.currentSymbol).precision;
     const hasTick=this.bid!=null&&this.ask!=null&&this.ask>this.bid;
-    const mid=this.lastClose??((this.ask!=null&&this.bid!=null)?(this.ask+this.bid)/2:null);
-    const s=hasTick?(this.ask-this.bid):(this.spread||0);
-    const b=hasTick?this.bid:(mid!=null?mid-s/2:null);
-    const a=hasTick?this.ask:(mid!=null?mid+s/2:null);
+    const b=hasTick?this.bid:null;
+    const a=hasTick?this.ask:null;
     if(this!==activePanel)return;
     const _rb=document.getElementById('mebBid');
     const _ra=document.getElementById('mebAsk');
@@ -2230,6 +2269,15 @@ class TradingPanel {
       this.setStatus('disconnected — reconnecting…');clearInterval(this.hb);clearTimeout(this.reconnTimer);
       this.reconnTimer=setTimeout(()=>this.connect(),Math.min(5000,this.reconnDelay));
       this.reconnDelay=Math.min(5000,this.reconnDelay*1.7);this.connecting=false;
+      // FIX-05C — a dropped connection means we no longer know the real
+      // bid/ask: invalidate the live quote authority immediately rather
+      // than let a stale pre-disconnect value keep being shown/tradeable.
+      // history/candleSeries/selected symbol/timeframe/positions are
+      // deliberately left untouched — only live quote state resets.
+      // onopen (above) never restores these — it waits for a fresh real
+      // tick, same as symbol change.
+      this.bid=null; this.ask=null; this.liveMid=null; this.liveSource=null; this.prevLiveMid=null;
+      this._updateBidAsk();
       // PANEL-04 — a socket drop while our own order was in flight must
       // release the buttons instead of leaving them stuck disabled.
       if(orderTicketPanel===this&&orderTicketState==='sending'){
@@ -2330,8 +2378,26 @@ class TradingPanel {
 
     if(msg.type==='price'||msg.type==='tick'){
       if(msg.symbol&&msg.symbol!==this.currentSymbol)return;
-      this.bid=n(msg.bid??msg.best_bid??null);this.ask=n(msg.ask??msg.best_ask??null);
-      if(this.bid!=null&&this.ask!=null&&this.ask>this.bid){this.spread=this.ask-this.bid;this.lastClose=(this.ask+this.bid)/2;this._updateBidAsk();const _qs=msg.symbol||this.currentSymbol;if(_qs){const _qe=quotesLivePx[_qs];quotesLivePx[_qs]={price:this.lastClose,prev:_qe?_qe.price:null};}if(document.getElementById('quotesPanel')?.style.display!=='none')renderQuotes(quotesSearch?.value||'');}
+      // FIX-05C — fail closed: a tick only becomes REAL LIVE QUOTE
+      // authority (bid/ask/liveMid) when its source is explicit and
+      // trusted. source==null (missing) or source==="sim" must NEVER
+      // establish a tradeable quote — no rigid provider whitelist either
+      // (Money Broker stays provider-agnostic): any non-null, non-"sim"
+      // source qualifies. lastClose is deliberately untouched here — it
+      // belongs to candle/history state only (see setPrice/history/
+      // candle_update), never to the tick handler anymore.
+      const _b=n(msg.bid??msg.best_bid??null);
+      const _a=n(msg.ask??msg.best_ask??null);
+      const _src=msg.source;
+      if(_src!=null&&_src!=='sim'&&_b!=null&&_a!=null&&_a>_b){
+        this.prevLiveMid=this.liveMid;
+        this.bid=_b;this.ask=_a;this.liveMid=(_a+_b)/2;this.liveSource=_src;
+        this._updateBidAsk();
+        this._updateLiveQuoteDisplay();
+        const _qs=msg.symbol||this.currentSymbol;
+        if(_qs){const _qe=quotesLivePx[_qs];quotesLivePx[_qs]={price:this.liveMid,prev:_qe?_qe.price:null};}
+        if(document.getElementById('quotesPanel')?.style.display!=='none')renderQuotes(quotesSearch?.value||'');
+      }
       return;
     }
 
@@ -2634,15 +2700,19 @@ class TradingPanel {
     }
   }
 
-  /* ── Live P&L titles (Feature 1) ── */
-  _updatePnLTitles(px){
-    if(px==null)return;
+  /* ── Live P&L titles (Feature 1) ──
+     FIX-05C — was computeRawPnL(this.currentSymbol,...,lastClose): a raw
+     duplicate that never consulted backend pos.pnl, the only remaining
+     outlier next to the O.6c-1x-safe table/quickbar/1.5s-updater paths.
+     Now uses the SAME computePositionPnLSafe(pos) they use — backend
+     pos.pnl first, quotesLivePx fallback, else null. Never lastClose. */
+  _updatePnLTitles(){
     for(const [id,rec] of this.linesById.entries()){
       if(!rec.plEntry||String(id).startsWith('tmp-'))continue;
-      const qty=rec.qty||1;
-      const raw=computeRawPnL(this.currentSymbol, rec.side, rec.entry, qty, px);
-      const sign=raw>=0?'+':'';
-      const label=`${rec.side==='buy'?'BUY':'SELL'} ${sign}$${Math.abs(raw).toFixed(2)}`;
+      const pos=this.positionsCache.find(p=>String(p.id)===String(id));
+      const raw=pos?computePositionPnLSafe(pos):null;
+      const side=rec.side==='buy'?'BUY':'SELL';
+      const label=raw!=null?`${side} ${raw>=0?'+':''}$${Math.abs(raw).toFixed(2)}`:`${side} —`;
       rec.plEntry.applyOptions({title:label});
     }
   }
@@ -2804,9 +2874,16 @@ class TradingPanel {
       execToast('close','❌ Sin conexión','No se pudo enviar la orden — reconectando…');
       return;
     }
-    if(!this.currentSymbol||this.lastClose==null){this.setStatus('⚠️ Wait for first tick');return;}
+    // FIX-05C — was lastClose==null (candle/history state — could be
+    // non-null from a synthetic history load with zero real ticks yet).
+    // Gate on the real live quote instead; backend stays the final
+    // financial authority either way.
+    if(!this.currentSymbol||!this._hasLiveFinancialQuote()){this.setStatus('⚠️ Price unavailable');return;}
     const type=document.getElementById('ordType').value;
-    const payload={action:'order:new',symbol:this.currentSymbol,side,type,qty,price:this.lastClose,sl:slV,tp:tpV};
+    // FIX-05C — the old client-side price field (keyed off lastClose) was
+    // dead: _order_new() never reads data.get("price") (confirmed by
+    // audit, zero readers repo-wide). Removed rather than left unused.
+    const payload={action:'order:new',symbol:this.currentSymbol,side,type,qty,sl:slV,tp:tpV};
     if(riskConfirmed)payload.risk_confirmed=true;
     try{navigator.vibrate&&navigator.vibrate(50);}catch(_){}
     _setOrderTicketSending(this);
@@ -2838,7 +2915,9 @@ class TradingPanel {
     // order_ack's existing "transfer selection to the real id" logic keeps
     // selecting/highlighting the position the instant it's confirmed.
     this.selectedPosIds.clear();this.selectedPosIds.add(tmpId);this.lastSelectedId=tmpId;
-    this.pendingTmp.push({tmpId,symbol:this.currentSymbol,side,avg:this.lastClose});
+    // FIX-05C — avg uses liveMid (guaranteed non-null by the guard above),
+    // the real live quote at send time, not candle/history state.
+    this.pendingTmp.push({tmpId,symbol:this.currentSymbol,side,avg:this.liveMid});
     setTimeout(()=>showQB(this,tmpId),50);
   }
 }
@@ -2891,6 +2970,10 @@ function setActive(panel){
   if(statusEl){statusEl.textContent=t;statusEl.className='status '+(t.includes('✅')?'ok':t.includes('❌')?'err':'');}
   updateGlobalWSStatus(t);
   panel._updateBidAsk();
+  // FIX-05C — reflect whatever real live quote THIS panel already has
+  // (liveMid==null before its first real tick is a no-op here, same as
+  // everywhere else — never fabricated from lastClose).
+  panel._updateLiveQuoteDisplay();
   if(panel.lastClose!=null)panel.setPrice(panel.lastClose,panel.prevClose);
   const dec=getLotDecimals(panel.currentSymbol);
   if(isMobile()){const _lv=document.getElementById('mebLotVal');if(_lv)_lv.value=(panel.mobileLot||getLotMin(panel.currentSymbol)).toFixed(dec);}

@@ -921,6 +921,12 @@ class TradingConsumer(AsyncWebsocketConsumer):
         raw_ask = event["ask"]
         mid     = event["mid"]
         ts      = event["time"]
+        # FIX-05C — read once, up here, purely to hand it to the client in
+        # the tick payload below. The financial gate further down (its own
+        # `_price_source = event.get("source")`, untouched) reads the SAME
+        # key independently — this is display-only, never wired into any
+        # execution/SL-TP/pricing decision.
+        source  = event.get("source")
 
         # O.6c-1w-b — RAW MARKET QUOTE -> VALIDATE -> broker markup ->
         # execution. Same structural + Capa A validation as
@@ -982,7 +988,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
         self._pricing_snapshot_state[symbol] = pricing_ctx.tick_pricing_snapshot(
             symbol, profile, dynamic_inputs=dynamic_inputs,
         )
-        await self.send_json({"type": "tick", "symbol": symbol, "bid": bid, "ask": ask, "time": ts})
+        await self.send_json({"type": "tick", "symbol": symbol, "bid": bid, "ask": ask, "time": ts, "source": source})
         await self._on_tick(symbol, mid, volume=0.0, ts=ts)
         # O.6c-1aa — UNIFIED RAW EXECUTION. _check_tp_sl() (live WS SL/TP)
         # now evaluates against raw_bid/raw_ask — the SAME values just
