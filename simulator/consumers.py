@@ -2473,17 +2473,38 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 self._track_daily_pnl(realized)
                 closed_items.append(outcome["notify_item"])
 
-        # DB commits done — update memory, then persist suspension.
+        # DB commits done — update memory with whatever ACTUALLY remains.
         self._positions = failed_positions
-        # pnl_unreal/margin_used zeroed BEFORE any balance/equity refresh
-        # below — _refresh_account_after_stale_close() derives equity as
-        # fresh_balance + self.account["pnl_unreal"], so this order
-        # matters: a stopout intends equity == balance (any leftover
-        # failed_positions notwithstanding, same approximation the
-        # non-stale branch below already made), not balance + a
-        # still-stale pre-stopout pnl_unreal.
-        self.account["pnl_unreal"]  = 0.0
-        self.account["margin_used"] = 0.0
+        closed_count    = len(closed_items)
+        remaining_count = len(failed_positions)
+        # STOPOUT LIQUIDATION OUTCOME INTEGRITY — FULL means nothing is
+        # left open (remaining_count==0). Deliberately NOT "closed_count
+        # > 0 and remaining_count == 0": a position closed by a
+        # concurrent connection/daemon between this loop starting and
+        # this position's own _db_close_position_atomic call lands in
+        # neither closed_items nor failed_positions (PANEL-03's
+        # already_closed/"stale close" guard, _handle_close_result
+        # returning None — see its own docstring) — it's genuinely gone,
+        # just not via THIS call's own atomic close. A batch resolved
+        # entirely that way would have closed_count==0 AND
+        # remaining_count==0, which must still count as FULL (matches
+        # the pre-existing, unrelated stale-close contract already
+        # covered by test_close_path_concurrency_parity.py — confirmed
+        # by running it, not assumed). self._positions is never empty
+        # when this function is entered (see the caller's own
+        # `and self._positions` gate), so remaining_count==0 can only
+        # mean every position that existed at the start is now
+        # genuinely resolved one way or another.
+        is_full = remaining_count == 0
+
+        # pnl_unreal/margin_used recalculated from self._positions (now
+        # failed_positions) via the SAME pure helpers the per-tick path
+        # already uses — never hardcoded to 0.0. When remaining_count==0
+        # (FULL) these naturally compute to 0, preserving the exact prior
+        # behavior for that case; when positions remain (EMPTY/PARTIAL)
+        # they now reflect real exposure instead of a fabricated zero.
+        self.account["pnl_unreal"]  = round(self._unrealized_pnl_total(), 2)
+        self.account["margin_used"] = round(self._margin_used_total(), 2)
         if saw_stale_close:
             # At least one collision — force a fresh, non-throttled
             # balance/equity read rather than trust running_balance (see
@@ -2491,48 +2512,59 @@ class TradingConsumer(AsyncWebsocketConsumer):
             await self._refresh_account_after_stale_close()
         else:
             self.account["balance"] = running_balance
-            self.account["equity"]  = round(running_balance, 2)
+            self.account["equity"]  = round(running_balance + self.account["pnl_unreal"], 2)
 
-        try:
-            await self._db_suspend_account("stopout")
-        except Exception as exc:
-            log.error("[stopout] DB suspend failed: %s", exc)
+        if is_full:
+            try:
+                await self._db_suspend_account("stopout")
+            except Exception as exc:
+                log.error("[stopout] DB suspend failed: %s", exc)
+            self.account["status"] = "Suspendido"
 
-        self.account["status"] = "Suspendido"
-
-        # Notify client
+        # Notify client — order_close/positions refresh are always
+        # truthful regardless of outcome; account:suspended only on FULL.
         for c in closed_items:
             await self.send_json({"type": "order_close", **c})
         await self._refresh_and_send_positions()
-        await self.send_json({
-            "type": "account:suspended",
-            "status": "Suspendido",
-            "reason": "stopout",
-        })
+        if is_full:
+            await self.send_json({
+                "type": "account:suspended",
+                "status": "Suspendido",
+                "reason": "stopout",
+            })
         peak = self.account["peak_balance"]
         balance = self.account["balance"]
         total_dd_pct = round((peak - balance) / peak * 100, 2) if peak > 0 else 0.0
         daily_pnl = self._daily_realized_pnl
         daily_dd_pct = round(abs(daily_pnl) / peak * 100, 2) if (peak > 0 and daily_pnl < 0) else 0.0
+        margin_used  = self.account["margin_used"]
+        equity_val   = self.account["equity"]
+        margin_level = round(equity_val / margin_used * 100, 2) if margin_used > 0 else 0.0
+        free_margin  = round(equity_val - margin_used, 2)
         await self.send_json({
             "type": "account:update",
             "balance": round(balance, 2),
-            "equity": self.account["equity"],
-            "pnl_unreal": 0.0,
-            "upnl": 0.0,
-            "margin_used": 0.0,
-            "free_margin": self.account["equity"],
+            "equity": equity_val,
+            "pnl_unreal": self.account["pnl_unreal"],
+            "upnl": self.account["pnl_unreal"],
+            "margin_used": margin_used,
+            "free_margin": free_margin,
+            # used_margin_pct/maintenance_margin/liquidation_distance stay
+            # at the DD engine's existing FIX-04 convention (0.0/0.0/
+            # equity) — this engine was never gated into compute_margin_
+            # state() (RETAIL-only, see _recalc_account_and_push), and
+            # extending that gate is out of this block's scope.
             "used_margin_pct": 0.0,
             "maintenance_margin": 0.0,
-            "liquidation_distance": self.account["equity"],
+            "liquidation_distance": equity_val,
             "leverage": self.account["leverage"],
             "netting_mode": bool(self.account.get("netting_mode", False)),
-            "status": "Suspendido",
+            "status": self.account.get("status", "Activo"),
             "account_type": self.account.get("account_type", "CHALLENGE"),
             "total_dd_pct": total_dd_pct,
             "daily_dd_pct": daily_dd_pct,
             "daily_pnl": round(daily_pnl, 2),
-            "margin_level": 0.0,
+            "margin_level": margin_level,
             "bid": round(self.get_bid(self.symbol), step_decimals_for(self.symbol)[1]),
             "ask": round(self.get_ask(self.symbol), step_decimals_for(self.symbol)[1]),
             "spread": 0.0,
@@ -2601,49 +2633,86 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 self._track_daily_pnl(realized)
                 closed_items.append(outcome["notify_item"])
 
-        # DB commits done — update memory. pnl_unreal/margin_used zeroed
-        # BEFORE any balance/equity refresh below — see the matching
-        # comment in _do_stopout for why the order matters.
+        # DB commits done — update memory with whatever ACTUALLY remains.
+        # STOPOUT LIQUIDATION OUTCOME INTEGRITY — pnl_unreal/margin_used
+        # recalculated from self._positions (now failed_positions) via
+        # the SAME pure helpers the per-tick path already uses — never
+        # hardcoded to 0.0. When remaining_count==0 (FULL) these
+        # naturally compute to 0, preserving the exact prior behavior for
+        # that case; when positions remain (EMPTY/PARTIAL) they now
+        # reflect real exposure instead of a fabricated zero.
         self._positions = failed_positions
-        self.account["pnl_unreal"]  = 0.0
-        self.account["margin_used"] = 0.0
+        closed_count    = len(closed_items)
+        remaining_count = len(failed_positions)
+        self.account["pnl_unreal"]  = round(self._unrealized_pnl_total(), 2)
+        self.account["margin_used"] = round(self._margin_used_total(), 2)
         if saw_stale_close:
             await self._refresh_account_after_stale_close()
         else:
             self.account["balance"] = running_balance
-            self.account["equity"]  = round(self.account["balance"], 2)
+            self.account["equity"]  = round(self.account["balance"] + self.account["pnl_unreal"], 2)
 
         for c in closed_items:
             await self.send_json({"type": "order_close", **c})
         await self._refresh_and_send_positions()
-        await self.send_json({
-            # FIX-03 — was "account:margin_call": the trigger is
-            # stopout_level, not margin_call_level — Margin Call never
-            # closes positions (see _compute_pretrade_margin_guard). Zero
-            # real consumers of the old name existed (confirmed during
-            # audit), so no compatibility shim.
-            "type": "account:stopout",
-            "reason": "margin_level_below_stopout",
-            "stopout_level": _stopout_threshold,
-            "balance": round(self.account["balance"], 2),
-        })
+        # account:stopout fires when this call actually resolved something:
+        # either a real close of its own (closed_count>0) or full resolution
+        # via remaining_count==0. Deliberately NOT "closed_count > 0" alone:
+        # a position closed by a concurrent connection/daemon between this
+        # loop starting and this position's own _db_close_position_atomic
+        # call lands in neither closed_items nor failed_positions (PANEL-03's
+        # already_closed/"stale close" guard, _handle_close_result returning
+        # None) — it's genuinely gone, just not via THIS call's own atomic
+        # close. A batch resolved entirely that way would have
+        # closed_count==0 AND remaining_count==0, which must still notify as
+        # a full resolution (mirrors _do_stopout()'s is_full fix). Never
+        # sent on a genuine EMPTY attempt (closed_count==0 and
+        # remaining_count>0), which would falsely claim positions were
+        # liquidated when none were. partial/closed_count/remaining_count
+        # are additive fields — existing consumers reading only
+        # reason/stopout_level/balance are unaffected.
+        if closed_count > 0 or remaining_count == 0:
+            await self.send_json({
+                # FIX-03 — was "account:margin_call": the trigger is
+                # stopout_level, not margin_call_level — Margin Call never
+                # closes positions (see _compute_pretrade_margin_guard). Zero
+                # real consumers of the old name existed (confirmed during
+                # audit), so no compatibility shim.
+                "type": "account:stopout",
+                "reason": "margin_level_below_stopout",
+                "stopout_level": _stopout_threshold,
+                "balance": round(self.account["balance"], 2),
+                "partial": remaining_count > 0,
+                "closed_count": closed_count,
+                "remaining_count": remaining_count,
+            })
         dec = step_decimals_for(self.symbol)[1]
         balance = self.account["balance"]
+        margin_used = self.account["margin_used"]
+        equity_val  = self.account["equity"]
+        margin_level = round(equity_val / margin_used * 100, 2) if margin_used > 0 else 0.0
+        free_margin  = round(equity_val - margin_used, 2)
+        from .risk_engine import compute_margin_state
+        _ms = compute_margin_state(
+            equity_val, margin_used,
+            stopout_level=self.account.get("stopout_level", 70.0),
+        )
         await self.send_json({
             "type": "account:update",
             "balance": round(balance, 2),
-            "equity": self.account["equity"],
-            "pnl_unreal": 0.0, "upnl": 0.0,
-            "margin_used": 0.0, "free_margin": self.account["equity"],
-            "used_margin_pct": 0.0, "maintenance_margin": 0.0,
-            "liquidation_distance": self.account["equity"],
+            "equity": equity_val,
+            "pnl_unreal": self.account["pnl_unreal"], "upnl": self.account["pnl_unreal"],
+            "margin_used": margin_used, "free_margin": free_margin,
+            "used_margin_pct": _ms["used_margin_pct"],
+            "maintenance_margin": _ms["maintenance_margin"],
+            "liquidation_distance": _ms["liquidation_distance"],
             "leverage": self.account["leverage"],
             "netting_mode": bool(self.account.get("netting_mode", False)),
             "status": self.account.get("status", "Activo"),  # stays Active
             "account_type": "RETAIL",
             "total_dd_pct": 0.0, "daily_dd_pct": 0.0,
             "daily_pnl": round(self._daily_realized_pnl, 2),
-            "margin_level": 0.0,
+            "margin_level": margin_level,
             "margin_call_level": self.account.get("margin_call_level", 100.0),
             "stopout_level": self.account.get("stopout_level", 70.0),
             "bid": round(self.get_bid(self.symbol), dec),

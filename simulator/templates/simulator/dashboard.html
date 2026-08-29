@@ -2284,9 +2284,19 @@ class TradingPanel {
          (position_changed) — same handler covers both, no separate code
          path needed. This replaces the old (removed) event name that
          wrongly implied Margin Call itself closes positions — the real
-         trigger is stopout_level; Margin Call never closes positions. */
+         trigger is stopout_level; Margin Call never closes positions.
+         STOPOUT LIQUIDATION OUTCOME INTEGRITY — this event is now only
+         ever sent after at least one real close (never on an empty
+         attempt); msg.partial distinguishes a full liquidation from one
+         where some positions remain open pending a valid price. */
       const _sol=msg.stopout_level!=null?Number(msg.stopout_level).toFixed(0)+'%':'el límite';
-      showRiskAlert('⛔ STOP-OUT — Posiciones liquidadas (nivel de margen por debajo de '+_sol+')',true);
+      if(msg.partial){
+        const _closed=msg.closed_count!=null?msg.closed_count:'?';
+        const _remaining=msg.remaining_count!=null?msg.remaining_count:'?';
+        showRiskAlert('⛔ STOP-OUT PARCIAL — Se liquidaron '+_closed+' posición(es); '+_remaining+' permanece(n) abierta(s) pendiente(s) de liquidación (nivel de margen por debajo de '+_sol+')',true);
+      } else {
+        showRiskAlert('⛔ STOP-OUT — Posiciones liquidadas (nivel de margen por debajo de '+_sol+')',true);
+      }
       return;
     }
     if(msg.type==='account:violated'){

@@ -316,6 +316,23 @@ class SimStopoutSkippedTests(TransactionTestCase):
         self.assertTrue(Position.objects.filter(pk=pos.pk).exists())  # never closed
         self.assertEqual(len(panel._positions), 1)
 
+        # STOPOUT LIQUIDATION OUTCOME INTEGRITY — this is the exact
+        # EMPTY-close scenario that bug closed: this call must NOT have
+        # suspended the account or written a fake stopout ledger entry,
+        # since zero positions actually closed.
+        self.account.refresh_from_db()
+        self.assertEqual(self.account.status, "Activo")
+        self.assertEqual(
+            LedgerEntry.objects.filter(
+                account=self.account, event_type=LedgerEntry.EV_ADJUST, meta__reason="stopout",
+            ).count(),
+            0,
+        )
+        self.assertEqual(
+            [c.args[0] for c in panel.send_json.call_args_list if c.args[0].get("type") == "account:suspended"],
+            [],
+        )
+
 
 # ── 8 — market-session policy gates _order_new(), never close ───────────────
 
