@@ -498,6 +498,12 @@ class CeleryRedisProtectionTests(TransactionTestCase):
         r = _redis.from_url(url, socket_connect_timeout=1, socket_timeout=1)
         r.setex("trx:price:bid:EUR/USD", 60, bid_str)
         r.setex("trx:price:ask:EUR/USD", 60, ask_str)
+        # FIX-05A.1 — _read_cached_price() now fails closed without a
+        # trusted source key; a real (non-"sim") source here isolates
+        # this test to exactly the structural/plausibility case it's
+        # named for, not the separate source gate (covered by its own
+        # dedicated tests in test_fix05a1_source_propagation.py).
+        r.setex("trx:price:source:EUR/USD", 60, "finnhub")
         try:
             bid, ask = _read_cached_price("EUR/USD")
             if expect_valid:
@@ -507,7 +513,7 @@ class CeleryRedisProtectionTests(TransactionTestCase):
                 self.assertIsNone(bid)
                 self.assertIsNone(ask)
         finally:
-            r.delete("trx:price:bid:EUR/USD", "trx:price:ask:EUR/USD")
+            r.delete("trx:price:bid:EUR/USD", "trx:price:ask:EUR/USD", "trx:price:source:EUR/USD")
 
     def test_scenario21_valid_price_passes(self):
         self._write_and_check("1.10000", "1.10020", expect_valid=True)

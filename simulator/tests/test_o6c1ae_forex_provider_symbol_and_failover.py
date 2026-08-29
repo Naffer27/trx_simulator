@@ -41,10 +41,11 @@ for that non-regression coverage.
 import asyncio
 import json
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from django.test import SimpleTestCase, TransactionTestCase
 
+from market_data.contracts import OrderPolicy
 from market_data.feeds import FeedManager, _binance_sym, _finnhub_sym
 from market_data.symbol_specs import get_spec
 from simulator.models import Position
@@ -246,7 +247,14 @@ class OrderNewWithValidEurUsdQuoteTests(TransactionTestCase):
         normally instead of price_unavailable."""
         consumer = _consumer(self.account.pk)
         _seed_raw("EUR/USD", 1.17000, 1.17020)
-        _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
+        # TEST-INFRA — market-session policy is real-clock-driven
+        # (FIX-05A); this test is a provider-failover regression guard,
+        # not market-session behavior, so pin it open.
+        with patch(
+            "market_data.sessions.service.evaluate_market_session_for_symbol",
+            return_value=Mock(order_policy=OrderPolicy.OPEN_NORMAL),
+        ):
+            _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
         self.assertIsNone(_first_error(consumer))
         self.assertTrue(Position.objects.filter(account=self.account, symbol="EUR/USD").exists())
 

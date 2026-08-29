@@ -46,10 +46,11 @@ this suite for the same established reasons).
 """
 import time
 from decimal import Decimal
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from django.test import TransactionTestCase, SimpleTestCase
 
+from market_data.contracts import OrderPolicy
 from simulator.consumers import TradingConsumer
 from simulator.models import LedgerEntry, BrokerLedger, Position, Trade, TradingAccount
 from simulator.spread_config_cache import refresh_cache_sync, reset_for_tests
@@ -61,6 +62,17 @@ from .test_order_ticket_sl_tp_validation import _consumer, _first_error, _run
 
 _db_open_sync  = TradingConsumer._db_open_position_atomic.__wrapped__
 _db_close_sync = TradingConsumer._db_close_position_atomic.__wrapped__
+
+
+def _open_normal_session():
+    """TEST-INFRA — market-session policy is real-clock-driven (FIX-05A);
+    these tests are about raw execution/rejection semantics, not
+    market-session behavior, so pin it open. Same pattern as
+    test_fix05a_financial_price_integrity.py::_open_normal_session()."""
+    return patch(
+        "market_data.sessions.service.evaluate_market_session_for_symbol",
+        return_value=Mock(order_policy=OrderPolicy.OPEN_NORMAL),
+    )
 
 
 def _clear_symbol(symbol: str):
@@ -144,7 +156,8 @@ class RawExecutionAuthorityTests(TransactionTestCase):
         # Deliberately different raw vs. what _bid_state/_ask_state carries,
         # to prove avg_price tracks the RAW quote, not the stale client cache.
         _seed_raw("EUR/USD", 1.20000, 1.20002)
-        _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
+        with _open_normal_session():
+            _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
         self.assertIsNone(_first_error(consumer))
         pos = Position.objects.get(account=self.account)
         self.assertEqual(pos.avg_price, Decimal("1.20002"))  # raw ask, not 1.1000
@@ -152,7 +165,8 @@ class RawExecutionAuthorityTests(TransactionTestCase):
     def test_sell_avg_price_is_raw_bid(self):
         consumer = _consumer(self.account.pk)
         _seed_raw("EUR/USD", 1.20000, 1.20002)
-        _run(consumer._order_new({"symbol": "EUR/USD", "side": "sell", "qty": 0.01}))
+        with _open_normal_session():
+            _run(consumer._order_new({"symbol": "EUR/USD", "side": "sell", "qty": 0.01}))
         self.assertIsNone(_first_error(consumer))
         pos = Position.objects.get(account=self.account)
         self.assertEqual(pos.avg_price, Decimal("1.20000"))  # raw bid
@@ -183,7 +197,8 @@ class RawExecutionRejectionTests(TransactionTestCase):
     def test_cross_symbol_btc_into_eurusd_rejected(self):
         consumer = _consumer(self.account.pk)
         _seed_raw("EUR/USD", 63088.50, 63088.70)
-        _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
+        with _open_normal_session():
+            _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
         self._assert_fully_rejected(consumer)
 
     def test_cross_symbol_eur_into_btcusd_rejected(self):
@@ -195,19 +210,22 @@ class RawExecutionRejectionTests(TransactionTestCase):
     def test_nan_rejected(self):
         consumer = _consumer(self.account.pk)
         _seed_raw("EUR/USD", float("nan"), 1.10020)
-        _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
+        with _open_normal_session():
+            _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
         self._assert_fully_rejected(consumer)
 
     def test_infinity_rejected(self):
         consumer = _consumer(self.account.pk)
         _seed_raw("EUR/USD", 1.10000, float("inf"))
-        _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
+        with _open_normal_session():
+            _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
         self._assert_fully_rejected(consumer)
 
     def test_stale_rejected(self):
         consumer = _consumer(self.account.pk)
         _seed_raw("EUR/USD", 1.10000, 1.10020, fresh=False)
-        _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
+        with _open_normal_session():
+            _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
         self._assert_fully_rejected(consumer)
 
     def test_pretrade_check_itself_rejects_on_missing_quote(self):
@@ -247,8 +265,11 @@ class SlTpRawUnificationTests(SimpleTestCase):
         c._recalc_account_and_push = AsyncMock()
         return c
 
-    def _tick(self, symbol, bid, ask, ts=1_700_000_000):
-        return {"symbol": symbol, "bid": bid, "ask": ask, "mid": round((bid + ask) / 2, 5), "time": ts}
+    def _tick(self, symbol, bid, ask, ts=1_700_000_000, source="finnhub"):
+        # FIX-05A.1 — real default source: this class tests SL/TP raw-vs-
+        # marked-up unification, not the source gate itself.
+        return {"symbol": symbol, "bid": bid, "ask": ask,
+                "mid": round((bid + ask) / 2, 5), "time": ts, "source": source}
 
     def test_check_tp_sl_called_with_raw_not_marked_bid_ask(self):
         c = self._tick_consumer()
@@ -616,7 +637,8 @@ class EndToEndPriceAuthorityTests(_SpreadConfigTestCase):
         # it, so this test's value is the one actually in effect.
         consumer = _consumer(account.pk)  # simulates a brand-new connection object
         _seed_raw("EUR/USD", 1.18000, 1.18002)
-        _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
+        with _open_normal_session():
+            _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
         self.assertIsNone(_first_error(consumer))
         pos = Position.objects.get(account=account)
         self.assertEqual(pos.avg_price, Decimal("1.18002"))

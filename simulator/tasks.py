@@ -21,7 +21,8 @@ def _read_cached_price(symbol: str) -> tuple[float | None, float | None]:
     """
     Read bid/ask written by FeedManager from Redis.
     Returns (bid, ask) as floats, or (None, None) if keys are missing,
-    stale, or structurally/plausibility invalid.
+    stale, structurally/plausibility invalid, or (FIX-05A.1) financially
+    untrusted — source key missing (legacy entry) or source=="sim".
     Must never raise — any failure is safe-returns (None, None).
 
     O.6c-1w — Celery runs in a SEPARATE process from Daphne/FeedManager
@@ -44,6 +45,24 @@ def _read_cached_price(symbol: str) -> tuple[float | None, float | None]:
         ask_raw = r.get(f"{_PRICE_CACHE_KEY_PREFIX}:ask:{symbol}")
         if bid_raw is None or ask_raw is None:
             logger.debug("[price_cache] stale/missing keys for %s", symbol)
+            return (None, None)
+        # FIX-05A.1 — fail-closed: a missing source key (legacy entry
+        # written before this block, or any other gap) or source=="sim"
+        # (FeedManager's synthetic-continuity fallback) is NEVER treated
+        # as financially trustworthy — no silent fallback to "live". The
+        # daemon is the ONE place a stale/legacy Redis entry can survive
+        # a deploy for up to _PRICE_CACHE_TTL seconds; the very next real
+        # tick for this symbol overwrites all three keys together
+        # (same pipeline, feeds.py::_write_price_cache_sync), so this is
+        # a temporary, safe "no financial action" window, never a
+        # permanent block.
+        source_raw = r.get(f"{_PRICE_CACHE_KEY_PREFIX}:source:{symbol}")
+        if source_raw is None:
+            logger.debug("[price_cache] missing source key for %s (legacy or gap) — fail-closed", symbol)
+            return (None, None)
+        source = source_raw.decode() if isinstance(source_raw, bytes) else str(source_raw)
+        if source == "sim":
+            logger.debug("[price_cache] source=sim for %s — not financial authority", symbol)
             return (None, None)
         bid, ask = float(bid_raw), float(ask_raw)
         if not _validate_quote_values(symbol, bid, ask):

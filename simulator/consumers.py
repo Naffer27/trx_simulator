@@ -996,7 +996,21 @@ class TradingConsumer(AsyncWebsocketConsumer):
         # _check_tp_sl()'s own body is unchanged — its side convention
         # (BUY exits at bid, SELL exits at ask) was already correct, only
         # the price authority passed in was wrong.
-        await self._check_tp_sl(symbol, raw_bid, raw_ask)
+        #
+        # FIX-05A.1 — closes the FIX-05A residual gap: the broadcast
+        # event now carries "source" (FeedManager._broadcast(), FIX-05A.1)
+        # so this financial trigger can be gated WITHOUT re-querying
+        # self._feed (the approach that broke ~20 pre-existing tests'
+        # minimal price_tick() fixtures in the earlier FIX-05A attempt —
+        # confirmed by actually running the suite, not assumed). Fail-
+        # closed, not fail-open: a missing "source" key is NEVER silently
+        # treated as trusted/live — only an explicit, known-real value
+        # (never "sim") allows SL/TP to evaluate. _check_tp_sl()'s own
+        # signature/body/side-convention are unchanged; only whether it
+        # is called at all changes.
+        _price_source = event.get("source")
+        if _price_source is not None and _price_source != "sim":
+            await self._check_tp_sl(symbol, raw_bid, raw_ask)
         await self._recalc_account_and_push()
 
     async def candle_kline(self, event: dict):
@@ -1216,9 +1230,15 @@ class TradingConsumer(AsyncWebsocketConsumer):
         Side convention is the OPEN-side mirror of _feed_close_price()'s
         CLOSE-side convention: opening a BUY crosses ask; closing a BUY
         crosses bid — same symbol, same validated quote, opposite side
-        of the same round trip."""
+        of the same round trip.
+
+        FIX-05A — quote.source=="sim" (FeedManager's synthetic-continuity
+        fallback, used when the market is closed or the real provider is
+        down) is never financial authority. Treated identically to "no
+        quote at all" — same None/price_unavailable contract, never a
+        second error path."""
         quote = self._feed.get_validated_quote(symbol)
-        if quote is None:
+        if quote is None or quote.source == "sim":
             return None
         return quote.ask if side == "buy" else quote.bid
 
@@ -1289,6 +1309,32 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
         if sym not in _ALLOWED_SYMBOLS:
             await self.send_json({"type": "error", "code": "invalid_symbol", "message": "simbolo_no_permitido"})
+            return
+
+        # FIX-05A — market-session policy gate for NEW orders only (never
+        # applied to _order_close()/manual close/SL/TP/stopout — those
+        # must keep working under CLOSE_ONLY, and their own financial
+        # quote gate above already independently blocks them under a
+        # genuinely absent/sim quote). Reuses the existing FOUNDATION-02
+        # OrderPolicy contract (evaluate_market_session_for_symbol(),
+        # market_data/sessions/service.py) — confirmed by the FIX-05
+        # design lock to already exist but have zero real consumer before
+        # this change. Pure, synchronous, no I/O, never raises (degrades
+        # to HALT_NEW_ORDERS on any internal evaluation error).
+        from market_data.contracts import OrderPolicy
+        from market_data.sessions.service import evaluate_market_session_for_symbol
+        _session = evaluate_market_session_for_symbol(sym)
+        if _session.order_policy in (OrderPolicy.MARKET_CLOSED, OrderPolicy.HALT_NEW_ORDERS):
+            await self.send_json({
+                "type": "error", "code": "market_closed",
+                "message": "mercado_cerrado_o_nuevas_ordenes_bloqueadas",
+            })
+            return
+        if _session.order_policy == OrderPolicy.CLOSE_ONLY:
+            await self.send_json({
+                "type": "error", "code": "close_only",
+                "message": "solo_se_permiten_cierres_en_este_momento",
+            })
             return
 
         # O.6c-1w-b — RAW MARKET QUOTE -> VALIDATE -> broker markup ->
@@ -2168,13 +2214,20 @@ class TradingConsumer(AsyncWebsocketConsumer):
         sufficient on its own (a BTCUSD-magnitude value was observed
         under the EUR/USD key, has_price()==True the whole time).
 
+        FIX-05A — quote.source=="sim" is never financial authority for
+        any of the six call sites above (row P&L, account-wide floating
+        P&L/equity, manual close, Close All, SL/TP, stopout/liquidation).
+        Treated identically to "no quote at all" — reuses the exact
+        existing None fail-safe every one of those callers already has,
+        never a new "frozen" model.
+
         Returns None — never base_price_for(), never any synthetic
         value, never a value that failed validation — on ANY failure.
         Mirrors broker_exposure.py's own FASE 4 reference-price policy
         exactly (exclude, never fabricate), now generalized through one
         choke point rather than repeated per call site."""
         quote = self._feed.get_validated_quote(symbol)
-        if quote is None:
+        if quote is None or quote.source == "sim":
             return None
         return quote.bid if side == "buy" else quote.ask
 
@@ -3615,19 +3668,72 @@ class TradingConsumer(AsyncWebsocketConsumer):
             _commission_d = Decimal(str(commission)) if commission and commission > 0 else Decimal("0")
 
             # O.6c-1aa — EXPLICIT SPREAD FEE. Computed BEFORE any balance
-            # mutation, from the exact same inputs (_effective_pips) and
-            # exact same calculate_spread_revenue() call the pre-O.6c-1aa
-            # code already used for BrokerLedger-only booking — formula
-            # unchanged (O.6c-1z's approved decision). _spread_fee_d is
-            # reused verbatim for BOTH the trader's LedgerEntry(EV_FEE)
-            # debit below and BrokerLedger(REV_SPREAD)'s amount — a
-            # single computed value feeding both writes guarantees exact
-            # parity by construction, never two independently-timed
-            # recomputations that could drift.
-            _spread_cfg     = _get_spread_config(symbol)
-            _base_pips      = float(_spread_cfg.spread_pips) if (_spread_cfg is not None and _spread_cfg.enabled) else 0.0
-            _markup_pips    = float(self.account.get("spread_pips", 0.0) or 0.0)
-            _effective_pips = _base_pips + _markup_pips
+            # mutation, from the exact same calculate_spread_revenue()
+            # call the pre-O.6c-1aa code already used for BrokerLedger-
+            # only booking — formula unchanged (O.6c-1z's approved
+            # decision). _spread_fee_d is reused verbatim for BOTH the
+            # trader's LedgerEntry(EV_FEE) debit below and BrokerLedger
+            # (REV_SPREAD)'s amount — a single computed value feeding
+            # both writes guarantees exact parity by construction.
+            #
+            # FIX-05A — _effective_pips now comes from THIS SAME order's
+            # already-captured pricing_context (line ~1456, PricingDecision
+            # per the FIX-05 design lock) instead of independently
+            # recomputing base_pips+markup_pips here. That old
+            # recomputation bypassed compute_effective_spread_pips()'s
+            # min/max clamp and the dynamic-spread multiplier chain — both
+            # of which pricing_context["effective_spread_pips"] already
+            # applied (built via the SAME compute_effective_spread_pips()
+            # broker_price() itself calls, see pricing_context.py's module
+            # docstring) — so the fee and the displayed bid/ask could
+            # silently diverge for the same tick. One decision, read
+            # twice, never recomputed independently.
+            #
+            # Two distinct "missing" cases, handled differently on purpose
+            # (audited before implementing — ~110 existing test call sites
+            # across the suite call this method directly, bypassing
+            # _order_new(), with pricing_context=None by design, and
+            # legitimately expect a real fee):
+            #   - pricing_context is None: the caller never attempted a
+            #     capture at all (every direct/unit-test call site below
+            #     _order_new(); _order_new() itself ALWAYS passes a real
+            #     dict). Not the bug this block fixes — preserve the prior
+            #     base+markup formula verbatim for these callers, zero
+            #     regression.
+            #   - pricing_context is a dict but "effective_spread_pips" is
+            #     missing/None: build_pricing_context() legitimately
+            #     leaves it None whenever base_spread_pips AND
+            #     account_markup_pips are BOTH None (no BrokerSpreadConfig
+            #     for this symbol at all — a routine, expected state, not
+            #     a failure) — same zero-fee outcome the prior formula
+            #     already produced for "no config". Only warn for the
+            #     genuinely abnormal case: pricing_profile==
+            #     PROFILE_CAPTURE_FAILED (_capture_pricing_context()'s own
+            #     defensive except-branch; build_pricing_context() itself
+            #     is documented to never raise, so this should not occur
+            #     for a real _order_new() order that already required a
+            #     valid quote to get this far). Never guess a fee in
+            #     either sub-case: log-and-zero for the abnormal one,
+            #     silently-zero for the routine one — exactly like the
+            #     pre-existing "_effective_pips <= 0" no-fee path below
+            #     already does for a legitimately-zero spread.
+            if pricing_context is None:
+                _spread_cfg     = _get_spread_config(symbol)
+                _base_pips      = float(_spread_cfg.spread_pips) if (_spread_cfg is not None and _spread_cfg.enabled) else 0.0
+                _markup_pips    = float(self.account.get("spread_pips", 0.0) or 0.0)
+                _effective_pips = _base_pips + _markup_pips
+            else:
+                _effective_pips = pricing_context.get("effective_spread_pips")
+                if _effective_pips is None:
+                    if pricing_context.get("pricing_profile") == pricing_ctx.PROFILE_CAPTURE_FAILED:
+                        log.warning(
+                            "[spread_fee] pos=%s symbol=%s pricing_context capture failed — "
+                            "charging zero spread fee, never recomputing independently",
+                            position_id, symbol,
+                        )
+                    _effective_pips = 0.0
+                _base_pips   = pricing_context.get("base_spread_pips") or 0.0
+                _markup_pips = pricing_context.get("account_markup_pips") or 0.0
             _spread_rev     = calculate_spread_revenue(symbol, float(qty), _effective_pips) if _effective_pips > 0 else 0.0
             _spread_fee_d   = Decimal(str(_spread_rev)) if _spread_rev > 0 else Decimal("0")
 

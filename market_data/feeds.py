@@ -175,7 +175,10 @@ def _validate_quote_values(symbol: str, bid, ask) -> bool:
 
 
 # ─── Redis price cache (cross-process, for daemon/Celery access) ───────────────
-# Key schema: trx:price:bid:{symbol}, trx:price:ask:{symbol}
+# Key schema: trx:price:bid:{symbol}, trx:price:ask:{symbol},
+# trx:price:source:{symbol} (FIX-05A.1 — same TTL, same pipeline, so the
+# three keys always expire/refresh together; the daemon's _read_cached_price()
+# fail-closes on a missing or "sim" source, see simulator/tasks.py).
 # TTL: 60 s — if the feed stops, keys expire and the daemon skips those positions.
 # Failures are silent: a Redis outage must never bring down the feed loop.
 
@@ -186,8 +189,8 @@ _PRICE_CACHE_KEY_PREFIX = "trx:price"
 _redis_write_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="price_cache")
 
 
-def _write_price_cache_sync(symbol: str, bid: float, ask: float) -> None:
-    """Write bid/ask to Redis. Called from a thread pool — must never raise."""
+def _write_price_cache_sync(symbol: str, bid: float, ask: float, source: str) -> None:
+    """Write bid/ask/source to Redis. Called from a thread pool — must never raise."""
     try:
         from django.conf import settings as _s
         import redis as _redis
@@ -196,16 +199,17 @@ def _write_price_cache_sync(symbol: str, bid: float, ask: float) -> None:
         pipe = r.pipeline(transaction=False)
         pipe.setex(f"{_PRICE_CACHE_KEY_PREFIX}:bid:{symbol}", _PRICE_CACHE_TTL, str(bid))
         pipe.setex(f"{_PRICE_CACHE_KEY_PREFIX}:ask:{symbol}", _PRICE_CACHE_TTL, str(ask))
+        pipe.setex(f"{_PRICE_CACHE_KEY_PREFIX}:source:{symbol}", _PRICE_CACHE_TTL, str(source))
         pipe.execute()
     except Exception as exc:
         # Intentionally swallowed — Redis down must not crash the feed loop.
         log.debug("[price_cache] write failed for %s: %r", symbol, exc)
 
 
-async def _write_price_cache(symbol: str, bid: float, ask: float) -> None:
+async def _write_price_cache(symbol: str, bid: float, ask: float, source: str) -> None:
     """Non-blocking wrapper: dispatches the Redis write to the thread pool."""
     loop = asyncio.get_event_loop()
-    loop.run_in_executor(_redis_write_pool, _write_price_cache_sync, symbol, bid, ask)
+    loop.run_in_executor(_redis_write_pool, _write_price_cache_sync, symbol, bid, ask, source)
 
 
 # ─── singleton ─────────────────────────────────────────────────────────────────
@@ -770,7 +774,7 @@ class FeedManager:
             self._price_ts[symbol]     = time.time()
             self._price_source[symbol] = source  # O.6c-1w — Quote.source metadata
         # Write to Redis so cross-process readers (Celery daemon) can access prices.
-        await _write_price_cache(symbol, bid, ask)
+        await _write_price_cache(symbol, bid, ask, source)
         # FOUNDATION-13 — records only a timestamp (no bid/ask/mid) in the
         # observability store, gated by MARKET_DATA_OBSERVABILITY_ENABLED.
         if self._observability_enabled():
@@ -788,6 +792,11 @@ class FeedManager:
                 "ask":    ask,
                 "mid":    mid,
                 "time":   ts,
+                # FIX-05A.1 — aditivo, no rompe ningún reader existente
+                # (price_tick() es el único, accede por clave explícita).
+                # Autoridad financiera de SL/TP en vivo vs display; ver
+                # consumers.py::price_tick().
+                "source": source,
             },
         )
 

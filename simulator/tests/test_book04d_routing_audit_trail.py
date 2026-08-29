@@ -16,12 +16,13 @@ that file's own module docstring for the full reasoning).
 import time
 import uuid
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from django.db import connection
 from django.test import TestCase, TransactionTestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 
+from market_data.contracts import OrderPolicy
 from market_data.feeds import get_feed_manager
 from simulator import broker_audit as _audit
 from simulator.broker_audit import Category, EV_ROUTING_DECISION_RECORDED, record_routing_event
@@ -32,6 +33,17 @@ from .factories import make_account
 from .test_order_ticket_sl_tp_validation import _consumer, _first_error, _run
 
 _db_record_routing_audit_event = TradingConsumer._db_record_routing_audit_event.__wrapped__
+
+
+def _open_normal_session():
+    """TEST-INFRA — market-session policy is real-clock-driven (FIX-05A);
+    this test is about routing-audit merge behavior, not market-session
+    behavior, so pin it open. Same pattern as test_fix05a_financial_
+    price_integrity.py::_open_normal_session()."""
+    return patch(
+        "market_data.sessions.service.evaluate_market_session_for_symbol",
+        return_value=Mock(order_policy=OrderPolicy.OPEN_NORMAL),
+    )
 
 
 def _seed_price(symbol, price):
@@ -195,10 +207,11 @@ class OrderNewRoutingAuditIntegrationTests(TransactionTestCase):
         account = make_account(balance=Decimal("100000"))
         consumer = _consumer(account.pk, netting_mode=True)
 
-        _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.1}))
-        self.assertEqual(BrokerAuditEvent.objects.filter(category=Category.ROUTING).count(), 1)
+        with _open_normal_session():
+            _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.1}))
+            self.assertEqual(BrokerAuditEvent.objects.filter(category=Category.ROUTING).count(), 1)
 
-        _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.1}))
+            _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.1}))
 
         events = BrokerAuditEvent.objects.filter(category=Category.ROUTING).order_by("id")
         self.assertEqual(events.count(), 2)

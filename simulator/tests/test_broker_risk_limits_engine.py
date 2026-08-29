@@ -40,12 +40,13 @@ import random
 import threading
 import time
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from django.db import connection
 from django.db.utils import OperationalError
 from django.test import TestCase, TransactionTestCase
 
+from market_data.contracts import OrderPolicy
 from market_data.feeds import get_feed_manager
 
 import simulator.broker_risk as br
@@ -83,6 +84,17 @@ def _clear_price(symbol):
         feed._bids.pop(symbol, None)
         feed._asks.pop(symbol, None)
         feed._price_ts.pop(symbol, None)
+
+
+def _open_normal_session():
+    """TEST-INFRA — market-session policy is real-clock-driven (FIX-05A);
+    these tests are about broker-wide risk limits, not market-session
+    behavior, so pin it open. Same pattern as test_fix05a_financial_
+    price_integrity.py::_open_normal_session()."""
+    return patch(
+        "market_data.sessions.service.evaluate_market_session_for_symbol",
+        return_value=Mock(order_policy=OrderPolicy.OPEN_NORMAL),
+    )
 
 
 class _CleanFeedMixin:
@@ -606,7 +618,7 @@ class IntegrationTests(_CleanFeedMixin, TransactionTestCase):
 
         account = make_account(account_type="STANDARD", balance=Decimal("100000"))
         c = _ws_consumer(account.id)
-        with patch.object(br, "MAX_SYMBOL_EXPOSURE_LOTS", Decimal("20")):
+        with patch.object(br, "MAX_SYMBOL_EXPOSURE_LOTS", Decimal("20")), _open_normal_session():
             _run(c._order_new({"action": "order:new", "symbol": "EUR/USD", "side": "buy", "qty": 3}))
 
         sent = [call.args[0] for call in c.send_json.call_args_list]
@@ -618,7 +630,8 @@ class IntegrationTests(_CleanFeedMixin, TransactionTestCase):
     def test_order_within_limits_still_opens_normally(self):
         account = make_account(account_type="STANDARD", balance=Decimal("100000"))
         c = _ws_consumer(account.id)
-        _run(c._order_new({"action": "order:new", "symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
+        with _open_normal_session():
+            _run(c._order_new({"action": "order:new", "symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
 
         self.assertEqual(Position.objects.filter(account=account).count(), 1)
         sent = [call.args[0] for call in c.send_json.call_args_list]
@@ -666,7 +679,8 @@ class NoRegressionTests(TransactionTestCase):
     def test_trader_facing_formulas_unchanged(self):
         account = make_account(account_type="STANDARD", balance=Decimal("100000"))
         c = _ws_consumer(account.id)
-        _run(c._order_new({"action": "order:new", "symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
+        with _open_normal_session():
+            _run(c._order_new({"action": "order:new", "symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
         account.refresh_from_db()
         pos = Position.objects.get(account=account)
         self.assertEqual(pos.qty, Decimal("0.01"))

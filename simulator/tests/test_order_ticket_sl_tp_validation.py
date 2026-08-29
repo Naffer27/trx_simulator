@@ -32,10 +32,11 @@ import asyncio
 import math
 import time
 from decimal import Decimal
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock, patch
 
 from django.test import TestCase, TransactionTestCase
 
+from market_data.contracts import OrderPolicy
 from market_data.feeds import get_feed_manager
 from simulator.consumers import TradingConsumer, _validate_sl_tp
 from simulator.models import Position
@@ -213,6 +214,17 @@ class OrderNewIntegrationTests(TransactionTestCase):
             feed._asks["EUR/USD"] = 1.1000
             feed._prices["EUR/USD"] = 1.1000
             feed._price_ts["EUR/USD"] = time.time()
+        # TEST-INFRA — market-session policy is real-clock-driven
+        # (FIX-05A); this class proves SL/TP validation wiring, not
+        # market-session behavior, so pin it open for every test here.
+        # Same pattern as test_fix05a_financial_price_integrity.py::
+        # _open_normal_session().
+        _session_patcher = patch(
+            "market_data.sessions.service.evaluate_market_session_for_symbol",
+            return_value=Mock(order_policy=OrderPolicy.OPEN_NORMAL),
+        )
+        _session_patcher.start()
+        self.addCleanup(_session_patcher.stop)
 
     def test_buy_inverted_sl_tp_rejected_by_order_new(self):
         consumer = _consumer(self.account.pk)

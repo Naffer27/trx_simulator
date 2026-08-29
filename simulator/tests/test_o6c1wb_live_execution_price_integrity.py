@@ -41,16 +41,28 @@ pre-existing trigger logic.
 """
 import time
 from decimal import Decimal
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock, patch
 
 from django.test import TestCase, TransactionTestCase
 
+from market_data.contracts import OrderPolicy
 from simulator.consumers import TradingConsumer
 from simulator.models import LedgerEntry, Position, Trade, TradingAccount
 from market_data.feeds import get_feed_manager
 
 from .factories import make_account
 from .test_order_ticket_sl_tp_validation import _consumer, _first_error, _run
+
+
+def _open_normal_session():
+    """TEST-INFRA — market-session policy is real-clock-driven (FIX-05A);
+    these tests are about raw execution price-integrity gating, not
+    market-session behavior, so pin it open. Same pattern as
+    test_fix05a_financial_price_integrity.py::_open_normal_session()."""
+    return patch(
+        "market_data.sessions.service.evaluate_market_session_for_symbol",
+        return_value=Mock(order_policy=OrderPolicy.OPEN_NORMAL),
+    )
 
 
 def _clear_symbol(symbol: str):
@@ -104,9 +116,16 @@ def _tick_bare_consumer(**overrides) -> TradingConsumer:
     return c
 
 
-def _tick(symbol: str, bid: float, ask: float, ts: int = 1_700_000_000) -> dict:
+def _tick(symbol: str, bid: float, ask: float, ts: int = 1_700_000_000,
+          source: str = "finnhub") -> dict:
+    """FIX-05A.1 — source defaults to a real provider name: every test in
+    this file exercises structural/plausibility validation or SL/TP
+    firing on an otherwise-valid tick, none of them are about the source
+    gate itself (that has its own dedicated coverage in
+    test_fix05a1_source_propagation.py) — a real default here keeps
+    their original intent intact under the new fail-closed contract."""
     mid = round((bid + ask) / 2, 5)
-    return {"symbol": symbol, "bid": bid, "ask": ask, "mid": mid, "time": ts}
+    return {"symbol": symbol, "bid": bid, "ask": ask, "mid": mid, "time": ts, "source": source}
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -129,7 +148,8 @@ class OrderNewRejectionTests(TransactionTestCase):
         # already-live symbol would.
         consumer = _consumer(self.account.pk)
         _seed_raw("EUR/USD", 63088.50, 63088.70)  # the O.6c-1t magnitude
-        _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
+        with _open_normal_session():
+            _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
 
         err = _first_error(consumer)
         self.assertIsNotNone(err)
@@ -155,28 +175,32 @@ class OrderNewRejectionTests(TransactionTestCase):
     def test_nan_at_open_rejected(self):
         consumer = _consumer(self.account.pk)
         _seed_raw("EUR/USD", float("nan"), 1.10020)
-        _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
+        with _open_normal_session():
+            _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
         self.assertEqual(_first_error(consumer)["code"], "price_unavailable")
         self.assertEqual(Position.objects.filter(account=self.account).count(), 0)
 
     def test_infinity_at_open_rejected(self):
         consumer = _consumer(self.account.pk)
         _seed_raw("EUR/USD", 1.10000, float("inf"))
-        _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
+        with _open_normal_session():
+            _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
         self.assertEqual(_first_error(consumer)["code"], "price_unavailable")
         self.assertEqual(Position.objects.filter(account=self.account).count(), 0)
 
     def test_zero_at_open_rejected(self):
         consumer = _consumer(self.account.pk)
         _seed_raw("EUR/USD", 0.0, 1.10020)
-        _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
+        with _open_normal_session():
+            _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
         self.assertEqual(_first_error(consumer)["code"], "price_unavailable")
         self.assertEqual(Position.objects.filter(account=self.account).count(), 0)
 
     def test_stale_at_open_rejected(self):
         consumer = _consumer(self.account.pk)
         _seed_raw("EUR/USD", 1.10000, 1.10020, fresh=False)
-        _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
+        with _open_normal_session():
+            _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
         self.assertEqual(_first_error(consumer)["code"], "price_unavailable")
         self.assertEqual(Position.objects.filter(account=self.account).count(), 0)
 
@@ -189,7 +213,8 @@ class OrderNewRejectionTests(TransactionTestCase):
         true cold-start state this test is named for."""
         consumer = _consumer(self.account.pk)
         _clear_symbol("EUR/USD")
-        _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
+        with _open_normal_session():
+            _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
         self.assertEqual(_first_error(consumer)["code"], "price_unavailable")
         self.assertEqual(Position.objects.filter(account=self.account).count(), 0)
 
@@ -208,7 +233,8 @@ class OrderNewUnchangedOnValidQuoteTests(TransactionTestCase):
         untouched by this microblock — this proves the new gate is a
         pure pass/fail check that never alters the computed price."""
         consumer = _consumer(self.account.pk)
-        _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
+        with _open_normal_session():
+            _run(consumer._order_new({"symbol": "EUR/USD", "side": "buy", "qty": 0.01}))
 
         self.assertIsNone(_first_error(consumer))
         pos = Position.objects.get(account=self.account)
@@ -216,7 +242,8 @@ class OrderNewUnchangedOnValidQuoteTests(TransactionTestCase):
 
     def test_valid_quote_sell_fills_at_bid_unchanged(self):
         consumer = _consumer(self.account.pk)
-        _run(consumer._order_new({"symbol": "EUR/USD", "side": "sell", "qty": 0.01}))
+        with _open_normal_session():
+            _run(consumer._order_new({"symbol": "EUR/USD", "side": "sell", "qty": 0.01}))
         self.assertIsNone(_first_error(consumer))
         pos = Position.objects.get(account=self.account)
         self.assertEqual(pos.avg_price, Decimal("1.1000"))
