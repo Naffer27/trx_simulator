@@ -360,7 +360,7 @@ class Trade(models.Model):
     account = models.ForeignKey(TradingAccount, on_delete=models.CASCADE)
     symbol = models.CharField(max_length=12, default='EUR/USD')
     trade_type = models.CharField(max_length=4, choices=SIDE_CHOICES)
-    lot_size = models.DecimalField(max_digits=10, decimal_places=2)
+    lot_size = models.DecimalField(max_digits=10, decimal_places=6)
 
     entry_price = models.DecimalField(max_digits=18, decimal_places=6)
     exit_price = models.DecimalField(max_digits=18, decimal_places=6, null=True, blank=True)

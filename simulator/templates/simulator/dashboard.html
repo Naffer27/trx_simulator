@@ -2486,11 +2486,25 @@ class TradingPanel {
       const pnlClose=msg.realized_pnl??msg.pnl??msg.profit??msg.result??null;
       const pnlStr=pnlClose!=null?(pnlClose>=0?'+':'')+Number(pnlClose).toFixed(2)+' USD':'cerrado';
       execToast('close','Posición cerrada',pnlStr);
-      // Track for Historial tab
+      // Track for Historial tab — GOLDEN-SCENARIOS-FIX-01: with N panels
+      // open, each has its own WS connection and each receives this SAME
+      // order_close broadcast (position_changed() reaches every connection
+      // for this account) — closedTradesHistory is a single page-global
+      // array, so without a dedupe guard each panel's own unshift() adds
+      // its own copy, producing N visual rows for 1 real Trade (DB/ledger
+      // were always correct — this was purely a rendering bug). msg.id is
+      // the position_id, stable and never reused (a Position is closed
+      // exactly once, in full — no partial-close path exists), so it's a
+      // safe permanent dedupe key. Scanning the whole array (not just
+      // WS-appended entries) also protects the initial closed_trades_json
+      // seed for free — no separate case needed.
       if(msg.id!=null){
-        const pnlV=msg.realized_pnl??msg.pnl??msg.profit??msg.result??null;
-        closedTradesHistory.unshift({id:msg.id,symbol:msg.symbol||this.currentSymbol,side:msg.side||'?',qty:msg.qty??msg.quantity??null,entry:msg.avg_entry??msg.avg??msg.entry??null,close:msg.close_px??msg.close??null,pnl:pnlV,ts:Date.now()});
-        if(closedTradesHistory.length>100)closedTradesHistory.pop();
+        const _dupId=String(msg.id);
+        if(!closedTradesHistory.some(t=>String(t.id)===_dupId)){
+          const pnlV=msg.realized_pnl??msg.pnl??msg.profit??msg.result??null;
+          closedTradesHistory.unshift({id:msg.id,symbol:msg.symbol||this.currentSymbol,side:msg.side||'?',qty:msg.qty??msg.quantity??null,entry:msg.avg_entry??msg.avg??msg.entry??null,close:msg.close_px??msg.close??null,pnl:pnlV,ts:Date.now()});
+          if(closedTradesHistory.length>100)closedTradesHistory.pop();
+        }
         _syncHistorialPanel();
       }
       const cid=msg.id!=null?String(msg.id):null;
