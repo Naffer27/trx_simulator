@@ -90,6 +90,31 @@ def _finnhub_sym(symbol: str) -> str:
     return s
 
 
+# ─── FIX-05B.1 — Closed-Candle Filter ───────────────────────────────────────────
+#
+# Pure, provider-agnostic helpers: given a bar's OPEN time (seconds) and a
+# timeframe's duration (seconds), is that bar actually closed yet? Verified
+# live against both Binance (open-time, ms) and Kraken (open-time, s) — both
+# return the still-forming bar as the last row of a kline/OHLC response
+# (FIX-05B.1 design lock §B). Deliberately takes tf_seconds as an int, not a
+# timeframe string: market_data/feeds.py must not import simulator/
+# consumers.py::tf_seconds() (circular import — consumers.py already imports
+# FROM this module) and must not duplicate that mapping either. The one
+# caller with tf_seconds() already in scope (generate_history(), consumers.py)
+# passes the resolved seconds in — this stays the single authoritative
+# closed-candle filter point, applied once, not duplicated at the fetch site.
+def _is_closed(candle_open_time_sec: int, tf_seconds_value: int, now_sec: int) -> bool:
+    return candle_open_time_sec + tf_seconds_value <= now_sec
+
+
+def _closed_only(bars: list, tf_seconds_value: int, now_sec: "int | None" = None) -> list:
+    """Filter, not "drop the last element" — correct even if a provider ever
+    returns more than one still-forming bar, or bars out of order."""
+    if now_sec is None:
+        now_sec = int(time.time())
+    return [b for b in bars if _is_closed(b["time"], tf_seconds_value, now_sec)]
+
+
 # ─── O.6c-1w — Price Integrity / Plausibility Gate ──────────────────────────────
 #
 # get_validated_quote() (FeedManager method, below) is the single

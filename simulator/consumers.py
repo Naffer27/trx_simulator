@@ -1,5 +1,5 @@
 # simulator/consumers.py
-import os, json, asyncio, random, time, logging, math
+import os, json, asyncio, time, logging, math
 from datetime import datetime, timezone as dt_timezone
 from urllib.parse import parse_qs
 
@@ -8,7 +8,7 @@ from channels.db import database_sync_to_async
 from django.db import transaction
 from django.utils import timezone
 
-from market_data.feeds import get_feed_manager, _validate_quote_values
+from market_data.feeds import get_feed_manager, _validate_quote_values, _closed_only
 from market_data.symbol_specs import get_spec, allowed_symbols, kline_symbols
 from .models import TradingAccount, Position, Trade, LedgerEntry, BrokerLedger
 from .spread_engine import broker_price, calculate_spread_revenue, _get_config as _get_spread_config
@@ -736,8 +736,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 await self._feed.subscribe(new_sym, self.channel_layer, self.channel_name)
             self._last_bar_time.pop(new_sym, None)
             hist = await self.generate_history(new_sym, self.timeframe, bars=240)
-            await self.send_json({"type": "history", "symbol": new_sym, "data": hist})
-            await self._send_bridge_candle(new_sym, self.timeframe)
+            await self._send_history_or_unavailable(new_sym, self.timeframe, hist)
             await self.send_json({"type": "ack", "action": "symbol_changed", "symbol": new_sym})
             await self._refresh_and_send_positions()
 
@@ -747,16 +746,14 @@ class TradingConsumer(AsyncWebsocketConsumer):
             self._reset_agg(self.symbol)
             self._last_bar_time.pop(self.symbol, None)
             hist = await self.generate_history(self.symbol, tf, bars=240)
-            await self.send_json({"type": "history", "symbol": self.symbol, "data": hist})
-            await self._send_bridge_candle(self.symbol, tf)
+            await self._send_history_or_unavailable(self.symbol, tf, hist)
             await self.send_json({"type":"ack","action":"change_timeframe","timeframe":tf,"tf_sec":tf_seconds(tf)})
 
         elif act == "load_history":
             sym = data.get("symbol", self.symbol)
             tf  = normalize_tf(data.get("timeframe", self.timeframe))
             hist = await self.generate_history(sym, tf, bars=240)
-            await self.send_json({"type":"history","symbol":sym,"data":hist})
-            await self._send_bridge_candle(sym, tf)
+            await self._send_history_or_unavailable(sym, tf, hist)
 
         elif act == "account:get":
             await self._recalc_account_and_push()
@@ -1126,64 +1123,57 @@ class TradingConsumer(AsyncWebsocketConsumer):
             "color":"#26a69a" if acc["c"]>=acc["o"] else "#f44336",
         })
 
-    # ---------------- Historia sintética ----------------
+    # ---------------- Historia ----------------
 
-    async def _send_bridge_candle(self, symbol: str, timeframe: str) -> None:
-        """Send a flat candle at the CURRENT live bucket so the price line
-        anchors to the real feed price immediately after history loads,
-        eliminating the visual gap between synthetic history and live ticks."""
-        px = self._price_state.get(symbol, base_price_for(symbol))
+    async def _send_history_or_unavailable(self, symbol: str, timeframe: str, hist) -> None:
+        """FIX-05B.1 — single dispatch point used by all 3 history call-sites
+        (change_symbol/change_timeframe/load_history). Never closes the WS,
+        never touches the subscription/live-tick flow — this is one more
+        send_json() among many on an already-open connection, same as any
+        other informational message type."""
+        if hist is None:
+            reason = "no_real_history" if symbol not in _KLINE_SYMBOLS else "provider_unavailable"
+            await self.send_json({
+                "type": "history_unavailable", "symbol": symbol, "timeframe": timeframe, "reason": reason,
+            })
+        else:
+            await self.send_json({"type": "history", "symbol": symbol, "data": hist})
+
+    async def generate_history(self, symbol, timeframe, bars=200) -> "list[dict] | None":
+        """FIX-05B.1 — real closed candles only, or None (never fabricated).
+
+        None means "no real history available for this symbol/timeframe
+        right now" — callers must send history_unavailable, never fall back
+        to a synthetic series. Distinguishes cleanly from a real-but-short
+        result (fewer than `bars` closed candles after filtering out the
+        still-forming one) — that is a valid, real, non-None result, never
+        padded back up to `bars`."""
+        if symbol not in _KLINE_SYMBOLS:
+            # No real historical provider configured for this symbol today
+            # (e.g. forex/XAU pending FIX-05B.2) — no random-walk fallback.
+            return None
+
+        hist = await self._feed.fetch_kline_history(symbol, interval=timeframe, limit=bars)
+        hist = _closed_only(hist, tf_seconds(timeframe))
+        if not hist:
+            log.warning("[consumer] real history unavailable for %s %s (provider failure or all-open)", symbol, timeframe)
+            return None
+
+        # Snap the in-memory price state to the last CLOSED bar so bid/ask
+        # calculations start at a real price. FIX-05C — this is display/
+        # bid-ask-seed state only, never the live financial quote authority
+        # (liveMid, frontend-only, tick-source-gated) — untouched here.
+        last_close = hist[-1]["close"]
+        spr = spread_for(symbol)
         _, dec = step_decimals_for(symbol)
-        tf_sec = tf_seconds(timeframe)
-        now = int(time.time())
-        bucket = (now // tf_sec) * tf_sec
-        px = round(px, dec)
-        await self.send_json({
-            "type": "candle_update",
-            "symbol": symbol,
-            "data": {"time": bucket, "open": px, "high": px, "low": px, "close": px},
-        })
-    async def generate_history(self, symbol, timeframe, bars=200):
-        # For exchange-kline symbols, fetch real historical data from Binance REST.
-        if symbol in _KLINE_SYMBOLS:
-            hist = await self._feed.fetch_kline_history(symbol, interval=timeframe, limit=bars)
-            if hist:
-                # Snap the in-memory price state to the last closed bar so the
-                # bridge candle and bid/ask calculations start at a real price.
-                last_close = hist[-1]["close"]
-                spr = spread_for(symbol)
-                _, dec = step_decimals_for(symbol)
-                self._price_state[symbol] = last_close
-                self._bid_state[symbol], self._ask_state[symbol] = broker_price(
-                    symbol,
-                    round(last_close - spr / 2, dec),
-                    round(last_close + spr / 2, dec),
-                    markup_pips=float(self.account.get("spread_pips", 0.0) or 0.0),
-                )
-                return hist
-            log.warning("[consumer] Binance REST history failed for %s — falling back to synthetic", symbol)
-
-        # Synthetic history for non-Binance symbols (and Binance emergency fallback).
-        base = self._price_state.get(symbol, base_price_for(symbol))
-        step, dec = step_decimals_for(symbol)
-        d = drift_for(symbol)
-        now = int(time.time())
-        tf_sec = tf_seconds(timeframe)
-        current_bucket = (now // tf_sec) * tf_sec
-        series = []
-        price = base
-        rnd = random.Random(symbol + timeframe)
-        for i in range(1, bars + 1):
-            ts = current_bucket - i * tf_sec
-            c = price
-            o = c + (rnd.random() - 0.5) * d
-            h = max(o, c) + abs(rnd.random() - 0.5) * d * 0.6
-            l = min(o, c) - abs(rnd.random() - 0.5) * d * 0.6
-            price = o
-            series.append({"time": ts, "open": round(o, dec), "high": round(h, dec),
-                           "low": round(l, dec), "close": round(c, dec)})
-        series.reverse()
-        return series
+        self._price_state[symbol] = last_close
+        self._bid_state[symbol], self._ask_state[symbol] = broker_price(
+            symbol,
+            round(last_close - spr / 2, dec),
+            round(last_close + spr / 2, dec),
+            markup_pips=float(self.account.get("spread_pips", 0.0) or 0.0),
+        )
+        return hist
 
     # ---------------- Estado de precio ----------------
 
