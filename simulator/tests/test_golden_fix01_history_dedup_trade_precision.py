@@ -27,6 +27,14 @@ Design lock: GOLDEN-SCENARIOS-FIX-01 (this block). Two independent fixes:
      max_lot in symbol_specs.py, 100.0). Purely additive: every existing
      2-decimal value remains exactly representable, nothing is recomputed
      or retroactively reconstructed.
+
+  FIX-01B (follow-up) — A/B above closed the DB/serializer side, but a
+  third, purely cosmetic layer still truncated qty for BTCUSD: the
+  bottom-panel history renderer (_renderBtmHistory()) hardcoded
+  Number(t.qty).toFixed(2) instead of reusing getLotDecimals(t.symbol),
+  the same helper _syncHistorialPanel() already used correctly. Fixed by
+  making that one call-site symbol-aware too — see
+  BtmHistoryQtySymbolAwareRenderTests below.
 """
 from decimal import Decimal
 
@@ -45,6 +53,18 @@ def _template_source():
 def _order_close_block(src):
     i = src.index("if(msg.type==='order_close'){")
     j = src.index("/* ── Indicator rendering ── */", i)
+    return src[i:j]
+
+
+def _btm_history_block(src):
+    i = src.index("function _renderBtmHistory(){")
+    j = src.index("/* ── Bottom panel resize", i)
+    return src[i:j]
+
+
+def _sync_historial_panel_block(src):
+    i = src.index("function _syncHistorialPanel(){")
+    j = src.index("function _renderHstSummary(", i)
     return src[i:j]
 
 
@@ -138,6 +158,61 @@ class HistoryDedupInvariantDocumentationTests(SimpleTestCase):
         block = _order_close_block(_template_source())
         self.assertIn("closedTradesHistory.some(t=>String(t.id)===_dupId)", block)
         self.assertNotIn("_wsSeenIds", block)  # no separate WS-only tracking set introduced
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# A.1 (FIX-01B) — HISTORY QTY SYMBOL-AWARE RENDER
+#
+# _renderBtmHistory() (the bottom-panel "Journal" history view — distinct
+# from _syncHistorialPanel()'s side-tab list, identifiable by its PnL
+# string carrying a literal "$" prefix, which the side-tab never does)
+# hardcoded Number(t.qty).toFixed(2) for the qty span. For BTCUSD
+# (lot_step=0.001, LOT_SPECS.dec=3) this rendered "0.001" as "0.00" even
+# though the DB (Trade.lot_size, FIX-01) and the closed_trades_json
+# serializer (views.py, unchanged) were already correct — the value was
+# lost only in this last, pure-presentation step. Fixed by reusing
+# getLotDecimals(t.symbol||'') — the exact same helper
+# _syncHistorialPanel() already used correctly one function over — no new
+# formatter, no change to LOT_SPECS/getLotDecimals themselves.
+# ─────────────────────────────────────────────────────────────────────────
+class BtmHistoryQtySymbolAwareRenderTests(SimpleTestCase):
+    """No JS runtime in this repo (same situation as the order_close dedupe
+    tests above) — textual/structural assertions on the shipped template
+    source, not simulated runtime execution."""
+
+    def test_btm_history_qty_uses_get_lot_decimals(self):
+        block = _btm_history_block(_template_source())
+        self.assertIn(
+            "Number(t.qty).toFixed(getLotDecimals(t.symbol||''))", block
+        )
+
+    def test_btm_history_qty_no_longer_hardcoded_2dp(self):
+        block = _btm_history_block(_template_source())
+        self.assertNotIn("Number(t.qty).toFixed(2)", block)
+
+    def test_btc_qty_contract_renders_with_three_decimals(self):
+        # Contract check against the real LOT_SPECS table, not a hardcoded
+        # assumption — BTCUSD's own dec:3 entry is what makes 0.001 render
+        # correctly, so assert that entry exists rather than just trusting
+        # the call-site wiring in isolation.
+        src = _template_source()
+        self.assertIn('"BTCUSD":  {step:0.001, min:0.001, dec:3}', src)
+
+    def test_eth_qty_contract_keeps_two_decimals(self):
+        src = _template_source()
+        self.assertIn('"ETHUSD":  {step:0.01,  min:0.01,  dec:2}', src)
+
+    def test_pnl_formatting_in_btm_history_unchanged(self):
+        # Must still be 2dp, with the "$" prefix that identifies this
+        # panel — untouched by the qty fix.
+        block = _btm_history_block(_template_source())
+        self.assertIn("Math.abs(pnlV).toFixed(2)", block)
+
+    def test_sync_historial_panel_untouched(self):
+        block = _sync_historial_panel_block(_template_source())
+        self.assertIn(
+            "Number(t.qty).toFixed(getLotDecimals(t.symbol||''))", block
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────

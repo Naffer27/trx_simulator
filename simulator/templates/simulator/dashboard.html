@@ -4143,7 +4143,7 @@ function _renderBtmHistory(){
       <div class="btm-hst-left">
         <span class="btm-hst-sym">${sym}</span>
         <span class="btm-hst-${side}">${side.toUpperCase()}</span>
-        ${t.qty!=null?`<span class="btm-hst-qty">${Number(t.qty).toFixed(2)}</span>`:''}
+        ${t.qty!=null?`<span class="btm-hst-qty">${Number(t.qty).toFixed(getLotDecimals(t.symbol||''))}</span>`:''}
       </div>
       <div style="display:flex;align-items:baseline;gap:12px;">
         <span style="font-size:.68rem;color:var(--muted)">${timeStr}</span>
