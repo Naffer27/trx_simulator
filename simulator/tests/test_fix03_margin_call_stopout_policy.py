@@ -14,7 +14,7 @@ _pos_entry) rather than re-inventing one — same TransactionTestCase
 discipline for genuine cross-call DB visibility.
 """
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from django.db import connection
 from django.test import TestCase, TransactionTestCase
@@ -24,8 +24,10 @@ from simulator.broker_audit import (
     EV_POSITION_CLOSED, EV_POSITION_CLOSED_MARGIN_CALL, EV_POSITION_CLOSED_STOPOUT,
     close_reason_event_type,
 )
-from simulator.consumers import _compute_pretrade_margin_guard
-from simulator.models import AccountProduct, BrokerAuditEvent, Position, Trade, TradingAccount
+from simulator.consumers import TradingConsumer, _compute_pretrade_margin_guard
+from simulator.models import (
+    AccountProduct, BrokerAuditEvent, LedgerEntry, Position, Trade, TradingAccount,
+)
 from simulator.risk_engine import check_equity_stopout
 from simulator.tasks import _close_position_sync
 
@@ -629,3 +631,332 @@ class DashboardTemplateContractTests(TestCase):
         src = self._template_source()
         self.assertIn("ml<_sol", src.replace(" ", ""))
         self.assertIn("ml<=_mcl", src.replace(" ", ""))
+
+
+# ── 10. GOLDEN-STOPOUT-01C — Account 55's REAL config (10%/50%), deterministic ──
+#
+# GOLDEN-STOPOUT-01A/01B found the earlier Golden Scenario design (2
+# positions at 25% each) had used real-standard's max_margin_per_trade_pct
+# (25%) while account 55 actually runs demo-standard (10%/50%) — that
+# 2-position design would be rejected outright by gate 3 for this account.
+# This section re-derives and certifies the scenario against account 55's
+# OWN verified live snapshot (margin_call=100/stopout=70/max_per_trade=10/
+# max_total=50/leverage=100), and against a genuinely deterministic
+# mechanism — 01B found a direct Redis price injection unsafe (the
+# trx:price:*:{symbol} keys are global by symbol, not scoped by account or
+# provider; the daemon's scan_positions_task would see it too; and the
+# Finnhub feed for EUR/USD reactivates and can overwrite it the moment a
+# real position is opened, per feeds.py's position-symbol keepalive) — so
+# the Stop-Out TRIGGER here is exercised via the account's own forced
+# equity/margin_used, the SAME backend-controlled mechanism
+# GoldenScenarioMCL100SOL70Tests (section 6, above) already uses and this
+# repo has already relied on.
+#
+# Positions are opened through the REAL, authoritative order-open path
+# (TradingConsumer._db_open_position_atomic — the same primitive every
+# other atomic-guard/concurrency test in this repo drives directly via
+# its .__wrapped__ escape from @database_sync_to_async), never the
+# make_position() factory — so every one of the 5 opens is actually
+# gated by _compute_atomic_open_guard exactly as production would be.
+
+_db_open_sync = TradingConsumer._db_open_position_atomic.__wrapped__
+
+
+def _seed_global_feed_price(symbol, price):
+    """RISK-02 (broker_risk.validate_new_order) reads broker-wide price
+    coverage from the REAL process-global FeedManager singleton
+    (get_feed_manager()), never from a per-connection self._feed stub —
+    confirmed empirically (test_broker_risk_limits_engine.py's own
+    _seed_price/_clear_price pair uses this exact mechanism, and this
+    section's first draft failed with RISK_PRICING_INCOMPLETE without
+    it). Must be paired with _clear_global_feed_price in tearDown — the
+    singleton outlives this TransactionTestCase's DB flush."""
+    import time as _time
+    from market_data.feeds import get_feed_manager
+    feed = get_feed_manager()
+    with feed._lock:
+        feed._prices[symbol] = price
+        feed._bids[symbol] = price
+        feed._asks[symbol] = price
+        feed._price_ts[symbol] = _time.time()
+
+
+def _clear_global_feed_price(symbol):
+    from market_data.feeds import get_feed_manager
+    feed = get_feed_manager()
+    with feed._lock:
+        feed._prices.pop(symbol, None)
+        feed._bids.pop(symbol, None)
+        feed._asks.pop(symbol, None)
+        feed._price_ts.pop(symbol, None)
+
+
+class _FlatFeed116:
+    """Fixed EUR/USD bid=ask=1.16000 — no spread, no movement. Needed so
+    _db_open_position_atomic's existing-position repricing and
+    _do_retail_liquidation's close price are well-defined; the Stop-Out
+    TRIGGER itself is exercised via the account's own forced equity/
+    margin_used (see the module note above), never by this feed moving —
+    01B found a real ~150-pip market move is not practical to reproduce
+    deterministically in a test. Same interface as
+    test_close_path_concurrency_parity._FakeFeed, fixed at 1.16000
+    instead of 1.1000 to match this scenario's entry price."""
+    def has_price(self, symbol): return True
+    def last_bid(self, symbol): return 1.16000
+    def last_ask(self, symbol): return 1.16000
+    def mark_position_symbol(self, symbol): pass
+    def sync_position_symbol_from_db(self, symbol): pass
+    def get_validated_quote(self, symbol):
+        from market_data.feeds import Quote
+        return Quote(symbol=symbol, bid=1.16000, ask=1.16000, mid=1.16000,
+                     timestamp=0.0, source="fake")
+
+
+def _golden55_consumer(account):
+    """Bare TradingConsumer stub carrying account 55's REAL verified
+    snapshot values (margin_call=100/stopout=70/max_per_trade=10/
+    max_total=50/leverage=100/allowed_symbols=None/max_lot_size=None) —
+    never this module's permissive defaults. Mirrors
+    test_close_path_concurrency_parity._consumer()'s field set (proven
+    sufficient for both _db_open_position_atomic and
+    _do_retail_liquidation) with EUR/USD fixed at 1.16000."""
+    c = TradingConsumer.__new__(TradingConsumer)
+    c._db_account_id = account.pk
+    c._last_db_sync = 0.0
+    c._positions = []
+    c._daily_realized_pnl = 0.0
+    c._daily_pnl_date = None
+    c.symbol = "EUR/USD"
+    c._bid_state, c._ask_state = {"EUR/USD": 1.16000}, {"EUR/USD": 1.16000}
+    c._raw_bid_state, c._raw_ask_state = {}, {}
+    c._pricing_snapshot_state, c._pricing_ts_state = {}, {}
+    c._feed = _FlatFeed116()
+    balance = float(account.balance)
+    c.account = {
+        "balance": balance, "equity": balance,
+        "peak_balance": balance, "pnl_unreal": 0.0, "margin_used": 0.0,
+        "leverage": 100, "currency": "USD", "netting_mode": False,
+        "status": "Activo", "account_type": "DEMO", "tier": "10K",
+        "profit_target": 0.0, "initial_balance": balance,
+        "product_name": "demo-standard", "commission_per_lot": 0.0, "commission_pct": 0.0,
+        "spread_pips": 0.0, "allowed_symbols": None, "max_lot_size": None,
+        "margin_call_level": 100.0, "stopout_level": 70.0,
+        "max_margin_per_trade_pct": 10.0, "max_total_margin_pct": 50.0,
+        "commercial_pricing_fields": {},
+    }
+    c.send_json = AsyncMock()
+    return c
+
+
+class GoldenStopout01CAccount55RealConfigTests(TransactionTestCase):
+    """GOLDEN-STOPOUT-01C — deterministic, account-55-faithful Stop-Out
+    scenario: 5 x BUY EUR/USD, qty=0.86 each, entry=1.16000, under the
+    account's REAL max_margin_per_trade_pct=10%/max_total_margin_pct=50%
+    (not the inapplicable real-standard 25% the earlier design used)."""
+
+    ENTRY_PX = 1.16000
+    QTY = Decimal("0.86")
+
+    def setUp(self):
+        super().setUp()
+        _seed_global_feed_price("EUR/USD", self.ENTRY_PX)
+
+    def tearDown(self):
+        _clear_global_feed_price("EUR/USD")
+        super().tearDown()
+
+    def _make_golden_account(self):
+        # ── 2. AccountProduct / snapshots — demo-standard equivalent ──
+        product = AccountProduct.objects.create(
+            code="golden55-demo-standard-equiv", name="Golden Demo Standard Equivalent",
+            product_type=AccountProduct.TYPE_STANDARD,
+            margin_call_level=Decimal("100.00"), stopout_level=Decimal("70.00"),
+            max_leverage=100, typical_spread_pips=Decimal("1.20"),
+            commission_per_lot=Decimal("0.00"),
+            max_margin_per_trade_pct=Decimal("10.00"),
+            max_total_margin_pct=Decimal("50.00"),
+        )
+        account = make_account(
+            balance=Decimal("10000.62"), account_type="DEMO", status="Activo",
+            leverage_snapshot=100,
+            margin_call_level_snapshot=Decimal("100.00"),
+            stopout_level_snapshot=Decimal("70.00"),
+            max_margin_per_trade_pct_snapshot=Decimal("10.00"),
+            max_total_margin_pct_snapshot=Decimal("50.00"),
+            allowed_symbols_snapshot=None, max_lot_size_snapshot=None,
+            account_product=product,
+        )
+        # make_account() hardcodes leverage=50 internally (not an override
+        # param, same limitation GoldenScenarioMCL100SOL70Tests already
+        # worked around) — set account 55's real leverage=100 directly.
+        TradingAccount.objects.filter(pk=account.pk).update(leverage=100)
+        account.refresh_from_db()
+        return account
+
+    def test_full_golden_scenario_open_mc100_stopout70_boundary_and_full_close(self):
+        account = self._make_golden_account()
+        consumer = _golden55_consumer(account)
+
+        # ── 3. Opening the 5 positions through the REAL atomic path ──
+        results = []
+        for i in range(5):
+            result = _db_open_sync(
+                consumer, "EUR/USD", "buy", float(self.QTY), self.ENTRY_PX,
+                None, None, commission=0.0, new_balance=float(account.balance),
+            )
+            self.assertTrue(
+                result["ok"],
+                f"open #{i + 1} rejected: {result.get('error_code')}/{result.get('message')}",
+            )
+            self.assertLess(
+                result["required_margin_pct"], 10.00,
+                f"open #{i + 1} per-trade %% must stay under the account's real 10%% cap",
+            )
+            self.assertLessEqual(
+                result["projected_total_margin_pct"], 50.00,
+                f"open #{i + 1} total %% must stay at/under the account's real 50%% cap",
+            )
+            results.append(result)
+
+        positions = list(Position.objects.filter(account=account).order_by("id"))
+        self.assertEqual(len(positions), 5, "netting_mode=False -> 5 separate positions, no merge")
+        for p in positions:
+            self.assertEqual(p.qty, self.QTY)
+            self.assertEqual(p.avg_price, Decimal(str(self.ENTRY_PX)))
+
+        # ── D. margin after each open — required_margin ~997.60/position ──
+        for i, result in enumerate(results, start=1):
+            self.assertAlmostEqual(result["required_margin"], 997.60, delta=0.01)
+            self.assertAlmostEqual(result["projected_total_margin"], 997.60 * i, delta=0.05)
+
+        final_margin_used = results[-1]["projected_total_margin"]
+        self.assertAlmostEqual(final_margin_used, 4988.00, delta=0.5)
+
+        account.refresh_from_db()
+        self.assertEqual(
+            account.balance, Decimal("10000.62"),
+            "demo-standard commission_per_lot=0.00 and no BrokerSpreadConfig/account "
+            "markup exist in this isolated test DB -> the real fee formula correctly "
+            "yields $0.00; balance must be untouched by the 5 opens",
+        )
+        margin_level_at_open = float(account.balance) / final_margin_used * 100.0
+        self.assertGreater(margin_level_at_open, 200.0, "sanity: ~200.5%% at open, matches GOLDEN-STOPOUT-01A's calc")
+
+        # ── 4. Margin Call 100%% — order-entry gate only, never closes ──
+        equity_at_mc = final_margin_used  # equity == margin_used -> margin_level == 100.00%
+        account_snap = {
+            "leverage": 100, "allowed_symbols": None, "max_lot_size": None,
+            "margin_call_level": 100.0,
+        }
+        ok, code, _msg, _details = _compute_pretrade_margin_guard(
+            "EUR/USD", 0.01, self.ENTRY_PX, equity=equity_at_mc, margin_used_now=final_margin_used,
+            account_snap=account_snap, spec_max_leverage=500, spec_contract_size=100000.0,
+            max_margin_per_trade_pct=10.0, max_total_margin_pct=50.0,
+        )
+        self.assertFalse(ok, "a new order at the Margin-Call-equivalent equity must be rejected")
+        # Account 55's own 50%% total-margin cap is structurally tighter
+        # than margin_call_level=100 — same finding
+        # MarginCallOrderGateBoundaryTests' docstring already proved in
+        # general, now confirmed for this account's OWN real config: the
+        # rejection fires at gate 4 (total_margin_exceeded), never gate 5
+        # (margin_call_level_breach). Margin Call is not separately
+        # observable as its own distinct trigger for this account — it is
+        # a gate, never a liquidation event, and this asserts exactly
+        # which gate fires rather than assuming one.
+        self.assertEqual(code, "total_margin_exceeded")
+
+        self.assertEqual(
+            Position.objects.filter(account=account).count(), 5,
+            "Margin Call is an order-entry gate only — it must never close a position",
+        )
+        self.assertEqual(Trade.objects.filter(account=account).count(), 0)
+        self.assertEqual(
+            LedgerEntry.objects.filter(account=account, event_type=LedgerEntry.EV_REALIZED).count(), 0,
+            "no REALIZED_PNL must be created by a rejected order / Margin-Call-equivalent state",
+        )
+
+        # ── 5. Stop-Out 70%% — exact boundary, strict '<' ──
+        equity_exactly_70 = round(final_margin_used * 0.70, 2)
+        triggered_at_70 = check_equity_stopout(
+            equity=equity_exactly_70, peak_balance=float(account.balance), tier="10K",
+            account_type="DEMO", margin_used=final_margin_used, stopout_level=70.0,
+        )
+        self.assertFalse(triggered_at_70, "exactly 70.00%% must NOT trigger stop-out (strict '<')")
+
+        equity_just_below_70 = round(final_margin_used * 0.6999, 2)
+        triggered_below_70 = check_equity_stopout(
+            equity=equity_just_below_70, peak_balance=float(account.balance), tier="10K",
+            account_type="DEMO", margin_used=final_margin_used, stopout_level=70.0,
+        )
+        self.assertTrue(triggered_below_70, "69.99%% must trigger stop-out")
+
+        # ── 6/7/8. Full liquidation — deterministic, forced equity, real close path ──
+        consumer.account["margin_used"] = final_margin_used
+        consumer.account["equity"] = equity_just_below_70
+        # Same order positions were opened in -> exercises whatever
+        # liquidation order the engine actually has today (none/FIFO by
+        # list order); this test asserts the EXISTING behavior, it does
+        # not introduce a new "close biggest loss first" policy.
+        consumer._positions = [_pos_entry(p) for p in positions]
+
+        _run(consumer._do_retail_liquidation())
+
+        self.assertEqual(Position.objects.filter(account=account).count(), 0, "FULL stop-out: 0 positions remain")
+        # Trade carries no Position FK (a fill record, not a position
+        # link) — verified by count/values instead: one Trade per closed
+        # Position, in the same order they were closed (ascending id,
+        # matching creation order — no reordering policy exists or is
+        # introduced here).
+        trades = list(Trade.objects.filter(account=account).order_by("id"))
+        self.assertEqual(len(trades), 5, "exactly one Trade per closed Position")
+        for t in trades:
+            self.assertEqual(t.symbol, "EUR/USD")
+            self.assertEqual(t.trade_type, Trade.BUY)
+            self.assertEqual(t.lot_size, self.QTY)
+            self.assertEqual(t.entry_price, Decimal(str(self.ENTRY_PX)))
+            self.assertAlmostEqual(float(t.profit_loss), 0.0, places=2)
+
+        realized_entries = list(LedgerEntry.objects.filter(account=account, event_type=LedgerEntry.EV_REALIZED))
+        self.assertEqual(len(realized_entries), 5, "one REALIZED_PNL LedgerEntry per close, no duplication")
+        total_realized = sum(float(e.amount) for e in realized_entries)
+        # Deterministic, backend-controlled scenario: close price == entry
+        # price (flat _FlatFeed116, per the module note above) -> every
+        # position closes at exactly zero realized P&L.
+        self.assertAlmostEqual(total_realized, 0.0, places=2)
+
+        account.refresh_from_db()
+        self.assertEqual(
+            account.balance, Decimal("10000.62"),
+            "balance = initial (10000.62) + $0.00 commission + $0.00 spread fee + "
+            "sum(realized_pnl=0.00 x5) -- the real, unmocked engine formula, not hardcoded",
+        )
+        self.assertEqual(consumer.account["margin_used"], 0.0)
+        self.assertEqual(consumer.account["equity"], float(account.balance))
+        self.assertEqual(consumer.account["status"], "Activo", "DEMO/RETAIL-family never suspends on stop-out")
+        self.assertEqual(account.status, "Activo")
+
+        stopout_events = [
+            c.args[0] for c in consumer.send_json.call_args_list
+            if c.args[0].get("type") == "account:stopout"
+        ]
+        self.assertEqual(len(stopout_events), 1)
+        ev = stopout_events[0]
+        self.assertFalse(ev["partial"])
+        self.assertEqual(ev["closed_count"], 5)
+        self.assertEqual(ev["remaining_count"], 0)
+
+        audit_events = BrokerAuditEvent.objects.filter(
+            event_type=EV_POSITION_CLOSED_STOPOUT, account=account,
+        )
+        self.assertEqual(audit_events.count(), 5)
+
+        # ── 9. No Redis / no global side effects ──
+        import inspect
+        src_liq = inspect.getsource(TradingConsumer._do_retail_liquidation)
+        self.assertNotIn("trx:price", src_liq)
+        self.assertNotIn("import redis", src_liq)
+        src_open = inspect.getsource(TradingConsumer._db_open_position_atomic.__wrapped__)
+        self.assertNotIn("trx:price", src_open)
+        # This test never imports celery/Daphne — the async paths under
+        # test run via asyncio.run() (see _run, imported above) directly
+        # against a real DB, exactly like every other test in this file.
