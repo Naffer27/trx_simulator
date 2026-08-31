@@ -305,6 +305,152 @@ class SeedCommandSnapshotTests(TestCase):
         self.assertEqual(account.stopout_level_snapshot, Decimal("70.00"))
 
 
+# ── 5b. GOLDEN-STOPOUT-FIX-01 — data migration 0074 (product drift fix) ─────
+#
+# 0072 changed AccountProduct.stopout_level's model FIELD DEFAULT to 70 —
+# but that only affects new rows created without an explicit value; the 4
+# already-seeded MVP rows kept their pre-0072 value (50) because
+# seed_account_products is deliberately idempotent (skips existing `code`s
+# unless --force-update). Migration 0074 is the one-time, narrowly-scoped
+# correction: only AccountProduct.stopout_level, only the 4 known MVP
+# codes, only rows currently at exactly 50.00 — TradingAccount is never
+# referenced. Tested here by importing the migration's own forward/reverse
+# functions directly (RunPython callables take only (apps, schema_editor);
+# passing the live app registry and schema_editor=None is safe for a pure
+# data migration with no schema operations) rather than driving a full
+# MigrationExecutor — same shape, far less test machinery.
+class Migration0074StopoutDriftFixTests(TestCase):
+    def setUp(self):
+        import importlib
+        from django.apps import apps as live_apps
+        self._forward = importlib.import_module(
+            "simulator.migrations.0074_fix_account_product_stopout_70"
+        )._set_stopout_70
+        self._reverse = importlib.import_module(
+            "simulator.migrations.0074_fix_account_product_stopout_70"
+        )._revert_stopout_50
+        self._apps = live_apps
+
+    def _make_product(self, code, **overrides):
+        fields = dict(
+            code=code, name=code, product_type=AccountProduct.TYPE_STANDARD,
+            margin_call_level=Decimal("100.00"), stopout_level=Decimal("50.00"),
+            max_leverage=100, typical_spread_pips=Decimal("1.20"),
+            commission_per_lot=Decimal("0.00"),
+            max_margin_per_trade_pct=Decimal("10.00"),
+            max_total_margin_pct=Decimal("50.00"),
+        )
+        fields.update(overrides)
+        return AccountProduct.objects.create(**fields)
+
+    def test_forward_moves_all_four_mvp_products_50_to_70(self):
+        for code in ("demo-standard", "demo-ecn", "real-standard", "real-ecn"):
+            self._make_product(code)
+        self._forward(self._apps, None)
+        for code in ("demo-standard", "demo-ecn", "real-standard", "real-ecn"):
+            self.assertEqual(
+                AccountProduct.objects.get(code=code).stopout_level, Decimal("70.00"), code
+            )
+
+    def test_forward_does_not_touch_other_fields(self):
+        p = self._make_product("real-ecn", commission_per_lot=Decimal("7.00"))
+        before = (
+            p.margin_call_level, p.max_leverage, p.typical_spread_pips,
+            p.commission_per_lot, p.max_margin_per_trade_pct, p.max_total_margin_pct,
+        )
+        self._forward(self._apps, None)
+        p.refresh_from_db()
+        after = (
+            p.margin_call_level, p.max_leverage, p.typical_spread_pips,
+            p.commission_per_lot, p.max_margin_per_trade_pct, p.max_total_margin_pct,
+        )
+        self.assertEqual(before, after)
+        self.assertEqual(p.stopout_level, Decimal("70.00"))  # sanity: the intended field DID move
+
+    def test_forward_does_not_touch_custom_product(self):
+        custom = self._make_product("premium-custom")
+        self._forward(self._apps, None)
+        custom.refresh_from_db()
+        self.assertEqual(custom.stopout_level, Decimal("50.00"))
+
+    def test_forward_does_not_touch_mvp_product_already_at_non_50_value(self):
+        manually_corrected = self._make_product("demo-standard", stopout_level=Decimal("65.00"))
+        self._forward(self._apps, None)
+        manually_corrected.refresh_from_db()
+        self.assertEqual(manually_corrected.stopout_level, Decimal("65.00"))
+
+    def test_reverse_moves_all_four_mvp_products_70_to_50(self):
+        for code in ("demo-standard", "demo-ecn", "real-standard", "real-ecn"):
+            self._make_product(code, stopout_level=Decimal("70.00"))
+        self._reverse(self._apps, None)
+        for code in ("demo-standard", "demo-ecn", "real-standard", "real-ecn"):
+            self.assertEqual(
+                AccountProduct.objects.get(code=code).stopout_level, Decimal("50.00"), code
+            )
+
+    def test_reverse_does_not_touch_custom_product_at_70(self):
+        custom = self._make_product("premium-custom", stopout_level=Decimal("70.00"))
+        self._reverse(self._apps, None)
+        custom.refresh_from_db()
+        self.assertEqual(custom.stopout_level, Decimal("70.00"))
+
+    def test_existing_account_snapshot_50_unaffected_by_forward(self):
+        product = self._make_product("real-standard")
+        account = make_account(
+            balance=Decimal("10000.00"),
+            margin_call_level_snapshot=Decimal("100.00"),
+            stopout_level_snapshot=Decimal("50.00"),
+            account_product=product,
+        )
+        self._forward(self._apps, None)
+        account.refresh_from_db()
+        self.assertEqual(account.stopout_level_snapshot, Decimal("50.00"))
+
+    def test_existing_account_snapshot_none_unaffected_by_forward(self):
+        # GOLDEN-STOPOUT-FIX-01 boundary — the None-fallback finding is
+        # explicitly out of scope here; this only confirms the migration
+        # itself (which never references TradingAccount at all) leaves it
+        # exactly as-is, not that None is somehow "correct".
+        product = self._make_product("real-ecn")
+        account = make_account(balance=Decimal("10000.00"), account_product=product)
+        TradingAccount.objects.filter(pk=account.pk).update(stopout_level_snapshot=None)
+        self._forward(self._apps, None)
+        account.refresh_from_db()
+        self.assertIsNone(account.stopout_level_snapshot)
+
+    def test_new_account_after_forward_gets_snapshot_70(self):
+        for code in ("demo-standard", "demo-ecn", "real-standard", "real-ecn"):
+            self._make_product(code)
+        self._forward(self._apps, None)
+        for code in ("demo-standard", "demo-ecn", "real-standard", "real-ecn"):
+            product = AccountProduct.objects.get(code=code)
+            account = make_account(
+                balance=Decimal("10000.00"),
+                margin_call_level_snapshot=product.margin_call_level,
+                stopout_level_snapshot=product.stopout_level,
+                account_product=product,
+            )
+            self.assertEqual(account.stopout_level_snapshot, Decimal("70.00"), code)
+
+    def test_seed_command_still_idempotent_after_forward(self):
+        from django.core.management import call_command
+        call_command("seed_account_products")  # real 4 rows, real seed source (already 70)
+        for p in AccountProduct.objects.filter(code__in=(
+            "demo-standard", "demo-ecn", "real-standard", "real-ecn",
+        )):
+            p.stopout_level = Decimal("50.00")
+            p.save(update_fields=["stopout_level"])
+        self._forward(self._apps, None)
+        for code in ("demo-standard", "demo-ecn", "real-standard", "real-ecn"):
+            self.assertEqual(AccountProduct.objects.get(code=code).stopout_level, Decimal("70.00"))
+        call_command("seed_account_products")  # no --force-update: must skip, not touch anything
+        for code in ("demo-standard", "demo-ecn", "real-standard", "real-ecn"):
+            self.assertEqual(
+                AccountProduct.objects.get(code=code).stopout_level, Decimal("70.00"),
+                f"{code} must remain untouched by a non-forced reseed",
+            )
+
+
 # ── 6. Golden scenario — EURUSD, $10,000, 1:500, MCL=100/SOL=70 ─────────────
 
 class GoldenScenarioMCL100SOL70Tests(TransactionTestCase):
