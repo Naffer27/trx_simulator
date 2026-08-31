@@ -139,6 +139,143 @@ class ProviderFallbackPreservedTests(TestCase):
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# GOLDEN-SCENARIOS-MARKETDATA-01 — Kraken REST OHLC pair mapping.
+#
+# Root cause (verified live against the real Kraken API, see the audit):
+# Kraken exposes each pair under two different names — "wsname" (e.g.
+# "XBT/USD", with a slash — what the WebSocket API and _kraken_loop()'s
+# live ticks correctly use) and "altname" (e.g. "XBTUSD", no slash — what
+# the REST /0/public/OHLC endpoint requires instead). fetch_kline_history()
+# was passing the wsname to REST, which returns HTTP 200 with
+# {"error":["EQuery:Unknown asset pair"]} — silently swallowed at
+# log.debug, never a real bar. Fixed via a small, explicit
+# _KRAKEN_REST_PAIR dict (_kraken_rest_pair()), used ONLY by the REST
+# branch — _kraken_sym()/_kraken_loop() (WS, live ticks) are untouched.
+#
+# The pre-existing test_binance_failure_falls_through_to_kraken (above)
+# only asserted "kraken.com" appears in the requested URL — it would have
+# passed with the wsname bug too (the mock never inspected the actual
+# `pair=` query value), which is exactly why the regression suite never
+# caught this. The tests below assert on the real query string.
+# ─────────────────────────────────────────────────────────────────────────
+class KrakenRestPairMappingTests(TestCase):
+    def _urls_requested(self, symbol, interval="1h", kraken_body=None):
+        fm = FeedManager()
+        urls: list[str] = []
+        body = kraken_body or json.dumps({
+            "result": {"XXBTZUSD": [_kraken_row(int(time.time()) - 3600)]}, "error": [],
+        }).encode()
+
+        def _urlopen(req, timeout=10):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            urls.append(url)
+            if "kraken.com" in url:
+                return _mock_response(body)
+            raise OSError("simulated network failure")  # Binance US/com both fail
+
+        with patch("market_data.feeds.urllib.request.urlopen", side_effect=_urlopen):
+            bars = _run(fm.fetch_kline_history(symbol, interval=interval, limit=10))
+        return urls, bars
+
+    def test_btc_rest_request_uses_altname_xbtusd(self):
+        urls, _ = self._urls_requested("BTCUSD")
+        kraken_urls = [u for u in urls if "kraken.com" in u]
+        self.assertEqual(len(kraken_urls), 1)
+        self.assertIn("pair=XBTUSD", kraken_urls[0])
+        self.assertNotIn("XBT/USD", kraken_urls[0])
+        self.assertNotIn("XBT%2FUSD", kraken_urls[0])
+
+    def test_eth_rest_request_uses_altname_ethusd(self):
+        eth_body = json.dumps({
+            "result": {"XETHZUSD": [_kraken_row(int(time.time()) - 3600)]}, "error": [],
+        }).encode()
+        urls, _ = self._urls_requested("ETHUSD", kraken_body=eth_body)
+        kraken_urls = [u for u in urls if "kraken.com" in u]
+        self.assertEqual(len(kraken_urls), 1)
+        self.assertIn("pair=ETHUSD", kraken_urls[0])
+        self.assertNotIn("ETH/USD", kraken_urls[0])
+
+    def test_kraken_rest_pair_mapping_values(self):
+        from market_data.feeds import _kraken_rest_pair
+        self.assertEqual(_kraken_rest_pair("BTCUSD"), "XBTUSD")
+        self.assertEqual(_kraken_rest_pair("ETHUSD"), "ETHUSD")
+
+    def test_kraken_ws_symbol_helper_unchanged(self):
+        # _kraken_sym() (WS/live-ticks) must keep returning the wsname —
+        # this fix only added a separate, REST-only mapping.
+        from market_data.feeds import _kraken_sym
+        self.assertEqual(_kraken_sym("BTCUSD"), "XBT/USD")
+        self.assertEqual(_kraken_sym("ETHUSD"), "ETH/USD")
+
+    def test_kraken_loop_still_uses_ws_symbol_helper(self):
+        # Structural regression: the live-tick WS path must still call
+        # _kraken_sym(), never _kraken_rest_pair() — the two are for
+        # different endpoints and must never be swapped.
+        import inspect
+        from market_data.feeds import FeedManager as _FM
+        src = inspect.getsource(_FM._try_live_legacy)
+        self.assertIn("kr_pair = _kraken_sym(symbol)", src)
+
+    def test_full_fallback_chain_binance_fails_kraken_correct_pair_succeeds(self):
+        _, bars = self._urls_requested("BTCUSD")
+        self.assertEqual(len(bars), 1)
+        self.assertEqual(bars[0]["close"], 100.5)
+
+    def test_1m_15m_1h_all_reach_kraken_with_correct_pair(self):
+        for tf, kr_interval in (("1m", "1"), ("15m", "15"), ("1h", "60")):
+            with self.subTest(timeframe=tf):
+                urls, bars = self._urls_requested("BTCUSD", interval=tf)
+                kraken_urls = [u for u in urls if "kraken.com" in u]
+                self.assertEqual(len(kraken_urls), 1)
+                self.assertIn("pair=XBTUSD", kraken_urls[0])
+                self.assertIn(f"interval={kr_interval}", kraken_urls[0])
+                self.assertEqual(len(bars), 1)
+
+    def test_closed_only_still_removes_only_the_open_candle(self):
+        # fetch_kline_history() itself returns raw bars (closed-only is
+        # applied one layer up, in generate_history() — FIX-05B.1's single
+        # authority, see NoSyntheticCodeTests) — so this exercises the
+        # FULL real path: a real FeedManager, urlopen mocked, through
+        # TradingConsumer.generate_history().
+        now = int(time.time())
+        tf_sec = 3600  # 1h
+        kraken_body = json.dumps({
+            "result": {"XXBTZUSD": [
+                _kraken_row(now - 2 * tf_sec),
+                _kraken_row(now - tf_sec),
+                _kraken_row(now),  # still forming — must be dropped
+            ]},
+            "error": [],
+        }).encode()
+
+        def _urlopen(req, timeout=10):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if "kraken.com" in url:
+                return _mock_response(kraken_body)
+            raise OSError("simulated network failure")  # Binance US/com both fail
+
+        c = _bare_history_consumer(symbol="BTCUSD", timeframe="1h")
+        c._feed = FeedManager()
+        with patch("market_data.feeds.urllib.request.urlopen", side_effect=_urlopen):
+            result = _run(c.generate_history("BTCUSD", "1h", bars=10))
+        self.assertIsNotNone(result)
+        self.assertEqual(len(result), 2)  # the still-open bar was excluded
+
+    def test_history_unavailable_when_kraken_also_fails(self):
+        c = _bare_history_consumer(symbol="BTCUSD", timeframe="1h")
+        c._feed.fetch_kline_history.return_value = []  # all 3 providers failed upstream
+        result = _run(c.generate_history("BTCUSD", "1h", bars=240))
+        self.assertIsNone(result)
+
+    def test_no_synthetic_history_reintroduced(self):
+        import inspect
+        from market_data import feeds as feeds_module
+        src = inspect.getsource(feeds_module.FeedManager.fetch_kline_history)
+        self.assertNotIn("random.Random(", src)
+        self.assertNotIn("rnd.random()", src)
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # 4/14. All provider failures (any timeframe, including 1s) -> history_unavailable
 # ─────────────────────────────────────────────────────────────────────────
 class AllProviderFailureTests(TestCase):

@@ -78,6 +78,30 @@ def _binance_sym(symbol: str) -> str | None:
 def _kraken_sym(symbol: str) -> str | None:
     return _get_spec(symbol).kraken_symbol
 
+# GOLDEN-SCENARIOS-MARKETDATA-01 — Kraken exposes each pair under TWO
+# different names depending on endpoint: the WebSocket API takes the
+# "wsname" (e.g. "XBT/USD", with a slash — this is exactly what
+# SymbolSpec.kraken_symbol/_kraken_sym() already holds, and what
+# _kraken_loop()'s live-tick WS subscription correctly uses, verified
+# live against wss://ws.kraken.com). The REST /0/public/OHLC endpoint
+# instead requires the "altname" (e.g. "XBTUSD", no slash) — passing the
+# wsname there returns HTTP 200 with {"error":["EQuery:Unknown asset
+# pair"]}, verified live. Deliberately a small, explicit, per-symbol
+# dict — not a blind "strip the slash" transform — even though that
+# transform happens to hold for both entries today (verified live via
+# Kraken's own /0/public/AssetPairs for both XBT/USD and ETH/USD): a
+# silent transform would fail differently (and less visibly) for a
+# future Kraken-mapped symbol whose altname doesn't follow that pattern.
+# symbol_specs.py::kraken_symbol is NOT changed — it stays correct for
+# the WS path, which is untouched by this dict.
+_KRAKEN_REST_PAIR = {
+    "BTCUSD": "XBTUSD",
+    "ETHUSD": "ETHUSD",
+}
+
+def _kraken_rest_pair(symbol: str) -> str | None:
+    return _KRAKEN_REST_PAIR.get(symbol)
+
 def _finnhub_sym(symbol: str) -> str:
     """Finnhub symbol string — use spec value when available."""
     sp = _get_spec(symbol)
@@ -757,14 +781,21 @@ class FeedManager:
             log.debug("[feed] Binance com klines unavailable for %s: %r", symbol, exc)
 
         # ── 3. Kraken OHLC fallback ──
+        # GOLDEN-SCENARIOS-MARKETDATA-01 — REST needs the altname
+        # (_kraken_rest_pair, e.g. "XBTUSD"), never the wsname _kraken_sym()
+        # returns (e.g. "XBT/USD") — that's _kraken_loop()'s (WS, live
+        # ticks) pair, untouched here. Using the wsname against this REST
+        # endpoint returns HTTP 200 with {"error":["EQuery:Unknown asset
+        # pair"]} — silently swallowed by the except below before this fix,
+        # never a real bar.
         _KR_INTERVAL = {"1m": 1, "5m": 5, "15m": 15, "1h": 60, "1d": 1440}
-        kr_pair  = _kraken_sym(symbol)
-        kr_intv  = _KR_INTERVAL.get(interval)
-        if kr_pair and kr_intv:
+        kr_rest_pair = _kraken_rest_pair(symbol)
+        kr_intv      = _KR_INTERVAL.get(interval)
+        if kr_rest_pair and kr_intv:
             try:
                 raw  = await loop.run_in_executor(
                     None, _fetch,
-                    f"https://api.kraken.com/0/public/OHLC?pair={kr_pair}&interval={kr_intv}",
+                    f"https://api.kraken.com/0/public/OHLC?pair={kr_rest_pair}&interval={kr_intv}",
                 )
                 data = json.loads(raw)
                 rows = list(data["result"].values())[0]  # first key is the pair data
@@ -783,7 +814,13 @@ class FeedManager:
                 log.info("[feed] Kraken klines %s %s — %d bars", symbol, interval, len(bars))
                 return bars
             except Exception as exc:
-                log.debug("[feed] Kraken klines unavailable for %s: %r", symbol, exc)
+                # GOLDEN-SCENARIOS-MARKETDATA-01 — was log.debug (invisible
+                # at normal levels), which is exactly why this pair-mapping
+                # bug went unnoticed. exc's repr is a KeyError/ValueError/
+                # URLError message — never response bodies or credentials
+                # (this endpoint is unauthenticated) — safe to log at
+                # warning.
+                log.warning("[feed] Kraken klines unavailable for %s %s: %r", symbol, interval, exc)
 
         log.error("[feed] All kline history sources failed for %s %s", symbol, interval)
         return []
