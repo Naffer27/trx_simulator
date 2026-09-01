@@ -8,7 +8,7 @@ from channels.db import database_sync_to_async
 from django.db import transaction
 from django.utils import timezone
 
-from market_data.feeds import get_feed_manager, _validate_quote_values, _closed_only
+from market_data.feeds import get_feed_manager, _validate_quote_values, _closed_only, _MASSIVE_ENABLED_SYMBOLS
 from market_data.symbol_specs import get_spec, allowed_symbols, kline_symbols
 from .models import TradingAccount, Position, Trade, LedgerEntry, BrokerLedger
 from .spread_engine import broker_price, calculate_spread_revenue, _get_config as _get_spread_config
@@ -1132,7 +1132,14 @@ class TradingConsumer(AsyncWebsocketConsumer):
         send_json() among many on an already-open connection, same as any
         other informational message type."""
         if hist is None:
-            reason = "no_real_history" if symbol not in _KLINE_SYMBOLS else "provider_unavailable"
+            # FIX-05B.2-C — a symbol with NO real provider configured at all
+            # (neither the crypto kline chain nor the Massive forex
+            # allowlist) is "no_real_history"; a symbol Massive (or the
+            # crypto chain) IS configured for, but which failed/returned
+            # empty this time, is "provider_unavailable" — same contract,
+            # now covering both provider families.
+            unsupported = symbol not in _KLINE_SYMBOLS and symbol not in _MASSIVE_ENABLED_SYMBOLS
+            reason = "no_real_history" if unsupported else "provider_unavailable"
             await self.send_json({
                 "type": "history_unavailable", "symbol": symbol, "timeframe": timeframe, "reason": reason,
             })
@@ -1140,20 +1147,29 @@ class TradingConsumer(AsyncWebsocketConsumer):
             await self.send_json({"type": "history", "symbol": symbol, "data": hist})
 
     async def generate_history(self, symbol, timeframe, bars=200) -> "list[dict] | None":
-        """FIX-05B.1 — real closed candles only, or None (never fabricated).
+        """FIX-05B.1/FIX-05B.2 — real closed candles only, or None (never
+        fabricated).
 
         None means "no real history available for this symbol/timeframe
         right now" — callers must send history_unavailable, never fall back
         to a synthetic series. Distinguishes cleanly from a real-but-short
         result (fewer than `bars` closed candles after filtering out the
         still-forming one) — that is a valid, real, non-None result, never
-        padded back up to `bars`."""
-        if symbol not in _KLINE_SYMBOLS:
+        padded back up to `bars`.
+
+        FIX-05B.2-C — symbol dispatch: crypto (kline chain) and Massive
+        forex (_MASSIVE_ENABLED_SYMBOLS) are two disjoint provider paths,
+        never merged or duplicated into a single framework. A symbol in
+        neither returns None without attempting any network call."""
+        if symbol in _KLINE_SYMBOLS:
+            hist = await self._feed.fetch_kline_history(symbol, interval=timeframe, limit=bars)
+        elif symbol in _MASSIVE_ENABLED_SYMBOLS:
+            hist = await self._feed.fetch_massive_history(symbol, interval=timeframe, limit=bars)
+        else:
             # No real historical provider configured for this symbol today
-            # (e.g. forex/XAU pending FIX-05B.2) — no random-walk fallback.
+            # (e.g. XAU pending a future block) — no random-walk fallback.
             return None
 
-        hist = await self._feed.fetch_kline_history(symbol, interval=timeframe, limit=bars)
         hist = _closed_only(hist, tf_seconds(timeframe))
         if not hist:
             log.warning("[consumer] real history unavailable for %s %s (provider failure or all-open)", symbol, timeframe)

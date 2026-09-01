@@ -365,7 +365,19 @@ class ClosedCandleFilterTests(SimpleTestCase):
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# 15. Forex/no-provider symbols -> no_real_history, zero fetch attempted
+# 15. Symbols with NO real provider at all -> no_real_history, zero fetch
+#     attempted on any provider.
+#
+# FIX-05B.2-C — EUR/USD (and GBP/USD/USD/JPY/AUD/USD) moved OUT of "no
+# provider" territory: they now have real history via Massive
+# (_MASSIVE_ENABLED_SYMBOLS, market_data/feeds.py) — see
+# simulator/tests/test_fix05b2_massive_history.py for that path's full
+# coverage (mapping, timeframes, pagination, error handling, dispatch).
+# This class keeps testing the SAME original contract — a symbol with
+# truly zero real provider configured — just probed with USD/CAD
+# (enabled=False in the registry, confirmed still outside BOTH the kline
+# and the Massive allowlists) instead of EUR/USD, since EUR/USD is no
+# longer a valid instance of that case.
 # ─────────────────────────────────────────────────────────────────────────
 class ForexNoRealHistoryTests(TestCase):
     def test_symbol_choices_match_registry_kline_membership(self):
@@ -376,18 +388,20 @@ class ForexNoRealHistoryTests(TestCase):
         self.assertNotIn("EUR/USD", kline_symbols())
 
     def test_forex_symbol_returns_none_without_calling_feed(self):
-        c = _bare_history_consumer(symbol="EUR/USD", timeframe="1m")
-        result = _run(c.generate_history("EUR/USD", "1m", bars=240))
+        c = _bare_history_consumer(symbol="USD/CAD", timeframe="1m")
+        c._feed.fetch_massive_history = AsyncMock(return_value=[])
+        result = _run(c.generate_history("USD/CAD", "1m", bars=240))
         self.assertIsNone(result)
         c._feed.fetch_kline_history.assert_not_called()
+        c._feed.fetch_massive_history.assert_not_called()
 
     def test_forex_dispatches_no_real_history_reason(self):
-        c = _bare_history_consumer(symbol="EUR/USD", timeframe="1m")
-        _run(c._send_history_or_unavailable("EUR/USD", "1m", None))
+        c = _bare_history_consumer(symbol="USD/CAD", timeframe="1m")
+        _run(c._send_history_or_unavailable("USD/CAD", "1m", None))
         msg = _sent(c.send_json, "history_unavailable")
         self.assertIsNotNone(msg)
         self.assertEqual(msg["reason"], "no_real_history")
-        self.assertEqual(msg["symbol"], "EUR/USD")
+        self.assertEqual(msg["symbol"], "USD/CAD")
         self.assertEqual(msg["timeframe"], "1m")
 
     def test_kline_symbol_failure_dispatches_provider_unavailable_reason(self):

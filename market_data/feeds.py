@@ -34,6 +34,7 @@ except ImportError:
 log = logging.getLogger("simulator.ws")
 
 FINNHUB_API_KEY      = (os.getenv("FINNHUB_API_KEY", "") or "").strip()
+MASSIVE_API_KEY       = (os.getenv("MASSIVE_API_KEY", "") or "").strip()
 DEFAULT_TICK_INTERVAL = float(os.getenv("PRICE_TICK_INTERVAL", "1.0"))
 
 # How long (seconds) to stay in sim before retrying the live feed
@@ -112,6 +113,72 @@ def _finnhub_sym(symbol: str) -> str:
         a, b = s.split("/", 1)
         return f"FX:{a}{b}"
     return s
+
+
+# ─── FIX-05B.2 — Massive (Forex Historical ONLY) ────────────────────────────────
+#
+# FIX-05B.2-B design lock. Scope: REST historical aggregates for exactly the
+# 4 symbols below, never WS, never quote/resync, never XAU/USD (ticker
+# candidate C:XAUUSD was confirmed live in FIX-05B.2-A.1 but deliberately
+# not enabled here — that's a future, separately-authorized block). Crypto
+# history (fetch_kline_history, below) is completely untouched — these are
+# two disjoint symbol sets by construction (kline_symbols() vs this
+# allowlist), never merged into one provider-selection framework.
+_MASSIVE_ENABLED_SYMBOLS = frozenset({"EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD"})
+
+# multiplier, timespan — Massive's own /v2/aggs/ticker/.../range/{mult}/{span}/...
+# path segments. Single source of truth; consumers.py never duplicates this.
+_MASSIVE_TF = {
+    "1s":  (1, "second"),
+    "1m":  (1, "minute"),
+    "5m":  (5, "minute"),
+    "15m": (15, "minute"),
+    "1h":  (1, "hour"),
+    "1d":  (1, "day"),
+}
+_MASSIVE_SECONDS_PER_UNIT = {"second": 1, "minute": 60, "hour": 3600, "day": 86400}
+
+# FIX-05B.2-A.1 — Massive's own 1h coverage is confirmed real but uneven
+# across pairs (EUR/USD can legitimately return HTTP 200/status=OK/
+# resultsCount=0 over a 30-day window while GBP/USD returns a real bar in
+# the same window) — GAP_BUFFER exists to absorb ordinary weekend/gap
+# density, not to paper over that specific finding; a genuinely empty
+# result after this buffer is a legitimate provider_unavailable, not a
+# bug (see fetch_massive_history's error contract below).
+GAP_BUFFER = 2.0
+_MASSIVE_RANGE_MIN_SECONDS = 86400
+_MASSIVE_RANGE_MAX_SECONDS = 400 * 86400
+
+_MASSIVE_MAX_PAGES = 3  # 1 initial fetch + at most 2 next_url continuations, never more
+
+
+def _massive_sym(symbol: str) -> "str | None":
+    """'EUR/USD' -> 'C:EURUSD'. None for anything outside the allowlist —
+    never a 'contains /' heuristic (FIX-05B.2-B design lock §2)."""
+    if symbol not in _MASSIVE_ENABLED_SYMBOLS:
+        return None
+    return f"C:{symbol.replace('/', '')}"
+
+
+def _massive_range(interval: str, bars: int) -> "tuple[str, str] | None":
+    """(from_date, to_date) as UTC YYYY-MM-DD strings, sized to comfortably
+    contain `bars` closed candles of `interval`. Pure date-range sizing —
+    never a loop, never re-queried/widened here (that's what bounded
+    pagination in fetch_massive_history is for). Returns None for an
+    unsupported interval (caller fails closed)."""
+    tf = _MASSIVE_TF.get(interval)
+    if tf is None:
+        return None
+    multiplier, timespan = tf
+    bar_seconds = multiplier * _MASSIVE_SECONDS_PER_UNIT[timespan]
+    raw_span_seconds = bar_seconds * max(int(bars), 1)
+    span_seconds = raw_span_seconds * GAP_BUFFER
+    span_seconds = max(_MASSIVE_RANGE_MIN_SECONDS, min(span_seconds, _MASSIVE_RANGE_MAX_SECONDS))
+
+    from datetime import datetime, timedelta, timezone as _dt_tz
+    to_dt = datetime.now(_dt_tz.utc)
+    from_dt = to_dt - timedelta(seconds=span_seconds)
+    return from_dt.strftime("%Y-%m-%d"), to_dt.strftime("%Y-%m-%d")
 
 
 # ─── FIX-05B.1 — Closed-Candle Filter ───────────────────────────────────────────
@@ -824,6 +891,113 @@ class FeedManager:
 
         log.error("[feed] All kline history sources failed for %s %s", symbol, interval)
         return []
+
+    async def fetch_massive_history(
+        self, symbol: str, interval: str = "1m", limit: int = 200
+    ) -> list:
+        """
+        FIX-05B.2-B/C — Massive REST historical aggregates, Forex ONLY
+        (see _MASSIVE_ENABLED_SYMBOLS). Analogous to fetch_kline_history()
+        above: async, run_in_executor + urllib.request, same {"time"
+        (seconds), "open","high","low","close","volume"} output contract.
+        Never raises for a normal provider failure (missing key,
+        unsupported symbol/timeframe, HTTP 401/403/429/5xx, timeout,
+        invalid JSON, status!=OK, missing/empty results, a malformed row)
+        — every one of those returns [] so generate_history() (consumers.py)
+        can fail-closed to history_unavailable exactly like the crypto path
+        already does. results=[] is a legitimate, confirmed-real outcome
+        (FIX-05B.2-A.1 — EUR/USD 1h can return HTTP 200/status=OK/
+        resultsCount=0), never logged as a warning/error.
+
+        Closed-candle filtering is NOT done here — _closed_only()
+        (consumers.py::generate_history(), reusing market_data.feeds'
+        own _is_closed()/_closed_only()) remains the single authority,
+        exactly as it already is for the crypto path — this fetcher
+        returns every bar Massive gave it, still-forming one included.
+        """
+        if not MASSIVE_API_KEY:
+            log.debug("[massive] no MASSIVE_API_KEY configured — skipping %s %s", symbol, interval)
+            return []
+        mapped = _massive_sym(symbol)
+        tf = _MASSIVE_TF.get(interval)
+        if mapped is None or tf is None:
+            return []
+        multiplier, timespan = tf
+        date_range = _massive_range(interval, limit)
+        if date_range is None:
+            return []
+        from_date, to_date = date_range
+
+        loop = asyncio.get_event_loop()
+
+        def _fetch(url: str) -> bytes:
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "Authorization": f"Bearer {MASSIVE_API_KEY}",
+                    "User-Agent": "trx-sim/1.0",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.read()
+
+        all_bars: list = []
+        pages = 0
+        url = (
+            f"https://api.massive.com/v2/aggs/ticker/{mapped}/range/"
+            f"{multiplier}/{timespan}/{from_date}/{to_date}?limit={limit}"
+        )
+
+        while url and pages < _MASSIVE_MAX_PAGES:
+            try:
+                raw = await loop.run_in_executor(None, _fetch, url)
+                data = json.loads(raw)
+            except Exception as exc:
+                # Timeout/URLError/HTTPError(401/403/429/5xx)/JSON decode —
+                # all transient/config failures, never response bodies or
+                # the Authorization header. exc's repr never contains
+                # MASSIVE_API_KEY (it's a header value, not part of the
+                # URL/exception message urllib builds).
+                log.debug("[massive] fetch failed for %s %s (page %d): %r",
+                          symbol, interval, pages + 1, exc)
+                break
+            pages += 1
+
+            if data.get("status") != "OK":
+                log.warning("[massive] non-OK status for %s %s: %r",
+                            symbol, interval, data.get("status"))
+                break
+
+            for row in (data.get("results") or []):
+                try:
+                    all_bars.append({
+                        "time":   int(row["t"]) // 1000,
+                        "open":   float(row["o"]),
+                        "high":   float(row["h"]),
+                        "low":    float(row["l"]),
+                        "close":  float(row["c"]),
+                        "volume": float(row.get("v", 0.0)),
+                    })
+                except (KeyError, TypeError, ValueError):
+                    continue  # malformed row — skip it, never abort the batch
+
+            next_url = data.get("next_url")
+            if len(all_bars) >= limit or not next_url:
+                break
+            url = next_url  # re-fetched via the SAME _fetch() -> same Authorization header
+
+        # Dedupe by timestamp (first occurrence wins) + defensive final sort —
+        # never trust cross-page accumulation order blindly.
+        seen: set = set()
+        deduped = []
+        for b in sorted(all_bars, key=lambda x: x["time"]):
+            if b["time"] not in seen:
+                seen.add(b["time"])
+                deduped.append(b)
+
+        log.info("[feed] Massive %s %s — %d bars (%d page(s))",
+                  symbol, interval, len(deduped), pages)
+        return deduped
 
     async def _broadcast(self, symbol: str, cl, bid: float, ask: float, ts: int,
                           source: str = "live") -> None:
