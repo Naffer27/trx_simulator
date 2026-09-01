@@ -201,6 +201,18 @@ class ForexFailoverTests(SimpleTestCase):
         self._key_patch = patch("market_data.feeds.FINNHUB_API_KEY", "fake-key-for-test")
         self._key_patch.start()
         self.addCleanup(self._key_patch.stop)
+        # FIX-05B.3-B1 — this class drives _try_live_legacy("EUR/USD", ...)
+        # directly, which now tries Massive before Finnhub. These tests
+        # predate Massive and exist specifically to isolate Finnhub's own
+        # failover behavior — a real MASSIVE_API_KEY in the environment
+        # would otherwise let Massive's own websockets.connect() call
+        # consume this test's Finnhub-scoped mock (StopIteration) or, in
+        # other tests in this file, attempt a real network connection.
+        # Empty key keeps _try_live_legacy's Massive branch inert, exactly
+        # preserving this file's original Finnhub-only intent.
+        self._massive_key_patch = patch("market_data.feeds.MASSIVE_API_KEY", "")
+        self._massive_key_patch.start()
+        self.addCleanup(self._massive_key_patch.stop)
 
     def test_permanent_protocol_error_returns_false_lets_feed_loop_fall_to_sim(self):
         """(1)(9) EUR/USD has no Binance/Kraken symbol in the registry

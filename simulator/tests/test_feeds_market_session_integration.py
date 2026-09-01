@@ -120,7 +120,12 @@ class AllowlistAndFlagUnaffectedTests(SimpleTestCase):
         # EUR/USD's legacy path has no Binance/Kraken symbol, so it falls
         # through to Finnhub — mock every loop it could reach so this stays
         # a pure unit test with zero real network.
+        # FIX-05B.3-B1 — _try_live_legacy() now tries Massive before
+        # Finnhub for EUR/USD; MASSIVE_API_KEY="" keeps that branch inert
+        # (a real key in the environment would otherwise let this test
+        # attempt a genuine network connection to Massive).
         with patch("market_data.sessions.service.evaluate_market_session_for_symbol") as mock_eval, \
+             patch("market_data.feeds.MASSIVE_API_KEY", ""), \
              patch.object(self.fm, "_binance_loop", new=AsyncMock()), \
              patch.object(self.fm, "_kraken_loop", new=AsyncMock()), \
              patch.object(self.fm, "_finnhub_loop", new=AsyncMock()):
@@ -129,7 +134,9 @@ class AllowlistAndFlagUnaffectedTests(SimpleTestCase):
 
     @override_settings(MARKET_DATA_ROUTER_ENABLED=True, MARKET_DATA_ROUTER_SYMBOLS=frozenset({"BTCUSD"}))
     def test_symbol_outside_allowlist_never_evaluates_session(self):
+        # FIX-05B.3-B1 — same reasoning as test_flag_off_never_evaluates_session above.
         with patch("market_data.sessions.service.evaluate_market_session_for_symbol") as mock_eval, \
+             patch("market_data.feeds.MASSIVE_API_KEY", ""), \
              patch.object(self.fm, "_binance_loop", new=AsyncMock()), \
              patch.object(self.fm, "_kraken_loop", new=AsyncMock()), \
              patch.object(self.fm, "_finnhub_loop", new=AsyncMock()):

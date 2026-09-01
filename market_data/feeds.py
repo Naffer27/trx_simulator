@@ -181,6 +181,60 @@ def _massive_range(interval: str, bars: int) -> "tuple[str, str] | None":
     return from_dt.strftime("%Y-%m-%d"), to_dt.strftime("%Y-%m-%d")
 
 
+# ─── FIX-05B.3-B1 — Massive Forex LIVE WebSocket (EUR/USD only) ────────────────
+#
+# Design lock: FIX-05B.3-A. B1 scope is deliberately narrow: exactly one
+# symbol (EUR/USD). GBP/USD, USD/JPY, AUD/USD stay on Finnhub until B2
+# extends _MASSIVE_WS_ENABLED_SYMBOLS. XAU/USD is out of scope entirely
+# (same as historical, FIX-05B.2). Crypto is untouched — Binance/Kraken
+# are checked first in _try_live_legacy(), same as always.
+#
+# wss://socket.massive.com/forex — confirmed live (GOLDEN-LIVE-PROVIDER-01,
+# FIX-05B.3-A): auth-then-subscribe, one JSON array of event dicts per
+# message, {"ev":"C","p":"EUR/USD","b":bid,"a":ask,"t":ms} for a live quote.
+# "C.EUR/USD" (dot, WITH slash) is the WS subscribe param — never confused
+# with "C:EURUSD" (colon, no slash), the unrelated historical aggs ticker
+# format _massive_sym() already owns (FIX-05B.2).
+_MASSIVE_WS_URL = "wss://socket.massive.com/forex"
+_MASSIVE_WS_ENABLED_SYMBOLS = frozenset({"EUR/USD"})  # B1 — B2 adds GBP/USD, USD/JPY, AUD/USD
+
+# FIX-05B.3-B1.1 — data-staleness watchdog. GOLDEN-MASSIVE-PRICECACHE-01
+# found the WS connection can stay technically alive (ping/pong healthy,
+# no exception) while silently stopping delivery of "ev":"C" quote
+# events for minutes — a failure mode connection-error handling alone
+# never detects. DATA_STALE_TIMEOUT (20s) is deliberately well under
+# _PRICE_CACHE_TTL (60s, feeds.py, UNCHANGED by this block) — chosen
+# from live evidence (GOLDEN-LIVE-PROVIDER-01: AUD/USD, the sparsest of
+# the 4 pairs, ticked at worst every ~3.3s under normal conditions; 20s
+# is ~6x that gap, and still leaves 40s of TTL headroom for the
+# reconnect+auth+resubscribe cycle — sub-second in every live test so
+# far — to recover the feed before get_validated_quote() would fail
+# closed on staleness anyway).
+DATA_STALE_TIMEOUT = 20.0
+_MASSIVE_WATCHDOG_POLL_SECONDS = 5.0
+
+
+def _massive_ws_param(symbol: str) -> str:
+    """'EUR/USD' -> 'C.EUR/USD'."""
+    return f"C.{symbol}"
+
+
+def _parse_massive_events(raw) -> list:
+    """Massive sends a JSON array of event dicts per WS message (confirmed
+    live). A single malformed/unexpected message must never kill the
+    reader — returns [] on any parse failure, same fail-soft contract
+    _parse_binance()-style helpers already follow elsewhere in this file."""
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return []
+    if isinstance(data, list):
+        return [e for e in data if isinstance(e, dict)]
+    if isinstance(data, dict):
+        return [data]
+    return []
+
+
 # ─── FIX-05B.1 — Closed-Candle Filter ───────────────────────────────────────────
 #
 # Pure, provider-agnostic helpers: given a bar's OPEN time (seconds) and a
@@ -401,6 +455,27 @@ class FeedManager:
         # last_valid_quote() below for the (currently informational
         # only) accessor.
         self._last_valid_quote: dict[str, "Quote"] = {}
+        # FIX-05B.3-B1 — Massive Forex live WS shared-connection state.
+        # B1 has exactly one caller (_massive_forex_loop("EUR/USD", ...)),
+        # so these are not yet load-bearing for multi-symbol fan-out —
+        # they exist now so B2's true shared reader (Design Lock §D) can
+        # extend this without renaming/restructuring. _massive_ws is the
+        # live connection object (or None); _massive_subscribed is the
+        # set of symbols with an active Massive subscribe; _massive_
+        # connect_lock guards the connect+auth+subscribe sequence.
+        self._massive_ws = None
+        self._massive_subscribed: set[str] = set()
+        self._massive_connect_lock = asyncio.Lock()
+        # FIX-05B.3-B1.1 — wall-clock (time.monotonic()) of the last
+        # GENUINE "ev":"C" quote _massive_forex_loop's own read loop
+        # parsed and broadcast for this symbol — set to "now" once more
+        # when a fresh connection attempt starts (a grace window for the
+        # first quote), and ONLY ever advanced further by an actual valid
+        # quote. Never touched by auth/status/malformed/unknown messages.
+        # Read by _massive_staleness_watchdog() to detect "socket alive,
+        # data silent" — a failure mode connection-error handling alone
+        # never catches (GOLDEN-MASSIVE-PRICECACHE-01).
+        self._massive_last_quote_at: dict[str, float] = {}
         # PANEL-02 — guards all reads/writes of the four dicts above. This
         # class's own feed tasks (_broadcast/_resync_price) run on the
         # asyncio event loop thread, but has_price()/last_price()/
@@ -1281,6 +1356,25 @@ class FeedManager:
             except Exception as exc:
                 log.error("[feed] Kraken failed for %s (%r)", symbol, exc)
 
+        # FIX-05B.3-B1 — Massive is primary for _MASSIVE_WS_ENABLED_SYMBOLS
+        # (EUR/USD only, B1). _massive_forex_loop() itself never gives up
+        # permanently (indefinite backoff, Design Lock §I) — it only
+        # raises here on a genuinely unhandled error (not its own routine
+        # reconnect cycle), in which case Finnhub below runs as a real
+        # secondary fallback for THIS symbol, same as it always has been
+        # for every other symbol. GBP/USD, USD/JPY, AUD/USD are not in
+        # _MASSIVE_WS_ENABLED_SYMBOLS yet (B2) and skip this branch
+        # entirely, falling straight to Finnhub exactly as before —
+        # unchanged for those 3 pairs.
+        if MASSIVE_API_KEY and websockets and symbol in _MASSIVE_WS_ENABLED_SYMBOLS:
+            try:
+                await self._massive_forex_loop(symbol, channel_layer)
+                return True
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.error("[feed] Massive Forex failed for %s (%r)", symbol, exc)
+
         if FINNHUB_API_KEY and websockets and "/" in symbol:
             try:
                 await self._finnhub_loop(symbol, channel_layer)
@@ -1599,6 +1693,233 @@ class FeedManager:
                     symbol, exc, consecutive_failures, MAX_FAILURES,
                 )
                 await asyncio.sleep(3)
+
+    async def _massive_staleness_watchdog(self, symbol: str, ws, state: dict) -> None:
+        """
+        FIX-05B.3-B1.1 — one watchdog per Massive connection, created by
+        _massive_forex_loop right after it starts reading (cancelled in
+        that same method's `finally` the instant the connection ends, for
+        ANY reason). Polls roughly every _MASSIVE_WATCHDOG_POLL_SECONDS
+        and compares wall-clock (time.monotonic()) against
+        self._massive_last_quote_at[symbol] — updated ONLY by the read
+        loop's own "ev":"C" parsing branch, never by auth/status/
+        malformed/unknown messages, and never by this watchdog itself.
+
+        On exceeding DATA_STALE_TIMEOUT: logs exactly ONCE (this task
+        then returns — a fresh watchdog is created for the next
+        connection attempt, so there is never a second warning for the
+        same incident), records state["reason"]="data_stale" for the
+        caller to log/handle, and closes `ws`. Never touches Redis,
+        _broadcast(), the DB, or the frontend directly — closing the
+        socket is its ONLY side effect; _massive_forex_loop's existing
+        reconnect/backoff machinery does everything else (Design Lock
+        §6/§7 — no second reconnect mechanism).
+        """
+        try:
+            while True:
+                await asyncio.sleep(_MASSIVE_WATCHDOG_POLL_SECONDS)
+                last = self._massive_last_quote_at.get(symbol)
+                if last is None:
+                    continue
+                elapsed = time.monotonic() - last
+                if elapsed > DATA_STALE_TIMEOUT:
+                    log.warning(
+                        "[feed] Massive %s stale data — no valid quote for %.1fs",
+                        symbol, elapsed,
+                    )
+                    state["reason"] = "data_stale"
+                    try:
+                        await ws.close()
+                    except Exception:
+                        pass
+                    return
+        except asyncio.CancelledError:
+            raise
+
+    async def _massive_forex_loop(
+        self, symbol: str, channel_layer, *,
+        on_first_tick: Optional[Callable[[], None]] = None,
+        on_terminal_failure: Optional[Callable[[Exception], None]] = None,
+    ) -> None:
+        """
+        FIX-05B.3-B1/B1.1 — Massive Forex live WS. B1 scope: exactly one
+        symbol (EUR/USD, _MASSIVE_WS_ENABLED_SYMBOLS) — returns
+        immediately, without attempting any connection, for any other
+        symbol.
+
+        Design lock §D/§I: uses the shared-connection attributes
+        (self._massive_ws/_massive_subscribed/_massive_connect_lock) B2
+        will extend into a true shared reader serving several concurrent
+        symbols. B1 has exactly one caller, so this stays a single
+        self-contained retry loop (same overall shape as _finnhub_loop
+        above) rather than a separate background reader task with a
+        fan-out queue — no multi-symbol complexity is introduced early.
+
+        Auth-then-subscribe: the subscribe message is sent ONLY after an
+        explicit {"ev":"status","status":"auth_success"} is observed —
+        never sent blind. bid/ask come straight from Massive's own quote
+        event (unlike Finnhub's single trade price, which the sibling
+        loop above has to synthesize bid/ask from with a spread
+        constant) — real market bid/ask, higher fidelity by construction.
+
+        FIX-05B.3-B1.1 — a _massive_staleness_watchdog runs alongside the
+        read loop for the lifetime of each connection, detecting "socket
+        alive, no new quotes" (GOLDEN-MASSIVE-PRICECACHE-01) — a failure
+        mode the connection-error `except` branch below never sees on
+        its own. CRITICAL (Design Lock §6 correction): closing the
+        socket from the watchdog does NOT reliably make `async for raw
+        in ws` raise in every case — it can also end the iteration
+        cleanly (StopAsyncIteration, no exception). Both outcomes are
+        handled identically here: the code immediately after the `async
+        with websockets.connect(...)` block runs whenever that block
+        exits WITHOUT propagating an exception, and feeds into the exact
+        same cleanup + reconnect the `except Exception` branch already
+        uses — a normal end of the iterator can never leave this method
+        stalled or return early.
+
+        Reconnects with exponential backoff (2/4/8/16/30s cap),
+        INDEFINITELY — deliberately never "gives up" permanently, unlike
+        _finnhub_loop's fixed-3-attempts-then-give-up policy (Design
+        Lock §I explicitly rejects copying that). A data-staleness
+        reconnect skips the sleep entirely (it's a self-triggered
+        closure, not a real failure signal — waiting would only make the
+        TTL race worse) and resets backoff to its 2s floor, so a genuine
+        connection error occurring right after still backs off from the
+        same baseline. on_terminal_failure is never invoked in normal
+        operation here; it stays in the signature only for symmetry with
+        the other provider loops' shared on_first_tick/on_terminal_
+        failure contract (FOUNDATION-10, used by the router dispatch
+        table when that path is active).
+
+        Every quote still passes through _validate_quote_values() (Capa
+        A, structural + magnitude) before ever reaching _broadcast() —
+        the SAME single choke point every other provider already uses:
+        no new state, no new Redis write path, no new frontend contract.
+        source="massive" needs no allowlist change anywhere (confirmed,
+        FIX-05B.3-A §G) — _read_cached_price()/the frontend tick handler
+        only ever reject source is None or source=="sim".
+        """
+        if symbol not in _MASSIVE_WS_ENABLED_SYMBOLS:
+            return
+        param = _massive_ws_param(symbol)
+        log.info("[feed] Massive Forex loop for %s (%s)", symbol, param)
+        backoff = 2.0
+        tick_reported = False
+        while True:
+            watchdog_state = {"reason": None}
+            try:
+                async with websockets.connect(
+                    _MASSIVE_WS_URL,
+                    ping_interval=20, ping_timeout=20,
+                    close_timeout=10, max_queue=256,
+                ) as ws:
+                    async with self._massive_connect_lock:
+                        self._massive_ws = ws
+                        # Grace window — a fresh connection gets up to
+                        # DATA_STALE_TIMEOUT to deliver its first quote
+                        # before the watchdog would consider it stale.
+                        # The SAME dict entry becomes pure data-freshness
+                        # the instant a real "ev":"C" event updates it
+                        # below — one timestamp, two well-defined phases,
+                        # never ambiguous about which one is active (a
+                        # value only ever moves forward, from "connection
+                        # just started" to "last real quote").
+                        self._massive_last_quote_at[symbol] = time.monotonic()
+                        await ws.send(json.dumps({"action": "auth", "params": MASSIVE_API_KEY}))
+
+                    watchdog_task = asyncio.create_task(
+                        self._massive_staleness_watchdog(symbol, ws, watchdog_state)
+                    )
+                    try:
+                        authed = False
+                        async for raw in ws:
+                            for ev in _parse_massive_events(raw):
+                                ev_type = ev.get("ev")
+                                if ev_type == "status":
+                                    status = ev.get("status")
+                                    if status == "auth_success":
+                                        authed = True
+                                        async with self._massive_connect_lock:
+                                            await ws.send(json.dumps({
+                                                "action": "subscribe", "params": param,
+                                            }))
+                                            self._massive_subscribed.add(symbol)
+                                    elif status == "error":
+                                        raise RuntimeError(
+                                            f"massive_auth_or_subscribe_error symbol={symbol}: {ev.get('message')}"
+                                        )
+                                    continue
+                                if ev_type != "C" or not authed:
+                                    # A quote before auth_success should never
+                                    # happen (Massive doesn't stream pre-auth);
+                                    # defensive only, never a real path.
+                                    continue
+                                if ev.get("p") != symbol:
+                                    continue
+                                try:
+                                    bid = float(ev["b"])
+                                    ask = float(ev["a"])
+                                    ts  = int(ev["t"]) // 1000
+                                except (KeyError, TypeError, ValueError):
+                                    continue
+                                if not _validate_quote_values(symbol, bid, ask):
+                                    continue
+                                # FIX-05B.3-B1.1 — the ONLY place this
+                                # timestamp advances past its grace-window
+                                # seed value: a genuine, validated quote.
+                                self._massive_last_quote_at[symbol] = time.monotonic()
+                                await self._broadcast(symbol, channel_layer, bid, ask, ts, source="massive")
+                                backoff = 2.0
+                                if not tick_reported and on_first_tick is not None:
+                                    tick_reported = True
+                                    try:
+                                        on_first_tick()
+                                    except Exception as cb_exc:
+                                        log.debug("[feed] massive on_first_tick callback failed for %s: %r", symbol, cb_exc)
+                    finally:
+                        # Design Lock §8 — at most 1 watchdog per
+                        # connection; always cancelled and awaited here,
+                        # regardless of whether the read loop above
+                        # exited via exception or normally, so no task is
+                        # ever left orphaned.
+                        watchdog_task.cancel()
+                        try:
+                            await watchdog_task
+                        except asyncio.CancelledError:
+                            pass
+                # Design Lock §6 — reached whenever the `async with
+                # websockets.connect(...)` block above exits WITHOUT an
+                # exception propagating past it: `async for raw in ws`
+                # ended cleanly (StopAsyncIteration), which is exactly
+                # what a watchdog-triggered ws.close() can produce. Never
+                # treat this as "done" — always cycle back through the
+                # same reconnect path a real error would.
+                self._massive_subscribed.discard(symbol)
+                self._massive_ws = None
+                if watchdog_state["reason"] == "data_stale":
+                    log.warning("[feed] Massive %s reconnecting after data staleness", symbol)
+                    backoff = 2.0
+                    continue
+                log.warning("[feed] Massive %s connection ended — reconnect in %.0fs", symbol, backoff)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30.0)
+            except asyncio.CancelledError:
+                self._massive_subscribed.discard(symbol)
+                self._massive_ws = None
+                raise
+            except Exception as exc:
+                self._massive_subscribed.discard(symbol)
+                self._massive_ws = None
+                if watchdog_state["reason"] == "data_stale":
+                    log.warning("[feed] Massive %s reconnecting after data staleness", symbol)
+                    backoff = 2.0
+                    continue
+                log.error(
+                    "[feed] Massive Forex error %s: %r — reconnect in %.0fs",
+                    symbol, exc, backoff,
+                )
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30.0)
 
     # ── price resync via REST ──
 
