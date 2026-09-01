@@ -306,7 +306,19 @@ if REDIS_URL:
         "default": {
             "BACKEND": "channels_redis.core.RedisChannelLayer",
             "CONFIG": {
-                "hosts": [REDIS_URL],
+                # GOLDEN-INFRA-REDIS-01B — socket_timeout must exceed
+                # channels_redis's own brpop_timeout (5s, RedisChannelLayer.
+                # brpop_timeout in channels_redis/core.py) with margin.
+                # redis-py 8.0.1's DEFAULT_SOCKET_TIMEOUT is also 5s, so
+                # leaving this unset put the client-side socket read
+                # timeout in an exact, marginless race against Redis's own
+                # server-side BZPOPMIN(timeout=5) blocking reply — any
+                # jitter made a routine "no message yet" wait raise
+                # redis.exceptions.TimeoutError and kill the ASGI instance
+                # (confirmed live: 28 crash/reconnect cycles in one
+                # GOLDEN-UI-PRICESTATE-01C repro session). 10s gives a
+                # comfortable margin above the 5s blocking call.
+                "hosts": [{"address": REDIS_URL, "socket_timeout": 10}],
                 "capacity": 1500,       # max msgs per channel before back-pressure
                 "expiry": 10,           # msg TTL seconds (prevents stale price ticks)
                 "group_expiry": 86400,  # group membership TTL (1 day)

@@ -115,6 +115,26 @@ class DevelopmentUnaffectedTests(TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_channel_layer_hosts_carry_address_and_socket_timeout_10(self):
+        # GOLDEN-INFRA-REDIS-01B — socket_timeout must exceed
+        # channels_redis's own brpop_timeout (5s) with margin; left unset,
+        # it silently inherited redis-py's DEFAULT_SOCKET_TIMEOUT (also
+        # 5s), racing the two timeouts against each other with zero
+        # margin (root-caused live: 28 crash/reconnect cycles in one
+        # repro session, GOLDEN-INFRA-REDIS-01).
+        result = _run(
+            {"APP_ENV": "development", "DB_NAME": "", "REDIS_URL": _VALID_REDIS_URL},
+            "runserver",
+            "h = settings.CHANNEL_LAYERS['default']['CONFIG']['hosts'][0]; "
+            "assert h['address'] == " + repr(_VALID_REDIS_URL) + "; "
+            "assert h['socket_timeout'] == 10; "
+            "assert settings.CHANNEL_LAYERS['default']['CONFIG']['capacity'] == 1500; "
+            "assert settings.CHANNEL_LAYERS['default']['CONFIG']['expiry'] == 10; "
+            "assert settings.CHANNEL_LAYERS['default']['CONFIG']['group_expiry'] == 86400; "
+            "print('OK')",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
 
 # ─────────────────────────────────────────────
 # B, D — staging
