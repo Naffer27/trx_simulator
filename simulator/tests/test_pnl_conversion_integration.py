@@ -299,6 +299,44 @@ class NoDivergenceWsCeleryTests(TestCase):
         self.assertEqual(ws_pnl, daemon_pnl)
 
 
+class MarginOnlineOfflineParityTests(TestCase):
+    """FIX-USDJPY-MARGIN-01-B §10 (mandatory) — for the SAME USD/JPY
+    position, the online WS margin_used (TradingConsumer.
+    _margin_used_total(), consumers.py) must equal the offline Celery
+    daemon's margin_used (tasks._compute_offline_equity_margin()) —
+    salvo redondeo explícitamente documentado. Both now delegate to the
+    SAME pnl_engine.calculate_required_margin() helper, so they cannot
+    diverge; this test proves it end-to-end through both real call
+    sites, not just at the pure-function level."""
+
+    def test_online_and_offline_margin_used_agree_on_usd_jpy(self):
+        account = make_account(account_type="RETAIL", balance=Decimal("9832"))
+        # make_account() hardcodes leverage=50 internally — matches
+        # _bare_consumer()'s implicit self.account.get("leverage", 50)
+        # default below, so both paths use the SAME effective leverage.
+        pos = make_position(account, symbol="USD/JPY", side="BUY",
+                             qty=Decimal("0.01"), avg_price=Decimal("160.19"))
+
+        # Online (WS) path — TradingConsumer._margin_used_total().
+        c = _bare_consumer()
+        c.account["currency"] = account.currency
+        c._positions = [{"id": pos.pk, "symbol": "USD/JPY", "side": "buy",
+                          "qty": 0.01, "avg": 160.19}]
+        online_margin_used = c._margin_used_total()
+
+        # Offline (Celery daemon) path — tasks._compute_offline_equity_margin().
+        from simulator.tasks import _compute_offline_equity_margin
+        _equity, offline_margin_used, _floating, _fp_map = _compute_offline_equity_margin(
+            [pos], {"USD/JPY": (160.19, 160.20)}, account,
+        )
+
+        self.assertAlmostEqual(online_margin_used, offline_margin_used, places=6)
+        # And explicitly the corrected value, not the old ~160x-inflated
+        # one: notional_account = 0.01*100000 = 1000 (Case B, no price
+        # multiplication); effective_lev = min(50, 500) = 50 -> $20.00.
+        self.assertAlmostEqual(online_margin_used, 20.0, places=2)
+
+
 class NoDbPerTickTests(TestCase):
     """18) No DB por tick — price_tick() with a USD/JPY position open must
     still perform zero ORM queries; pnl_engine reads only SymbolSpec (an
@@ -316,13 +354,22 @@ class NoDbPerTickTests(TestCase):
 
 
 class NoMarginCommissionSpreadChangeTests(TestCase):
-    """19) Ningún cambio en margen, comisión o spread — structural
-    guarantee: none of those functions import or reference pnl_engine."""
+    """19) MARGIN-02 scope boundary — commission and spread stayed
+    untouched by that block (structural guarantee: neither function
+    imports or references pnl_engine).
 
-    def test_margin_used_total_untouched(self):
+    margin is NO LONGER in that "untouched" set — FIX-USDJPY-MARGIN-01-B
+    deliberately closed the sibling bug MARGIN-02's own docstring
+    predicted margin would eventually need (the same base/quote
+    conversion gap, ~160x for USD/JPY): _margin_used_total() now MUST
+    route through pnl_engine.calculate_required_margin(), the single
+    base/quote-aware helper every real margin path in this codebase
+    shares (Design Lock FIX-USDJPY-MARGIN-01-A)."""
+
+    def test_margin_used_total_now_uses_pnl_engine(self):
         import inspect
         source = inspect.getsource(TradingConsumer._margin_used_total)
-        self.assertNotIn("pnl_engine", source)
+        self.assertIn("pnl_engine", source)
 
     def test_commission_for_untouched(self):
         import inspect

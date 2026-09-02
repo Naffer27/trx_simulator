@@ -287,12 +287,22 @@ class NoFinancialFormulaChangedTests(SimpleTestCase):
         self.assertIn('diff = (close - entry) if is_buy else (entry - close)', src)
         self.assertIn("return diff * qty * cs", src)
 
-    def test_margin_formula_untouched(self):
+    def test_margin_formula_delegates_to_centralized_conversion(self):
+        """FIX-USDJPY-MARGIN-01-B — this GOLDEN-FIX01 lock originally
+        pinned the OLD inline formula (`entry_px * qty *
+        spec_contract_size / effective_lev`), which was base/quote-blind
+        and overstated USD/JPY margin ~160x (GOLDEN-USDJPY-MARGIN-01).
+        That formula was deliberately and correctly replaced. The lock's
+        intent survives unchanged — margin math must not silently
+        re-diverge into an inline, uncentralized formula again — now
+        verified as "delegates to the shared pnl_engine helper" rather
+        than pinned to one exact old expression."""
         import inspect
 
         from simulator.consumers import _compute_pretrade_margin_guard
 
         src = inspect.getsource(_compute_pretrade_margin_guard)
-        self.assertIn(
+        self.assertIn("pnl_engine.calculate_required_margin", src)
+        self.assertNotIn(
             "required_margin = abs(entry_px * qty * spec_contract_size) / effective_lev", src
         )

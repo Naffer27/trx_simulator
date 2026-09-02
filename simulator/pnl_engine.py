@@ -330,3 +330,162 @@ def position_pnl_float(
         )
         return 0.0
     return float(result.pnl_account)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# FIX-USDJPY-MARGIN-01-B — Base/Quote-Aware Margin Notional
+#
+# Root cause fixed: every margin-required formula in this codebase (the
+# pretrade guard, the atomic open guard, the live margin_used total, the
+# risk preview, the offline daemon's stopout margin) computed
+# `price * qty * contract_size` and treated the result as if it were
+# already in the account's currency — the EXACT SAME bug class this
+# module's own PnL functions already fixed (see module docstring): true
+# only when quote_currency == account_currency. For USD/JPY (base=USD,
+# quote=JPY) this overstated required_margin by ~the USD/JPY exchange
+# rate (~160x, confirmed live — GOLDEN-USDJPY-MARGIN-01/
+# FIX-USDJPY-MARGIN-01-A).
+#
+# calculate_margin_notional_account_currency() is the single, pure
+# source of truth for "what is this order's notional, in the account's
+# currency" — every real margin path (pretrade guard, atomic open guard,
+# margin_used total, atomic fresh_margin_used, risk preview, offline
+# daemon) must go through it (or its float convenience wrapper,
+# calculate_required_margin()) — never re-implement the formula inline.
+#
+# Deliberately reuses convert_pnl_to_account_currency() UNCHANGED rather
+# than re-deriving the 3-case currency logic: a notional valuation
+# (price * qty * contract_size, no entry/close diff) is exactly the same
+# shape as calculate_quote_pnl()'s output — an amount already expressed
+# in the instrument's quote currency — so the SAME conversion rules
+# apply without modification. This is deliberately not represented as a
+# PositionPnLResult (its field names — pnl_quote/pnl_account — would be
+# misleading for a notional value that isn't a profit/loss delta);
+# MarginNotionalResult below carries the identical information under
+# names that make sense for margin.
+# ─────────────────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class MarginNotionalResult:
+    notional_quote: Decimal
+    quote_currency: str
+    notional_account: Optional[Decimal]
+    account_currency: str
+    conversion_mode: str
+    conversion_rate: Optional[Decimal]
+    conversion_symbol: Optional[str]
+    converted: bool
+    error_code: Optional[str]
+
+    def to_dict(self) -> dict:
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "notional_quote": float(self.notional_quote),
+            "quote_currency": self.quote_currency,
+            "notional_account": float(self.notional_account) if self.notional_account is not None else None,
+            "account_currency": self.account_currency,
+            "conversion_mode": self.conversion_mode,
+            "conversion_rate": float(self.conversion_rate) if self.conversion_rate is not None else None,
+            "conversion_symbol": self.conversion_symbol,
+            "converted": self.converted,
+            "error_code": self.error_code,
+        }
+
+
+def calculate_margin_notional_account_currency(
+    symbol: str,
+    price,
+    quantity,
+    account_currency: str = "USD",
+) -> MarginNotionalResult:
+    """
+    FIX-USDJPY-MARGIN-01-B — the single entry point every real margin
+    path should call to get an order/position's notional value in the
+    account's currency. Pure, DB-free, same guarantees as
+    calculate_position_pnl(): reads only market_data.symbol_specs (via
+    the existing profile_from_symbol_spec() bridge), never raises —
+    degrades to converted=False + error_code, never a fabricated number.
+
+    notional_quote = abs(price * quantity * contract_size) — a straight
+    valuation in the instrument's own quote currency (no entry/close
+    diff, unlike PnL). Handed to convert_pnl_to_account_currency()
+    UNCHANGED for the actual currency conversion — Case B
+    (base_currency == account_currency) divides by `price` itself (the
+    instrument's own price IS the base/quote exchange rate), which is
+    mathematically identical to "never multiply by price for this case"
+    — exactly Design Lock FIX-USDJPY-MARGIN-01-A §G/§D's intent, with
+    zero duplication of the 3-case conversion rule.
+    """
+    try:
+        from market_data.symbol_specs import get_spec, normalize_symbol
+        from market_data.instruments.bridges import profile_from_symbol_spec
+
+        canonical = normalize_symbol(symbol)
+        spec = get_spec(canonical)
+        profile = profile_from_symbol_spec(spec)
+
+        price_d = _to_decimal(price)
+        qty_d = _to_decimal(quantity)
+        cs_d = _to_decimal(spec.contract_size)
+        notional_quote = abs(price_d * qty_d * cs_d)
+
+        result = convert_pnl_to_account_currency(
+            notional_quote, profile.base_currency, profile.quote_currency, account_currency,
+            conversion_prices={canonical: price},
+            conversion_symbol=canonical,
+        )
+        return MarginNotionalResult(
+            notional_quote=result.pnl_quote,
+            quote_currency=result.quote_currency,
+            notional_account=result.pnl_account,
+            account_currency=result.account_currency,
+            conversion_mode=result.conversion_mode,
+            conversion_rate=result.conversion_rate,
+            conversion_symbol=result.conversion_symbol,
+            converted=result.converted,
+            error_code=result.error_code,
+        )
+    except Exception as exc:
+        logger.error(
+            "[pnl_engine] calculate_margin_notional_account_currency failed for %s (non-fatal): %r",
+            symbol, exc,
+        )
+        return MarginNotionalResult(
+            notional_quote=Decimal("0"), quote_currency="",
+            notional_account=None, account_currency=account_currency,
+            conversion_mode=CONVERSION_MODE_UNSUPPORTED, conversion_rate=None,
+            conversion_symbol=None, converted=False,
+            error_code=ERROR_INVALID_INPUT,
+        )
+
+
+def calculate_required_margin(
+    symbol: str,
+    price,
+    quantity,
+    effective_leverage,
+    account_currency: str = "USD",
+):
+    """
+    FIX-USDJPY-MARGIN-01-B — thin convenience wrapper around
+    calculate_margin_notional_account_currency() for the (many) call
+    sites that just want a final float margin figure plus a clear
+    fail-closed signal — never a fabricated number.
+
+    Returns (required_margin, error_code):
+      - conversion succeeded  -> (float >= 0.0, None)
+      - conversion unsupported (Case C, no explicit rate available;
+        unreachable with any currently-enabled symbol — see Design Lock
+        FIX-USDJPY-MARGIN-01-A §H) -> (None, error_code)
+
+    Callers MUST treat required_margin is None as fail-closed: reject
+    the order/refuse to count it as margin_used, never substitute 0.0,
+    never assume 1:1, never fall back to the un-converted quote-currency
+    notional.
+    """
+    result = calculate_margin_notional_account_currency(symbol, price, quantity, account_currency)
+    if not result.converted or result.notional_account is None:
+        return None, (result.error_code or ERROR_NO_CONVERSION_RATE)
+    lev = max(1, int(effective_leverage))
+    return float(abs(result.notional_account) / Decimal(lev)), None

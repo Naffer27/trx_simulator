@@ -189,3 +189,120 @@ class PositionPnlFloatTests(SimpleTestCase):
         never a guessed number."""
         val = pe.position_pnl_float("buy", 1.0, 1.1, 1.0, "GBP/USD", "EUR")
         self.assertEqual(val, 0.0)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# FIX-USDJPY-MARGIN-01-B — calculate_margin_notional_account_currency() /
+# calculate_required_margin(). Root cause: every margin-required formula
+# in this codebase computed price*qty*contract_size and treated it as
+# already-account-currency — true only for quote_currency==account_
+# currency. USD/JPY (base=USD) overstated required_margin by ~the
+# USD/JPY rate (~160x, confirmed live — GOLDEN-USDJPY-MARGIN-01).
+# ─────────────────────────────────────────────────────────────────────────
+class CalculateMarginNotionalTests(SimpleTestCase):
+    """Case A/B/C, delegating to convert_pnl_to_account_currency()
+    UNCHANGED — no conversion rule duplicated here."""
+
+    def test_case_a_eurusd_quote_equals_account_no_conversion(self):
+        result = pe.calculate_margin_notional_account_currency("EUR/USD", 1.15921, 0.01, "USD")
+        self.assertTrue(result.converted)
+        self.assertEqual(result.conversion_mode, pe.CONVERSION_MODE_NONE)
+        self.assertAlmostEqual(float(result.notional_account), 1159.21, places=2)
+
+    def test_case_a_gbpusd_unchanged(self):
+        result = pe.calculate_margin_notional_account_currency("GBP/USD", 1.35162, 0.01, "USD")
+        self.assertAlmostEqual(float(result.notional_account), 1351.62, places=2)
+
+    def test_case_a_audusd_unchanged(self):
+        result = pe.calculate_margin_notional_account_currency("AUD/USD", 0.71448, 0.01, "USD")
+        self.assertAlmostEqual(float(result.notional_account), 714.48, places=2)
+
+    def test_case_b_usdjpy_notional_is_qty_times_contract_size_only(self):
+        """The core fix: base_currency(USD) == account_currency(USD) ->
+        notional_account = qty*contract_size, the price is NEVER
+        multiplied in — 0.01 * 100000 = 1000, independent of price."""
+        result = pe.calculate_margin_notional_account_currency("USD/JPY", 160.19, 0.01, "USD")
+        self.assertTrue(result.converted)
+        self.assertEqual(result.conversion_mode, pe.CONVERSION_MODE_BASE_ACCOUNT_INVERSE)
+        self.assertAlmostEqual(float(result.notional_account), 1000.0, places=2)
+
+    def test_case_b_usdjpy_notional_independent_of_price_150(self):
+        result = pe.calculate_margin_notional_account_currency("USD/JPY", 150.0, 0.01, "USD")
+        self.assertAlmostEqual(float(result.notional_account), 1000.0, places=2)
+
+    def test_case_b_usdjpy_notional_independent_of_price_170(self):
+        result = pe.calculate_margin_notional_account_currency("USD/JPY", 170.0, 0.01, "USD")
+        self.assertAlmostEqual(float(result.notional_account), 1000.0, places=2)
+
+    def test_case_b_usdchf_latent(self):
+        """USD/CHF is enabled=False today (not tradeable) but the PURE
+        helper is testable directly regardless — same Case B shape as
+        USD/JPY (base=USD=account_currency)."""
+        result = pe.calculate_margin_notional_account_currency("USD/CHF", 0.90000, 0.01, "USD")
+        self.assertTrue(result.converted)
+        self.assertEqual(result.conversion_mode, pe.CONVERSION_MODE_BASE_ACCOUNT_INVERSE)
+        self.assertAlmostEqual(float(result.notional_account), 1000.0, places=2)
+
+    def test_case_b_usdcad_latent(self):
+        result = pe.calculate_margin_notional_account_currency("USD/CAD", 1.37000, 0.01, "USD")
+        self.assertTrue(result.converted)
+        self.assertEqual(result.conversion_mode, pe.CONVERSION_MODE_BASE_ACCOUNT_INVERSE)
+        self.assertAlmostEqual(float(result.notional_account), 1000.0, places=2)
+
+    def test_case_c_fails_closed_no_invented_rate(self):
+        """Neither base (GBP) nor quote (USD) matches account_currency
+        (EUR), and no explicit rate is supplied — must fail closed, never
+        assume 1:1, never fabricate a rate."""
+        result = pe.calculate_margin_notional_account_currency("GBP/USD", 1.35, 0.01, "EUR")
+        self.assertFalse(result.converted)
+        self.assertIsNone(result.notional_account)
+        self.assertEqual(result.error_code, pe.ERROR_NO_CONVERSION_RATE)
+
+    def test_invalid_currency_inputs_safe_not_raise(self):
+        result = pe.calculate_margin_notional_account_currency("NOTASYMBOL", 1.0, 0.01, "USD")
+        self.assertFalse(result.converted)
+        self.assertIsNone(result.notional_account)
+        self.assertIsNotNone(result.error_code)
+
+    def test_contract_size_preserved(self):
+        """contract_size is read from the real SymbolSpec registry, never
+        hardcoded — EUR/USD's 100,000 flows through unchanged."""
+        result = pe.calculate_margin_notional_account_currency("EUR/USD", 1.0, 1.0, "USD")
+        self.assertAlmostEqual(float(result.notional_quote), 100000.0, places=2)
+
+    def test_helper_has_no_db_side_effects(self):
+        """Pure — no Django ORM import anywhere in the call chain."""
+        import inspect
+        source = inspect.getsource(pe.calculate_margin_notional_account_currency)
+        self.assertNotIn("django.db", source)
+        self.assertNotIn(".objects.", source)
+        self.assertNotIn(".save(", source)
+
+
+class CalculateRequiredMarginTests(SimpleTestCase):
+    """calculate_required_margin() — the float convenience wrapper every
+    real margin call site (consumers.py, risk_engine.py, tasks.py) uses."""
+
+    def test_usdjpy_100x_leverage_is_10_dollars(self):
+        margin, error = pe.calculate_required_margin("USD/JPY", 160.19, 0.01, 100, "USD")
+        self.assertIsNone(error)
+        self.assertAlmostEqual(margin, 10.0, places=2)
+
+    def test_leverage_applied_after_currency_conversion(self):
+        """50x leverage on the SAME (already-converted) $1000 notional
+        must give exactly double the margin of 100x — proving leverage
+        divides the converted account-currency notional, not a
+        pre-conversion quote-currency figure."""
+        margin_100x, _ = pe.calculate_required_margin("USD/JPY", 160.19, 0.01, 100, "USD")
+        margin_50x, _ = pe.calculate_required_margin("USD/JPY", 160.19, 0.01, 50, "USD")
+        self.assertAlmostEqual(margin_50x, margin_100x * 2, places=6)
+
+    def test_eurusd_unchanged_at_100x(self):
+        margin, error = pe.calculate_required_margin("EUR/USD", 1.15921, 0.01, 100, "USD")
+        self.assertIsNone(error)
+        self.assertAlmostEqual(margin, 11.5921, places=4)
+
+    def test_case_c_returns_none_and_error_code(self):
+        margin, error = pe.calculate_required_margin("GBP/USD", 1.35, 0.01, 100, "EUR")
+        self.assertIsNone(margin)
+        self.assertIsNotNone(error)

@@ -189,8 +189,33 @@ def evaluate_position_risk(account, symbol: str, lot_size: float,
     contract_size = sym_spec.contract_size if sym_spec else 1.0
     effective_leverage = max(1, min(leverage, sym_spec.max_leverage if sym_spec else leverage))
 
+    # notional/exposure_pct/est_adverse_loss/dd_impact_pct below are a
+    # DIFFERENT, pre-existing "exposure" metric family (documented
+    # elsewhere in this codebase, e.g. broker_exposure.py, as distinct
+    # from margin) — deliberately untouched by FIX-USDJPY-MARGIN-01-B,
+    # whose scope is required_margin specifically.
     notional = lot_size * price * contract_size
-    new_margin = notional / effective_leverage
+
+    # FIX-USDJPY-MARGIN-01-B — new_margin (the figure this function's
+    # margin-call risk assessment actually uses) is base/quote-aware,
+    # via the same shared helper every other margin path uses.
+    from . import pnl_engine as _pnl_engine
+    account_currency = getattr(account, "currency", None) or "USD"
+    new_margin, _margin_error_code = _pnl_engine.calculate_required_margin(
+        symbol, price, lot_size, effective_leverage, account_currency,
+    )
+    if new_margin is None:
+        # Unreachable today (every enabled symbol is Case A or B) — see
+        # pnl_engine.position_pnl_float's identical precedent: log
+        # loudly, never fabricate a number for a risk preview.
+        import logging as _logging
+        _logging.getLogger("simulator.pnl").critical(
+            "[risk_engine] event=margin_conversion_unsupported symbol=%s "
+            "account_currency=%s error_code=%s — new_margin=0.0, NOT a "
+            "fabricated number.",
+            symbol, account_currency, _margin_error_code,
+        )
+        new_margin = 0.0
 
     balance = float(account.balance)
     peak = float(account.peak_balance) if float(account.peak_balance) > 0 else balance

@@ -82,6 +82,7 @@ def _compute_pretrade_margin_guard(
     spec_contract_size: float,
     max_margin_per_trade_pct: float = _DEFAULT_MAX_MARGIN_PER_TRADE_PCT,
     max_total_margin_pct: float = _DEFAULT_MAX_TOTAL_MARGIN_PCT,
+    account_currency: str = "USD",
 ) -> tuple[bool, str, str, dict]:
     """
     Pure pre-trade guard — no I/O, no DB, no side effects.
@@ -100,6 +101,9 @@ def _compute_pretrade_margin_guard(
                  (_compute_atomic_open_guard). No formula is duplicated.
 
     Checks (in order):
+      0. margin currency conversion — required_margin must be computable
+         in account_currency (FIX-USDJPY-MARGIN-01-B); fails closed,
+         never fabricates a rate or assumes 1:1 (see below)
       1. allowed_symbols_snapshot  — symbol whitelist
       2. max_lot_size_snapshot     — product-level hard lot cap
       3. per-trade margin %        — required_margin / equity ≤ max_margin_per_trade_pct
@@ -116,11 +120,55 @@ def _compute_pretrade_margin_guard(
     (product snapshot, falling back to 10.0/50.0 — see the O.6c-1e
     hydration comments). No formula changed — only where the two
     thresholds come from.
+
+    FIX-USDJPY-MARGIN-01-B — required_margin is derived from
+    pnl_engine.calculate_required_margin(), the single base/quote-aware
+    notional helper every real margin path in this codebase now shares
+    (Design Lock FIX-USDJPY-MARGIN-01-A). account_currency defaults to
+    "USD" for any caller/test that predates this parameter — identical
+    behavior to before this block for every account whose currency is
+    USD (100% of real accounts today, per the MARGIN-01/02 audit this
+    block's Design Lock cites). spec_contract_size is no longer read by
+    this function's own math (the helper re-derives contract_size from
+    market_data.symbol_specs itself, guaranteeing it can never drift
+    from what the rest of the system uses) — kept as a required
+    parameter only so every existing positional call site/test keeps
+    working unchanged; minimal-diff choice over a signature change that
+    would ripple into call sites unrelated to this fix.
     """
     account_lev = max(1, int(account_snap.get("leverage", 50)))
     effective_lev = max(1, min(account_lev, spec_max_leverage))
-    required_margin = abs(entry_px * qty * spec_contract_size) / effective_lev
     equity_safe = max(float(equity), 0.01)
+
+    required_margin, _margin_error_code = pnl_engine.calculate_required_margin(
+        symbol, entry_px, qty, effective_lev, account_currency,
+    )
+    if required_margin is None:
+        # Case C (Design Lock §H) — account currency matches neither
+        # base nor quote and no explicit conversion rate is available.
+        # Unreachable today (every enabled symbol is Case A or B) — but
+        # when it does happen, fail closed: never open at a fabricated
+        # or 1:1-assumed margin.
+        logging.getLogger("simulator.guard").error(
+            "[guard] REJECTED margin_currency_conversion_unavailable | sym=%s qty=%s "
+            "entry_px=%.5f account_currency=%s error_code=%s",
+            symbol, qty, entry_px, account_currency, _margin_error_code,
+        )
+        return (
+            False,
+            "margin_currency_conversion_unavailable",
+            (
+                "Orden rechazada: no se pudo calcular el margen requerido en la "
+                "moneda de la cuenta para este símbolo."
+            ),
+            {
+                "required_margin": 0.0, "required_margin_pct": 0.0,
+                "projected_total_margin": round(float(margin_used_now), 4),
+                "projected_total_margin_pct": round(float(margin_used_now) / equity_safe * 100.0, 2),
+                "max_total_margin_pct": max_total_margin_pct,
+            },
+        )
+
     per_trade_pct = required_margin / equity_safe * 100.0
     total_margin_after = float(margin_used_now) + required_margin
     total_margin_pct = total_margin_after / equity_safe * 100.0
@@ -354,6 +402,7 @@ def _compute_atomic_open_guard(
     is_new_position: bool,
     fresh_open_count: int,
     max_open_positions: int,
+    account_currency: str = "USD",
 ) -> dict:
     """
     PANEL-02 — the single authoritative order-open validator. Called ONLY
@@ -444,6 +493,7 @@ def _compute_atomic_open_guard(
         account_snap, spec.max_leverage, spec.contract_size,
         max_margin_per_trade_pct=account_snap.get("max_margin_per_trade_pct", _DEFAULT_MAX_MARGIN_PER_TRADE_PCT),
         max_total_margin_pct=account_snap.get("max_total_margin_pct", _DEFAULT_MAX_TOTAL_MARGIN_PCT),
+        account_currency=account_currency,
     )
     return {
         "ok": guard_ok,
@@ -1436,6 +1486,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
             self.account, _spec.max_leverage, _spec.contract_size,
             max_margin_per_trade_pct=self.account.get("max_margin_per_trade_pct", _DEFAULT_MAX_MARGIN_PER_TRADE_PCT),
             max_total_margin_pct=self.account.get("max_total_margin_pct", _DEFAULT_MAX_TOTAL_MARGIN_PCT),
+            account_currency=self.account.get("currency", "USD"),
         )
         if not _guard_ok:
             await self.send_json({"type": "error", "code": _guard_code, "message": _guard_msg})
@@ -2153,7 +2204,20 @@ class TradingConsumer(AsyncWebsocketConsumer):
         entry_px = self._raw_exec_price(symbol, side)
         if entry_px is None:
             return False, "price_unavailable"
-        est_margin = abs(entry_px * qty * spec.contract_size) / lev
+        # FIX-USDJPY-MARGIN-01-B — base/quote-aware notional, same shared
+        # helper every other margin path in this file now uses. Fails
+        # closed (never assumes 1:1) — unreachable today, every enabled
+        # symbol is Case A or B.
+        est_margin, _margin_error_code = pnl_engine.calculate_required_margin(
+            symbol, entry_px, qty, lev, self.account.get("currency", "USD"),
+        )
+        if est_margin is None:
+            log.error(
+                "[guard] REJECTED margin_currency_conversion_unavailable | sym=%s qty=%s "
+                "entry_px=%.5f error_code=%s",
+                symbol, qty, entry_px, _margin_error_code,
+            )
+            return False, "margin_currency_conversion_unavailable"
         equity = self.account["balance"] + self._unrealized_pnl_total()
         if est_margin > (equity - self._margin_used_total()):
             return False, "insufficient_margin"
@@ -2286,13 +2350,32 @@ class TradingConsumer(AsyncWebsocketConsumer):
         self._daily_realized_pnl += amount
 
     def _margin_used_total(self):
+        # FIX-USDJPY-MARGIN-01-B — base/quote-aware notional per position,
+        # same shared helper every margin path in this file now uses.
         account_lev = max(1, int(self.account.get("leverage", 50)))
+        account_currency = self.account.get("currency", "USD")
         total = 0.0
         for p in self._positions:
             spec = get_spec(p["symbol"])
             lev = max(1, min(account_lev, spec.max_leverage))
-            notional = abs(p["avg"] * p["qty"] * spec.contract_size)
-            total += notional / lev
+            margin, error_code = pnl_engine.calculate_required_margin(
+                p["symbol"], p["avg"], p["qty"], lev, account_currency,
+            )
+            if margin is None:
+                # Unreachable today (no open position can exist for a
+                # Case-C symbol — the pretrade guard already rejects
+                # opening one). Mirrors pnl_engine.position_pnl_float's
+                # own established precedent for this identical
+                # impossible case: log loudly, never fabricate a number.
+                log.critical(
+                    "[margin] event=margin_conversion_unsupported symbol=%s "
+                    "account_currency=%s error_code=%s — contributing 0.0 to "
+                    "margin_used_total, NOT a fabricated number. This should be "
+                    "unreachable with current account currencies/enabled symbols.",
+                    p["symbol"], account_currency, error_code,
+                )
+                continue
+            total += margin
         return total
 
     async def _recalc_account_and_push(self):
@@ -3472,7 +3555,8 @@ class TradingConsumer(AsyncWebsocketConsumer):
             # 4. Fresh margin_used — derived from the locked Position rows'
             # own avg_price/qty (DB Decimal fields), never from
             # self._positions/self._margin_used_total(). Same formula as
-            # _margin_used_total(), just fed DB-fresh data — no price
+            # _margin_used_total() (FIX-USDJPY-MARGIN-01-B: same shared
+            # base/quote-aware helper), just fed DB-fresh data — no price
             # dependency at all (margin uses each position's own entry
             # price, not a live price).
             account_lev = max(1, int(self.account.get("leverage", 50)))
@@ -3480,9 +3564,20 @@ class TradingConsumer(AsyncWebsocketConsumer):
             for _p in open_positions:
                 _pspec = get_spec(_p.symbol)
                 _plev = max(1, min(account_lev, _pspec.max_leverage))
-                fresh_margin_used += (
-                    abs(float(_p.avg_price) * float(_p.qty) * _pspec.contract_size) / _plev
+                _pmargin, _pmargin_error = pnl_engine.calculate_required_margin(
+                    _p.symbol, float(_p.avg_price), float(_p.qty), _plev, account.currency,
                 )
+                if _pmargin is None:
+                    # Unreachable today — see _margin_used_total()'s
+                    # identical comment for the full reasoning.
+                    log.critical(
+                        "[margin] event=margin_conversion_unsupported symbol=%s "
+                        "account_currency=%s error_code=%s — contributing 0.0 to "
+                        "fresh_margin_used, NOT a fabricated number.",
+                        _p.symbol, account.currency, _pmargin_error,
+                    )
+                    continue
+                fresh_margin_used += _pmargin
 
             # 5. max_open_positions — fetched now (price-independent) so
             # it's available in the structured response even if step 6
@@ -3567,6 +3662,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 symbol, qty, price, account.status, _account_snap, _spec,
                 fresh_equity, fresh_margin_used, is_new_position, fresh_open_count,
                 _rule.max_open_positions,
+                account_currency=account.currency,
             )
             if not guard["ok"]:
                 # Rejected under lock — nothing is created, no commission

@@ -927,9 +927,30 @@ def _compute_offline_equity_margin(pos_list: list, prices: dict, account) -> tup
         total_floating     += fp
         pos_fp_map[pos.id]  = fp
 
-        lev      = max(1, min(account_lev, spec.max_leverage))
-        notional = abs(avg * qty * spec.contract_size)
-        margin_used += notional / lev
+        # FIX-USDJPY-MARGIN-01-B — same shared base/quote-aware helper as
+        # every other margin path. This total drives REAL offline
+        # stopout (see the caller, ~line 1150: equity/margin_used < 50%)
+        # — must never diverge from the online margin_used the WS path
+        # computes for the identical position.
+        lev = max(1, min(account_lev, spec.max_leverage))
+        pos_margin, pos_margin_error = pnl_engine.calculate_required_margin(
+            pos.symbol, avg, qty, lev, account_currency,
+        )
+        if pos_margin is None:
+            # Unreachable today (every enabled symbol is Case A or B) —
+            # same established precedent as position_pnl_float() just
+            # above: log loudly, never fabricate a number. Contributing
+            # 0.0 here (rather than halting the daemon cycle) mirrors
+            # _margin_used_total()'s identical online-path decision — see
+            # that function's comment for the full reasoning.
+            logger.critical(
+                "[tasks] event=margin_conversion_unsupported symbol=%s "
+                "account_currency=%s error_code=%s — contributing 0.0 to "
+                "offline margin_used, NOT a fabricated number.",
+                pos.symbol, account_currency, pos_margin_error,
+            )
+            pos_margin = 0.0
+        margin_used += pos_margin
 
     equity = float(account.balance) + total_floating
     return equity, margin_used, total_floating, pos_fp_map

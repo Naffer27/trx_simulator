@@ -23,6 +23,7 @@ from simulator.risk_engine import (
     check_and_enforce_risk,
     check_equity_stopout,
     compute_margin_state,
+    evaluate_position_risk,
     validate_order_risk,
 )
 
@@ -279,6 +280,76 @@ class TestRetailStopoutLevelSnapshot(SimpleTestCase):
                 account_type="RETAIL", margin_used=0.0, stopout_level=99.0,
             )
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FIX-USDJPY-MARGIN-01-B — evaluate_position_risk()'s new_margin (the risk
+# preview's margin-call figure, path #5 of the 6 corrected in this block)
+# must agree with the SAME base/quote-aware pnl_engine helper every other
+# margin path uses — never the old price*qty*contract_size formula.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestEvaluatePositionRiskUsdJpyConsistency(TestCase):
+    def setUp(self):
+        self.account = make_account(account_type="RETAIL", balance=Decimal("9832"))
+        self.account.leverage = 100
+        self.account.currency = "USD"
+        self.account.stopout_level_snapshot = Decimal("70.00")
+        self.account.save()
+
+    def test_usdjpy_margin_matches_shared_helper_not_old_formula(self):
+        """No live FeedManager price in this test process — the function
+        falls back to SymbolSpec.base_price (155.000 for USD/JPY, market_data/
+        symbol_specs.py) internally. Recompute the expected margin the
+        SAME way (base_price -> shared helper) rather than assuming any
+        particular live price."""
+        from simulator import pnl_engine
+        from market_data.symbol_specs import get_spec
+        base_price = get_spec("USD/JPY").base_price
+        result = evaluate_position_risk(
+            self.account, "USD/JPY", 0.01, current_equity=9832.0,
+            current_margin_used=0.0, leverage=100,
+        )
+        expected, _ = pnl_engine.calculate_required_margin("USD/JPY", base_price, 0.01, 100, "USD")
+        self.assertIn("new_margin_required", result)  # RETAIL engine key (compute_margin_state)
+        self.assertAlmostEqual(result["new_margin_required"], expected, places=2)
+        # And explicitly NOT the old buggy value (base_price * qty * contract_size / lev).
+        old_buggy_value = abs(base_price * 0.01 * 100_000) / 100
+        self.assertNotAlmostEqual(result["new_margin_required"], old_buggy_value, places=0)
+
+    def test_usdjpy_margin_pct_is_small_not_inflated_160x(self):
+        """The exact symptom from GOLDEN-USDJPY-MARGIN-01: before this
+        fix, used_margin_pct for 0.01 USD/JPY on this account would have
+        been ~16%. After the fix it must be well under 1%."""
+        result = evaluate_position_risk(
+            self.account, "USD/JPY", 0.01, current_equity=9832.0,
+            current_margin_used=0.0, leverage=100,
+        )
+        self.assertLess(result["used_margin_pct"], 1.0)
+
+    def test_risk_preview_matches_order_execution_guard(self):
+        """FIX-USDJPY-MARGIN-01-B §12 — the risk_preview WS action's
+        margin figure (evaluate_position_risk, informational) must equal
+        the margin actually enforced when the order executes
+        (_compute_pretrade_margin_guard) for the identical inputs — both
+        now delegate to the same pnl_engine helper, so a preview can
+        never show one number while the real order charges another."""
+        from market_data.symbol_specs import get_spec
+        from simulator.consumers import _compute_pretrade_margin_guard
+
+        base_price = get_spec("USD/JPY").base_price
+        preview = evaluate_position_risk(
+            self.account, "USD/JPY", 0.01, current_equity=9832.0,
+            current_margin_used=0.0, leverage=100,
+        )
+        spec = get_spec("USD/JPY")
+        snap = {"leverage": 100, "margin_call_level": 100.0}
+        _ok, _code, _msg, guard_details = _compute_pretrade_margin_guard(
+            "USD/JPY", 0.01, base_price, 9832.0, 0.0,
+            snap, spec.max_leverage, spec.contract_size,
+            account_currency="USD",
+        )
+        self.assertAlmostEqual(preview["new_margin_required"], guard_details["required_margin"], places=2)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
