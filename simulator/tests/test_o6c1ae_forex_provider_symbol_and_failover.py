@@ -185,60 +185,19 @@ class FinnhubProtocolErrorHandlingTests(SimpleTestCase):
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# C — failover: _try_live_legacy() falls through to sim, never fabricates
+# C — B2-FOREX-PROVIDER-CLEANUP-01: Finnhub is no longer a Forex runtime
+#     fallback for any of the 4 active pairs — removed. Massive is the
+#     sole runtime provider; a Massive failure for EUR/USD now goes
+#     straight to "unpriced" (get_validated_quote() fail-closed), never a
+#     Finnhub hand-off. Coverage of that dispatch behavior now lives in
+#     simulator/tests/test_fix05b3_massive_forex_live.py
+#     (DispatchPriorityTests.test_massive_failure_never_falls_through_to_
+#     finnhub). _finnhub_loop()'s own protocol-error handling (raises
+#     instead of hanging, logs, on_terminal_failure fires) remains real,
+#     working code — still covered above by
+#     FinnhubProtocolErrorHandlingTests, which tests the function
+#     directly rather than its (now removed) role in Forex dispatch.
 # ─────────────────────────────────────────────────────────────────────────
-class ForexFailoverTests(SimpleTestCase):
-    def setUp(self):
-        self.fm = FeedManager()
-        self.channel_layer = MagicMock()
-        self.channel_layer.group_send = AsyncMock()
-        self._write_cache_patch = patch("market_data.feeds._write_price_cache", new=AsyncMock())
-        self._write_cache_patch.start()
-        self.addCleanup(self._write_cache_patch.stop)
-        self._sleep_patch = patch("market_data.feeds.asyncio.sleep", new=AsyncMock())
-        self._sleep_patch.start()
-        self.addCleanup(self._sleep_patch.stop)
-        self._key_patch = patch("market_data.feeds.FINNHUB_API_KEY", "fake-key-for-test")
-        self._key_patch.start()
-        self.addCleanup(self._key_patch.stop)
-        # FIX-05B.3-B1 — this class drives _try_live_legacy("EUR/USD", ...)
-        # directly, which now tries Massive before Finnhub. These tests
-        # predate Massive and exist specifically to isolate Finnhub's own
-        # failover behavior — a real MASSIVE_API_KEY in the environment
-        # would otherwise let Massive's own websockets.connect() call
-        # consume this test's Finnhub-scoped mock (StopIteration) or, in
-        # other tests in this file, attempt a real network connection.
-        # Empty key keeps _try_live_legacy's Massive branch inert, exactly
-        # preserving this file's original Finnhub-only intent.
-        self._massive_key_patch = patch("market_data.feeds.MASSIVE_API_KEY", "")
-        self._massive_key_patch.start()
-        self.addCleanup(self._massive_key_patch.stop)
-
-    def test_permanent_protocol_error_returns_false_lets_feed_loop_fall_to_sim(self):
-        """(1)(9) EUR/USD has no Binance/Kraken symbol in the registry
-        (both None), so once Finnhub gives up, _try_live_legacy() must
-        return False — the exact signal _feed_loop() reads to run
-        _sim_loop() next. No price is fabricated here; this only proves
-        the hand-off happens, never a base_price_for()/candle-history
-        shortcut."""
-        connect_mock = make_connect_mock([[FINNHUB_ERROR_INVALID_SYMBOL]] * 3)
-        with patch("market_data.feeds.websockets.connect", connect_mock):
-            result = _run(self.fm._try_live_legacy("EUR/USD", self.channel_layer))
-        self.assertFalse(result)
-
-    def test_transient_connection_failure_then_recovery_still_broadcasts(self):
-        """(9) a transient (non-protocol) failure on the first attempt
-        must not prevent a later, successful attempt from broadcasting
-        once the connection recovers."""
-        boom = RuntimeError("temporary network blip")
-        connect_mock = make_connect_mock([
-            boom,
-            [FINNHUB_TICK_EURUSD, asyncio.CancelledError()],
-        ])
-        with patch("market_data.feeds.websockets.connect", connect_mock):
-            with self.assertRaises(asyncio.CancelledError):
-                _run(self.fm._finnhub_loop("EUR/USD", self.channel_layer))
-        self.channel_layer.group_send.assert_awaited()
 
 
 # ─────────────────────────────────────────────────────────────────────────
