@@ -336,10 +336,40 @@ class RedisCleanupTests(TestCase):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class AdminSiteLoginAuditTests(TestCase):
+    """
+    AUDIT04B-ORDER-FLAKE-01 — this class drives the REAL admin login view
+    (MoneyBrokerAdminSite.login(), O.4d-1), which increments real,
+    Redis-backed, TTL'd (300s) rate-limit counters
+    (trx:rl:admin_login_fail:ip:<ip> / :user:<username>) on every failed
+    attempt. Unlike test_o4d1_admin_login_rate_limiting.py /
+    test_o4d3_admin_totp_bruteforce_e2e.py (which use unique per-test IPs
+    AND clean up defensively), this class always uses the Django test
+    Client's default IP and a small, fixed set of usernames — so two
+    invocations within the same 300s window accumulate on top of each
+    other and can cross the real threshold, blocking every subsequent
+    admin login attempt (success or failure) before any audit event is
+    ever created. Confirmed root cause, not a random flake — see
+    AUDIT04B-ORDER-FLAKE-01. _cleanup_admin_login_rate_limit() clears
+    only this class's own keys, before AND after every test, so this
+    class can never leak into (or be leaked into by) any other run.
+    """
+
+    def _cleanup_admin_login_rate_limit(self):
+        from simulator.ratelimit import _get_rl_redis, _RL_PREFIX
+        r = _get_rl_redis()
+        keys = r.keys(f"{_RL_PREFIX}admin_login_fail:*")
+        if keys:
+            r.delete(*keys)
+
     def setUp(self):
+        self._cleanup_admin_login_rate_limit()
         self.staff = make_user(username="a04b_staff", password="StaffPass!1",
                                 is_staff=True, is_superuser=True)
         self.non_staff = make_user(username="a04b_nonstaff", password="NonStaff!1")
+
+    def tearDown(self):
+        self._cleanup_admin_login_rate_limit()
+        super().tearDown()
 
     def test_successful_login_creates_event(self):
         self.client.post(ADMIN_LOGIN_URL, {
