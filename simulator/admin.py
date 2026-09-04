@@ -28,6 +28,7 @@ from .models import (
     RoutingDecision,
     LiquidityProvider, LiquidityDecision, LiquidityLedger,
     DealingDeskDecision,
+    PendingOrder,
 )
 from . import challenge_engine
 from .secure_media import broker_document_secure_widget, kyc_secure_widget
@@ -1137,6 +1138,84 @@ class PositionAdmin(admin.ModelAdmin):
         # still exists.
         from market_data.feeds import get_feed_manager
         transaction.on_commit(lambda: get_feed_manager().sync_position_symbol_from_db(symbol))
+
+
+# ─────────────────────────────────────────────
+# PendingOrder — ORDER-MANAGEMENT-V2A
+# ─────────────────────────────────────────────
+
+def _admin_cancel_pending_order(pending_order_id: int) -> dict:
+    """Design lock section 10 — Admin must never bypass the same
+    select_for_update/status-guard discipline every other cancel path
+    uses (TradingConsumer._db_cancel_pending_order). A plain field edit
+    to status='CANCELLED' via the change form would skip that guard
+    entirely (no lock, no race protection against a trigger mid-flight)
+    — status is therefore a readonly field on PendingOrderAdmin below,
+    and this action is the ONLY way an admin can cancel a PENDING row."""
+    from django.db import transaction as _tx
+    from django.utils import timezone
+    from . import ws_events
+    with _tx.atomic():
+        po = (
+            PendingOrder.objects.select_for_update()
+            .filter(pk=pending_order_id)
+            .first()
+        )
+        if po is None:
+            return {"ok": False, "code": "not_found"}
+        if po.status != PendingOrder.PENDING:
+            return {"ok": False, "code": "not_pending"}
+        po.status = PendingOrder.CANCELLED
+        po.cancelled_at = timezone.now()
+        po.save(update_fields=["status", "cancelled_at", "updated_at"])
+        _tx.on_commit(lambda: ws_events.publish_pending_order_changed(
+            po.account_id, action=ws_events.ACTION_PENDING_CANCEL, pending_order_id=po.id,
+        ))
+        return {"ok": True}
+
+
+@admin.register(PendingOrder)
+class PendingOrderAdmin(admin.ModelAdmin):
+    list_display = (
+        "id", "account", "symbol", "order_type", "side", "qty", "trigger_price",
+        "sl", "tp", "status", "expires_at", "created_at",
+    )
+    list_filter = ("status", "order_type", "side", "symbol", "account")
+    search_fields = ("symbol", "account__user__username", "account__user__email")
+    # status/triggered_*/cancelled_at are transition outcomes, never a
+    # free-text admin edit — see _admin_cancel_pending_order's docstring.
+    readonly_fields = ("status", "created_at", "updated_at", "triggered_at",
+                        "triggered_position_id", "cancelled_at")
+    actions = ["cancel_selected_pending_orders"]
+
+    @admin.action(description="Cancel selected pending orders")
+    def cancel_selected_pending_orders(self, request, queryset):
+        cancelled, skipped = 0, 0
+        for pending_order_id in queryset.values_list("id", flat=True):
+            result = _admin_cancel_pending_order(pending_order_id)
+            if result["ok"]:
+                cancelled += 1
+            else:
+                skipped += 1
+        if cancelled:
+            self.message_user(request, f"{cancelled} pending order(s) cancelled.")
+        if skipped:
+            self.message_user(request, f"{skipped} skipped (already triggered/cancelled/expired).")
+
+    # Same writer-map discipline as PositionAdmin above — any Position
+    # writer must propagate; a PendingOrder writer must too. save_model
+    # here only ever touches editable (non-status) fields — see
+    # readonly_fields — so this is a plain field-edit notification, never
+    # a state transition (those all funnel through _admin_cancel_pending_
+    # order's own on_commit above).
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        from django.db import transaction
+        from . import ws_events
+        account_id, pending_order_id = obj.account_id, obj.pk
+        transaction.on_commit(lambda: ws_events.publish_pending_order_changed(
+            account_id, action=ws_events.ACTION_PENDING_UPDATE, pending_order_id=pending_order_id,
+        ))
 
 
 # ─────────────────────────────────────────────

@@ -1407,6 +1407,129 @@ def scan_positions_task(self) -> dict:
 
 
 # ──────────────────────────────────────────────────────
+# ORDER-MANAGEMENT-V2A — Offline pending-order trigger/expiry daemon
+# Sibling of scan_positions_task above, dedicated schedule (design lock
+# section 8 — NOT folded into scan_positions_task's own responsibility).
+# Catches limit/stop triggers and GTC/expires_at sweeps while the
+# trader's WebSocket is disconnected.
+# ──────────────────────────────────────────────────────
+
+@shared_task(
+    name="simulator.scan_pending_orders",
+    bind=True,
+    max_retries=0,
+    acks_late=True,
+    soft_time_limit=25,
+    time_limit=29,
+)
+def scan_pending_orders_task(self) -> dict:
+    """
+    Offline execution daemon for PendingOrder (ORDER-MANAGEMENT-V2A).
+    Per tick cycle: for every status=PENDING row, checks expiry first
+    (design lock section 6 — precedence over trigger), then the trigger
+    condition table (design lock section 2/C). Every actual state
+    transition — TRIGGERED, EXPIRED, or REJECTED — happens INSIDE
+    consumers._trigger_pending_order_core(), under its own
+    select_for_update(PendingOrder) + BrokerRiskLock + TradingAccount +
+    Position lock chain: the exact same function
+    TradingConsumer._check_pending_triggers() (the live WS path) calls.
+    Zero duplicated margin/risk/expiry logic between the live and daemon
+    paths — this task only decides WHICH rows to attempt and WHAT
+    execution_price to pass; the decision itself always happens in that
+    one shared, lock-protected function.
+    """
+    import time as _time
+    from django.utils import timezone as _tz
+    from .models import PendingOrder
+    from .consumers import _trigger_pending_order_core, _pending_trigger_condition_met
+
+    t0  = _time.monotonic()
+    now = _tz.now()
+
+    pending = list(
+        PendingOrder.objects
+        .filter(status=PendingOrder.PENDING)
+        .only("id", "symbol", "side", "order_type", "trigger_price", "expires_at", "account_id")
+        .order_by("account_id", "id")
+    )
+
+    if not pending:
+        logger.debug("[pending_daemon] no pending orders")
+        return {"scanned": 0, "triggered": 0, "expired": 0, "skipped_stale": 0, "elapsed_ms": 0}
+
+    scanned       = len(pending)
+    triggered     = 0
+    expired       = 0
+    skipped_stale = 0
+
+    # One Redis GET per unique symbol across the whole batch — same
+    # dedupe intent as scan_positions_task's per-account grouping, here
+    # broker-wide since PendingOrder rows are not grouped by account for
+    # pricing the way an account's own open Position rows are.
+    symbols = {p.symbol for p in pending}
+    prices: dict = {}
+    for sym in symbols:
+        bid, ask = _read_cached_price(sym)
+        if bid is not None and ask is not None:
+            prices[sym] = (bid, ask)
+
+    for po in pending:
+        if po.expires_at is not None and po.expires_at <= now:
+            # Route through the SAME shared core so the expiry write
+            # happens under the SAME select_for_update + status re-check
+            # as everything else (design lock section 5 — no separate,
+            # un-locked write here; a live tick could be mid-trigger for
+            # this exact row at this exact instant). execution_price is
+            # never read on the expiry branch (checked first, inside the
+            # core, before execution_price is ever touched) — the 0.0
+            # placeholder is intentionally inert.
+            try:
+                result = _trigger_pending_order_core(po.id, 0.0)
+            except Exception as exc:
+                logger.error("[pending_daemon] expiry check failed pending_order_id=%s: %s",
+                             po.id, exc, exc_info=True)
+                continue
+            if result.get("code") == "expired":
+                expired += 1
+            continue
+
+        if po.symbol not in prices:
+            skipped_stale += 1
+            continue
+
+        bid, ask = prices[po.symbol]
+        if not _pending_trigger_condition_met(po.order_type, po.side, float(po.trigger_price), bid, ask):
+            continue
+
+        execution_price = ask if po.side == "BUY" else bid
+        try:
+            result = _trigger_pending_order_core(po.id, execution_price)
+        except Exception as exc:
+            logger.error("[pending_daemon] trigger failed pending_order_id=%s: %s",
+                         po.id, exc, exc_info=True)
+            continue
+        if result.get("ok"):
+            triggered += 1
+            logger.info(
+                "[pending_daemon] pending_order_id=%s symbol=%s side=%s exec_px=%s -> position_id=%s",
+                po.id, po.symbol, po.side, execution_price, result.get("position_id"),
+            )
+
+    elapsed_ms = round((_time.monotonic() - t0) * 1000)
+    logger.info(
+        "[pending_daemon] scan done: scanned=%d triggered=%d expired=%d skipped_stale=%d elapsed=%dms worker=%s",
+        scanned, triggered, expired, skipped_stale, elapsed_ms, self.request.hostname,
+    )
+    return {
+        "scanned":       scanned,
+        "triggered":     triggered,
+        "expired":       expired,
+        "skipped_stale": skipped_stale,
+        "elapsed_ms":    elapsed_ms,
+    }
+
+
+# ──────────────────────────────────────────────────────
 # PHASE 2A — Cross-process price cache read validation
 # Read-only. No DB writes. No execution logic.
 # Remove or keep as smoke test after Phase 2A ships.

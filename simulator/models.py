@@ -311,6 +311,69 @@ class Position(models.Model):
         return f"{self.account_id} {self.symbol} {self.side} qty={self.qty} @ {self.avg_price}"
 
 
+class PendingOrder(models.Model):
+    """ORDER-MANAGEMENT-V2A — Pending (limit/stop) orders. Never executes
+    directly: only records intent + trigger condition. Execution always
+    happens through the same market-open authority a real market order
+    uses (see simulator/consumers.py::_trigger_pending_order_core) —
+    trigger_price only decides WHEN to attempt the open, never the fill
+    price (see that function's docstring)."""
+    LIMIT = 'LIMIT'
+    STOP = 'STOP'
+    ORDER_TYPE_CHOICES = [(LIMIT, LIMIT), (STOP, STOP)]
+
+    BUY = 'BUY'
+    SELL = 'SELL'
+    SIDE_CHOICES = [(BUY, BUY), (SELL, SELL)]
+
+    PENDING = 'PENDING'
+    TRIGGERED = 'TRIGGERED'
+    CANCELLED = 'CANCELLED'
+    EXPIRED = 'EXPIRED'
+    REJECTED = 'REJECTED'
+    STATUS_CHOICES = [
+        (PENDING,   PENDING),
+        (TRIGGERED, TRIGGERED),
+        (CANCELLED, CANCELLED),
+        (EXPIRED,   EXPIRED),
+        (REJECTED,  REJECTED),
+    ]
+
+    account = models.ForeignKey(TradingAccount, on_delete=models.CASCADE, related_name='pending_orders')
+    symbol = models.CharField(max_length=12)
+    side = models.CharField(max_length=4, choices=SIDE_CHOICES)
+    order_type = models.CharField(max_length=5, choices=ORDER_TYPE_CHOICES)
+    qty = models.DecimalField(max_digits=18, decimal_places=6)
+    trigger_price = models.DecimalField(max_digits=18, decimal_places=6)
+    sl = models.DecimalField(max_digits=18, decimal_places=6, null=True, blank=True)
+    tp = models.DecimalField(max_digits=18, decimal_places=6, null=True, blank=True)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=PENDING)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    expires_at = models.DateTimeField(null=True, blank=True)   # null = GTC
+    triggered_at = models.DateTimeField(null=True, blank=True)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+
+    # Audited in ORDER-MANAGEMENT-V2A — DESIGN LOCK FINAL, section 11.A:
+    # NOT a FK (Position rows can later close/disappear — same precedent
+    # as Trade never keeping a live FK back to the Position it closed),
+    # just a historical pointer set once, at the moment this order
+    # TRIGGERED, to whichever Position absorbed the fill (new row, or an
+    # existing row on a netting merge — see _trigger_pending_order_core).
+    triggered_position_id = models.IntegerField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["account", "status"], name="pendord_acc_status_idx"),
+            models.Index(fields=["symbol", "status"], name="pendord_sym_status_idx"),
+            models.Index(fields=["status", "expires_at"], name="pendord_status_exp_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.account_id} {self.symbol} {self.order_type} {self.side} qty={self.qty} trig={self.trigger_price} [{self.status}]"
+
+
 class LedgerEntry(models.Model):
     """Libro mayor: cada evento contable."""
     EV_DEPOSIT = 'DEPOSIT'

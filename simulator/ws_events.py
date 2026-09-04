@@ -31,6 +31,21 @@ ACTION_OPEN = "open"
 ACTION_CLOSE = "close"
 ACTION_UPDATE = "update"
 
+# ORDER-MANAGEMENT-V2A — same "never the source of truth, just a resync
+# signal" contract as EVENT_TYPE above, for the PendingOrder book instead
+# of the Position book. Separate event type/handler (pending_order_changed
+# in consumers.py) rather than overloading EVENT_TYPE, since the two
+# books are independent and a receiver only interested in one should
+# never have to filter the other out.
+EVENT_TYPE_PENDING = "pending_order.changed"
+
+ACTION_PENDING_NEW     = "new"
+ACTION_PENDING_CANCEL  = "cancel"
+ACTION_PENDING_UPDATE  = "update"
+ACTION_PENDING_TRIGGER = "trigger"
+ACTION_PENDING_EXPIRE  = "expire"
+ACTION_PENDING_REJECT  = "reject"
+
 
 def publish_position_changed(account_id, *, action, position_id=None, **extra):
     """
@@ -67,4 +82,28 @@ def publish_position_changed(account_id, *, action, position_id=None, **extra):
         log.warning(
             "[ws_events] publish failed account=%s action=%s position_id=%s: %r",
             account_id, action, position_id, exc,
+        )
+
+
+def publish_pending_order_changed(account_id, *, action, pending_order_id=None, **extra):
+    """ORDER-MANAGEMENT-V2A — PendingOrder-book equivalent of
+    publish_position_changed() above. Same fire-and-forget, never-the-
+    source-of-truth contract; same callable-from-sync-or-async-context
+    guarantee (async_to_sync), same fail-open (never raises)."""
+    if not account_id:
+        return
+    try:
+        from asgiref.sync import async_to_sync
+        from channels.layers import get_channel_layer
+        cl = get_channel_layer()
+        if not cl:
+            return
+        async_to_sync(cl.group_send)(
+            f"account_{account_id}",
+            {"type": EVENT_TYPE_PENDING, "action": action, "pending_order_id": pending_order_id, **extra},
+        )
+    except Exception as exc:
+        log.warning(
+            "[ws_events] publish failed account=%s action=%s pending_order_id=%s: %r",
+            account_id, action, pending_order_id, exc,
         )

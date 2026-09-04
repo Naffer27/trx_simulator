@@ -1026,7 +1026,7 @@
         <div class="btm-resize-handle" id="btmResizeHandle"></div>
         <div class="btm-tabs-bar">
           <button class="btm-tab active" data-btm="positions">Positions <span class="btm-count" id="btmPosCount"></span></button>
-          <button class="btm-tab" data-btm="orders">Orders</button>
+          <button class="btm-tab" data-btm="orders">Orders <span class="btm-count" id="btmOrdCount"></span></button>
           <button class="btm-tab" data-btm="history">History</button>
           <button class="btm-tab" data-btm="journal">Journal</button>
         </div>
@@ -1040,7 +1040,13 @@
             </table>
           </div>
           <div class="btm-pane" id="btmPaneOrders">
-            <div class="btm-empty"><i class="fa-solid fa-list-check" style="opacity:.22"></i> No pending orders</div>
+            <table class="btm-pos-table" id="ordTable" style="display:none">
+              <thead>
+                <tr><th>Symbol</th><th>Type</th><th>Side</th><th>Qty</th><th>Trigger</th><th>SL</th><th>TP</th><th>Status</th><th>Created</th><th>Actions</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+            <div class="btm-empty" id="ordEmpty"><i class="fa-solid fa-list-check" style="opacity:.22"></i> No pending orders</div>
           </div>
           <div class="btm-pane" id="btmPaneHistory"></div>
           <div class="btm-pane" id="btmPaneJournal">
@@ -1355,8 +1361,15 @@
         <div class="rc-field-row">
           <select id="ordType" class="rc-select rc-select-full">
             <option value="market" selected>Market Order</option>
-            <option value="limit" disabled>Limit (soon)</option>
+            <option value="limit">Limit Order</option>
+            <option value="stop">Stop Order</option>
           </select>
+        </div>
+
+        <!-- Trigger Price — ORDER-MANAGEMENT-V2A, only shown for limit/stop -->
+        <div class="rc-field-row" id="trigPriceRow" style="display:none">
+          <label class="rc-field-lbl">Trigger Price</label>
+          <input id="trigPrice" type="number" step="0.00001" placeholder="Precio de disparo" class="rc-input">
         </div>
 
         <!-- Volume -->
@@ -1417,7 +1430,7 @@
         <div class="rc-section-lbl">Quick Actions</div>
         <div class="rc-qa-grid">
           <button class="rc-qa-btn rc-qa-danger" onclick="showCloseAllConfirm()">Close All</button>
-          <button class="rc-qa-btn rc-qa-muted" onclick="alert('Cancel All — no pending orders')">Cancel All</button>
+          <button class="rc-qa-btn rc-qa-muted" onclick="cancelAllPendingOrders()">Cancel All</button>
         </div>
       </div>
 
@@ -1914,6 +1927,11 @@ function _adjustLot(dir){
 
 /* ── Global state ── */
 const allPanels=[];
+// ORDER-MANAGEMENT-V2A — account-wide (not per-panel/per-symbol, unlike
+// positionsCache): every panel's own WS connection receives the same
+// account_{id}-broadcast pending_orders resync, so any panel's handler
+// safely overwrites this single shared cache.
+let pendingOrdersCache=[];
 let activePanel=null;
 let globalProvider=localStorage.provider||'sim';
 const DEFAULT_SYMBOLS=['BTCUSD','EUR/USD','ETHUSD','GBP/USD'];
@@ -2837,6 +2855,21 @@ class TradingPanel {
       for(const p of allPanels){if(p===this)continue;p._renderLines(p.positionsCache);}
       renderGlobalPositions();return;
     }
+    // ORDER-MANAGEMENT-V2A — account-wide, always a full resync (see
+    // pendingOrdersCache's own comment above for why this is safe to
+    // overwrite unconditionally from any panel's socket).
+    if(msg.type==='pending_orders'){
+      if(Array.isArray(msg.items))pendingOrdersCache=msg.items;
+      renderGlobalPendingOrders();return;
+    }
+    if(msg.type==='error_pending'){
+      const label={'trigger_already_met':'El precio de disparo ya fue alcanzado','invalid_trigger_price':'Precio de disparo inválido','max_positions':'Límite de posiciones alcanzado','insufficient_margin':'Margen insuficiente','min_qty_violation':'Tamaño mínimo no alcanzado','max_lot_size':'Tamaño de lote excedido'};
+      execToast('close','⚠️ Orden pendiente rechazada',label[msg.code]||msg.message||msg.code||'error');
+      return;
+    }
+    if(msg.type==='order_pending_new'){execToast('buy','Orden pendiente creada',`${msg.order_type} ${msg.side} @ ${msg.trigger_price}`);return;}
+    if(msg.type==='order_pending_cancel'){execToast('close','Orden pendiente cancelada','');return;}
+    if(msg.type==='order_pending_update'){return;}
     if(msg.type==='order_ack'){
       // Only the panel that owns the in-flight ticket may resolve it —
       // see the 'error' branch above for why this can't be unconditional.
@@ -3584,6 +3617,50 @@ function renderGlobalPositions(){
   _syncTradingPanel();
 }
 
+/* ── ORDER-MANAGEMENT-V2A — Global pending orders table ── */
+function renderGlobalPendingOrders(){
+  const table=document.getElementById('ordTable'),empty=document.getElementById('ordEmpty');
+  if(!table)return;
+  const all=pendingOrdersCache;
+  const p=5;
+  if(!all.length){
+    table.style.display='none';if(empty)empty.style.display='';
+  }else{
+    table.style.display='';if(empty)empty.style.display='none';
+    const tbody=table.querySelector('tbody');
+    tbody.innerHTML=all.map(r=>{
+      const side=String(r.side||'buy').toLowerCase();
+      const sym=(r.symbol||'').replace('/','');
+      const qty=Number(r.qty||0);
+      const createdStr=r.created_ts?new Date(r.created_ts*1000).toLocaleTimeString():'-';
+      return `<tr data-id="${r.id}">
+        <td class="btm-td-${side}">${sym}</td>
+        <td>${(r.order_type||'').toUpperCase()}</td>
+        <td class="btm-td-${side}">${side.toUpperCase()}</td>
+        <td align="right">${qty.toFixed(getLotDecimals(r.symbol))}</td>
+        <td align="right">${fmt(r.trigger_price,p)}</td>
+        <td align="right">${r.sl!=null?fmt(r.sl,p):'-'}</td>
+        <td align="right">${r.tp!=null?fmt(r.tp,p):'-'}</td>
+        <td>${r.status||'PENDING'}</td>
+        <td>${createdStr}</td>
+        <td><div class="btm-actions">
+          <button class="btm-btn-close" data-id="${r.id}">✕</button>
+        </div></td>
+      </tr>`;
+    }).join('');
+    tbody.querySelectorAll('.btm-btn-close').forEach(btn=>{
+      btn.addEventListener('click',e=>{
+        e.stopPropagation();
+        const id=btn.getAttribute('data-id');
+        const panel=_anyOpenPanel();if(!panel)return;
+        panel.ws.send(JSON.stringify({action:'order:pending:cancel',id:String(id)}));
+      });
+    });
+  }
+  const btmCnt=document.getElementById('btmOrdCount');
+  if(btmCnt)btmCnt.textContent=all.length||'';
+}
+
 /* ── Account ── */
 function renderAccount(msg){
   window._lastAccountMsg=msg;
@@ -3794,10 +3871,15 @@ sheetSave.addEventListener('click',()=>{
 /* ── Order buttons ── */
 function sendActiveOrder(side){
   if(!activePanel)return;
+  const ordType=document.getElementById('ordType')?.value||'market';
   const sym=activePanel.currentSymbol;
   const rawQty=parseFloat(document.getElementById('qty')?.value);
   const qty=rawQty >= getLotMin(sym) ? +rawQty.toFixed(getLotDecimals(sym)) : getLotMin(sym);
   const slV=document.getElementById('sl').value,tpV=document.getElementById('tp').value;
+  if(ordType==='limit'||ordType==='stop'){
+    sendActivePendingOrder(side,ordType,sym,qty,slV!==''?Number(slV):null,tpV!==''?Number(tpV):null);
+    return;
+  }
   activePanel.sendOrder(side,qty,slV!==''?Number(slV):null,tpV!==''?Number(tpV):null);
 }
 document.getElementById('btnBuy').addEventListener('click',()=>sendActiveOrder('buy'));
@@ -3806,6 +3888,46 @@ btnTopBuy.addEventListener('click',()=>sendActiveOrder('buy'));
 btnTopSell.addEventListener('click',()=>sendActiveOrder('sell'));
 if(lotInc)lotInc.addEventListener('click',()=>{if(lotVal)lotVal.textContent=Math.min(100,parseFloat(lotVal.textContent||.3)+0.01).toFixed(2);});
 if(lotDec)lotDec.addEventListener('click',()=>{if(lotVal)lotVal.textContent=Math.max(0.01,parseFloat(lotVal.textContent||.3)-0.01).toFixed(2);});
+
+/* ── ORDER-MANAGEMENT-V2A — Pending orders (limit/stop) ── */
+const ordTypeEl=document.getElementById('ordType');
+if(ordTypeEl){
+  ordTypeEl.addEventListener('change',()=>{
+    const row=document.getElementById('trigPriceRow');
+    if(row)row.style.display=(ordTypeEl.value==='limit'||ordTypeEl.value==='stop')?'':'none';
+  });
+}
+
+// Deliberately independent of TradingChartPanel.sendOrder()/the PANEL-04
+// ticket state machine (orderTicketState/pendingTmp) — that machinery
+// exists for the market-order round trip's optimistic chart-line
+// placeholder, which pending orders never draw (design lock scope: no
+// chart visualization for pending orders in V2A). A pending order is a
+// simple fire-and-refresh: send order:pending:new, the backend's own
+// pending_orders resync (ws_events.publish_pending_order_changed ->
+// pending_order_changed -> _refresh_and_send_pending_orders) repaints
+// the Orders tab table.
+function sendActivePendingOrder(side,orderType,symbol,qty,slV,tpV){
+  const panel=_anyOpenPanel();
+  if(!panel){execToast('close','❌ Sin conexión','No se pudo enviar la orden — reconectando…');return;}
+  const trigRaw=document.getElementById('trigPrice')?.value;
+  const triggerPrice=trigRaw!==''&&trigRaw!=null?Number(trigRaw):NaN;
+  if(!Number.isFinite(triggerPrice)||triggerPrice<=0){
+    execToast('close','⚠️ Precio de disparo requerido','Ingresa un trigger price válido');
+    return;
+  }
+  const payload={action:'order:pending:new',symbol,side,order_type:orderType,qty,trigger_price:triggerPrice,sl:slV,tp:tpV};
+  try{panel.ws.send(JSON.stringify(payload));}
+  catch(e){execToast('close','❌ Error de conexión','No se pudo enviar la orden');return;}
+  execToast('send',`${orderType.toUpperCase()} ${side.toUpperCase()} pendiente enviada`,`@ ${triggerPrice}`);
+}
+
+function cancelAllPendingOrders(){
+  const panel=_anyOpenPanel();
+  if(!panel)return;
+  const ids=pendingOrdersCache.map(p=>p.id);
+  for(const id of ids)panel.ws.send(JSON.stringify({action:'order:pending:cancel',id:String(id)}));
+}
 
 /* ── Watchlist ── */
 document.querySelectorAll('.watchlist .wl').forEach(btn=>btn.addEventListener('click',()=>{

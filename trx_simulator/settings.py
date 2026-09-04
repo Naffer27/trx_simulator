@@ -423,6 +423,14 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": celery_td(seconds=30),
         "options":  {"expires": 28},   # drop if not picked up before next firing
     },
+    # ORDER-MANAGEMENT-V2A — offline pending-order (limit/stop) trigger +
+    # expiry daemon every 30 s. Dedicated schedule, deliberately NOT
+    # folded into scan-positions-30s above (design lock section 8).
+    "scan-pending-orders-30s": {
+        "task":     "simulator.scan_pending_orders",
+        "schedule": celery_td(seconds=30),
+        "options":  {"expires": 28},   # drop if not picked up before next firing
+    },
     # Broker revenue snapshot every 5 min — equity curve + trend analytics
     "take-revenue-snapshot-5m": {
         "task":     "simulator.take_revenue_snapshot",

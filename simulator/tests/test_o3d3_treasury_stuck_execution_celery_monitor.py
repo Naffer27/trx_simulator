@@ -354,8 +354,11 @@ class BeatScheduleTests(SimpleTestCase):
         # own BeatScheduleTests for that entry's dedicated coverage) +
         # FIX-02A.4's 2 new entries ("reconcile-unknown-payouts-15m",
         # "replay-payout-webhook-events-5m" — provider-agnostic UNKNOWN
-        # reconciliation / durable webhook replay).
-        self.assertEqual(len(schedule), 14)
+        # reconciliation / durable webhook replay) + ORDER-MANAGEMENT-V2A's
+        # 1 new entry ("scan-pending-orders-30s" — offline pending-order
+        # trigger/expiry daemon, dedicated schedule per that block's design
+        # lock section 8, not folded into "scan-positions-30s").
+        self.assertEqual(len(schedule), 15)
 
     def test_no_other_task_names_were_renamed_or_removed(self):
         from django.conf import settings

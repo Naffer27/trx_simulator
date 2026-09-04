@@ -10,7 +10,7 @@ from django.utils import timezone
 
 from market_data.feeds import get_feed_manager, _validate_quote_values, _closed_only, _MASSIVE_ENABLED_SYMBOLS, _MASSIVE_CRYPTO_ENABLED_SYMBOLS
 from market_data.symbol_specs import get_spec, allowed_symbols, kline_symbols
-from .models import TradingAccount, Position, Trade, LedgerEntry, BrokerLedger
+from .models import TradingAccount, Position, Trade, LedgerEntry, BrokerLedger, PendingOrder
 from .spread_engine import broker_price, calculate_spread_revenue, _get_config as _get_spread_config
 from .observability import security_log
 from . import pricing_context as pricing_ctx
@@ -390,6 +390,34 @@ def _validate_sl_tp(side: str, sl, tp, exec_price: float) -> tuple[bool, str, st
     return True, "ok", "ok"
 
 
+def _pending_trigger_condition_met(order_type: str, side: str, trigger_price: float,
+                                    bid: float, ask: float) -> bool:
+    """ORDER-MANAGEMENT-V2A — design lock section 2/C. Pure trigger-
+    condition table, confirmed against _raw_exec_price()'s own side
+    convention (BUY opens at ask, SELL opens at bid — see that
+    function's docstring): the side a pending order would ACTUALLY fill
+    on is the same side that decides whether its condition is met.
+    Shared by THREE call sites so the table is defined exactly once:
+      - creation-time validation (_order_pending_new — rejects an order
+        already in-the-money at the moment it's created; that should be
+        a market order instead, not a pending one),
+      - the live-tick evaluator (_check_pending_triggers),
+      - the offline daemon evaluator (tasks.scan_pending_orders_task).
+    order_type/side are the DB's uppercase enum values
+    (PendingOrder.LIMIT/STOP/BUY/SELL) — case-insensitive regardless."""
+    order_type = str(order_type).upper()
+    side = str(side).upper()
+    if order_type == "LIMIT" and side == "BUY":
+        return ask <= trigger_price
+    if order_type == "LIMIT" and side == "SELL":
+        return bid >= trigger_price
+    if order_type == "STOP" and side == "BUY":
+        return ask >= trigger_price
+    if order_type == "STOP" and side == "SELL":
+        return bid <= trigger_price
+    return False
+
+
 def _compute_atomic_open_guard(
     symbol: str,
     qty: float,
@@ -504,6 +532,355 @@ def _compute_atomic_open_guard(
     }
 
 
+# ── ORDER-MANAGEMENT-V2A — pending-order trigger executor ───────────────────
+def _trigger_pending_order_core(pending_order_id: int, execution_price: float) -> dict:
+    """
+    The single authoritative pending-order trigger executor. Called from
+    BOTH the live WS path (TradingConsumer._db_trigger_pending_order_atomic
+    — a thin @database_sync_to_async wrapper) and the offline daemon
+    (tasks.scan_pending_orders_task) — a plain, undecorated module-level
+    function so a thread-pool-executed async wrapper and a genuinely sync
+    Celery task can both call it directly, with ZERO duplication of the
+    margin/risk formula: _compute_atomic_open_guard and
+    broker_risk.validate_new_order are the EXACT SAME functions
+    _db_open_position_atomic() uses for a real market order — reused
+    verbatim here, never reimplemented (design lock, section E).
+
+    execution_price is the caller's responsibility, resolved BEFORE this
+    function is called, from the raw validated bid/ask exactly like a
+    market order (_raw_exec_price's side convention: BUY -> ask, SELL ->
+    bid — see design lock section 2/C). trigger_price only ever decided
+    WHEN to attempt this call (design lock section 3); it never reaches
+    this function as a price.
+
+    Lock order (extends the module-level "global lock order" note below):
+        PendingOrder (this one row, by id) → BrokerRiskLock →
+        TradingAccount → Position
+    PendingOrder is locked FIRST and held for the ENTIRE duration of this
+    transaction — this is what makes a live-tick trigger and a daemon
+    trigger (or two live ticks from two panels of the same account)
+    racing for the SAME PendingOrder row safe WITHOUT any optimistic
+    check-and-set (design lock section 5, explicitly forbidden): whichever
+    transaction acquires this row's lock first runs the entire guard+open
+    decision before releasing it; the loser blocks, then observes
+    status != PENDING and no-ops. New to this codebase (no other path
+    locks PendingOrder) — free to place first since it is the cheapest,
+    single-row check that should fail fast before touching the
+    broker-wide BrokerRiskLock singleton.
+
+    Deliberately excluded (documented scope decisions, not omissions):
+      - BOOK-04b Routing Engine Shadow Mode: off by default
+        (ROUTING_ENGINE_ENABLED), non-financial (analysis-only, already
+        best-effort/fail-open in _db_open_position_atomic itself), never
+        discussed in the design lock. routing_decision_id is always None
+        for a pending-order-triggered open.
+      - Spread MARKUP fee (BrokerLedger REV_SPREAD / pricing_context):
+        this function runs with no live WS connection, so the SPREAD-04/
+        05 dynamic/commercial markup pipeline (which resolves per-tick,
+        per-connection state) has nothing to read from. Mirrors the
+        PRE-EXISTING, already-shipped precedent for daemon-driven SL/TP
+        closes (see tasks._daemon_pricing_context's docstring: explicit
+        zero markup, never a second spread pipeline) — not a new
+        simplification invented for this block.
+      - Commission (LedgerEntry EV_COMMISSION / BrokerLedger
+        REV_COMMISSION) IS still charged — unlike the spread markup, it
+        is deterministic per lot/pct-notional and fully DB-resolvable
+        (commercial_pricing.resolve_commercial_pricing_fields(account),
+        the exact same resolver TradingConsumer.commission_for() uses,
+        just read fresh from the locked account row here instead of a
+        connection's cached copy — same formula, not a second one).
+
+    Returns a structured dict: {"ok": bool, "code": str, "position_id":
+    int|None, "merged": bool|None}. Never raises.
+    """
+    from decimal import Decimal
+    from .models import BrokerRiskLock, AuditLog
+    from . import ws_events, commercial_pricing as _cp, broker_audit as _audit
+
+    with transaction.atomic():
+        po = (
+            PendingOrder.objects.select_for_update()
+            .filter(pk=pending_order_id)
+            .first()
+        )
+        if po is None or po.status != PendingOrder.PENDING:
+            return {"ok": False, "code": "not_pending", "position_id": None, "merged": None}
+
+        now = timezone.now()
+
+        # Design lock section 6 — expiry has precedence over trigger,
+        # evaluated inside the SAME lock/transaction so live and daemon
+        # are deterministically identical regardless of who evaluates
+        # first.
+        if po.expires_at is not None and po.expires_at <= now:
+            po.status = PendingOrder.EXPIRED
+            po.save(update_fields=["status", "updated_at"])
+            transaction.on_commit(lambda _id=po.account_id, _pid=po.id: ws_events.publish_pending_order_changed(
+                _id, action=ws_events.ACTION_PENDING_EXPIRE, pending_order_id=_pid,
+            ))
+            return {"ok": False, "code": "expired", "position_id": None, "merged": None}
+
+        symbol, side, qty = po.symbol, po.side.lower(), float(po.qty)
+        sl = float(po.sl) if po.sl is not None else None
+        tp = float(po.tp) if po.tp is not None else None
+
+        def _reject(code: str, message: str, **extra_detail) -> dict:
+            po.status = PendingOrder.REJECTED
+            po.save(update_fields=["status", "updated_at"])
+            AuditLog.objects.create(
+                event_type="pending_order.rejected",
+                action=f"PendingOrder {po.id} rejected: {code}",
+                account_id=po.account_id,
+                detail={
+                    "pending_order_id": po.id, "symbol": symbol, "side": side,
+                    "reason": code, "message": message, **extra_detail,
+                },
+            )
+            transaction.on_commit(lambda _id=po.account_id, _pid=po.id: ws_events.publish_pending_order_changed(
+                _id, action=ws_events.ACTION_PENDING_REJECT, pending_order_id=_pid,
+            ))
+            return {"ok": False, "code": code, "position_id": None, "merged": None}
+
+        # Design lock section 4 — SL/TP revalidated against the REAL fill
+        # price (never trigger_price). Same pure validator _order_new()
+        # uses for a market order — no second SL/TP policy invented.
+        _sl_tp_ok, _sl_tp_code, _sl_tp_msg = _validate_sl_tp(side, sl, tp, execution_price)
+        if not _sl_tp_ok:
+            return _reject(_sl_tp_code, _sl_tp_msg, execution_price=execution_price)
+
+        # 0 — BrokerRiskLock, same singleton/self-heal as
+        # _db_open_position_atomic's own step 0.
+        _lock_row, _lock_created = BrokerRiskLock.objects.get_or_create(pk=1)
+        if _lock_created:
+            _lock_row.last_recreated_at = timezone.now()
+            _lock_row.save(update_fields=["last_recreated_at"])
+        BrokerRiskLock.objects.select_for_update().get(pk=1)
+
+        # 1 — TradingAccount, this account's own mutex.
+        account = (
+            TradingAccount.objects.select_for_update()
+            .filter(id=po.account_id)
+            .first()
+        )
+        if account is None:
+            return _reject("account_not_found", "Cuenta no encontrada")
+
+        # 2 — every open Position for this account, locked.
+        open_positions = list(
+            Position.objects.select_for_update()
+            .filter(account=account)
+            .order_by("id")
+        )
+
+        # 3 — netting merge target. account.netting_mode is the FRESH DB
+        # field, just locked — the only value available in this
+        # connection-less context. Documented divergence (not a bug this
+        # function fixes): the live WS path's own _order_new() instead
+        # reads a per-connection in-memory copy that the "order:mode" WS
+        # action can change WITHOUT ever persisting to DB (consumers.py,
+        # act == "order:mode") — so a live-triggered and a
+        # daemon-triggered fill for the same account could theoretically
+        # net differently if that in-memory override is active. DB is the
+        # only truthful source available here.
+        existing = None
+        if account.netting_mode:
+            existing = next(
+                (p for p in open_positions if p.symbol == symbol and p.side == side.upper()),
+                None,
+            )
+        is_new_position = existing is None
+        fresh_open_count = len(open_positions)
+
+        # 4 — fresh margin_used. Same formula as _db_open_position_atomic
+        # step 4 / tasks._compute_offline_equity_margin
+        # (pnl_engine.calculate_required_margin,
+        # min(account.leverage, symbol.max_leverage)).
+        account_lev = max(1, int(account.leverage))
+        fresh_margin_used = 0.0
+        for _p in open_positions:
+            _pspec = get_spec(_p.symbol)
+            _plev = max(1, min(account_lev, _pspec.max_leverage))
+            _pmargin, _pmargin_error = pnl_engine.calculate_required_margin(
+                _p.symbol, float(_p.avg_price), float(_p.qty), _plev, account.currency,
+            )
+            if _pmargin is None:
+                log.critical(
+                    "[pending_trigger] event=margin_conversion_unsupported symbol=%s "
+                    "account_currency=%s error_code=%s — contributing 0.0, NOT a fabricated number.",
+                    _p.symbol, account.currency, _pmargin_error,
+                )
+                continue
+            fresh_margin_used += _pmargin
+
+        # 5 — fresh equity. Daemon-context price source: the SAME Redis
+        # cache FeedManager writes (tasks._read_cached_price) — the live
+        # caller instead sources execution_price via self._feed
+        # (FeedManager, shared per-process) BEFORE calling this function;
+        # here, only OTHER open positions' mark prices are needed, and
+        # this connection-less function has no self._feed to read, so it
+        # always uses the cross-process Redis cache — same cache, same
+        # validation (_validate_quote_values), just a different accessor
+        # for a context with no live connection.
+        from .tasks import _read_cached_price
+        _unpriced = []
+        _prices: dict = {}
+        for _p in open_positions:
+            _b, _a = _read_cached_price(_p.symbol)
+            if _b is None or _a is None:
+                _unpriced.append(_p.symbol)
+            else:
+                _prices[_p.symbol] = (_b, _a)
+        if _unpriced:
+            log.warning(
+                "[pending_trigger] account=%s REJECTED — no fresh price for open position "
+                "symbol(s) %s; refusing to compute fresh_equity rather than assume floating PnL=0",
+                po.account_id, _unpriced,
+            )
+            return _reject("market_price_unavailable", "Precio no disponible para posiciones abiertas",
+                            unpriced_symbols=_unpriced)
+
+        fresh_floating_pnl = 0.0
+        for _p in open_positions:
+            _bid, _ask = _prices[_p.symbol]
+            _close_px = _bid if _p.side == "BUY" else _ask
+            fresh_floating_pnl += pnl_engine.position_pnl_float(
+                _p.side.lower(), float(_p.avg_price), _close_px, float(_p.qty), _p.symbol,
+                account_currency=account.currency,
+            )
+        fresh_equity = float(account.balance) + fresh_floating_pnl
+
+        # 6 — the ONE authoritative validation, reused verbatim (see
+        # docstring above).
+        _spec = get_spec(symbol)
+        from .risk_engine import get_or_create_risk_rule
+        _rule = get_or_create_risk_rule(account)
+        _account_snap = {
+            "leverage": account_lev,
+            "allowed_symbols": account.allowed_symbols_snapshot,
+            "max_lot_size": float(account.max_lot_size_snapshot) if account.max_lot_size_snapshot is not None else None,
+            "margin_call_level": float(account.margin_call_level_snapshot) if account.margin_call_level_snapshot is not None else None,
+            "max_margin_per_trade_pct": float(account.max_margin_per_trade_pct_snapshot) if account.max_margin_per_trade_pct_snapshot is not None else _DEFAULT_MAX_MARGIN_PER_TRADE_PCT,
+            "max_total_margin_pct": float(account.max_total_margin_pct_snapshot) if account.max_total_margin_pct_snapshot is not None else _DEFAULT_MAX_TOTAL_MARGIN_PCT,
+        }
+        guard = _compute_atomic_open_guard(
+            symbol, qty, execution_price, account.status, _account_snap, _spec,
+            fresh_equity, fresh_margin_used, is_new_position, fresh_open_count,
+            _rule.max_open_positions, account_currency=account.currency,
+        )
+        if not guard["ok"]:
+            return _reject(guard["error_code"], guard["message"])
+
+        # 7 — RISK-02 broker-wide limits, same function
+        # _db_open_position_atomic calls at its own step 8.5, under the
+        # SAME BrokerRiskLock held since step 0 above.
+        from .broker_risk import validate_new_order
+        _risk02 = validate_new_order(
+            account_id=po.account_id, symbol=symbol, side=side, qty=qty,
+            price=execution_price, contract_size=_spec.contract_size,
+            account_type=account.account_type,
+        )
+        if not _risk02.allowed:
+            return _reject(_risk02.reason_code, _risk02.reason_message)
+
+        # 8 — create/merge Position, identical logic to
+        # _db_open_position_atomic step 9. No pricing_context captured
+        # (see "deliberately excluded" note above) — Position.pricing_
+        # context stays its documented null default for this path.
+        if existing:
+            new_qty = existing.qty + Decimal(str(qty))
+            new_avg = (
+                existing.avg_price * existing.qty + Decimal(str(execution_price)) * Decimal(str(qty))
+            ) / new_qty
+            existing.avg_price = new_avg.quantize(Decimal("0.000001"))
+            existing.qty = new_qty
+            if sl is not None:
+                existing.sl = Decimal(str(sl))
+            if tp is not None:
+                existing.tp = Decimal(str(tp))
+            existing.save(update_fields=["qty", "avg_price", "sl", "tp"])
+            position_id = existing.id
+            merged = True
+        else:
+            pos = Position.objects.create(
+                account_id=po.account_id, symbol=symbol, side=side.upper(),
+                qty=Decimal(str(qty)), avg_price=Decimal(str(execution_price)),
+                sl=Decimal(str(sl)) if sl is not None else None,
+                tp=Decimal(str(tp)) if tp is not None else None,
+            )
+            position_id = pos.id
+            merged = False
+
+        # 9 — commission (see "deliberately excluded" note above for why
+        # the spread markup fee is skipped but commission is not).
+        _cp_fields = _cp.resolve_commercial_pricing_fields(account)
+        _profile = _cp.build_commercial_pricing_profile(_cp_fields, symbol)
+        if _profile.commission_per_lot > 0:
+            _commission = round(qty * _profile.commission_per_lot, 2)
+        elif _profile.commission_pct > 0:
+            _notional = qty * execution_price * _spec.contract_size
+            _commission = max(0.0, _notional * _profile.commission_pct)
+        elif _profile.source == _cp.SOURCE_LEGACY_FALLBACK:
+            _notional = qty * execution_price * _spec.contract_size
+            _commission = max(0.0, _notional * _spec.commission_pct)
+        else:
+            _commission = 0.0
+        _commission_d = Decimal(str(_commission)) if _commission > 0 else Decimal("0")
+        _auth_balance = account.balance - _commission_d
+
+        if _commission_d > 0:
+            trader_ledger = LedgerEntry.objects.create(
+                account_id=po.account_id, event_type=LedgerEntry.EV_COMMISSION,
+                amount=-_commission_d, balance_after=_auth_balance,
+                meta={"symbol": symbol, "side": side, "db_pos_id": position_id,
+                      "source": "pending_order_trigger", "pending_order_id": po.id},
+            )
+            try:
+                BrokerLedger.objects.create(
+                    revenue_type=BrokerLedger.REV_COMMISSION, amount=_commission_d,
+                    source_account_id=po.account_id, source_ledger=trader_ledger,
+                    symbol=symbol, meta={"side": side, "db_pos_id": position_id, "pending_order_id": po.id},
+                )
+            except Exception as _bl_exc:
+                log.warning("[pending_trigger] broker_ledger commission insert failed pos=%s: %s", position_id, _bl_exc)
+            account.balance = _auth_balance
+            account.save(update_fields=["balance"])
+
+        # 10 — finalize PendingOrder → TRIGGERED, only now that the open
+        # has actually succeeded (never before — see docstring).
+        po.status = PendingOrder.TRIGGERED
+        po.triggered_at = now
+        po.triggered_position_id = position_id
+        po.save(update_fields=["status", "triggered_at", "triggered_position_id", "updated_at"])
+
+        transaction.on_commit(lambda: ws_events.publish_position_changed(
+            po.account_id,
+            action=(ws_events.ACTION_UPDATE if merged else ws_events.ACTION_OPEN),
+            position_id=position_id, symbol=symbol, side=side, qty=float(qty),
+            new_balance=float(_auth_balance),
+        ))
+        transaction.on_commit(lambda: ws_events.publish_pending_order_changed(
+            po.account_id, action=ws_events.ACTION_PENDING_TRIGGER, pending_order_id=po.id,
+        ))
+        transaction.on_commit(lambda: get_feed_manager().mark_position_symbol(symbol))
+
+    log.info(
+        "[pending_trigger] pending_order_id=%s pos_id=%s symbol=%s side=%s qty=%s merged=%s exec_px=%s",
+        pending_order_id, position_id, symbol, side, qty, merged, execution_price,
+    )
+    _audit.record_trade_event(
+        event_type=_audit.EV_POSITION_OPENED,
+        description=(
+            f"Position {'merged' if merged else 'opened'} on {symbol} {side.upper()} "
+            f"qty={qty} (pending order #{pending_order_id} trigger)"
+        ),
+        account_id=po.account_id, symbol=symbol,
+        source_module="simulator.consumers",
+        metadata={"position_id": position_id, "side": side, "qty": float(qty),
+                  "price": float(execution_price), "merged": merged, "pending_order_id": pending_order_id},
+    )
+    return {"ok": True, "code": "triggered", "position_id": position_id, "merged": merged}
+
+
 # ── PANEL-02 INVARIANTE-2 / RISK-02 — global lock order ─────────────────────
 # Audited across every live path in this codebase that locks any of
 # BrokerRiskLock/TradingAccount/Position with select_for_update() inside a
@@ -521,19 +898,27 @@ def _compute_atomic_open_guard(
 #     close)                     — TradingAccount → Position(single, by id)
 #   - admin.py force_close (dealing desk)        — TradingAccount →
 #     Position(all matching, .order_by("id"))
+#   - _trigger_pending_order_core (ORDER-MANAGEMENT-V2A, live WS trigger AND
+#     Celery scan_pending_orders_task daemon) — PendingOrder(single, by id,
+#     locked and held for the WHOLE transaction) → BrokerRiskLock →
+#     TradingAccount → Position(all open, this account, .order_by("id")).
+#     PendingOrder is a new lock with no other existing caller, so it was
+#     free to place first — never acquired by any OTHER path in this list,
+#     so it cannot invert against any of them.
 #
 # This is a single, consistent, GLOBAL lock order — not a per-function
 # choice. Any new code that locks two or more of these models MUST follow
 # the same order; reversing it in even one path would create a classic
 # lock-order-inversion deadlock against every path above the moment two of
 # them run concurrently. In particular: BrokerRiskLock is ONLY ever
-# acquired FIRST, by _db_open_position_atomic, and NEVER acquired by any
-# code path that has already locked TradingAccount or Position — see
-# BrokerRiskLock's model docstring for the full RISK-02 rationale (the
-# TOCTOU race this closes: two concurrent opens on DIFFERENT accounts, so
-# TradingAccount locking alone cannot serialize them, could otherwise both
-# read the same broker-wide exposure and jointly exceed a broker-wide
-# limit).
+# acquired FIRST among {BrokerRiskLock, TradingAccount, Position} (by
+# _db_open_position_atomic and _trigger_pending_order_core) and NEVER
+# acquired by any code path that has already locked TradingAccount or
+# Position — see BrokerRiskLock's model docstring for the full RISK-02
+# rationale (the TOCTOU race this closes: two concurrent opens on
+# DIFFERENT accounts, so TradingAccount locking alone cannot serialize
+# them, could otherwise both read the same broker-wide exposure and
+# jointly exceed a broker-wide limit).
 #
 # WHY ACCOUNT FIRST (not Position first, the original PANEL-02 design):
 # TradingAccount is the account's actual mutex — exactly one row exists
@@ -685,6 +1070,12 @@ class TradingConsumer(AsyncWebsocketConsumer):
         self._pricing_snapshot_state = {}
         self._order_seq = 1
         self._positions = []
+        # ORDER-MANAGEMENT-V2A — this connection's own in-memory mirror of
+        # its account's PENDING PendingOrder rows, hydrated in
+        # _maybe_hydrate_from_db() — same "never a DB query in the hot
+        # tick path" discipline self._positions already follows for
+        # _check_tp_sl().
+        self._pending_orders = []
         self._unpriced_pnl_symbols = []
         self._agg = {}
         # MASSIVE-CRYPTO-TRADE-CANDLES-01 — separate, crypto-trade-only
@@ -757,6 +1148,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
         await self.send_positions_snapshot()
+        await self._refresh_and_send_pending_orders()
         await self._recalc_account_and_push()
         await self.send_json({"type":"ack","action":"connected",
                               "timeframe":self.timeframe,"tf_sec":tf_seconds(self.timeframe)})
@@ -860,6 +1252,16 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
         elif act == "order:close":
             await self._order_close(data)
+
+        # ORDER-MANAGEMENT-V2A
+        elif act == "order:pending:new":
+            await self._order_pending_new(data)
+
+        elif act == "order:pending:cancel":
+            await self._order_pending_cancel(data)
+
+        elif act == "order:pending:update":
+            await self._order_pending_update(data)
 
         else:
             await self.send_json({"type":"ack","ok":True,"action":act})
@@ -1107,6 +1509,10 @@ class TradingConsumer(AsyncWebsocketConsumer):
         _price_source = event.get("source")
         if _price_source is not None and _price_source != "sim":
             await self._check_tp_sl(symbol, raw_bid, raw_ask)
+            # ORDER-MANAGEMENT-V2A — same raw-price, same fail-closed
+            # "never on a sim tick" gate as _check_tp_sl() immediately
+            # above; sibling evaluator for PendingOrder triggers.
+            await self._check_pending_triggers(symbol, raw_bid, raw_ask)
         await self._recalc_account_and_push()
 
     async def candle_kline(self, event: dict):
@@ -2361,6 +2767,344 @@ class TradingConsumer(AsyncWebsocketConsumer):
             await self.send_json({"type": "order_close", **outcome["notify_item"]})
         await self._refresh_and_send_positions()
 
+    # ---------------- ORDER-MANAGEMENT-V2A — Pending orders ----------------
+    async def _order_pending_new(self, data: dict):
+        sym        = data.get("symbol", self.symbol)
+        side       = str(data.get("side", "")).lower()
+        order_type = str(data.get("order_type", "")).lower()
+        qty        = float(data.get("qty", 0) or 0)
+        sl         = data.get("sl")
+        tp         = data.get("tp")
+        expires_at_raw = data.get("expires_at")   # absent/None = GTC
+
+        # NOTE — every rejection below uses "error_pending", never the
+        # generic "error" type: the frontend's generic 'error' handler
+        # unconditionally pops this connection's LAST pendingTmp entry
+        # (the optimistic chart-line placeholder for an in-flight MARKET
+        # order — see dashboard.html). A pending-order submission never
+        # pushes a pendingTmp entry, so reusing "error" here could wrongly
+        # discard an unrelated, still-in-flight market order's real
+        # placeholder if both happen to race. A distinct message type
+        # sidesteps that collision entirely rather than touching the
+        # existing, working market-order error handler.
+        if sym not in _ALLOWED_SYMBOLS:
+            await self.send_json({"type": "error_pending", "code": "invalid_symbol", "message": "simbolo_no_permitido"})
+            return
+        if side not in ("buy", "sell") or order_type not in ("limit", "stop") or qty <= 0:
+            await self.send_json({"type": "error_pending", "code": "invalid_order", "message": "orden_invalida"})
+            return
+
+        try:
+            trigger_price = float(data.get("trigger_price"))
+        except (TypeError, ValueError):
+            await self.send_json({"type": "error_pending", "code": "invalid_trigger_price", "message": "precio_de_disparo_invalido"})
+            return
+        if not math.isfinite(trigger_price) or trigger_price <= 0:
+            await self.send_json({"type": "error_pending", "code": "invalid_trigger_price", "message": "precio_de_disparo_invalido"})
+            return
+
+        if not self._db_account_id:
+            await self.send_json({"type": "error_pending", "code": "demo_not_supported", "message": "las_ordenes_pendientes_requieren_cuenta_real"})
+            return
+
+        # Same market-session gate _order_new() applies to new orders.
+        from market_data.contracts import OrderPolicy
+        from market_data.sessions.service import evaluate_market_session_for_symbol
+        _session = evaluate_market_session_for_symbol(sym)
+        if _session.order_policy in (OrderPolicy.MARKET_CLOSED, OrderPolicy.HALT_NEW_ORDERS):
+            await self.send_json({"type": "error_pending", "code": "market_closed", "message": "mercado_cerrado_o_nuevas_ordenes_bloqueadas"})
+            return
+        if _session.order_policy == OrderPolicy.CLOSE_ONLY:
+            await self.send_json({"type": "error_pending", "code": "close_only", "message": "solo_se_permiten_cierres_en_este_momento"})
+            return
+
+        _spec = get_spec(sym)
+        _lot_ok, _lot_code = _check_lot_size(qty, _spec)
+        if not _lot_ok:
+            await self.send_json({"type": "error_pending", "code": _lot_code, "message": _lot_code})
+            return
+
+        # O.6c-1w-b raw-quote gate — same contract _order_new()/
+        # _order_close() already use: reject before any DB write if the
+        # feed has no currently-valid raw quote for this symbol.
+        quote = self._feed.get_validated_quote(sym)
+        if quote is None or quote.source == "sim":
+            await self.send_json({"type": "error_pending", "code": "price_unavailable", "message": "no_se_pudo_crear_precio_no_disponible"})
+            return
+
+        # Design lock section 11.L test 1 — reject an order whose trigger
+        # condition is ALREADY met at creation time (that's a market
+        # order, not a pending one). Same table the live/daemon
+        # evaluators use — see _pending_trigger_condition_met's docstring.
+        if _pending_trigger_condition_met(order_type, side, trigger_price, quote.bid, quote.ask):
+            await self.send_json({
+                "type": "error_pending", "code": "trigger_already_met",
+                "message": "El precio de disparo ya está del lado alcanzado del mercado actual — use una orden market.",
+            })
+            return
+
+        # Preliminary SL/TP validation against trigger_price (design lock
+        # section 4) — REVALIDATED against the real execution_price at
+        # trigger time inside _trigger_pending_order_core; this is only
+        # an early, non-authoritative rejection.
+        _sl_tp_ok, _sl_tp_code, _sl_tp_msg = _validate_sl_tp(side, sl, tp, trigger_price)
+        if not _sl_tp_ok:
+            await self.send_json({"type": "error_pending", "code": _sl_tp_code, "message": _sl_tp_msg})
+            return
+
+        # Design lock section 7 — advisory-only margin sanity check
+        # (never a reservation). Same guard _order_new() runs before its
+        # own DB write.
+        eq_now = self.account["balance"] + self._unrealized_pnl_total()
+        mg_now = self._margin_used_total()
+        _guard_ok, _guard_code, _guard_msg, _guard_details = _compute_pretrade_margin_guard(
+            sym, qty, trigger_price, eq_now, mg_now,
+            self.account, _spec.max_leverage, _spec.contract_size,
+            max_margin_per_trade_pct=self.account.get("max_margin_per_trade_pct", _DEFAULT_MAX_MARGIN_PER_TRADE_PCT),
+            max_total_margin_pct=self.account.get("max_total_margin_pct", _DEFAULT_MAX_TOTAL_MARGIN_PCT),
+            account_currency=self.account.get("currency", "USD"),
+        )
+        if not _guard_ok:
+            await self.send_json({"type": "error_pending", "code": _guard_code, "message": _guard_msg})
+            return
+
+        expires_at = None
+        if expires_at_raw:
+            from django.utils.dateparse import parse_datetime
+            try:
+                _dt_val = parse_datetime(str(expires_at_raw))
+                if _dt_val is not None:
+                    expires_at = _dt_val if timezone.is_aware(_dt_val) else timezone.make_aware(_dt_val)
+            except Exception:
+                expires_at = None
+
+        order_dict = await self._db_create_pending_order(
+            sym, side.upper(), order_type.upper(), qty, trigger_price, sl, tp, expires_at,
+        )
+        self._pending_orders.append(order_dict)
+        await self.send_json({"type": "order_pending_new", **order_dict})
+        await self._refresh_and_send_pending_orders()
+
+    @database_sync_to_async
+    def _db_create_pending_order(self, symbol, side, order_type, qty, trigger_price, sl, tp, expires_at) -> dict:
+        from decimal import Decimal
+        from . import ws_events
+        po = PendingOrder.objects.create(
+            account_id=self._db_account_id, symbol=symbol, side=side, order_type=order_type,
+            qty=Decimal(str(qty)), trigger_price=Decimal(str(trigger_price)),
+            sl=Decimal(str(sl)) if sl is not None else None,
+            tp=Decimal(str(tp)) if tp is not None else None,
+            expires_at=expires_at,
+        )
+        transaction.on_commit(lambda: ws_events.publish_pending_order_changed(
+            self._db_account_id, action=ws_events.ACTION_PENDING_NEW, pending_order_id=po.id,
+        ))
+        return {
+            "id": po.id, "symbol": po.symbol, "side": po.side, "order_type": po.order_type,
+            "qty": float(po.qty), "trigger_price": float(po.trigger_price),
+            "sl": float(po.sl) if po.sl is not None else None,
+            "tp": float(po.tp) if po.tp is not None else None,
+            "status": po.status,
+            "expires_at": po.expires_at.timestamp() if po.expires_at else None,
+            "created_ts": int(po.created_at.timestamp()),
+        }
+
+    async def _order_pending_cancel(self, data: dict):
+        pid = data.get("id")
+        try:
+            pid = int(pid)
+        except (TypeError, ValueError):
+            await self.send_json({"type": "warn", "message": "order_pending_cancel_not_found"})
+            return
+        result = await self._db_cancel_pending_order(pid)
+        if not result["ok"]:
+            await self.send_json({"type": "warn", "message": f"order_pending_cancel_{result['code']}"})
+            return
+        self._pending_orders = [p for p in self._pending_orders if p["id"] != pid]
+        await self.send_json({"type": "order_pending_cancel", "id": pid})
+        await self._refresh_and_send_pending_orders()
+
+    @database_sync_to_async
+    def _db_cancel_pending_order(self, pending_order_id: int) -> dict:
+        """select_for_update — same pessimistic-lock discipline as
+        _trigger_pending_order_core (design lock section 5: NO optimistic
+        check-and-set). A cancel racing a trigger loses cleanly: if the
+        trigger's own transaction already committed TRIGGERED (or
+        EXPIRED/REJECTED), this observes status != PENDING under its own
+        lock and returns ok=False — never a false 'cancelled'."""
+        from . import ws_events
+        with transaction.atomic():
+            po = (
+                PendingOrder.objects.select_for_update()
+                .filter(pk=pending_order_id, account_id=self._db_account_id)
+                .first()
+            )
+            if po is None:
+                return {"ok": False, "code": "not_found"}
+            if po.status != PendingOrder.PENDING:
+                return {"ok": False, "code": "not_pending"}
+            po.status = PendingOrder.CANCELLED
+            po.cancelled_at = timezone.now()
+            po.save(update_fields=["status", "cancelled_at", "updated_at"])
+            transaction.on_commit(lambda: ws_events.publish_pending_order_changed(
+                self._db_account_id, action=ws_events.ACTION_PENDING_CANCEL, pending_order_id=po.id,
+            ))
+            return {"ok": True, "code": "cancelled"}
+
+    async def _order_pending_update(self, data: dict):
+        pid = data.get("id")
+        try:
+            pid = int(pid)
+        except (TypeError, ValueError):
+            await self.send_json({"type": "warn", "message": "order_pending_update_not_found"})
+            return
+
+        try:
+            trigger_price = float(data["trigger_price"]) if data.get("trigger_price") is not None else None
+            qty           = float(data["qty"]) if data.get("qty") is not None else None
+            sl            = float(data["sl"]) if data.get("sl") is not None else None
+            tp            = float(data["tp"]) if data.get("tp") is not None else None
+        except (TypeError, ValueError):
+            await self.send_json({"type": "error_pending", "code": "invalid_order", "message": "orden_invalida"})
+            return
+
+        if trigger_price is not None and (not math.isfinite(trigger_price) or trigger_price <= 0):
+            await self.send_json({"type": "error_pending", "code": "invalid_trigger_price", "message": "precio_de_disparo_invalido"})
+            return
+        if qty is not None and qty <= 0:
+            await self.send_json({"type": "error_pending", "code": "invalid_order", "message": "orden_invalida"})
+            return
+
+        result = await self._db_update_pending_order(pid, trigger_price, qty, sl, tp)
+        if not result["ok"]:
+            await self.send_json({"type": "warn", "message": f"order_pending_update_{result['code']}"})
+            return
+        for i, p in enumerate(self._pending_orders):
+            if p["id"] == pid:
+                self._pending_orders[i] = result["order"]
+                break
+        await self.send_json({"type": "order_pending_update", **result["order"]})
+        await self._refresh_and_send_pending_orders()
+
+    @database_sync_to_async
+    def _db_update_pending_order(self, pending_order_id: int, trigger_price, qty, sl, tp) -> dict:
+        """Same select_for_update discipline as _db_cancel_pending_order
+        above — a modify racing a trigger loses cleanly rather than
+        silently editing a row that already triggered."""
+        from decimal import Decimal
+        from . import ws_events
+        with transaction.atomic():
+            po = (
+                PendingOrder.objects.select_for_update()
+                .filter(pk=pending_order_id, account_id=self._db_account_id)
+                .first()
+            )
+            if po is None:
+                return {"ok": False, "code": "not_found"}
+            if po.status != PendingOrder.PENDING:
+                return {"ok": False, "code": "not_pending"}
+
+            _fields = []
+            if trigger_price is not None:
+                po.trigger_price = Decimal(str(trigger_price)); _fields.append("trigger_price")
+            if qty is not None:
+                po.qty = Decimal(str(qty)); _fields.append("qty")
+            if sl is not None:
+                po.sl = Decimal(str(sl)); _fields.append("sl")
+            if tp is not None:
+                po.tp = Decimal(str(tp)); _fields.append("tp")
+
+            if _fields:
+                _fields.append("updated_at")
+                po.save(update_fields=_fields)
+                transaction.on_commit(lambda: ws_events.publish_pending_order_changed(
+                    self._db_account_id, action=ws_events.ACTION_PENDING_UPDATE, pending_order_id=po.id,
+                ))
+
+            return {"ok": True, "code": "updated", "order": {
+                "id": po.id, "symbol": po.symbol, "side": po.side, "order_type": po.order_type,
+                "qty": float(po.qty), "trigger_price": float(po.trigger_price),
+                "sl": float(po.sl) if po.sl is not None else None,
+                "tp": float(po.tp) if po.tp is not None else None,
+                "status": po.status,
+                "expires_at": po.expires_at.timestamp() if po.expires_at else None,
+                "created_ts": int(po.created_at.timestamp()),
+            }}
+
+    async def _check_pending_triggers(self, symbol: str, raw_bid: float, raw_ask: float):
+        """ORDER-MANAGEMENT-V2A — live-tick trigger evaluator. Sibling of
+        _check_tp_sl(): same call site (price_tick(), after the same raw-
+        quote validation + 'never on a sim tick' fail-closed gate), same
+        'operates on this connection's own in-memory mirror, never a DB
+        query inside the hot tick path' discipline (design lock section
+        E's performance note).
+
+        getattr(..., None) or [] — same defensive-default already implied
+        for self._positions by every bare-consumer test double across the
+        suite (TradingConsumer.__new__(TradingConsumer) + only the
+        attributes that ONE test actually exercises, never a full
+        connect()); _pending_orders is new and none of those pre-existing
+        doubles know to set it, so treat "not set at all" the same as
+        "hydrated with zero pending orders" rather than raising."""
+        matched = [
+            p for p in (getattr(self, "_pending_orders", None) or [])
+            if p["symbol"] == symbol
+            and _pending_trigger_condition_met(p["order_type"], p["side"], p["trigger_price"], raw_bid, raw_ask)
+        ]
+        if not matched:
+            return
+
+        any_opened = False
+        for p in matched:
+            side = p["side"].lower()
+            execution_price = raw_ask if side == "buy" else raw_bid
+            try:
+                result = await self._db_trigger_pending_order_atomic(p["id"], execution_price)
+            except Exception as exc:
+                log.error("[pending_trigger] live trigger FAILED pending_order_id=%s: %s",
+                          p["id"], exc, exc_info=True)
+                continue
+            # Whatever the outcome (triggered / rejected / expired /
+            # not_pending — e.g. a concurrent daemon or sibling-panel tick
+            # already claimed it under its own lock), this order is no
+            # longer PENDING — drop it from the in-memory mirror
+            # unconditionally. DB decided; never re-add (same discipline
+            # _check_tp_sl() already uses for closed positions).
+            self._pending_orders = [x for x in self._pending_orders if x["id"] != p["id"]]
+            if result.get("ok"):
+                any_opened = True
+
+        if any_opened:
+            await self._recalc_account_and_push()
+            await self._refresh_and_send_positions()
+        await self._refresh_and_send_pending_orders()
+
+    @database_sync_to_async
+    def _db_trigger_pending_order_atomic(self, pending_order_id: int, execution_price: float) -> dict:
+        return _trigger_pending_order_core(pending_order_id, execution_price)
+
+    async def _refresh_and_send_pending_orders(self):
+        if not self._db_account_id:
+            await self.send_json({"type": "pending_orders", "items": self._pending_orders})
+            return
+        try:
+            items = await self._db_fetch_pending_orders()
+        except Exception as exc:
+            log.error("[pending_orders] refresh failed for account=%s — keeping previous state: %r",
+                      self._db_account_id, exc, exc_info=True)
+            await self.send_json({"type": "pending_orders", "items": self._pending_orders})
+            return
+        self._pending_orders = items
+        await self.send_json({"type": "pending_orders", "items": self._pending_orders})
+
+    async def pending_order_changed(self, event: dict):
+        """ORDER-MANAGEMENT-V2A — PendingOrder-book equivalent of
+        position_changed(). Simpler contract, deliberately: no optimistic
+        in-memory patch — pending orders are a lower-frequency, less
+        latency-sensitive UI element than open positions, so this always
+        just does a DB-fresh resync."""
+        await self._refresh_and_send_pending_orders()
+
     # ---------------- Risk Preview ----------------
     async def _handle_risk_preview(self, data: dict):
         sym = data.get("symbol", self.symbol)
@@ -3359,6 +4103,12 @@ class TradingConsumer(AsyncWebsocketConsumer):
         self._daily_pnl_date = _tz.now().date()
         log.info("[hydrate] daily_realized_pnl=%.2f for %s", self._daily_realized_pnl, self._daily_pnl_date)
 
+        # ORDER-MANAGEMENT-V2A
+        pending_items = await self._db_fetch_pending_orders()
+        self._pending_orders = pending_items
+        log.info("[hydrate] loaded %d pending order(s): %s",
+                 len(self._pending_orders), [(p["id"], p["symbol"], p["order_type"], p["side"]) for p in self._pending_orders])
+
     @database_sync_to_async
     def _db_suspend_account(self, reason: str) -> None:
         """ACCOUNT-02 — only ever sets status. balance/equity are NOT
@@ -3490,6 +4240,26 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 "sl": float(p.sl) if p.sl is not None else None,
                 "tp": float(p.tp) if p.tp is not None else None,
                 "opened_ts": int(p.opened_at.timestamp()),
+            })
+        return out
+
+    @database_sync_to_async
+    def _db_fetch_pending_orders(self):
+        """ORDER-MANAGEMENT-V2A — this connection's PENDING PendingOrder
+        rows (only status=PENDING; TRIGGERED/CANCELLED/EXPIRED/REJECTED
+        are terminal and irrelevant to the live trigger-check hot path
+        that consumes this list)."""
+        if not self._db_account_id: return []
+        out = []
+        qs = PendingOrder.objects.filter(account_id=self._db_account_id, status=PendingOrder.PENDING)
+        for p in qs:
+            out.append({
+                "id": p.id, "symbol": p.symbol, "side": p.side, "order_type": p.order_type,
+                "qty": float(p.qty), "trigger_price": float(p.trigger_price),
+                "sl": float(p.sl) if p.sl is not None else None,
+                "tp": float(p.tp) if p.tp is not None else None,
+                "expires_at": p.expires_at.timestamp() if p.expires_at else None,
+                "created_ts": int(p.created_at.timestamp()),
             })
         return out
 
