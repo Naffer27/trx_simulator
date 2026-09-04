@@ -98,7 +98,26 @@ class CandleLiveAuthorityTests(SimpleTestCase):
         self.assertNotIn("this.bid=n(", candle_block)
         self.assertNotIn("this.ask=_", candle_block)
         self.assertNotIn("this.ask=n(", candle_block)
-        self.assertIn("if(this.bid==null||this.ask==null)", candle_block)
+        # LIVE-CHART-RENDER-STABILITY-01 — the candle path's paint calls
+        # are coalesced through _scheduleVisualRender('candle', ...) /
+        # _flushVisualRender() rather than inlined here directly.
+        self.assertIn("_scheduleVisualRender('candle', msg.type==='candle_new')", candle_block)
+        # MASSIVE-CRYPTO-TRADE-CANDLES-01 — _updateBidAsk() now lives
+        # exclusively in the QUOTE branch of _flushVisualRender() (gated
+        # by the magnitude/max-age shouldPaint check), never in the
+        # candle branch at all — candle_update/candle_new still never
+        # writes or repaints bid/ask, the invariant asserted above holds
+        # unchanged; the write-site just moved out of this handler
+        # entirely (LIVE-CHART-RENDER-STABILITY-01), then out of the
+        # candle branch specifically (this block).
+        src = _template_source()
+        flush_block = _slice(src, "_flushVisualRender(){", "_cancelPendingVisualRender(){")
+        i_quote_branch = flush_block.index("if(this._quoteRenderPending){")
+        candle_branch = flush_block[:i_quote_branch]
+        quote_branch = flush_block[i_quote_branch:]
+        self.assertNotIn("this._updateBidAsk();", candle_branch)
+        self.assertIn("this._updateBidAsk();", quote_branch)
+        self.assertIn("if(shouldPaint){", quote_branch)
 
 
 class RealTickLiveAuthorityTests(SimpleTestCase):
@@ -116,7 +135,19 @@ class RealTickLiveAuthorityTests(SimpleTestCase):
         block = self._tick_block()
         self.assertIn("this.liveMid=(_a+_b)/2", block)
         self.assertIn("this.bid=_b;this.ask=_a;", block)
-        self.assertIn("this._updateLiveQuoteDisplay();", block)
+        # LIVE-CHART-RENDER-STABILITY-01 — the tick handler now schedules
+        # the live-quote paint (coalesced to ~100ms) instead of calling it
+        # inline. LIVE-CHART-SMOOTH-INTERPOLATION-01 — the actual paint,
+        # one level down in _flushVisualRender()'s quote branch, is now
+        # split into an instant badge/glow write and an animated
+        # priceLine retarget (never a single _updateLiveQuoteDisplay()
+        # call there anymore — that method is still used, unchanged, by
+        # setActive()'s one-time immediate re-paint only).
+        self.assertIn("_scheduleVisualRender('quote')", block)
+        src = _template_source()
+        flush_block = _slice(src, "_flushVisualRender(){", "_cancelPendingVisualRender(){")
+        self.assertIn("this._paintBadgeAndGlow(current);", flush_block)
+        self.assertIn("this._retargetPriceLineAnimation(current);", flush_block)
 
     def test_sim_tick_does_not_establish_live_quote(self):
         block = self._tick_block()

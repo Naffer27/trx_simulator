@@ -8,7 +8,7 @@ from channels.db import database_sync_to_async
 from django.db import transaction
 from django.utils import timezone
 
-from market_data.feeds import get_feed_manager, _validate_quote_values, _closed_only, _MASSIVE_ENABLED_SYMBOLS
+from market_data.feeds import get_feed_manager, _validate_quote_values, _closed_only, _MASSIVE_ENABLED_SYMBOLS, _MASSIVE_CRYPTO_ENABLED_SYMBOLS
 from market_data.symbol_specs import get_spec, allowed_symbols, kline_symbols
 from .models import TradingAccount, Position, Trade, LedgerEntry, BrokerLedger
 from .spread_engine import broker_price, calculate_spread_revenue, _get_config as _get_spread_config
@@ -687,7 +687,27 @@ class TradingConsumer(AsyncWebsocketConsumer):
         self._positions = []
         self._unpriced_pnl_symbols = []
         self._agg = {}
+        # MASSIVE-CRYPTO-TRADE-CANDLES-01 — separate, crypto-trade-only
+        # accumulator. Deliberately its own dict/lifecycle, never sharing
+        # state with self._agg (quote-driven, Forex + legacy) — see
+        # _reset_trade_agg()/price_trade()/_emit_trade_bar() below.
+        self._trade_agg = {}
         self._last_bar_time = {}
+        # CHART-HISTORY-INSTANT-LOAD-01 — first-paint history split.
+        # _history_generation increments on every change_symbol/change_
+        # timeframe/load_history request; _complete_history_depth()
+        # (below) checks its own captured generation against the CURRENT
+        # value (plus symbol/timeframe) before sending its "complete"
+        # message, so a depth fetch left over from a symbol/timeframe the
+        # user already moved past can never apply to the wrong chart —
+        # even in the edge case where the user switches back to the same
+        # symbol/timeframe before the old depth fetch finishes.
+        # _history_depth_task is the ONE in-flight depth fetch for this
+        # connection (one panel = one TradingConsumer = one connection) —
+        # explicitly cancelled whenever a new one starts or the socket
+        # disconnects, never left orphaned.
+        self._history_generation = 0
+        self._history_depth_task: "asyncio.Task | None" = None
 
         self.account = {
             "balance":       0.0,
@@ -747,6 +767,13 @@ class TradingConsumer(AsyncWebsocketConsumer):
         hb = getattr(self, "_heartbeat_task", None)
         if hb and not hb.done():
             hb.cancel()
+        # CHART-HISTORY-INSTANT-LOAD-01 — never leave a history-depth
+        # fetch running past the connection it was started for; nothing
+        # would await it, and send_json() on a closed socket would just
+        # raise into an unretrieved task exception.
+        depth_task = getattr(self, "_history_depth_task", None)
+        if depth_task and not depth_task.done():
+            depth_task.cancel()
         # Leave daemon notification group
         if getattr(self, "_db_account_id", None) and self.channel_layer:
             await self.channel_layer.group_discard(
@@ -782,11 +809,14 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 await self._feed.unsubscribe(old_sym, self.channel_layer, self.channel_name)
                 self.symbol = new_sym
                 self._reset_agg(new_sym)
+                self._reset_trade_agg(new_sym)
                 self._seed_price_state(new_sym)
                 await self._feed.subscribe(new_sym, self.channel_layer, self.channel_name)
             self._last_bar_time.pop(new_sym, None)
-            hist = await self.generate_history(new_sym, self.timeframe, bars=240)
-            await self._send_history_or_unavailable(new_sym, self.timeframe, hist)
+            self._history_generation += 1
+            hist, cursor = await self.generate_history_first_page(new_sym, self.timeframe, bars=240)
+            await self._send_history_or_unavailable(new_sym, self.timeframe, hist, phase=("initial" if cursor is not None else "complete"))
+            self._start_history_depth(new_sym, self.timeframe, cursor)
             await self.send_json({"type": "ack", "action": "symbol_changed", "symbol": new_sym})
             await self._refresh_and_send_positions()
 
@@ -794,16 +824,21 @@ class TradingConsumer(AsyncWebsocketConsumer):
             tf = normalize_tf(data.get("timeframe", self.timeframe))
             self.timeframe = tf
             self._reset_agg(self.symbol)
+            self._reset_trade_agg(self.symbol)
             self._last_bar_time.pop(self.symbol, None)
-            hist = await self.generate_history(self.symbol, tf, bars=240)
-            await self._send_history_or_unavailable(self.symbol, tf, hist)
+            self._history_generation += 1
+            hist, cursor = await self.generate_history_first_page(self.symbol, tf, bars=240)
+            await self._send_history_or_unavailable(self.symbol, tf, hist, phase=("initial" if cursor is not None else "complete"))
+            self._start_history_depth(self.symbol, tf, cursor)
             await self.send_json({"type":"ack","action":"change_timeframe","timeframe":tf,"tf_sec":tf_seconds(tf)})
 
         elif act == "load_history":
             sym = data.get("symbol", self.symbol)
             tf  = normalize_tf(data.get("timeframe", self.timeframe))
-            hist = await self.generate_history(sym, tf, bars=240)
-            await self._send_history_or_unavailable(sym, tf, hist)
+            self._history_generation += 1
+            hist, cursor = await self.generate_history_first_page(sym, tf, bars=240)
+            await self._send_history_or_unavailable(sym, tf, hist, phase=("initial" if cursor is not None else "complete"))
+            self._start_history_depth(sym, tf, cursor)
 
         elif act == "account:get":
             await self._recalc_account_and_push()
@@ -1036,7 +1071,15 @@ class TradingConsumer(AsyncWebsocketConsumer):
             symbol, profile, dynamic_inputs=dynamic_inputs,
         )
         await self.send_json({"type": "tick", "symbol": symbol, "bid": bid, "ask": ask, "time": ts, "source": source})
-        await self._on_tick(symbol, mid, volume=0.0, ts=ts)
+        # MASSIVE-CRYPTO-TRADE-CANDLES-01 — crypto candles are built
+        # exclusively from Massive trades now (price_trade(), fed by the
+        # XT channel) — a quote tick (XQ, this method) must never also
+        # drive the candle for these symbols, or the same market moment
+        # would produce two independent, disagreeing OHLC updates.
+        # Forex (and any future non-crypto symbol) is completely
+        # unaffected — unchanged, still built from the quote mid here.
+        if symbol not in _MASSIVE_CRYPTO_ENABLED_SYMBOLS:
+            await self._on_tick(symbol, mid, volume=0.0, ts=ts)
         # O.6c-1aa — UNIFIED RAW EXECUTION. _check_tp_sl() (live WS SL/TP)
         # now evaluates against raw_bid/raw_ask — the SAME values just
         # validated by _validate_quote_values() a few lines above, before
@@ -1132,7 +1175,17 @@ class TradingConsumer(AsyncWebsocketConsumer):
     async def _on_tick(self, symbol: str, price: float, volume: float = 0.0, ts: int | None = None):
         # Exchange-kline symbols send canonical OHLCV via candle_kline().
         # Server-side aggregation from price ticks would produce a second, divergent series.
-        if symbol in _KLINE_SYMBOLS:
+        # GOLDEN-MARKETDATA-CRYPTO-01 — BTCUSD/ETHUSD are still members of
+        # _KLINE_SYMBOLS (symbol_specs.py's exchange_symbol/kraken_symbol
+        # fields are kept dormant, unchanged) but are now served LIVE by
+        # Massive (tick quotes only, never a kline event — Binance/Kraken
+        # are functionally unreachable for them, _try_live_legacy) — so
+        # candle_kline() never fires for them anymore. Excluding them here
+        # restores real-time candle aggregation from their Massive ticks,
+        # exactly like every non-kline symbol already gets. Any other
+        # _KLINE_SYMBOLS member (none exist today) keeps the original
+        # skip-and-wait-for-candle_kline() behavior, unchanged.
+        if symbol in _KLINE_SYMBOLS and symbol not in _MASSIVE_CRYPTO_ENABLED_SYMBOLS:
             return
         if ts is None: ts = int(time.time())
         acc = self._agg.get(symbol)
@@ -1173,14 +1226,96 @@ class TradingConsumer(AsyncWebsocketConsumer):
             "color":"#26a69a" if acc["c"]>=acc["o"] else "#f44336",
         })
 
+    # ---------------- MASSIVE-CRYPTO-TRADE-CANDLES-01 — trade-based candle (crypto only) ----------------
+
+    def _reset_trade_agg(self, symbol: str):
+        self._trade_agg[symbol] = {"t0":None,"o":None,"h":None,"l":None,"c":None,"v":0.0,"tf_sec":tf_seconds(self.timeframe)}
+
+    async def price_trade(self, event: dict):
+        """Channel handler for FeedManager._broadcast_trade()'s
+        "price.trade" messages (Massive XT — crypto only; never sent for
+        Forex, see _massive_crypto_shared_loop()'s XT branch). Chart/
+        candle/volume ONLY — deliberately never touches self.bid/
+        self.ask/self._bid_state/self._ask_state/self._price_state,
+        never calls broker_price()/_check_tp_sl(), never sends a "tick"
+        message. Execution/PnL/margin/risk/SL-TP stay entirely on
+        price_tick() (Massive XQ), completely unchanged by this method's
+        existence — this is the OHLC-plumbing mirror of _on_tick()/
+        _emit_bar() above, deliberately a separate accumulator
+        (self._trade_agg, never self._agg) and a separate method, not a
+        shared/parameterized version of the quote path (same "duplicate,
+        don't share" boundary already used throughout this project for
+        Forex/Crypto)."""
+        symbol = event.get("symbol")
+        if symbol != self.symbol:
+            return
+        price = event["price"]
+        size  = event.get("size", 0.0)
+        ts    = event["time"]
+
+        acc = self._trade_agg.get(symbol)
+        if acc is None or acc["tf_sec"] != tf_seconds(self.timeframe):
+            self._reset_trade_agg(symbol)
+            acc = self._trade_agg[symbol]
+
+        tf_sec = acc["tf_sec"]
+        bucket = (ts // tf_sec) * tf_sec
+
+        if acc["t0"] is None:
+            acc["t0"]=bucket; acc["o"]=acc["h"]=acc["l"]=acc["c"]=price; acc["v"]=float(size or 0.0)
+            await self._emit_trade_bar(symbol, acc); return
+
+        if bucket == acc["t0"]:
+            acc["c"]=price; acc["h"]=max(acc["h"],price); acc["l"]=min(acc["l"],price)
+            acc["v"]=float(acc["v"])+float(size or 0.0)
+            await self._emit_trade_bar(symbol, acc); return
+
+        # bucket nuevo — MASSIVE-CRYPTO-TRADE-CANDLES-01 §7: no trade in
+        # a bucket simply means no candle_new/candle_update for it — the
+        # next real trade, whatever bucket it falls in, opens a fresh
+        # one exactly like this branch already does. Never a synthetic/
+        # carried-forward bar.
+        acc["t0"]=bucket; acc["o"]=acc["h"]=acc["l"]=acc["c"]=price; acc["v"]=float(size or 0.0)
+        await self._emit_trade_bar(symbol, acc)
+
+    async def _emit_trade_bar(self, symbol: str, acc: dict):
+        # Reuses self._last_bar_time (the "have we already sent this
+        # bucket's candle_new" bookkeeping _emit_bar() also uses) — safe
+        # because a symbol is either a quote-driven (Forex) or a trade-
+        # driven (crypto) candle source, never both, so the two writers
+        # can never collide on the same key.
+        bar = {"time":int(acc["t0"]), "open":float(acc["o"]), "high":float(acc["h"]),
+               "low":float(acc["l"]), "close":float(acc["c"])}
+        last_time = self._last_bar_time.get(symbol)
+
+        if last_time is None or int(acc["t0"]) > last_time:
+            await self.send_json({"type":"candle_new","symbol":symbol,"data":bar})
+            self._last_bar_time[symbol] = int(acc["t0"])
+        else:
+            await self.send_json({"type":"candle_update","symbol":symbol,"data":bar})
+
+        await self.send_json({
+            "type":"volume_update","symbol":symbol,"time":int(acc["t0"]),
+            "value":float(acc.get("v",0.0)),
+            "color":"#26a69a" if acc["c"]>=acc["o"] else "#f44336",
+        })
+
     # ---------------- Historia ----------------
 
-    async def _send_history_or_unavailable(self, symbol: str, timeframe: str, hist) -> None:
+    async def _send_history_or_unavailable(self, symbol: str, timeframe: str, hist, phase: str = "complete") -> None:
         """FIX-05B.1 — single dispatch point used by all 3 history call-sites
         (change_symbol/change_timeframe/load_history). Never closes the WS,
         never touches the subscription/live-tick flow — this is one more
         send_json() among many on an already-open connection, same as any
-        other informational message type."""
+        other informational message type.
+
+        CHART-HISTORY-INSTANT-LOAD-01 — `phase` is "initial" for the
+        fast-first-paint page-1-only send, "complete" (default —
+        unchanged for every pre-existing caller) once full depth has
+        been merged in. Only ever attached to a real "history" message;
+        "history_unavailable" carries no phase — it's a terminal failure
+        signal, not a partial result the frontend should expect a
+        follow-up for."""
         if hist is None:
             # FIX-05B.2-C — a symbol with NO real provider configured at all
             # (neither the crypto kline chain nor the Massive forex
@@ -1188,13 +1323,17 @@ class TradingConsumer(AsyncWebsocketConsumer):
             # crypto chain) IS configured for, but which failed/returned
             # empty this time, is "provider_unavailable" — same contract,
             # now covering both provider families.
-            unsupported = symbol not in _KLINE_SYMBOLS and symbol not in _MASSIVE_ENABLED_SYMBOLS
+            unsupported = (
+                symbol not in _KLINE_SYMBOLS
+                and symbol not in _MASSIVE_ENABLED_SYMBOLS
+                and symbol not in _MASSIVE_CRYPTO_ENABLED_SYMBOLS
+            )
             reason = "no_real_history" if unsupported else "provider_unavailable"
             await self.send_json({
                 "type": "history_unavailable", "symbol": symbol, "timeframe": timeframe, "reason": reason,
             })
         else:
-            await self.send_json({"type": "history", "symbol": symbol, "data": hist})
+            await self.send_json({"type": "history", "symbol": symbol, "timeframe": timeframe, "phase": phase, "data": hist})
 
     async def generate_history(self, symbol, timeframe, bars=200) -> "list[dict] | None":
         """FIX-05B.1/FIX-05B.2 — real closed candles only, or None (never
@@ -1207,11 +1346,18 @@ class TradingConsumer(AsyncWebsocketConsumer):
         still-forming one) — that is a valid, real, non-None result, never
         padded back up to `bars`.
 
-        FIX-05B.2-C — symbol dispatch: crypto (kline chain) and Massive
-        forex (_MASSIVE_ENABLED_SYMBOLS) are two disjoint provider paths,
-        never merged or duplicated into a single framework. A symbol in
-        neither returns None without attempting any network call."""
-        if symbol in _KLINE_SYMBOLS:
+        FIX-05B.2-C / GOLDEN-MARKETDATA-CRYPTO-01 — symbol dispatch: three
+        disjoint provider paths, never merged or duplicated into a single
+        framework. Massive-crypto (_MASSIVE_CRYPTO_ENABLED_SYMBOLS,
+        BTCUSD/ETHUSD) is checked FIRST — ahead of the legacy exchange-
+        kline chain (_KLINE_SYMBOLS) it now supersedes at runtime — so
+        crypto history never falls back to Binance/Kraken while Massive is
+        configured; Massive forex (_MASSIVE_ENABLED_SYMBOLS) remains the
+        third, unrelated path. A symbol in none of the three returns None
+        without attempting any network call."""
+        if symbol in _MASSIVE_CRYPTO_ENABLED_SYMBOLS:
+            hist = await self._feed.fetch_massive_crypto_history(symbol, interval=timeframe, limit=bars)
+        elif symbol in _KLINE_SYMBOLS:
             hist = await self._feed.fetch_kline_history(symbol, interval=timeframe, limit=bars)
         elif symbol in _MASSIVE_ENABLED_SYMBOLS:
             hist = await self._feed.fetch_massive_history(symbol, interval=timeframe, limit=bars)
@@ -1240,6 +1386,94 @@ class TradingConsumer(AsyncWebsocketConsumer):
             markup_pips=float(self.account.get("spread_pips", 0.0) or 0.0),
         )
         return hist
+
+    async def generate_history_first_page(self, symbol, timeframe, bars=200) -> "tuple[list[dict] | None, object]":
+        """CHART-HISTORY-INSTANT-LOAD-01 — first-paint half of
+        generate_history(). Same three-way dispatch, but issues exactly
+        ONE REST call for the Massive-backed paths (via the *_first_page
+        fetchers) instead of the full multi-page fetch, so the caller can
+        paint a chart in ~0.3s instead of waiting the full pagination
+        depth. Returns (closed_bars_or_None, cursor_or_None); cursor is
+        None whenever there is nothing left to fetch (kline path,
+        unsupported symbol, provider failure, or the first page already
+        covered everything) — callers use that to decide whether a depth
+        task is worth starting at all.
+
+        Price-state snapping happens here, exactly once, on whichever
+        closed bars are freshest — the depth phase (_complete_history_
+        depth, below) only ever prepends OLDER bars behind this result
+        and must never re-snap."""
+        cursor = None
+        if symbol in _MASSIVE_CRYPTO_ENABLED_SYMBOLS:
+            hist, cursor = await self._feed.fetch_massive_crypto_history_first_page(symbol, interval=timeframe, limit=bars)
+        elif symbol in _KLINE_SYMBOLS:
+            # Kline chain is already a single request — no first-page/
+            # depth split exists or is needed for it.
+            hist = await self._feed.fetch_kline_history(symbol, interval=timeframe, limit=bars)
+        elif symbol in _MASSIVE_ENABLED_SYMBOLS:
+            hist, cursor = await self._feed.fetch_massive_history_first_page(symbol, interval=timeframe, limit=bars)
+        else:
+            return None, None
+
+        hist = _closed_only(hist, tf_seconds(timeframe))
+        if not hist:
+            log.warning("[consumer] real history unavailable for %s %s (provider failure or all-open)", symbol, timeframe)
+            return None, cursor
+
+        last_close = hist[-1]["close"]
+        spr = spread_for(symbol)
+        _, dec = step_decimals_for(symbol)
+        self._price_state[symbol] = last_close
+        self._bid_state[symbol], self._ask_state[symbol] = broker_price(
+            symbol,
+            round(last_close - spr / 2, dec),
+            round(last_close + spr / 2, dec),
+            markup_pips=float(self.account.get("spread_pips", 0.0) or 0.0),
+        )
+        return hist, cursor
+
+    async def _complete_history_depth(self, symbol, timeframe, generation, cursor) -> None:
+        """CHART-HISTORY-INSTANT-LOAD-01 — runs detached (asyncio.create_
+        task, never awaited by receive()) to fetch the remaining
+        pagination depth after generate_history_first_page() already
+        delivered a fast first paint. Only ever created when generate_
+        history_first_page() returned a non-None cursor. Guarded by
+        generation+symbol+timeframe so a stale depth fetch (superseded
+        by another switch before it finished) is silently dropped
+        instead of overwriting a chart it no longer applies to — never
+        re-snaps price state, which was already set from the fresher
+        first page."""
+        try:
+            if symbol in _MASSIVE_CRYPTO_ENABLED_SYMBOLS:
+                hist = await self._feed.fetch_massive_crypto_history_remaining(cursor)
+            else:
+                hist = await self._feed.fetch_massive_history_remaining(cursor)
+            hist = _closed_only(hist, tf_seconds(timeframe))
+            if (
+                hist
+                and generation == self._history_generation
+                and symbol == self.symbol
+                and timeframe == self.timeframe
+            ):
+                await self._send_history_or_unavailable(symbol, timeframe, hist, phase="complete")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.debug("[consumer] history depth fetch failed for %s %s", symbol, timeframe, exc_info=True)
+
+    def _start_history_depth(self, symbol, timeframe, cursor) -> None:
+        """CHART-HISTORY-INSTANT-LOAD-01 — cancels any previous in-flight
+        depth fetch and, only if `cursor` is not None (a single-page
+        result needs no depth task at all — the first page already is
+        the final history for that request), starts a new detached one
+        tagged with the current generation."""
+        old = self._history_depth_task
+        if old and not old.done():
+            old.cancel()
+        self._history_depth_task = (
+            asyncio.create_task(self._complete_history_depth(symbol, timeframe, self._history_generation, cursor))
+            if cursor is not None else None
+        )
 
     # ---------------- Estado de precio ----------------
 

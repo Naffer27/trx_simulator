@@ -45,7 +45,15 @@ class FeatureFlagAndAllowlistGateTests(_RouterStateIsolatedTestCase):
     @override_settings(MARKET_DATA_ROUTER_ENABLED=False)
     def test_flag_false_uses_legacy_and_never_invokes_router(self):
         fm = FeedManager()
+        # GOLDEN-MARKETDATA-CRYPTO-01 — MASSIVE_API_KEY="" neutralizes
+        # _try_live_legacy's Massive-crypto branch (checked before Binance
+        # for BTCUSD) so this test keeps exercising Binance dispatch in
+        # isolation, same precedent already used for Forex symbols in
+        # test_feeds_market_session_integration.py. Without this, a real
+        # MASSIVE_API_KEY from .env makes _try_live_legacy open a genuine
+        # live connection to Massive here.
         with patch("market_data.runtime_router.service.select_runtime_provider") as mock_select, \
+             patch("market_data.feeds.MASSIVE_API_KEY", ""), \
              patch.object(fm, "_binance_loop", new=AsyncMock()) as mock_binance:
             result = _run(fm._try_live("BTCUSD", MagicMock()))
 
@@ -56,7 +64,9 @@ class FeatureFlagAndAllowlistGateTests(_RouterStateIsolatedTestCase):
     @override_settings(MARKET_DATA_ROUTER_ENABLED=True, MARKET_DATA_ROUTER_SYMBOLS=frozenset({"ETHUSD"}))
     def test_flag_true_symbol_not_on_allowlist_uses_legacy(self):
         fm = FeedManager()
+        # GOLDEN-MARKETDATA-CRYPTO-01 — see note above.
         with patch("market_data.runtime_router.service.select_runtime_provider") as mock_select, \
+             patch("market_data.feeds.MASSIVE_API_KEY", ""), \
              patch.object(fm, "_binance_loop", new=AsyncMock()) as mock_binance:
             _run(fm._try_live("BTCUSD", MagicMock()))  # BTCUSD not in the allowlist above
 

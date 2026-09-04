@@ -42,6 +42,13 @@ def _bare_history_consumer(symbol: str = "BTCUSD", timeframe: str = "1m") -> Tra
     c.timeframe = timeframe
     c._feed = MagicMock()
     c._feed.fetch_kline_history = AsyncMock(return_value=[])
+    # GOLDEN-MARKETDATA-CRYPTO-01 — generate_history() now checks
+    # _MASSIVE_CRYPTO_ENABLED_SYMBOLS (BTCUSD/ETHUSD) before _KLINE_SYMBOLS.
+    # Without this mock, a bare MagicMock's auto-created
+    # fetch_massive_crypto_history attribute is not awaitable, and
+    # `await self._feed.fetch_massive_crypto_history(...)` raises
+    # TypeError for every BTCUSD/ETHUSD test in this file.
+    c._feed.fetch_massive_crypto_history = AsyncMock(return_value=[])
     c._price_state = {}
     c._bid_state = {}
     c._ask_state = {}
@@ -86,7 +93,13 @@ class RealHistoryAcceptedTests(TestCase):
         tf_sec = tf_seconds("1m")
         closed_bar = _bar((now // tf_sec) * tf_sec - tf_sec, c=50000.0)
         c = _bare_history_consumer(symbol="BTCUSD", timeframe="1m")
+        # GOLDEN-MARKETDATA-CRYPTO-01 — generate_history() now dispatches
+        # BTCUSD to fetch_massive_crypto_history() first; fetch_kline_
+        # history stays mocked too (unused here) only so a future dispatch
+        # regression that fell back to it would still see real data rather
+        # than silently succeed on an empty list.
         c._feed.fetch_kline_history.return_value = [closed_bar]
+        c._feed.fetch_massive_crypto_history.return_value = [closed_bar]
         result = _run(c.generate_history("BTCUSD", "1m", bars=240))
         self.assertEqual(result, [closed_bar])
         self.assertEqual(c._price_state["BTCUSD"], 50000.0)
@@ -97,6 +110,7 @@ class RealHistoryAcceptedTests(TestCase):
         closed_bar = _bar((now // tf_sec) * tf_sec - tf_sec, c=3000.0)
         c = _bare_history_consumer(symbol="ETHUSD", timeframe="1m")
         c._feed.fetch_kline_history.return_value = [closed_bar]
+        c._feed.fetch_massive_crypto_history.return_value = [closed_bar]
         result = _run(c.generate_history("ETHUSD", "1m", bars=240))
         self.assertEqual(result, [closed_bar])
         self.assertEqual(c._price_state["ETHUSD"], 3000.0)
@@ -232,32 +246,28 @@ class KrakenRestPairMappingTests(TestCase):
                 self.assertEqual(len(bars), 1)
 
     def test_closed_only_still_removes_only_the_open_candle(self):
-        # fetch_kline_history() itself returns raw bars (closed-only is
-        # applied one layer up, in generate_history() — FIX-05B.1's single
-        # authority, see NoSyntheticCodeTests) — so this exercises the
-        # FULL real path: a real FeedManager, urlopen mocked, through
-        # TradingConsumer.generate_history().
+        # GOLDEN-MARKETDATA-CRYPTO-01 — generate_history() now dispatches
+        # BTCUSD to fetch_massive_crypto_history() FIRST, never falling
+        # through to fetch_kline_history()'s Binance->Kraken chain (that
+        # chain is exercised directly, unaffected, by
+        # test_1m_15m_1h_all_reach_kraken_with_correct_pair etc. above —
+        # this test's job is only to prove _closed_only() integrates
+        # end-to-end through generate_history(), independent of which
+        # provider produced the raw bars). Mocking fetch_massive_crypto_
+        # history directly, rather than preserving the old Kraken-REST
+        # plumbing here, matches the authorized runtime: Kraken is no
+        # longer reachable from generate_history() for BTCUSD.
         now = int(time.time())
         tf_sec = 3600  # 1h
-        kraken_body = json.dumps({
-            "result": {"XXBTZUSD": [
-                _kraken_row(now - 2 * tf_sec),
-                _kraken_row(now - tf_sec),
-                _kraken_row(now),  # still forming — must be dropped
-            ]},
-            "error": [],
-        }).encode()
-
-        def _urlopen(req, timeout=10):
-            url = req.full_url if hasattr(req, "full_url") else str(req)
-            if "kraken.com" in url:
-                return _mock_response(kraken_body)
-            raise OSError("simulated network failure")  # Binance US/com both fail
+        raw_bars = [
+            _bar(now - 2 * tf_sec),
+            _bar(now - tf_sec),
+            _bar(now),  # still forming — must be dropped
+        ]
 
         c = _bare_history_consumer(symbol="BTCUSD", timeframe="1h")
-        c._feed = FeedManager()
-        with patch("market_data.feeds.urllib.request.urlopen", side_effect=_urlopen):
-            result = _run(c.generate_history("BTCUSD", "1h", bars=10))
+        c._feed.fetch_massive_crypto_history = AsyncMock(return_value=raw_bars)
+        result = _run(c.generate_history("BTCUSD", "1h", bars=10))
         self.assertIsNotNone(result)
         self.assertEqual(len(result), 2)  # the still-open bar was excluded
 
@@ -320,9 +330,12 @@ class NoSyntheticCodeTests(SimpleTestCase):
         import inspect
         from simulator import consumers as consumers_module
         full_src = inspect.getsource(consumers_module)
-        # def _send_history_or_unavailable( + 3 call-sites (change_symbol,
-        # change_timeframe, load_history) = 4 occurrences of the call form.
-        self.assertEqual(full_src.count("_send_history_or_unavailable("), 4)
+        # def _send_history_or_unavailable( + 3 receive() call-sites
+        # (change_symbol, change_timeframe, load_history) + 1 call from
+        # _complete_history_depth() (CHART-HISTORY-INSTANT-LOAD-01 —
+        # the depth-completion phase dispatches through this SAME single
+        # helper, never a second send path) = 5 occurrences of the call form.
+        self.assertEqual(full_src.count("_send_history_or_unavailable("), 5)
         self.assertEqual(full_src.count("async def _send_history_or_unavailable"), 1)
 
 

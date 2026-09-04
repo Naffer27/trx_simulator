@@ -16,8 +16,12 @@ Contract under test:
     row) — every one of those returns [], never a synthetic candle.
     results=[] is a legitimate, confirmed-real outcome (FIX-05B.2-A.1),
     never logged as a warning/error.
-  - Pagination is bounded to _MASSIVE_MAX_PAGES, Authorization: Bearer is
-    re-attached on every page.
+  - Pagination requests newest-first (sort=desc) and is bounded to
+    _MASSIVE_FOREX_MAX_PAGES, trimmed to the most recent `limit` bars,
+    then sorted ascending before returning (CHART-GLOBAL-REGRESSION-01 —
+    the original ASC + a 3-page cap silently truncated 15m/1h history to
+    3-16 days stale, confirmed live for all 4 pairs). Authorization:
+    Bearer is re-attached on every page.
   - generate_history() (consumers.py) dispatches Massive-enabled forex
     symbols to fetch_massive_history(), reuses the SAME _closed_only() the
     crypto path already uses (no per-provider closed-candle filter), and
@@ -43,7 +47,7 @@ from simulator.consumers import TradingConsumer, tf_seconds
 from market_data.feeds import (
     FeedManager,
     _MASSIVE_ENABLED_SYMBOLS,
-    _MASSIVE_MAX_PAGES,
+    _MASSIVE_FOREX_MAX_PAGES,
     _MASSIVE_TF,
     _massive_range,
     _massive_sym,
@@ -283,19 +287,19 @@ class MassiveFetchHistoryTests(TestCase):
 
     def test_pagination_bounded_to_max_pages(self):
         # Every page returns 1 row + a next_url -> would paginate forever
-        # without the _MASSIVE_MAX_PAGES cap. limit=100 so len(results)
-        # never reaches `limit` on its own, forcing the cap to be what
-        # actually stops it.
+        # without the _MASSIVE_FOREX_MAX_PAGES cap. limit=1000 so
+        # len(results) never reaches `limit` on its own, forcing the cap
+        # to be what actually stops it.
         responses = [
             _mock_urlopen_response(json.dumps(_massive_payload(
                 [_massive_row(1000 * (i + 1))], next_url=f"https://api.massive.com/next?page={i}"
             )).encode())
-            for i in range(6)  # far more pages available than the cap allows
+            for i in range(_MASSIVE_FOREX_MAX_PAGES + 5)  # far more pages available than the cap allows
         ]
         with patch("urllib.request.urlopen", side_effect=responses) as mock_urlopen:
-            bars = self._run_fetch(limit=100)
-        self.assertEqual(mock_urlopen.call_count, _MASSIVE_MAX_PAGES)
-        self.assertEqual(len(bars), _MASSIVE_MAX_PAGES)
+            bars = self._run_fetch(limit=1000)
+        self.assertEqual(mock_urlopen.call_count, _MASSIVE_FOREX_MAX_PAGES)
+        self.assertEqual(len(bars), _MASSIVE_FOREX_MAX_PAGES)
 
     def test_next_url_reattaches_authorization_header(self):
         page1 = _mock_urlopen_response(json.dumps(_massive_payload(
@@ -326,6 +330,176 @@ class MassiveFetchHistoryTests(TestCase):
         times = [b["time"] for b in bars]
         self.assertEqual(len(times), len(set(times)), "no duplicate timestamps in the final result")
         self.assertEqual(bars[0]["close"], 1.1000, "first occurrence (page 1) must win, not be overwritten")
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# CHART-GLOBAL-REGRESSION-01 — DESC pagination (freshness fix). Confirmed
+# live against the real Massive API: EVERY Forex pair (EUR/USD, GBP/USD,
+# USD/JPY, AUD/USD) has the identical small, timeframe-driven page size
+# regardless of `limit` — the original ASC + 3-page cap silently
+# truncated 15m/1h history to 3-16 days stale, for all 4 pairs, never
+# caught before because only 1m (which happens to fit in one page) had
+# ever been checked against real data. Fixed the same way as
+# fetch_massive_crypto_history(): sort=desc, paginate up to
+# _MASSIVE_FOREX_MAX_PAGES, trim to the most recent `limit` bars, sort
+# ascending — same final contract. Mirrors
+# test_golden_marketdata_crypto_01_massive_crypto_live.py::
+# DescPaginationTests structurally (duplicate, don't share).
+# ─────────────────────────────────────────────────────────────────────────
+class DescPaginationForexTests(TestCase):
+    def setUp(self):
+        self._key_patch = patch("market_data.feeds.MASSIVE_API_KEY", "test-key-not-real-1234567890ab")
+        self._key_patch.start()
+        self.feed = FeedManager()
+
+    def tearDown(self):
+        self._key_patch.stop()
+
+    def _run_fetch(self, symbol="EUR/USD", interval="1m", limit=200):
+        return _run(self.feed.fetch_massive_history(symbol, interval=interval, limit=limit))
+
+    def test_initial_request_url_includes_sort_desc(self):
+        body = json.dumps(_massive_payload([_massive_row(9_000_000)])).encode()
+        captured = []
+
+        def _capture(req, timeout=None):
+            captured.append(req.full_url if hasattr(req, "full_url") else str(req))
+            return _mock_urlopen_response(body)
+
+        with patch("urllib.request.urlopen", side_effect=_capture):
+            self._run_fetch()
+        self.assertEqual(len(captured), 1)
+        self.assertIn("sort=desc", captured[0])
+
+    def test_sort_desc_url_for_all_four_pairs(self):
+        body = json.dumps(_massive_payload([_massive_row(9_000_000)])).encode()
+        for sym in ("EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD"):
+            captured = []
+
+            def _capture(req, timeout=None, _bucket=captured):
+                _bucket.append(req.full_url if hasattr(req, "full_url") else str(req))
+                return _mock_urlopen_response(body)
+
+            with patch("urllib.request.urlopen", side_effect=_capture):
+                self._run_fetch(symbol=sym)
+            self.assertIn("sort=desc", captured[0], sym)
+
+    def test_stops_when_requested_limit_reached_on_first_page(self):
+        rows = [_massive_row(9_000_000 + i * 60_000) for i in range(5)]
+        body = json.dumps(_massive_payload(rows, next_url="https://api.massive.com/next?cursor=x")).encode()
+        with patch("urllib.request.urlopen", return_value=_mock_urlopen_response(body)) as mock_urlopen:
+            bars = self._run_fetch(limit=5)
+        self.assertEqual(mock_urlopen.call_count, 1)
+        self.assertEqual(len(bars), 5)
+
+    def test_stops_at_forex_safety_cap_never_more(self):
+        responses = [
+            _mock_urlopen_response(json.dumps(_massive_payload(
+                [_massive_row(9_000_000 + i * 60_000)],
+                next_url=f"https://api.massive.com/next?page={i}",
+            )).encode())
+            for i in range(_MASSIVE_FOREX_MAX_PAGES + 5)
+        ]
+        with patch("urllib.request.urlopen", side_effect=responses) as mock_urlopen:
+            bars = self._run_fetch(limit=1000)
+        self.assertEqual(mock_urlopen.call_count, _MASSIVE_FOREX_MAX_PAGES)
+        self.assertEqual(len(bars), _MASSIVE_FOREX_MAX_PAGES)
+
+    def test_stops_cleanly_when_no_next_url(self):
+        rows = [_massive_row(9_000_000 + i * 60_000) for i in range(3)]
+        body = json.dumps(_massive_payload(rows)).encode()  # no next_url
+        with patch("urllib.request.urlopen", return_value=_mock_urlopen_response(body)) as mock_urlopen:
+            bars = self._run_fetch(limit=1000)
+        self.assertEqual(mock_urlopen.call_count, 1)
+        self.assertEqual(len(bars), 3)
+
+    def test_final_output_sorted_ascending_despite_desc_arrival(self):
+        page1 = _mock_urlopen_response(json.dumps(_massive_payload(
+            [_massive_row(300_000), _massive_row(200_000)],
+            next_url="https://api.massive.com/next?cursor=a",
+        )).encode())
+        page2 = _mock_urlopen_response(json.dumps(_massive_payload([_massive_row(100_000)])).encode())
+        with patch("urllib.request.urlopen", side_effect=[page1, page2]):
+            bars = self._run_fetch(limit=1000)
+        times = [b["time"] for b in bars]
+        self.assertEqual(times, sorted(times))
+        self.assertEqual(times, [100, 200, 300])
+
+    def test_keeps_the_most_recent_bars_when_more_than_limit_accumulates(self):
+        page1 = _mock_urlopen_response(json.dumps(_massive_payload(
+            [_massive_row(600_000), _massive_row(500_000)],
+            next_url="https://api.massive.com/next?cursor=a",
+        )).encode())
+        page2 = _mock_urlopen_response(json.dumps(_massive_payload(
+            [_massive_row(400_000), _massive_row(300_000)],
+            next_url="https://api.massive.com/next?cursor=b",
+        )).encode())
+        page3 = _mock_urlopen_response(json.dumps(_massive_payload(
+            [_massive_row(200_000), _massive_row(100_000)],
+        )).encode())
+        with patch("urllib.request.urlopen", side_effect=[page1, page2, page3]):
+            bars = self._run_fetch(limit=3)
+        self.assertEqual([b["time"] for b in bars], [400, 500, 600])
+
+    def test_dedupe_still_works_under_desc_pagination(self):
+        page1 = _mock_urlopen_response(json.dumps(_massive_payload(
+            [_massive_row(200_000, c=1.2345)],
+            next_url="https://api.massive.com/next?cursor=a",
+        )).encode())
+        page2 = _mock_urlopen_response(json.dumps(_massive_payload(
+            [_massive_row(200_000, c=9.9999), _massive_row(100_000)],
+        )).encode())
+        with patch("urllib.request.urlopen", side_effect=[page1, page2]):
+            bars = self._run_fetch(limit=1000)
+        times = [b["time"] for b in bars]
+        self.assertEqual(len(times), len(set(times)))
+        self.assertAlmostEqual(next(b["close"] for b in bars if b["time"] == 200), 1.2345)
+
+    def test_sparse_timeframe_prefers_freshness_over_depth(self):
+        # Mirrors the real 1h behavior confirmed live: ~3 results/page,
+        # can't reach a 200-bar limit within the cap, but the newest bar
+        # (page 1) must still survive in the final result.
+        responses = [
+            _mock_urlopen_response(json.dumps(_massive_payload(
+                [_massive_row(9_000_000 - i * 60_000)],
+                next_url=f"https://api.massive.com/next?page={i}",
+            )).encode())
+            for i in range(_MASSIVE_FOREX_MAX_PAGES + 3)
+        ]
+        with patch("urllib.request.urlopen", side_effect=responses):
+            bars = self._run_fetch(interval="1h", limit=1000)
+        self.assertLess(len(bars), 1000)
+        self.assertEqual(len(bars), _MASSIVE_FOREX_MAX_PAGES)
+        self.assertEqual(bars[-1]["time"], 9000)
+
+    def test_all_four_pairs_and_three_timeframes_use_same_mechanism(self):
+        # Not a claim that every pair/timeframe combination needs its own
+        # distinct test — the pagination code path is symbol/timeframe-
+        # agnostic by construction (only the URL's ticker/multiplier/
+        # timespan segments vary, confirmed in _massive_sym()/_MASSIVE_TF,
+        # both pure mapping tables outside this method entirely). This
+        # confirms the SAME single-page-reaches-limit behavior holds for
+        # all 4 pairs across 1m/15m/1h.
+        body = json.dumps(_massive_payload([_massive_row(9_000_000 + i * 60_000) for i in range(10)])).encode()
+        for sym in ("EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD"):
+            for tf in ("1m", "15m", "1h"):
+                with patch("urllib.request.urlopen", return_value=_mock_urlopen_response(body)):
+                    bars = self._run_fetch(symbol=sym, interval=tf, limit=10)
+                self.assertEqual(len(bars), 10, f"{sym} {tf}")
+
+    def test_crypto_pagination_constant_unaffected(self):
+        # Regression guard — the crypto cap must not have been touched or
+        # accidentally merged with the Forex one by this fix. Both equal
+        # 20 today (identical live-measured page-size profile), but are
+        # two separately-defined constants — changing one in source would
+        # not change the other (unlike, say, aliasing one to the other).
+        import inspect
+        from market_data import feeds as feeds_module
+        src = inspect.getsource(feeds_module)
+        self.assertIn("_MASSIVE_CRYPTO_MAX_PAGES = 20", src)
+        self.assertIn("_MASSIVE_FOREX_MAX_PAGES = 20", src)
+        self.assertEqual(feeds_module._MASSIVE_CRYPTO_MAX_PAGES, 20)
+        self.assertEqual(_MASSIVE_FOREX_MAX_PAGES, 20)
 
 
 # ─────────────────────────────────────────────────────────────────────────

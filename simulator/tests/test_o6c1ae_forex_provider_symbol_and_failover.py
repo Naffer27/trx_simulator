@@ -235,15 +235,43 @@ class OrderNewWithValidEurUsdQuoteTests(TransactionTestCase):
 # ─────────────────────────────────────────────────────────────────────────
 class CryptoRoutingUnaffectedTests(SimpleTestCase):
     """(11) this block only touches forex finnhub_symbol values and
-    _finnhub_loop()'s error handling. BTCUSD/ETHUSD never reach Finnhub
-    at all (_try_live_legacy tries Binance first, and their
-    exchange_symbol is set) — assert their routing metadata is exactly
-    what it was before this change."""
+    _finnhub_loop()'s error handling — BTCUSD/ETHUSD never reached Finnhub
+    before this change and still don't. What DID change, in
+    GOLDEN-MARKETDATA-CRYPTO-01: Massive is now checked BEFORE Binance in
+    _try_live_legacy for these 2 symbols, making Binance/Kraken
+    functionally unreachable for them — see
+    test_golden_marketdata_crypto_01_massive_crypto_live.py for the full
+    Massive-crypto dispatch/shared-connection coverage. This class keeps
+    asserting the dormant Binance/Kraken metadata (symbol_specs.py's
+    exchange_symbol/kraken_symbol) is unchanged — GOLDEN-MARKETDATA-
+    CRYPTO-01 §I classifies it "KEEP AS DORMANT", not removed — plus a
+    direct check that _try_live_legacy no longer reaches Binance for
+    them."""
 
-    def test_btcusd_still_routes_to_binance_first(self):
+    def test_btcusd_binance_kraken_metadata_kept_dormant(self):
         self.assertEqual(_binance_sym("BTCUSD"), "BTCUSDT")
         self.assertIsNone(get_spec("BTCUSD").finnhub_symbol)
 
-    def test_ethusd_still_routes_to_binance_first(self):
+    def test_ethusd_binance_kraken_metadata_kept_dormant(self):
         self.assertEqual(_binance_sym("ETHUSD"), "ETHUSDT")
         self.assertIsNone(get_spec("ETHUSD").finnhub_symbol)
+
+    def test_btcusd_never_reaches_binance_loop_at_runtime(self):
+        async def _scenario():
+            fm = FeedManager()
+            with patch("market_data.feeds.MASSIVE_API_KEY", "FAKEtestONLYnotREALkey1234567xx"), \
+                 patch.object(fm, "_massive_crypto_loop", new=AsyncMock(return_value=None)), \
+                 patch.object(fm, "_binance_loop", new=AsyncMock()) as mock_binance:
+                await fm._try_live_legacy("BTCUSD", MagicMock())
+                mock_binance.assert_not_called()
+        _run(_scenario())
+
+    def test_ethusd_never_reaches_binance_loop_at_runtime(self):
+        async def _scenario():
+            fm = FeedManager()
+            with patch("market_data.feeds.MASSIVE_API_KEY", "FAKEtestONLYnotREALkey1234567xx"), \
+                 patch.object(fm, "_massive_crypto_loop", new=AsyncMock(return_value=None)), \
+                 patch.object(fm, "_binance_loop", new=AsyncMock()) as mock_binance:
+                await fm._try_live_legacy("ETHUSD", MagicMock())
+                mock_binance.assert_not_called()
+        _run(_scenario())

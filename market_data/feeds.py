@@ -149,7 +149,20 @@ GAP_BUFFER = 2.0
 _MASSIVE_RANGE_MIN_SECONDS = 86400
 _MASSIVE_RANGE_MAX_SECONDS = 400 * 86400
 
-_MASSIVE_MAX_PAGES = 3  # 1 initial fetch + at most 2 next_url continuations, never more
+# CHART-GLOBAL-REGRESSION-01 — precheck confirmed live (real Massive API,
+# sort=desc, 2026-09-03): the aggs endpoint returns a small, timeframe-
+# driven page size for EVERY Forex pair tested (EUR/USD, GBP/USD, USD/JPY,
+# AUD/USD all identical) — 200/39/13/3/203 results per page for
+# 1m/5m/15m/1h/1d respectively, regardless of the requested `limit`. The
+# original _MASSIVE_MAX_PAGES=3 (1 initial + 2 continuations) was only
+# ever validated against 1m (which happens to fit in a single page) —
+# 15m/1h silently truncated Forex history to 3-16 DAYS stale, for every
+# pair, undetected until this audit. Renamed (not duplicated) to
+# _MASSIVE_FOREX_MAX_PAGES and raised to 20 — same evidence-backed value
+# already proven for _MASSIVE_CRYPTO_MAX_PAGES, since the two page-size
+# profiles are identical. Worst case (1h): 20 pages ≈ 60-80 fresh bars
+# instead of 200 stale ones — FRESHNESS > DEPTH, same tradeoff as crypto.
+_MASSIVE_FOREX_MAX_PAGES = 20
 
 
 def _massive_sym(symbol: str) -> "str | None":
@@ -179,6 +192,55 @@ def _massive_range(interval: str, bars: int) -> "tuple[str, str] | None":
     to_dt = datetime.now(_dt_tz.utc)
     from_dt = to_dt - timedelta(seconds=span_seconds)
     return from_dt.strftime("%Y-%m-%d"), to_dt.strftime("%Y-%m-%d")
+
+
+# CHART-HISTORY-INSTANT-LOAD-01 — first-paint split. Massive's per-page
+# result count (confirmed live, both Forex and crypto) is far smaller
+# than the requested `limit` for anything past 1m, so reaching full depth
+# can take up to _MASSIVE_FOREX_MAX_PAGES/_MASSIVE_CRYPTO_MAX_PAGES
+# sequential REST round-trips (measured: ~3.6s for Forex 15m, ~5.0s for
+# 1h) — all of it previously spent BEFORE generate_history() had
+# anything to send, blocking the whole TradingConsumer (Channels
+# processes one event per connection at a time) for that entire window.
+# fetch_massive_history()/fetch_massive_crypto_history() are now each
+# split into a `_first_page` (exactly one REST call, returns immediately)
+# and a `_remaining` (continues from a cursor, used from a detached
+# asyncio.Task in consumers.py so the consumer is never blocked past the
+# first ~0.3s) — the two together produce byte-identical output to the
+# original single-call function, which is kept as a thin composition of
+# both for 100% backward compatibility with every existing caller/test.
+@dataclass
+class _MassiveHistoryCursor:
+    """Opaque resume state for continuing a Massive aggs pagination past
+    page 1. Only ever produced by a `_first_page` fetcher and consumed by
+    its matching `_remaining` fetcher — callers never inspect its fields."""
+    symbol: str
+    interval: str
+    limit: int
+    bars_so_far: list  # raw parsed rows from page 1, DESC arrival order
+    pages_so_far: int
+    next_url: str
+
+
+def _finalize_massive_bars(bars: list, limit: int) -> list:
+    """Shared by all 4 Massive history fetchers (Forex/Crypto x first-
+    page/remaining): dedupe by timestamp in arrival (DESC) order (first
+    occurrence wins), trim to the most recent `limit` entries, sort
+    chronologically ascending — the single final-shape contract every
+    history fetcher in this file returns. Pure data reshaping (no
+    network/provider logic), so sharing it across the Forex/Crypto
+    boundary does not reopen Design Lock Option A's "duplicate, don't
+    share" decision — that decision is about the live-connection/
+    broadcast code, not this stateless post-processing step (already
+    byte-identical in both before this split existed)."""
+    seen: set = set()
+    deduped_desc = []
+    for b in bars:
+        if b["time"] not in seen:
+            seen.add(b["time"])
+            deduped_desc.append(b)
+    trimmed = deduped_desc[:limit]
+    return sorted(trimmed, key=lambda x: x["time"])
 
 
 # ─── FIX-05B.3-B1/B2 — Massive Forex LIVE WebSocket ─────────────────────────────
@@ -264,6 +326,98 @@ def _parse_massive_events(raw) -> list:
     if isinstance(data, dict):
         return [data]
     return []
+
+
+# ─── GOLDEN-MARKETDATA-CRYPTO-01 — Massive Crypto (historical + live) ───────────
+#
+# Design Lock: GOLDEN_MARKETDATA_CRYPTO_01_DESIGN_LOCK.md, Option A (approved) —
+# deliberately duplicates the FIX-05B.2/FIX-05B.3-B2-A Forex-Massive pattern
+# with a `_crypto_` infix on every new symbol/state/method, rather than
+# refactoring/sharing code with the certified Forex implementation — this
+# minimizes Forex regression risk (Forex code below is untouched). One
+# unified allowlist covers historical, live WS, and REST resync — unlike
+# Forex there is no disabled-but-historical-only crypto symbol today.
+#
+# wss://socket.massive.com/crypto is a DIFFERENT physical cluster from
+# Forex's wss://socket.massive.com/forex — confirmed live
+# (GOLDEN-MARKETDATA-CRYPTO-01 provider-access audit): cannot share one
+# connection with Forex, hence the fully parallel shared-connection state
+# below (mirrors _massive_* 1:1, never merged with it).
+_MASSIVE_WS_CRYPTO_URL = "wss://socket.massive.com/crypto"
+_MASSIVE_CRYPTO_ENABLED_SYMBOLS = frozenset({"BTCUSD", "ETHUSD"})
+
+# GOLDEN-MARKETDATA-CRYPTO-01 — ACCEPTANCE FIX (pagination). Confirmed live
+# against the real Massive REST API: the crypto aggs endpoint returns only
+# ~13 results per page for 15m regardless of the requested `limit` (at the
+# time this was written, Forex's own 1m had only been checked at a single
+# page — CHART-GLOBAL-REGRESSION-01 later confirmed live that Forex has
+# the SAME small, timeframe-driven page size for every pair/timeframe
+# except 1m, and needed the identical fix — see _MASSIVE_FOREX_MAX_PAGES
+# and fetch_massive_history() below). Reusing the old 3-page cap for
+# crypto silently truncated history ~4 days short of "now" (BTCUSD/ETHUSD
+# 15m both landed on the exact same stale timestamp — a systemic, not
+# per-symbol, gap). `sort=desc` (also confirmed live) makes page 1 always
+# contain the NEWEST bars regardless of how many pages are ultimately
+# fetched, so freshness degrades gracefully with this cap even for the
+# sparsest timeframe (1h: only ~60 of a requested 200 bars fit in 20
+# pages, but the newest bar is still <1h old) — deliberately preferring
+# less depth over stale-but-"complete" data. This constant stays
+# crypto-only (Design Lock Option A — duplicate, don't share); Forex has
+# its own separate constant with the same value, not this one.
+_MASSIVE_CRYPTO_MAX_PAGES = 20
+
+# Confirmed live: WS subscribe channel prefix is "XQ." (not Forex's "C."),
+# and the pair spelling uses a hyphen, not the canonical no-separator
+# internal symbol ("BTC-USD", never "BTCUSD") — an explicit dict, never a
+# "insert a hyphen" heuristic, same defensive posture as _KRAKEN_REST_PAIR
+# above. REST ticker format instead has NO separator to insert (Polygon-
+# style crypto prefix "X:" + the canonical symbol as-is: "X:BTCUSD").
+_MASSIVE_CRYPTO_WS_PAIR = {"BTCUSD": "BTC-USD", "ETHUSD": "ETH-USD"}
+_MASSIVE_CRYPTO_WS_PAIR_REVERSE = {v: k for k, v in _MASSIVE_CRYPTO_WS_PAIR.items()}
+
+
+def _massive_crypto_sym(symbol: str) -> "str | None":
+    """'BTCUSD' -> 'X:BTCUSD'. None for anything outside the allowlist —
+    never a heuristic (mirrors _massive_sym())."""
+    if symbol not in _MASSIVE_CRYPTO_ENABLED_SYMBOLS:
+        return None
+    return f"X:{symbol}"
+
+
+def _massive_crypto_ws_pair(symbol: str) -> "str | None":
+    """'BTCUSD' -> 'BTC-USD'. None for anything outside the allowlist."""
+    return _MASSIVE_CRYPTO_WS_PAIR.get(symbol)
+
+
+def _massive_crypto_symbol_from_pair(pair: str) -> "str | None":
+    """'BTC-USD' -> 'BTCUSD' — inverse of _massive_crypto_ws_pair(), used to
+    route an incoming "ev":"XQ" event (keyed by Massive's own pair
+    spelling) back to the canonical internal symbol. None for an unknown
+    pair — the caller drops the event, never guesses."""
+    return _MASSIVE_CRYPTO_WS_PAIR_REVERSE.get(pair)
+
+
+def _massive_crypto_ws_param(symbol: str) -> "str | None":
+    """'BTCUSD' -> 'XQ.BTC-USD,XT.BTC-USD' — MASSIVE-CRYPTO-TRADE-
+    CANDLES-01: every subscribe/unsubscribe for a crypto symbol now
+    covers BOTH the quote channel (XQ — execution/spread/PnL/margin/
+    risk/Redis price cache authority, unchanged) and the trade channel
+    (XT — chart/candle/volume only, see _broadcast_trade()) in the SAME
+    call, on the SAME shared connection — never a second socket. Every
+    caller (register/unregister/reconnect-resubscribe/per-symbol stale-
+    resubscribe) already just forwards this string verbatim as
+    "params", so this single change point covers all of them. None for
+    anything outside the allowlist."""
+    pair = _massive_crypto_ws_pair(symbol)
+    return f"XQ.{pair},XT.{pair}" if pair else None
+
+
+def _massive_crypto_ws_params_batch(symbols) -> str:
+    """Comma-joined subscribe params for every symbol in *symbols* that maps
+    to a known pair, sorted for deterministic ordering. '' for an empty/
+    all-unknown iterable — callers must never send an empty subscribe."""
+    params = [p for p in (_massive_crypto_ws_param(s) for s in sorted(symbols)) if p]
+    return ",".join(params)
 
 
 # ─── FIX-05B.1 — Closed-Candle Filter ───────────────────────────────────────────
@@ -536,6 +690,31 @@ class FeedManager:
         # wide — a failure mode connection-error handling alone never
         # catches (GOLDEN-MASSIVE-PRICECACHE-01).
         self._massive_last_quote_at: dict[str, float] = {}
+        # GOLDEN-MARKETDATA-CRYPTO-01 — Massive Crypto shared-connection
+        # state. Fully parallel to the _massive_* Forex block above (same
+        # roles, same invariants, same _massive_connect_lock-equivalent
+        # serialization) — deliberately NOT shared with it: a different
+        # physical WS cluster (wss://.../crypto vs .../forex), a different
+        # active-symbol set, and Option A (Design Lock §H) explicitly
+        # avoids merging the two to keep Forex regression risk at zero.
+        self._massive_crypto_ws = None
+        self._massive_crypto_subscribed: set[str] = set()
+        self._massive_crypto_connect_lock = asyncio.Lock()
+        self._massive_crypto_authed: bool = False
+        self._massive_crypto_active_symbols: set[str] = set()
+        self._massive_crypto_shared_task: "asyncio.Task | None" = None
+        self._massive_crypto_connection_watchdog_task: "asyncio.Task | None" = None
+        self._massive_crypto_symbol_stale_attempts: dict[str, int] = {}
+        self._massive_crypto_last_quote_at: dict[str, float] = {}
+        # CRYPTO-QUOTE-DEDUP-01 — last (bid, ask) actually broadcast (full
+        # _broadcast(), not _update_price_state()) per symbol. An exact
+        # repeat of both against this is "no new price information for
+        # the chart" — _massive_crypto_shared_loop() still refreshes
+        # freshness/cache for it (_update_price_state()) but skips the
+        # group_send. Crypto-only, never read by the Forex path. Reset on
+        # every reconnect and popped on unregister — see
+        # _massive_crypto_shared_loop()/_massive_crypto_unregister_symbol().
+        self._massive_crypto_last_broadcast_quote: dict[str, tuple[float, float]] = {}
         # PANEL-02 — guards all reads/writes of the four dicts above. This
         # class's own feed tasks (_broadcast/_resync_price) run on the
         # asyncio event loop thread, but has_price()/last_price()/
@@ -1027,40 +1206,35 @@ class FeedManager:
         log.error("[feed] All kline history sources failed for %s %s", symbol, interval)
         return []
 
-    async def fetch_massive_history(
+    async def fetch_massive_history_first_page(
         self, symbol: str, interval: str = "1m", limit: int = 200
-    ) -> list:
+    ) -> "tuple[list, _MassiveHistoryCursor | None]":
         """
-        FIX-05B.2-B/C — Massive REST historical aggregates, Forex ONLY
-        (see _MASSIVE_ENABLED_SYMBOLS). Analogous to fetch_kline_history()
-        above: async, run_in_executor + urllib.request, same {"time"
-        (seconds), "open","high","low","close","volume"} output contract.
-        Never raises for a normal provider failure (missing key,
-        unsupported symbol/timeframe, HTTP 401/403/429/5xx, timeout,
-        invalid JSON, status!=OK, missing/empty results, a malformed row)
-        — every one of those returns [] so generate_history() (consumers.py)
-        can fail-closed to history_unavailable exactly like the crypto path
-        already does. results=[] is a legitimate, confirmed-real outcome
-        (FIX-05B.2-A.1 — EUR/USD 1h can return HTTP 200/status=OK/
-        resultsCount=0), never logged as a warning/error.
-
-        Closed-candle filtering is NOT done here — _closed_only()
-        (consumers.py::generate_history(), reusing market_data.feeds'
-        own _is_closed()/_closed_only()) remains the single authority,
-        exactly as it already is for the crypto path — this fetcher
-        returns every bar Massive gave it, still-forming one included.
+        CHART-HISTORY-INSTANT-LOAD-01 — first-paint split of
+        fetch_massive_history(). Makes exactly ONE REST call (page 1,
+        sort=desc — newest bars first) and returns immediately:
+        (bars_asc, cursor). `cursor` is None whenever there is nothing
+        more to fetch — missing key/symbol/timeframe, a request failure,
+        page 1 already reaching `limit`, or Massive reporting no
+        next_url — in every one of those cases the returned bars ARE the
+        final answer (byte-identical to what fetch_massive_history()
+        would have produced) and the caller must never schedule a second
+        call. Otherwise `cursor` carries everything fetch_massive_
+        history_remaining() needs to continue from page 2 onward. Same
+        fail-closed contract as fetch_massive_history(): a failure on
+        page 1 returns ([], None), never raises.
         """
         if not MASSIVE_API_KEY:
             log.debug("[massive] no MASSIVE_API_KEY configured — skipping %s %s", symbol, interval)
-            return []
+            return [], None
         mapped = _massive_sym(symbol)
         tf = _MASSIVE_TF.get(interval)
         if mapped is None or tf is None:
-            return []
+            return [], None
         multiplier, timespan = tf
         date_range = _massive_range(interval, limit)
         if date_range is None:
-            return []
+            return [], None
         from_date, to_date = date_range
 
         loop = asyncio.get_event_loop()
@@ -1076,23 +1250,87 @@ class FeedManager:
             with urllib.request.urlopen(req, timeout=10) as r:
                 return r.read()
 
-        all_bars: list = []
-        pages = 0
         url = (
             f"https://api.massive.com/v2/aggs/ticker/{mapped}/range/"
-            f"{multiplier}/{timespan}/{from_date}/{to_date}?limit={limit}"
+            f"{multiplier}/{timespan}/{from_date}/{to_date}?limit={limit}&sort=desc"
         )
 
-        while url and pages < _MASSIVE_MAX_PAGES:
+        try:
+            raw = await loop.run_in_executor(None, _fetch, url)
+            data = json.loads(raw)
+        except Exception as exc:
+            # Timeout/URLError/HTTPError(401/403/429/5xx)/JSON decode —
+            # all transient/config failures, never response bodies or
+            # the Authorization header. exc's repr never contains
+            # MASSIVE_API_KEY (it's a header value, not part of the
+            # URL/exception message urllib builds).
+            log.debug("[massive] fetch failed for %s %s (page 1): %r", symbol, interval, exc)
+            return [], None
+
+        if data.get("status") != "OK":
+            log.warning("[massive] non-OK status for %s %s: %r", symbol, interval, data.get("status"))
+            return [], None
+
+        page_bars: list = []
+        for row in (data.get("results") or []):
+            try:
+                page_bars.append({
+                    "time":   int(row["t"]) // 1000,
+                    "open":   float(row["o"]),
+                    "high":   float(row["h"]),
+                    "low":    float(row["l"]),
+                    "close":  float(row["c"]),
+                    "volume": float(row.get("v", 0.0)),
+                })
+            except (KeyError, TypeError, ValueError):
+                continue  # malformed row — skip it, never abort the batch
+
+        next_url = data.get("next_url")
+        cursor = None
+        if len(page_bars) < limit and next_url:
+            cursor = _MassiveHistoryCursor(
+                symbol=symbol, interval=interval, limit=limit,
+                bars_so_far=page_bars, pages_so_far=1, next_url=next_url,
+            )
+
+        result = _finalize_massive_bars(page_bars, limit)
+        log.info("[feed] Massive %s %s — %d bars (1 page(s), first-page)",
+                  symbol, interval, len(result))
+        return result, cursor
+
+    async def fetch_massive_history_remaining(self, cursor: "_MassiveHistoryCursor") -> list:
+        """
+        CHART-HISTORY-INSTANT-LOAD-01 — continues pagination from
+        `cursor` (produced by fetch_massive_history_first_page()) through
+        page 2 onward, up to _MASSIVE_FOREX_MAX_PAGES total pages.
+        Returns the FINAL merged/deduped/trimmed/sorted-ascending result
+        — same contract as fetch_massive_history() itself. Callers must
+        never invoke this with cursor=None (fetch_massive_history_first_
+        page() already returned the final answer in that case).
+        """
+        symbol, interval, limit = cursor.symbol, cursor.interval, cursor.limit
+        loop = asyncio.get_event_loop()
+
+        def _fetch(url: str) -> bytes:
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "Authorization": f"Bearer {MASSIVE_API_KEY}",
+                    "User-Agent": "trx-sim/1.0",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.read()
+
+        all_bars: list = list(cursor.bars_so_far)  # DESC arrival order
+        pages = cursor.pages_so_far
+        url = cursor.next_url
+
+        while url and pages < _MASSIVE_FOREX_MAX_PAGES:
             try:
                 raw = await loop.run_in_executor(None, _fetch, url)
                 data = json.loads(raw)
             except Exception as exc:
-                # Timeout/URLError/HTTPError(401/403/429/5xx)/JSON decode —
-                # all transient/config failures, never response bodies or
-                # the Authorization header. exc's repr never contains
-                # MASSIVE_API_KEY (it's a header value, not part of the
-                # URL/exception message urllib builds).
                 log.debug("[massive] fetch failed for %s %s (page %d): %r",
                           symbol, interval, pages + 1, exc)
                 break
@@ -1121,21 +1359,265 @@ class FeedManager:
                 break
             url = next_url  # re-fetched via the SAME _fetch() -> same Authorization header
 
-        # Dedupe by timestamp (first occurrence wins) + defensive final sort —
-        # never trust cross-page accumulation order blindly.
-        seen: set = set()
-        deduped = []
-        for b in sorted(all_bars, key=lambda x: x["time"]):
-            if b["time"] not in seen:
-                seen.add(b["time"])
-                deduped.append(b)
+        result = _finalize_massive_bars(all_bars, limit)
+        log.info("[feed] Massive %s %s — %d bars (%d page(s), depth-complete)",
+                  symbol, interval, len(result), pages)
+        return result
 
-        log.info("[feed] Massive %s %s — %d bars (%d page(s))",
-                  symbol, interval, len(deduped), pages)
-        return deduped
+    async def fetch_massive_history(
+        self, symbol: str, interval: str = "1m", limit: int = 200
+    ) -> list:
+        """
+        FIX-05B.2-B/C — Massive REST historical aggregates, Forex ONLY
+        (see _MASSIVE_ENABLED_SYMBOLS). Analogous to fetch_kline_history()
+        above: async, run_in_executor + urllib.request, same {"time"
+        (seconds), "open","high","low","close","volume"} output contract.
+        Never raises for a normal provider failure (missing key,
+        unsupported symbol/timeframe, HTTP 401/403/429/5xx, timeout,
+        invalid JSON, status!=OK, missing/empty results, a malformed row)
+        — every one of those returns [] so generate_history() (consumers.py)
+        can fail-closed to history_unavailable exactly like the crypto path
+        already does. results=[] is a legitimate, confirmed-real outcome
+        (FIX-05B.2-A.1 — EUR/USD 1h can return HTTP 200/status=OK/
+        resultsCount=0), never logged as a warning/error.
 
-    async def _broadcast(self, symbol: str, cl, bid: float, ask: float, ts: int,
-                          source: str = "live") -> None:
+        Closed-candle filtering is NOT done here — _closed_only()
+        (consumers.py::generate_history(), reusing market_data.feeds'
+        own _is_closed()/_closed_only()) remains the single authority,
+        exactly as it already is for the crypto path — this fetcher
+        returns every bar Massive gave it, still-forming one included.
+
+        CHART-GLOBAL-REGRESSION-01 — ACCEPTANCE FIX (freshness). Confirmed
+        live: Massive's aggs endpoint returns only a small, timeframe-
+        driven page size regardless of `limit` (identical across all 4
+        Forex pairs) — the original ASC + _MASSIVE_MAX_PAGES=3 silently
+        truncated 15m/1h history to 3-16 days stale, for every pair,
+        never caught before because only 1m (which happens to fit in one
+        page) had ever been checked against real data. Fixed the same way
+        as fetch_massive_crypto_history(): request `sort=desc` (page 1
+        always newest-first), paginate up to _MASSIVE_FOREX_MAX_PAGES,
+        trim to the most recent `limit` bars, then sort ascending — same
+        final contract as before. Degrades gracefully: a sparse timeframe
+        (1h) may not reach the full requested depth within the cap, but
+        the newest bar is always fresh — preferring less depth over
+        stale-but-"complete" data.
+
+        CHART-HISTORY-INSTANT-LOAD-01 — this is now a thin composition of
+        fetch_massive_history_first_page() + fetch_massive_history_
+        remaining(), kept for 100% backward compatibility with every
+        existing caller/test that wants the complete answer in one await
+        (byte-identical output to before this split existed).
+        consumers.py's own history call-sites use the two split methods
+        directly (first page awaited inline for a fast first paint,
+        remaining pages run in a detached asyncio.Task) — see
+        generate_history_first_page()/_complete_history_depth() there.
+        """
+        first, cursor = await self.fetch_massive_history_first_page(symbol, interval, limit)
+        if cursor is None:
+            return first
+        return await self.fetch_massive_history_remaining(cursor)
+
+    async def fetch_massive_crypto_history_first_page(
+        self, symbol: str, interval: str = "1m", limit: int = 200
+    ) -> "tuple[list, _MassiveHistoryCursor | None]":
+        """
+        CHART-HISTORY-INSTANT-LOAD-01 — first-paint split of
+        fetch_massive_crypto_history(). Same contract as fetch_massive_
+        history_first_page() (Forex) — see that docstring — mirrored here
+        rather than shared (Design Lock Option A: duplicate, don't share
+        across the Forex/Crypto boundary for the actual fetch logic;
+        _finalize_massive_bars() is the one deliberate, provider-agnostic
+        exception — see its own docstring)."""
+        if not MASSIVE_API_KEY:
+            log.debug("[massive-crypto] no MASSIVE_API_KEY configured — skipping %s %s", symbol, interval)
+            return [], None
+        mapped = _massive_crypto_sym(symbol)
+        tf = _MASSIVE_TF.get(interval)
+        if mapped is None or tf is None:
+            return [], None
+        multiplier, timespan = tf
+        date_range = _massive_range(interval, limit)
+        if date_range is None:
+            return [], None
+        from_date, to_date = date_range
+
+        loop = asyncio.get_event_loop()
+
+        def _fetch(url: str) -> bytes:
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "Authorization": f"Bearer {MASSIVE_API_KEY}",
+                    "User-Agent": "trx-sim/1.0",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.read()
+
+        url = (
+            f"https://api.massive.com/v2/aggs/ticker/{mapped}/range/"
+            f"{multiplier}/{timespan}/{from_date}/{to_date}?limit={limit}&sort=desc"
+        )
+
+        try:
+            raw = await loop.run_in_executor(None, _fetch, url)
+            data = json.loads(raw)
+        except Exception as exc:
+            log.debug("[massive-crypto] fetch failed for %s %s (page 1): %r", symbol, interval, exc)
+            return [], None
+
+        if data.get("status") != "OK":
+            log.warning("[massive-crypto] non-OK status for %s %s: %r", symbol, interval, data.get("status"))
+            return [], None
+
+        page_bars: list = []
+        for row in (data.get("results") or []):
+            try:
+                page_bars.append({
+                    "time":   int(row["t"]) // 1000,
+                    "open":   float(row["o"]),
+                    "high":   float(row["h"]),
+                    "low":    float(row["l"]),
+                    "close":  float(row["c"]),
+                    "volume": float(row.get("v", 0.0)),
+                })
+            except (KeyError, TypeError, ValueError):
+                continue  # malformed row — skip it, never abort the batch
+
+        next_url = data.get("next_url")
+        cursor = None
+        if len(page_bars) < limit and next_url:
+            cursor = _MassiveHistoryCursor(
+                symbol=symbol, interval=interval, limit=limit,
+                bars_so_far=page_bars, pages_so_far=1, next_url=next_url,
+            )
+
+        result = _finalize_massive_bars(page_bars, limit)
+        log.info("[feed] Massive-crypto %s %s — %d bars (1 page(s), first-page)",
+                  symbol, interval, len(result))
+        return result, cursor
+
+    async def fetch_massive_crypto_history_remaining(self, cursor: "_MassiveHistoryCursor") -> list:
+        """CHART-HISTORY-INSTANT-LOAD-01 — see fetch_massive_history_
+        remaining()'s docstring (Forex); identical contract, mirrored for
+        crypto's own _MASSIVE_CRYPTO_MAX_PAGES cap."""
+        symbol, interval, limit = cursor.symbol, cursor.interval, cursor.limit
+        loop = asyncio.get_event_loop()
+
+        def _fetch(url: str) -> bytes:
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "Authorization": f"Bearer {MASSIVE_API_KEY}",
+                    "User-Agent": "trx-sim/1.0",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.read()
+
+        all_bars: list = list(cursor.bars_so_far)  # DESC arrival order
+        pages = cursor.pages_so_far
+        url = cursor.next_url
+
+        while url and pages < _MASSIVE_CRYPTO_MAX_PAGES:
+            try:
+                raw = await loop.run_in_executor(None, _fetch, url)
+                data = json.loads(raw)
+            except Exception as exc:
+                log.debug("[massive-crypto] fetch failed for %s %s (page %d): %r",
+                          symbol, interval, pages + 1, exc)
+                break
+            pages += 1
+
+            if data.get("status") != "OK":
+                log.warning("[massive-crypto] non-OK status for %s %s: %r",
+                            symbol, interval, data.get("status"))
+                break
+
+            for row in (data.get("results") or []):
+                try:
+                    all_bars.append({
+                        "time":   int(row["t"]) // 1000,
+                        "open":   float(row["o"]),
+                        "high":   float(row["h"]),
+                        "low":    float(row["l"]),
+                        "close":  float(row["c"]),
+                        "volume": float(row.get("v", 0.0)),
+                    })
+                except (KeyError, TypeError, ValueError):
+                    continue  # malformed row — skip it, never abort the batch
+
+            next_url = data.get("next_url")
+            if len(all_bars) >= limit or not next_url:
+                break
+            url = next_url  # re-fetched via the SAME _fetch() -> same Authorization header
+
+        result = _finalize_massive_bars(all_bars, limit)
+        log.info("[feed] Massive-crypto %s %s — %d bars (%d page(s), depth-complete)",
+                  symbol, interval, len(result), pages)
+        return result
+
+    async def fetch_massive_crypto_history(
+        self, symbol: str, interval: str = "1m", limit: int = 200
+    ) -> list:
+        """
+        GOLDEN-MARKETDATA-CRYPTO-01 — Massive REST historical aggregates,
+        Crypto ONLY (see _MASSIVE_CRYPTO_ENABLED_SYMBOLS). A deliberate
+        near-duplicate of fetch_massive_history() above (Design Lock §D /
+        Option A — Forex stays untouched, crypto gets its own sibling
+        rather than a shared/refactored code path): same aggs endpoint
+        shape, same _MASSIVE_TF/_massive_range() (both fully generic,
+        reused unchanged), same fail-closed contract ([] for any provider
+        failure or unsupported symbol/timeframe — never raises, never
+        fabricates a bar) — only the ticker resolution (_massive_crypto_
+        sym() instead of _massive_sym()) and the pagination direction
+        differ.
+
+        ACCEPTANCE FIX (confirmed live against the real API) — Massive's
+        crypto aggs endpoint returns only ~13 results per page regardless
+        of `limit`, so reusing Forex's _MASSIVE_MAX_PAGES=3 (Forex's own
+        endpoint DOES return up to the full `limit` in one page) silently
+        truncated history ~4 days short of "now". Fixed by requesting
+        `sort=desc` (newest-first — confirmed live: page 1 always
+        contains the newest bars, regardless of how many pages follow)
+        and paginating up to _MASSIVE_CRYPTO_MAX_PAGES=20, then trimming
+        to the most recent `limit` bars before the final chronological
+        sort. Degrades gracefully: a sparse timeframe (e.g. 1h) may not
+        reach the full requested depth within 20 pages, but the newest
+        bar is always fresh — preferring less depth over stale-but-
+        "complete" data (Design Lock: explicit, authorized tradeoff).
+
+        CHART-HISTORY-INSTANT-LOAD-01 — now a thin composition of
+        fetch_massive_crypto_history_first_page() + fetch_massive_crypto_
+        history_remaining(), kept for 100% backward compatibility (see
+        fetch_massive_history()'s own docstring for the full rationale).
+        """
+        first, cursor = await self.fetch_massive_crypto_history_first_page(symbol, interval, limit)
+        if cursor is None:
+            return first
+        return await self.fetch_massive_crypto_history_remaining(cursor)
+
+    async def _update_price_state(self, symbol: str, bid: float, ask: float,
+                                   source: str = "live") -> float:
+        """
+        CRYPTO-QUOTE-DEDUP-01 — the freshness/cache half of _broadcast(),
+        extracted verbatim (same statements, same order) so _broadcast()
+        itself is a pure composition of this plus its own group_send —
+        zero behavior change for any existing _broadcast() caller.
+
+        Updates everything has_price()/get_validated_quote() read
+        (_bids/_asks/_prices/_price_ts/_price_source, all under
+        self._lock), refreshes the Redis price cache (same TTL, same
+        _write_price_cache() call), and records the observability
+        "connection is alive" tick — but NEVER touches channel_layer.
+        Deliberately callable on its own for a quote that carries no new
+        price information (see _massive_crypto_shared_loop()): freshness
+        and "a real price change happened" are two separate concepts —
+        a duplicate quote is still fresh, it just isn't new.
+
+        Returns the rounded mid, so a full _broadcast() doesn't need to
+        recompute it for its group_send payload.
+        """
         _, dec = _step_dec(symbol)
         mid = round((bid + ask) / 2, dec)
         with self._lock:
@@ -1154,6 +1636,11 @@ class FeedManager:
                 record_tick(symbol)
             except Exception as exc:
                 log.debug("[observability] tick recording failed for %s (non-fatal): %r", symbol, exc)
+        return mid
+
+    async def _broadcast(self, symbol: str, cl, bid: float, ask: float, ts: int,
+                          source: str = "live") -> None:
+        mid = await self._update_price_state(symbol, bid, ask, source)
         await cl.group_send(
             self.group_for(symbol),
             {
@@ -1168,6 +1655,32 @@ class FeedManager:
                 # Autoridad financiera de SL/TP en vivo vs display; ver
                 # consumers.py::price_tick().
                 "source": source,
+            },
+        )
+
+    async def _broadcast_trade(self, symbol: str, cl, price: float, size: float, ts: int) -> None:
+        """
+        MASSIVE-CRYPTO-TRADE-CANDLES-01 — the SOLE broadcast point for a
+        Massive crypto trade (ev="XT"). Deliberately never calls
+        _broadcast() or _update_price_state(): a trade price is NEVER
+        execution authority — no Redis price-cache write, no _bids/
+        _asks/_price_ts/_price_source mutation, no interaction with the
+        quote dedup state (_massive_crypto_last_broadcast_quote,
+        CRYPTO-QUOTE-DEDUP-01) or anything has_price()/get_validated_
+        quote() read. Its only job is to hand the trade to every
+        connected TradingConsumer for that consumer's own candle
+        aggregation (each keeps its own per-timeframe bucket — see
+        consumers.py::price_trade()) — chart/candle/volume only, never a
+        bid/ask/mid, never "massive" quote source semantics.
+        """
+        await cl.group_send(
+            self.group_for(symbol),
+            {
+                "type":   "price.trade",
+                "symbol": symbol,
+                "price":  price,
+                "size":   size,
+                "time":   ts,
             },
         )
 
@@ -1405,13 +1918,33 @@ class FeedManager:
 
     async def _try_live_legacy(self, symbol: str, channel_layer) -> bool:
         """
-        Original _try_live logic — Binance -> Kraken -> Massive (for the
-        4 _MASSIVE_WS_ENABLED_SYMBOLS, exclusively — no Finnhub fallback,
+        Original _try_live logic — Massive (for the 2
+        _MASSIVE_CRYPTO_ENABLED_SYMBOLS, exclusively, GOLDEN-MARKETDATA-
+        CRYPTO-01) -> Binance -> Kraken -> Massive (for the 4
+        _MASSIVE_WS_ENABLED_SYMBOLS, exclusively — no Finnhub fallback,
         B2-FOREX-PROVIDER-CLEANUP-01) -> Finnhub (every other "/" symbol).
         This is what every symbol runs when the router flag is off, and
         what any symbol runs when it's not on the allowlist, and what an
         allowlisted symbol falls back to on any router-path failure.
         """
+        # GOLDEN-MARKETDATA-CRYPTO-01 — Massive is the SOLE runtime
+        # provider for BTCUSD/ETHUSD, checked BEFORE Binance/Kraken so
+        # those branches become functionally unreachable for these 2
+        # symbols (their code stays in place, unmodified, for every other
+        # crypto symbol — none exist today, GOLDEN-MARKETDATA-CRYPTO-01
+        # §I "KEEP AS DORMANT"). Same no-fallback contract as the Forex
+        # Massive branch below: a real failure here means the symbol goes
+        # unpriced rather than a silent handoff to Binance/Kraken.
+        if MASSIVE_API_KEY and websockets and symbol in _MASSIVE_CRYPTO_ENABLED_SYMBOLS:
+            try:
+                await self._massive_crypto_loop(symbol, channel_layer)
+                return True
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.error("[feed] Massive Crypto failed for %s (%r)", symbol, exc)
+            return False
+
         mapped = _binance_sym(symbol)
 
         if mapped and websockets:
@@ -2192,6 +2725,367 @@ class FeedManager:
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30.0)
 
+    # ── GOLDEN-MARKETDATA-CRYPTO-01 — Massive Crypto shared connection ──
+    # Deliberate structural mirror of the 5 _massive_* Forex methods above
+    # (register/unregister/per-symbol adapter/watchdog/shared reader) —
+    # same invariants, same lock-free-of-await create-task idiom, same
+    # zero-active-symbols teardown discipline, same "always resubscribe,
+    # never escalate to a second provider" watchdog policy (reusing
+    # DATA_STALE_TIMEOUT/_MASSIVE_WATCHDOG_POLL_SECONDS/
+    # _MASSIVE_SYMBOL_STALE_ESCALATION_THRESHOLD unchanged, Design Lock
+    # §F) — built correctly from day one, never had the Finnhub-escalation
+    # mistake B2-FOREX-PROVIDER-CLEANUP-01 had to remove. NOT shared code
+    # with the Forex methods (Option A, Design Lock §H): a different
+    # physical connection (_MASSIVE_WS_CRYPTO_URL), a different active-
+    # symbol set, entirely separate state.
+
+    async def _massive_crypto_register_symbol(self, symbol: str, channel_layer) -> None:
+        """Adds *symbol* to the shared crypto connection's active set,
+        starts the ONE shared connection if this is the first active
+        symbol process-wide, or sends an incremental subscribe if the
+        connection is already live and authed. Mirrors
+        _massive_register_symbol() exactly."""
+        async with self._massive_crypto_connect_lock:
+            self._massive_crypto_symbol_stale_attempts[symbol] = 0
+            self._massive_crypto_active_symbols.add(symbol)
+            self._massive_crypto_last_quote_at.setdefault(symbol, time.monotonic())
+
+            if self._massive_crypto_shared_task is None or self._massive_crypto_shared_task.done():
+                self._massive_crypto_shared_task = asyncio.create_task(
+                    self._massive_crypto_shared_loop(channel_layer)
+                )
+            elif (
+                self._massive_crypto_ws is not None and self._massive_crypto_authed
+                and symbol not in self._massive_crypto_subscribed
+            ):
+                param = _massive_crypto_ws_param(symbol)
+                if param is None:
+                    return
+                try:
+                    await self._massive_crypto_ws.send(json.dumps({
+                        "action": "subscribe", "params": param,
+                    }))
+                    self._massive_crypto_subscribed.add(symbol)
+                except Exception as exc:
+                    log.debug(
+                        "[feed] massive-crypto incremental subscribe failed for %s "
+                        "(non-fatal, next reconnect resubscribes it): %r",
+                        symbol, exc,
+                    )
+
+    async def _massive_crypto_unregister_symbol(self, symbol: str) -> None:
+        """Inverse of _massive_crypto_register_symbol(). Mirrors
+        _massive_unregister_symbol() exactly, including the same
+        never-joins-a-zombie teardown-under-one-lock-acquisition
+        guarantee."""
+        async with self._massive_crypto_connect_lock:
+            self._massive_crypto_active_symbols.discard(symbol)
+            self._massive_crypto_symbol_stale_attempts.pop(symbol, None)
+            self._massive_crypto_last_quote_at.pop(symbol, None)
+            self._massive_crypto_last_broadcast_quote.pop(symbol, None)  # CRYPTO-QUOTE-DEDUP-01
+            was_subscribed = symbol in self._massive_crypto_subscribed
+            self._massive_crypto_subscribed.discard(symbol)
+            if was_subscribed and self._massive_crypto_ws is not None and self._massive_crypto_authed:
+                param = _massive_crypto_ws_param(symbol)
+                if param is not None:
+                    try:
+                        await self._massive_crypto_ws.send(json.dumps({
+                            "action": "unsubscribe", "params": param,
+                        }))
+                    except Exception as exc:
+                        log.debug(
+                            "[feed] massive-crypto unsubscribe failed for %s "
+                            "(non-fatal, connection is tearing down or will reconnect): %r",
+                            symbol, exc,
+                        )
+
+            if not self._massive_crypto_active_symbols and self._massive_crypto_shared_task is not None:
+                shared_task = self._massive_crypto_shared_task
+                shared_task.cancel()
+                try:
+                    await shared_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception as exc:
+                    log.debug("[feed] massive-crypto shared service teardown raised (non-fatal): %r", exc)
+                self._massive_crypto_shared_task = None
+                self._massive_crypto_connection_watchdog_task = None
+                self._massive_crypto_ws = None
+                self._massive_crypto_authed = False
+                self._massive_crypto_subscribed.clear()
+                log.info("[feed] Massive crypto shared connection torn down (zero active symbols)")
+
+    async def _massive_crypto_loop(
+        self, symbol: str, channel_layer, *,
+        on_first_tick: Optional[Callable[[], None]] = None,
+        on_terminal_failure: Optional[Callable[[Exception], None]] = None,
+    ) -> None:
+        """Thin per-symbol adapter onto the ONE shared Massive crypto
+        connection (_massive_crypto_shared_loop below). Mirrors
+        _massive_forex_loop() exactly — registers, blocks until cancelled,
+        unregisters in `finally`. Never escalates to a second provider;
+        persistent per-symbol staleness is handled entirely inside the
+        connection watchdog. Returns immediately, without registering
+        anything, for any symbol outside _MASSIVE_CRYPTO_ENABLED_SYMBOLS.
+
+        on_first_tick/on_terminal_failure: unused here, same as the Forex
+        adapter — kept only for signature symmetry with the other provider
+        loops' shared contract (FOUNDATION-10); _try_live_legacy never
+        passes them.
+        """
+        if symbol not in _MASSIVE_CRYPTO_ENABLED_SYMBOLS:
+            return
+        await self._massive_crypto_register_symbol(symbol, channel_layer)
+        try:
+            await asyncio.Event().wait()
+        finally:
+            await self._massive_crypto_unregister_symbol(symbol)
+
+    async def _massive_crypto_connection_staleness_watchdog(self, ws, state: dict) -> None:
+        """The ONE watchdog for the shared crypto connection. Mirrors
+        _massive_connection_staleness_watchdog() exactly: connection-wide
+        staleness (every active symbol individually stale) closes `ws` and
+        lets _massive_crypto_shared_loop's reconnect machinery take over;
+        per-symbol staleness (some but not all) NEVER closes the
+        connection, always resubscribes just that symbol, and only steps
+        up log severity (WARNING -> ERROR) at
+        _MASSIVE_SYMBOL_STALE_ESCALATION_THRESHOLD — no fallback provider,
+        no escalation event, ever."""
+        try:
+            while True:
+                await asyncio.sleep(_MASSIVE_WATCHDOG_POLL_SECONDS)
+                active = set(self._massive_crypto_active_symbols)
+                if not active:
+                    continue
+                now = time.monotonic()
+                stale = [
+                    s for s in active
+                    if (now - self._massive_crypto_last_quote_at.get(s, now)) > DATA_STALE_TIMEOUT
+                ]
+                if not stale:
+                    continue
+
+                if len(stale) == len(active):
+                    oldest = min(self._massive_crypto_last_quote_at.get(s, now) for s in active)
+                    log.warning(
+                        "[feed] Massive crypto connection stale — no valid quote for ANY of %s in %.1fs",
+                        sorted(active), now - oldest,
+                    )
+                    state["reason"] = "connection_stale"
+                    for s in active:
+                        self._massive_crypto_symbol_stale_attempts[s] = 0
+                    try:
+                        await ws.close()
+                    except Exception:
+                        pass
+                    return
+
+                for sym in stale:
+                    attempts = self._massive_crypto_symbol_stale_attempts.get(sym, 0) + 1
+                    self._massive_crypto_symbol_stale_attempts[sym] = attempts
+                    if attempts >= _MASSIVE_SYMBOL_STALE_ESCALATION_THRESHOLD:
+                        log.error(
+                            "[feed] Massive crypto %s stale after %d consecutive incidents — "
+                            "no fallback provider, resubscribing again",
+                            sym, attempts,
+                        )
+                    else:
+                        log.warning(
+                            "[feed] Massive crypto %s stale data — no valid quote for %.1fs (attempt %d/%d, resubscribing)",
+                            sym, now - self._massive_crypto_last_quote_at.get(sym, now),
+                            attempts, _MASSIVE_SYMBOL_STALE_ESCALATION_THRESHOLD,
+                        )
+                    param = _massive_crypto_ws_param(sym)
+                    if param is None:
+                        continue
+                    try:
+                        async with self._massive_crypto_connect_lock:
+                            if self._massive_crypto_ws is not None and self._massive_crypto_authed:
+                                await self._massive_crypto_ws.send(json.dumps({"action": "unsubscribe", "params": param}))
+                                await self._massive_crypto_ws.send(json.dumps({"action": "subscribe", "params": param}))
+                            self._massive_crypto_last_quote_at[sym] = time.monotonic()
+                    except Exception as exc:
+                        log.debug("[feed] massive-crypto per-symbol resubscribe failed for %s (non-fatal): %r", sym, exc)
+        except asyncio.CancelledError:
+            raise
+
+    async def _massive_crypto_shared_loop(self, channel_layer) -> None:
+        """The ONE Massive crypto connection + ONE reader, process-wide.
+        Mirrors _massive_shared_loop() exactly, with two crypto-specific
+        differences confirmed live in the GOLDEN-MARKETDATA-CRYPTO-01
+        provider-access audit: the quote event type is "XQ" (not "C"),
+        keyed by ev["pair"] (Massive's own hyphenated spelling, e.g.
+        "BTC-USD") rather than ev["p"] (already-canonical for Forex) — so
+        incoming events are mapped back to the canonical symbol via
+        _massive_crypto_symbol_from_pair() before routing; an unmapped
+        pair is dropped, never routed. Bid/ask keys are "bp"/"ap" (not
+        Forex's "b"/"a")."""
+        backoff = 2.0
+        while True:
+            watchdog_state = {"reason": None}
+            try:
+                async with websockets.connect(
+                    _MASSIVE_WS_CRYPTO_URL,
+                    ping_interval=20, ping_timeout=20,
+                    close_timeout=10, max_queue=256,
+                ) as ws:
+                    async with self._massive_crypto_connect_lock:
+                        self._massive_crypto_ws = ws
+                        self._massive_crypto_authed = False
+                        now = time.monotonic()
+                        for sym in self._massive_crypto_active_symbols:
+                            self._massive_crypto_last_quote_at[sym] = now
+                            self._massive_crypto_symbol_stale_attempts[sym] = 0
+                            # CRYPTO-QUOTE-DEDUP-01 — a fresh connection
+                            # deserves a fresh first broadcast, even if
+                            # the first quote it delivers happens to
+                            # match whatever was last known before the
+                            # disconnect: reconnecting is itself a signal
+                            # worth re-confirming to consumers, and this
+                            # guarantees the dedup state can never suppress
+                            # every quote on a connection that just came up.
+                            self._massive_crypto_last_broadcast_quote.pop(sym, None)
+                        await ws.send(json.dumps({"action": "auth", "params": MASSIVE_API_KEY}))
+
+                    watchdog_task = asyncio.create_task(
+                        self._massive_crypto_connection_staleness_watchdog(ws, watchdog_state)
+                    )
+                    self._massive_crypto_connection_watchdog_task = watchdog_task
+                    try:
+                        authed = False
+                        async for raw in ws:
+                            for ev in _parse_massive_events(raw):
+                                ev_type = ev.get("ev")
+                                if ev_type == "status":
+                                    status = ev.get("status")
+                                    if status == "auth_success":
+                                        authed = True
+                                        async with self._massive_crypto_connect_lock:
+                                            self._massive_crypto_authed = True
+                                            active_now = set(self._massive_crypto_active_symbols)
+                                            if active_now:
+                                                await ws.send(json.dumps({
+                                                    "action": "subscribe",
+                                                    "params": _massive_crypto_ws_params_batch(active_now),
+                                                }))
+                                                self._massive_crypto_subscribed |= active_now
+                                    elif status == "error":
+                                        raise RuntimeError(
+                                            f"massive_crypto_auth_or_subscribe_error: {ev.get('message')}"
+                                        )
+                                    continue
+                                if not authed:
+                                    continue
+                                if ev_type == "XQ":
+                                    pair = ev.get("pair")
+                                    sym = _massive_crypto_symbol_from_pair(pair) if pair else None
+                                    if sym is None or sym not in self._massive_crypto_active_symbols:
+                                        continue
+                                    try:
+                                        bid = float(ev["bp"])
+                                        ask = float(ev["ap"])
+                                        ts  = int(ev["t"]) // 1000
+                                    except (KeyError, TypeError, ValueError):
+                                        continue
+                                    if not _validate_quote_values(sym, bid, ask):
+                                        continue
+                                    self._massive_crypto_last_quote_at[sym] = time.monotonic()
+                                    self._massive_crypto_symbol_stale_attempts[sym] = 0
+                                    backoff = 2.0
+                                    # CRYPTO-QUOTE-DEDUP-01 — freshness (the
+                                    # two lines above: connection is alive,
+                                    # backoff resets) and "this is new price
+                                    # information" are separate concepts. An
+                                    # exact repeat of the last (bid, ask) this
+                                    # loop actually broadcast for THIS symbol
+                                    # still refreshes _price_ts/Redis/
+                                    # observability via _update_price_state()
+                                    # (has_price()/get_validated_quote() stay
+                                    # correctly fresh) but is never sent to
+                                    # channel_layer — no group_send, no
+                                    # price_tick, no candle_update, no
+                                    # redundant visual movement. Any real
+                                    # change in bid OR ask takes the full
+                                    # _broadcast() path, unchanged.
+                                    if self._massive_crypto_last_broadcast_quote.get(sym) == (bid, ask):
+                                        await self._update_price_state(sym, bid, ask, source="massive")
+                                        continue
+                                    self._massive_crypto_last_broadcast_quote[sym] = (bid, ask)
+                                    await self._broadcast(sym, channel_layer, bid, ask, ts, source="massive")
+                                    continue
+                                if ev_type == "XT":
+                                    # MASSIVE-CRYPTO-TRADE-CANDLES-01 —
+                                    # trade channel: chart/candle/volume
+                                    # ONLY. Deliberately never touches
+                                    # _massive_crypto_last_quote_at/
+                                    # _massive_crypto_symbol_stale_attempts/
+                                    # backoff — those are the XQ connection-
+                                    # freshness signals; a trade says
+                                    # nothing about quote staleness, and
+                                    # must never mask a genuinely stale
+                                    # quote feed. Never calls _broadcast()/
+                                    # _update_price_state() — see
+                                    # _broadcast_trade()'s own docstring.
+                                    pair = ev.get("pair")
+                                    sym = _massive_crypto_symbol_from_pair(pair) if pair else None
+                                    if sym is None or sym not in self._massive_crypto_active_symbols:
+                                        continue
+                                    try:
+                                        price = float(ev["p"])
+                                        size  = float(ev.get("s", 0.0))
+                                        ts    = int(ev["t"]) // 1000
+                                    except (KeyError, TypeError, ValueError):
+                                        continue
+                                    # Reuses _validate_quote_values()'s Capa
+                                    # A magnitude-plausibility band by
+                                    # treating the single trade price as a
+                                    # degenerate zero-spread quote (bid==
+                                    # ask==price) — ask>=bid holds trivially
+                                    # when equal, and mid==price exactly, so
+                                    # this correctly validates the trade
+                                    # price's magnitude without a second,
+                                    # parallel validator function.
+                                    if not _validate_quote_values(sym, price, price):
+                                        continue
+                                    await self._broadcast_trade(sym, channel_layer, price, size, ts)
+                                    continue
+                    finally:
+                        watchdog_task.cancel()
+                        try:
+                            await watchdog_task
+                        except asyncio.CancelledError:
+                            pass
+                        self._massive_crypto_connection_watchdog_task = None
+                self._massive_crypto_subscribed.clear()
+                self._massive_crypto_ws = None
+                self._massive_crypto_authed = False
+                if watchdog_state["reason"] == "connection_stale":
+                    log.warning("[feed] Massive crypto shared connection reconnecting after connection-wide staleness")
+                    backoff = 2.0
+                    continue
+                log.warning("[feed] Massive crypto shared connection ended — reconnect in %.0fs", backoff)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30.0)
+            except asyncio.CancelledError:
+                self._massive_crypto_subscribed.clear()
+                self._massive_crypto_ws = None
+                self._massive_crypto_authed = False
+                raise
+            except Exception as exc:
+                self._massive_crypto_subscribed.clear()
+                self._massive_crypto_ws = None
+                self._massive_crypto_authed = False
+                if watchdog_state["reason"] == "connection_stale":
+                    log.warning("[feed] Massive crypto shared connection reconnecting after connection-wide staleness")
+                    backoff = 2.0
+                    continue
+                log.error(
+                    "[feed] Massive crypto shared connection error: %r — reconnect in %.0fs",
+                    exc, backoff,
+                )
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30.0)
+
     # ── price resync via REST ──
 
     async def _resync_price(self, symbol: str) -> None:
@@ -2241,6 +3135,44 @@ class FeedManager:
             req = urllib.request.Request(url, headers={"User-Agent": "trx-sim/1.0"})
             with urllib.request.urlopen(req, timeout=5) as r:
                 return r.read()
+
+        # ── Crypto: Massive last-trade (GOLDEN-MARKETDATA-CRYPTO-01) ──
+        # Checked FIRST for the 2 Massive-crypto symbols, fails CLOSED —
+        # no fallthrough to Binance/CoinGecko/Kraken below for these 2.
+        # Never fabricate a "recovered" price via a second provider (same
+        # policy as the Forex Massive-symbols carve-out further down);
+        # get_validated_quote() already refuses a stale/missing price for
+        # any financial decision, so the only cost of waiting for a fresh
+        # Massive WS tick instead is UX continuity during cold start, not
+        # safety. This endpoint (/v2/last/trade) has no Forex equivalent
+        # wired today (Design Lock §E) — confirmed live, response shape
+        # {"results":{"p":price,...},"status":"OK"}.
+        if MASSIVE_API_KEY and symbol in _MASSIVE_CRYPTO_ENABLED_SYMBOLS:
+            mc_ticker = _massive_crypto_sym(symbol)
+            if mc_ticker:
+                try:
+                    req = urllib.request.Request(
+                        f"https://api.massive.com/v2/last/trade/{mc_ticker}",
+                        headers={
+                            "Authorization": f"Bearer {MASSIVE_API_KEY}",
+                            "User-Agent": "trx-sim/1.0",
+                        },
+                    )
+
+                    def _fetch_mc(r=req) -> bytes:
+                        with urllib.request.urlopen(r, timeout=5) as resp:
+                            return resp.read()
+
+                    data = json.loads(await loop.run_in_executor(None, _fetch_mc))
+                    if data.get("status") == "OK":
+                        px = float((data.get("results") or {})["p"])
+                        log.debug("[feed] Massive-crypto last-trade %s = %.4f", symbol, px)
+                        return px
+                    log.debug("[feed] Massive-crypto last-trade non-OK status for %s: %r",
+                              symbol, data.get("status"))
+                except Exception as exc:
+                    log.debug("[feed] Massive-crypto last-trade unavailable for %s: %r", symbol, exc)
+            return None
 
         mapped = _binance_sym(symbol)
 

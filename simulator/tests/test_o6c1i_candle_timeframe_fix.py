@@ -207,11 +207,22 @@ class KlineSymbolNoRegressionTests(TestCase):
 # 13. Forex / non-kline path (_on_tick/_emit_bar) untouched
 # ─────────────────────────────────────────────────────────────────────────
 class NonKlinePathIntactTests(TestCase):
-    def test_on_tick_still_early_returns_for_kline_symbols(self):
+    def test_btcusd_massive_tick_now_feeds_candle_aggregation(self):
+        # GOLDEN-MARKETDATA-CRYPTO-01 — BTCUSD is still a _KLINE_SYMBOLS
+        # member (symbol_specs.py's exchange_symbol/kraken_symbol stay
+        # dormant, unchanged) but is now served LIVE by Massive
+        # (tick-only quotes, candle_kline() never fires for it anymore —
+        # Binance/Kraken are functionally unreachable, _try_live_legacy).
+        # _on_tick() was deliberately updated to stop early-returning for
+        # Massive-crypto-live symbols so real-time candle aggregation from
+        # ticks works again — the opposite of what this test used to
+        # assert (see simulator/tests/test_golden_marketdata_crypto_01_
+        # massive_crypto_live.py::OnTickCandleAggregationTests for the
+        # full, dedicated coverage of this behavior).
         c = _bare_consumer(symbol="BTCUSD", timeframe="15m")
         c._emit_bar = AsyncMock()
         _run(c._on_tick("BTCUSD", 100.0, volume=1.0, ts=0))
-        c._emit_bar.assert_not_awaited()
+        c._emit_bar.assert_awaited_once()
 
     def test_on_tick_aggregation_unchanged_for_forex_symbol(self):
         c = _bare_consumer(symbol="EUR/USD", timeframe="5m")

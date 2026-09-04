@@ -1751,11 +1751,26 @@ const fmt=(v,p=5)=>Number(v).toFixed(p).replace(/0+$/,'').replace(/\.$/,'');
 const RGX_HEX=/^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i;
 const hexToRgba=(hex,a=1)=>{const m=RGX_HEX.exec(hex);if(!m)return hex;return `rgba(${parseInt(m[1],16)},${parseInt(m[2],16)},${parseInt(m[3],16)},${a})`;};
 const priceFormatFor=sym=>(sym.includes('BTC')||sym.includes('ETH'))?{precision:2,minMove:0.01}:sym.endsWith('/JPY')?{precision:3,minMove:0.001}:{precision:5,minMove:0.00001};
+// LIVE-CHART-MAGNITUDE-FILTER-01 — the REAL pip size, hand-verified,
+// deliberately NEVER derived from priceFormatFor().minMove: minMove is
+// the order-pricing tick/pipette granularity (0.00001 for most forex
+// pairs, 0.001 for JPY — a tenth of a real pip), a different concept
+// from "1 pip". Real convention: 0.0001 for non-JPY forex, 0.01 for
+// JPY pairs.
+const pipSizeFor=sym=>sym.endsWith('/JPY')?0.01:0.0001;
 const tfToSec=tf=>({'1s':1,'1m':60,'5m':300,'15m':900,'1h':3600,'1d':86400}[String(tf)]??60);
 const roundToTick=(price,sym)=>{const {minMove,precision}=priceFormatFor(sym);return Number((Math.round(price/minMove)*minMove).toFixed(precision));};
 const debounce=(fn,ms)=>{let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms);};};
 const normTime=secOrMs=>{const t=Number(secOrMs||0);if(!t)return null;return(t>1e12)?Math.floor(t/1000):t;};
-const volPointForBar=b=>{const span=Math.max((b.high??b.close)-(b.low??b.close),Math.abs((b.close??0)-(b.open??0)));const val=Math.max(1,Math.floor(span*1e6));const up=(b.close??0)>=(b.open??0);return{time:b.time,value:val,color:up?'rgba(38,166,154,.45)':'rgba(239,83,80,.45)'};};
+// GOLDEN-MARKETDATA-CRYPTO-01 — ACCEPTANCE FIX (volume). Real volume (b.volume,
+// present on history bars for every symbol — Forex and crypto both confirmed
+// live to carry valid non-zero values from Massive) is used when available.
+// The span*1e6 proxy — calibrated for Forex's pip-scale price movements,
+// confirmed to explode to 15,000x-450,000x its intended range for BTC/ETH's
+// dollar-scale movements — is now ONLY a fallback for the live tick path
+// (candle_new/candle_update), whose bars carry no volume field at all
+// (Massive quotes have no per-tick trade volume, same as before this fix).
+const volPointForBar=b=>{const up=(b.close??0)>=(b.open??0);let val;if(b.volume!=null&&Number.isFinite(b.volume)&&b.volume>0){val=b.volume;}else{const span=Math.max((b.high??b.close)-(b.low??b.close),Math.abs((b.close??0)-(b.open??0)));val=Math.max(1,Math.floor(span*1e6));}return{time:b.time,value:val,color:up?'rgba(38,166,154,.45)':'rgba(239,83,80,.45)'};};
 const isMobile=()=>matchMedia('(max-width:900px)').matches;
 const usd=v=>v==null?'—':('$'+Number(v).toLocaleString(undefined,{maximumFractionDigits:2}));
 
@@ -2050,6 +2065,36 @@ class TradingPanel {
     this.positionsCache=[]; this.linesById=new Map(); this.selectedPosIds=new Set();
     this.lastSelectedId=null; this.pendingTmp=[]; this.dragging=null;
     this._bars=[];       // canonical OHLCV bar store — source of truth for indicators
+    // LIVE-CHART-RENDER-STABILITY-01 — visual coalescing/throttle state.
+    // See _scheduleVisualRender()/_flushVisualRender() below: financial/
+    // derived state is never gated by any of this, only the expensive
+    // paint calls (candleSeries.update, priceLine, badge, bid/ask DOM
+    // text) are deferred to a fixed ~100ms cadence.
+    this._visualRenderTimer=null;
+    this._quoteRenderPending=false;
+    this._candleRenderPending=false;
+    this._candleRenderIsNew=false;
+    // LIVE-CHART-MAGNITUDE-FILTER-01 — quote-branch paint anchor (last
+    // this.liveMid value that actually triggered a priceLine/badge/bid-
+    // ask repaint, and when). MASSIVE-CRYPTO-TRADE-CANDLES-01 later
+    // split candle and quote into independent decisions (candle close
+    // now comes from Massive trades, quote from Massive quotes — two
+    // legitimately different numbers) — this anchor gates the quote
+    // branch only.
+    this._lastPaintedMid=null;
+    this._lastPaintedAt=null;
+    // LIVE-CHART-SMOOTH-INTERPOLATION-01 — visual-only interpolation
+    // state. ONE shared requestAnimationFrame loop per panel animates
+    // BOTH the candle's displayed close and the priceLine toward their
+    // latest real target over ~200ms; this.liveMid/this._bars/PnL/
+    // execution are never touched by any of it (see _stepVisualAnim()
+    // below) — only the pixels drawn by candleSeries.update()/
+    // priceLine.applyOptions() lag momentarily, nothing financial ever
+    // does.
+    this._visualAnimRAF=null;
+    this._candleAnim=null;   // {from, to, startedAt, bar:{time,open,high,low}} | null
+    this._quoteAnim=null;    // {from, to, startedAt} | null
+    this._animDurationMs=200;
     this._indSeries={};  // {key: ISeriesApi|null} — one live series per enabled indicator
     this._oscEl={};this._oscChart={};this._oscSeries={};this._oscResObs={};this._syncing={};this._syncCleanup={};
     this.chartEl=null; this.statusEl=null; this.symSel=null; this.tfSel=null;
@@ -2131,13 +2176,48 @@ class TradingPanel {
     this.symTag.textContent=this.currentSymbol.replace('/','');
     this.candleSeries?.applyOptions({priceFormat:priceFormatFor(this.currentSymbol)});
     this._clearLines(); this.selectedPosIds.clear(); this.lastSelectedId=null;
+    // LIVE-CHART-RENDER-STABILITY-01 — a pending coalesced render belongs
+    // to the OLD symbol (it re-reads this.* /_bars at flush time) — must
+    // never apply to whatever the panel switches to.
+    this._cancelPendingVisualRender();
     this._bars=[];  // discard stale bars — new history will arrive shortly
+    // GOLDEN-MARKETDATA-CRYPTO-01 — SYMBOL/TIMEFRAME VISUAL RESET FIX.
+    // Resetting _bars above only cleared the JS-side bookkeeping array —
+    // the chart's own candleSeries/volumeSeries kept rendering the
+    // PREVIOUS symbol's candles/scale until the new history response
+    // landed (confirmed the root cause of the visual "stale scale after
+    // switching symbol" bug). Blank both series immediately so the chart
+    // never shows a foreign symbol's data while the new history is in
+    // flight.
+    this.candleSeries?.setData([]); this.volumeSeries?.setData([]);
     this._clearOscillatorData();
     if(isMobile())updatePanelTabs();
     this.lastClose=null; this.prevClose=null; this.prevCandleClose=null; this.bid=this.ask=null; this._resetAgg();
     // FIX-05C — a new symbol has no live quote yet either; the old
     // symbol's liveMid must never leak into the new instrument's ticket.
     this.liveMid=null; this.liveSource=null; this.prevLiveMid=null;
+    // GOLDEN-MARKETDATA-CRYPTO-01 — the state above (liveMid=null) was
+    // already correct, but the VISIBLE badge text was never blanked —
+    // it kept showing the previous symbol's last price until the first
+    // real tick for the new symbol arrived (confirmed root cause of the
+    // "wrong price briefly shown after switching" observation).
+    if(this.pxTag)this.pxTag.textContent='—';
+    this._updateBidAsk();
+    // GOLDEN-MARKETDATA-CRYPTO-01 — CHART-STATE-REGRESSION-AUDIT fix.
+    // this.priceLine (createPriceLine, attached to candleSeries) is a
+    // THIRD piece of visual state the earlier reset missed: it is
+    // created ONCE in initChart() and only ever updated by a real tick
+    // (_updateLiveQuoteDisplay) — so it kept showing the PREVIOUS
+    // symbol's price/title, and — because it's attached to the same
+    // 'right' scale as candleSeries — its stale value was included in
+    // that scale's autoscale computation, distorting the visible range
+    // for the new symbol's real candles until the first new tick landed.
+    // Removed here (not just re-priced) so it plays no part in the
+    // scale at all while no valid quote exists for the new symbol yet;
+    // _updateLiveQuoteDisplay() lazily recreates it on the first real
+    // tick for the new symbol (see below) — never left dangling with an
+    // invalid/zero price.
+    if(this.priceLine){this.candleSeries?.removePriceLine(this.priceLine);this.priceLine=null;}
     hideQB();
     // Reset lot to min for new symbol and update input attrs if this is the active panel
     this.mobileLot=getLotMin(this.currentSymbol);
@@ -2165,6 +2245,22 @@ class TradingPanel {
     this.currentTF=this.tfSel.value;
     _syncMhdrTFBadge(this.currentTF);
     this._resetAgg();
+    // GOLDEN-MARKETDATA-CRYPTO-01 — same principle as _onSymChange(): a
+    // 15m close is not a 1h close, so the previous timeframe's candles
+    // must never stay visible while the new history is in flight. The
+    // live-quote fields (see FIX-05C's own contract test for this exact
+    // method) are deliberately left untouched here — they reflect the
+    // CURRENT symbol's live tick, which stays valid across a
+    // timeframe-only change (the symbol didn't change).
+    // LIVE-CHART-RENDER-STABILITY-01 — a pending candle render carries
+    // the previous timeframe's bar; the live quote display stays valid
+    // across a timeframe-only change (same principle already applied to
+    // the live-quote fields noted above), so only the candle half is
+    // discarded.
+    this._cancelPendingCandleRender();
+    this._bars=[];
+    this.candleSeries?.setData([]); this.volumeSeries?.setData([]);
+    this.lastClose=null; this.prevClose=null; this.prevCandleClose=null;
     if(this.ws?.readyState===WebSocket.OPEN){
       this.ws.send(JSON.stringify({action:'change_timeframe',timeframe:this.currentTF}));
       this._loadHistory();
@@ -2194,14 +2290,121 @@ class TradingPanel {
      and when re-activating a panel that already has one (setActive). Never
      called from history/candle_update — before the first real tick,
      priceLine/pxTag/glow simply stay at their initial/untouched state
-     (no fabricated live line from candle/history close). */
+     (no fabricated live line from candle/history close).
+     GOLDEN-MARKETDATA-CRYPTO-01 — CHART-STATE-REGRESSION-AUDIT: the price
+     line reference is now null right after a symbol switch (_onSymChange()
+     removes it — never left dangling with a stale/invalid price). Lazily
+     recreated here, ONLY once a real tick for the (already guarded, by the
+     caller) current symbol establishes a valid liveMid — never with
+     price=0 or NaN. At most one live price line ever exists per panel:
+     this branch creates it exactly once, every subsequent call re-prices
+     the SAME object via applyOptions(), never calling createPriceLine()
+     again. */
   _updateLiveQuoteDisplay(){
-    if(!this.priceLine||this.liveMid==null)return;
+    if(this.liveMid==null)return;
     const px=this.liveMid,prev=this.prevLiveMid;
     const p=priceFormatFor(this.currentSymbol).precision;
-    this.priceLine.applyOptions({price:px,title:this.currentSymbol.replace('/','')});
+    if(!this.priceLine){
+      if(!this.candleSeries)return;
+      this.priceLine=this.candleSeries.createPriceLine({price:px,color:'rgba(255,255,255,.4)',lineWidth:1,lineStyle:2,axisLabelVisible:true,title:this.currentSymbol.replace('/','')});
+    }else{
+      this.priceLine.applyOptions({price:px,title:this.currentSymbol.replace('/','')});
+    }
     if(this.pxTag){this.pxTag.textContent=Number(px).toFixed(p);const up=prev==null||px>=prev;this.pxTag.classList.toggle('green',up);this.pxTag.classList.toggle('red',!up);}
     this._drawGlow(px);
+  }
+
+  // LIVE-CHART-SMOOTH-INTERPOLATION-01 — badge text + glow, INSTANT and
+  // exact, deliberately never animated (interpolating displayed digits
+  // reads as flicker, not smoothness — only the drawn priceLine benefits
+  // from interpolation, see _retargetPriceLineAnimation() below). Same
+  // logic _updateLiveQuoteDisplay() already had for these two, extracted
+  // so the flush's quote branch can call it directly without also
+  // touching priceLine synchronously.
+  _paintBadgeAndGlow(px){
+    const prev=this.prevLiveMid;
+    const p=priceFormatFor(this.currentSymbol).precision;
+    if(this.pxTag){this.pxTag.textContent=Number(px).toFixed(p);const up=prev==null||px>=prev;this.pxTag.classList.toggle('green',up);this.pxTag.classList.toggle('red',!up);}
+    this._drawGlow(px);
+  }
+
+  // LIVE-CHART-SMOOTH-INTERPOLATION-01 — priceLine only. First-ever
+  // creation (no line exists yet) is instant — there is no meaningful
+  // "from" to animate away from. Every subsequent call retargets the
+  // ONE shared animation loop (_stepVisualAnim()) toward `px`, starting
+  // from wherever the line is CURRENTLY drawn (never from the old
+  // target, never from a stale real value) — see _currentAnimValue().
+  _retargetPriceLineAnimation(px){
+    if(!this.candleSeries)return;
+    if(!this.priceLine){
+      this.priceLine=this.candleSeries.createPriceLine({price:px,color:'rgba(255,255,255,.4)',lineWidth:1,lineStyle:2,axisLabelVisible:true,title:this.currentSymbol.replace('/','')});
+      this._quoteAnim=null;
+      return;
+    }
+    const now=performance.now();
+    const from=this._quoteAnim?this._currentAnimValue(this._quoteAnim,now):px;
+    this._quoteAnim={from,to:px,startedAt:now};
+    this._ensureVisualAnimLoop();
+  }
+
+  _currentAnimValue(anim,now){
+    const t=Math.min(1,(now-anim.startedAt)/this._animDurationMs);
+    return anim.from+(anim.to-anim.from)*t;
+  }
+
+  _ensureVisualAnimLoop(){
+    if(this._visualAnimRAF==null){
+      this._visualAnimRAF=requestAnimationFrame(()=>this._stepVisualAnim());
+    }
+  }
+
+  // The ONE requestAnimationFrame loop per panel (condition 1) — steps
+  // whichever of {candle close, priceLine} currently has an active
+  // target, stops itself the instant neither does (never left running
+  // with nothing to animate, never more than one requestAnimationFrame
+  // call site in this whole file for this purpose).
+  _stepVisualAnim(){
+    // Defensive guard (condition 9) — a panel torn down mid-animation
+    // (layout switch) must never throw from a stray, already-scheduled
+    // frame.
+    if(!this.candleSeries||!this.chart){this._visualAnimRAF=null;this._candleAnim=null;this._quoteAnim=null;return;}
+    const now=performance.now();
+    let stillAnimating=false;
+    if(this._candleAnim){
+      const t=Math.min(1,(now-this._candleAnim.startedAt)/this._animDurationMs);
+      const close=this._candleAnim.from+(this._candleAnim.to-this._candleAnim.from)*t;
+      const b=this._candleAnim.bar;
+      this.candleSeries.update({time:b.time,open:b.open,high:b.high,low:b.low,close});
+      if(t<1)stillAnimating=true; else this._candleAnim=null;
+    }
+    if(this._quoteAnim&&this.priceLine){
+      const px=this._currentAnimValue(this._quoteAnim,now);
+      this.priceLine.applyOptions({price:px,title:this.currentSymbol.replace('/','')});
+      const t=Math.min(1,(now-this._quoteAnim.startedAt)/this._animDurationMs);
+      if(t<1)stillAnimating=true; else this._quoteAnim=null;
+    }
+    this._visualAnimRAF=stillAnimating?requestAnimationFrame(()=>this._stepVisualAnim()):null;
+  }
+
+  // candle_update only (never candle_new — see _flushVisualRender()):
+  // retargets the shared loop toward the real bar's close, starting
+  // from wherever the candle is CURRENTLY drawn. open/high/low always
+  // come from `bar` (the real, current bar) fresh on every frame in
+  // _stepVisualAnim() above — never animated, never stale.
+  _retargetCandleAnimation(bar){
+    const now=performance.now();
+    const from=this._candleAnim?this._currentAnimValue(this._candleAnim,now):bar.close;
+    this._candleAnim={from,to:bar.close,startedAt:now,bar};
+    this._ensureVisualAnimLoop();
+  }
+
+  // Full stop — symbol switch (condition 7) / disconnect (condition 9):
+  // nothing pending, and no in-flight visual animation, can ever apply
+  // to the panel/symbol being switched away from or the connection that
+  // just dropped.
+  _cancelVisualAnimation(){
+    if(this._visualAnimRAF!=null){cancelAnimationFrame(this._visualAnimRAF);this._visualAnimRAF=null;}
+    this._candleAnim=null; this._quoteAnim=null;
   }
 
   /* FIX-05C — the single guard for "is there a real, tradeable quote right
@@ -2236,6 +2439,154 @@ class TradingPanel {
     if(_ra)_ra.textContent=(a!=null)?a.toFixed(pf):'—';
     if(pxSell)pxSell.textContent=(b!=null)?b.toFixed(pf):'—';
     if(pxBuy)pxBuy.textContent=(a!=null)?a.toFixed(pf):'—';
+  }
+
+  /* LIVE-CHART-RENDER-STABILITY-01 — visual coalescing/throttle for the
+     tick and candle_update/candle_new message handlers. CRYPTO-QUOTE-
+     DEDUP-01 (backend) removed redundant broadcasts for an exact-repeat
+     quote; BTCUSD/ETHUSD still legitimately move many times per second
+     with REAL, distinct prices — this addresses that separately, on the
+     render side only. Every tick/candle message still updates this.bid/
+     ask/liveMid/_bars/lastClose/prevClose and calls setPrice() (PnL/RR
+     titles) synchronously and unconditionally, exactly as before — no
+     financial state is ever delayed, coalesced, or dropped. Only the
+     paint calls named below are deferred:
+       'quote'  -> _updateBidAsk() + _updateLiveQuoteDisplay() (priceLine/
+                   badge/glow)
+       'candle' -> candleSeries.update()/volumeSeries.update()/
+                   scrollToRealTime()/_updateIndicatorsLastBar()
+     This is a trailing-edge THROTTLE, not a debounce: _visualRenderTimer
+     is only ever scheduled when not already pending (the early return
+     below) — a sustained flood of ticks never pushes the paint further
+     into the future, it always fires ~100ms after the first pending
+     event in a quiet window and paints whatever is freshest at that
+     moment (re-read from this.* / this._bars at flush time, never a
+     stale snapshot). */
+  _scheduleVisualRender(kind, isNew){
+    if(kind==='candle'){this._candleRenderPending=true; if(isNew)this._candleRenderIsNew=true;}
+    else this._quoteRenderPending=true;
+    if(this._visualRenderTimer!=null)return;  // already scheduled this cycle — throttle, not debounce
+    this._visualRenderTimer=setTimeout(()=>{
+      this._visualRenderTimer=null;
+      this._flushVisualRender();
+    },100);
+  }
+
+  // LIVE-CHART-MAGNITUDE-FILTER-01 — per-symbol-class magnitude
+  // threshold, evaluated against the last PAINTED liveMid (never the
+  // last tick — see _flushVisualRender()), so small same-direction
+  // moves accumulate correctly instead of being discarded individually.
+  // Forex: a REAL pip (pipSizeFor(), never priceFormatFor().minMove —
+  // that's a tenth of a pip, would make this ~10x too tight). Crypto:
+  // basis points of the anchor price itself (scale-invariant — a fixed
+  // USD amount would drift out of calibration as BTC/ETH's price level
+  // moves over time).
+  _visualMagnitudeThreshold(symbol, anchorPrice){
+    if(symbol.includes('BTC')||symbol.includes('ETH'))return 1.5/10000*anchorPrice;
+    return pipSizeFor(symbol)*0.5;
+  }
+
+  // Forex ticks arrive sparsely enough (real measured median gap ~500ms)
+  // that a tight max-age would fight the magnitude filter almost every
+  // cycle; crypto's native tick rate is high enough that this is a pure
+  // safety net, rarely the actual trigger.
+  _maxVisualAgeMs(symbol){
+    return (symbol.includes('BTC')||symbol.includes('ETH'))?500:1000;
+  }
+
+  // MASSIVE-CRYPTO-TRADE-CANDLES-01 — deliberate reversal of LIVE-CHART-
+  // MAGNITUDE-FILTER-01's single shared decision: candle and quote are
+  // no longer numerically the same value (candle close = last Massive
+  // TRADE via XT; priceLine/badge/bid-ask = quote bid/ask/mid via XQ —
+  // two distinct, legitimately-diverging semantics, see price_trade()/
+  // price_tick() on the backend). Gating the candle by liveMid movement
+  // would silently withhold a real, distinct trade just because the
+  // unrelated quote hadn't moved — exactly what this split avoids.
+  // Candle: ONLY the 100ms throttle below, no magnitude gate — every
+  // trade that survives the throttle paints. Quote: unchanged magnitude
+  // + max-age filter, gating priceLine/badge/bid-ask only.
+  _flushVisualRender(){
+    if(this._candleRenderPending){
+      this._candleRenderPending=false;
+      const isNew=this._candleRenderIsNew; this._candleRenderIsNew=false;
+      // Re-read the latest bar from _bars (already updated synchronously
+      // by every coalesced message) rather than any snapshot captured at
+      // schedule time — this is what guarantees "always paint the most
+      // recent state", never an intermediate one.
+      const b=this._bars.length?this._bars[this._bars.length-1]:null;
+      if(b){
+        this.volumeSeries.update(volPointForBar(b));
+        if(this.stayLive)this.chart.timeScale().scrollToRealTime();
+        this._updateIndicatorsLastBar(b, isNew);
+        // LIVE-CHART-SMOOTH-INTERPOLATION-01 — volume/indicators/
+        // scrollToRealTime above always use the REAL bar, immediately,
+        // outside the animation loop. Only candleSeries.update()'s
+        // close value is ever animated, and only for candle_update
+        // (same bucket) — a brand new bucket (candle_new) has no
+        // meaningful "from" to animate away from (it would visually
+        // blend two different candles), so it paints directly, once,
+        // with the real bar, and cancels whatever candle animation was
+        // still running for the PREVIOUS bar.
+        if(isNew){
+          this._candleAnim=null;
+          this.candleSeries.update(b);
+        }else{
+          this._retargetCandleAnimation(b);
+        }
+      }
+    }
+    if(this._quoteRenderPending){
+      this._quoteRenderPending=false;
+      const now=Date.now();
+      const current=this.liveMid;
+      const shouldPaint = current==null
+        || this._lastPaintedMid==null
+        || Math.abs(current-this._lastPaintedMid) >= this._visualMagnitudeThreshold(this.currentSymbol, this._lastPaintedMid)
+        || (now-this._lastPaintedAt) >= this._maxVisualAgeMs(this.currentSymbol);
+      if(shouldPaint){
+        this._lastPaintedMid=current; this._lastPaintedAt=now;
+        this._updateBidAsk();
+        // LIVE-CHART-SMOOTH-INTERPOLATION-01 — badge/glow stay instant
+        // and exact (_paintBadgeAndGlow); only the drawn priceLine is
+        // animated (_retargetPriceLineAnimation) — same magnitude/max-
+        // age gate as before, unchanged, decides WHETHER to react at
+        // all; this only changes HOW the priceLine gets there.
+        this._paintBadgeAndGlow(current);
+        this._retargetPriceLineAnimation(current);
+      }
+    }
+  }
+
+  // Full reset — symbol switch: nothing pending, no quote paint anchor,
+  // and no in-flight visual animation, can ever apply to the symbol
+  // being switched away from. The new symbol's first candle/quote must
+  // land immediately, never animate in from the old symbol's stale
+  // price — see _retargetCandleAnimation()/_retargetPriceLineAnimation()
+  // above: with _candleAnim/_quoteAnim cleared, their next call has no
+  // "from" to animate from and effectively snaps (candle_new always
+  // snaps regardless; priceLine's very first post-switch value simply
+  // becomes the immediate `from`, animating 0 distance).
+  _cancelPendingVisualRender(){
+    if(this._visualRenderTimer!=null){clearTimeout(this._visualRenderTimer);this._visualRenderTimer=null;}
+    this._quoteRenderPending=false; this._candleRenderPending=false; this._candleRenderIsNew=false;
+    this._lastPaintedMid=null; this._lastPaintedAt=null;
+    this._cancelVisualAnimation();
+  }
+
+  // Partial reset — timeframe switch: only the pending CANDLE paint
+  // (belongs to the old timeframe's bar) and any in-flight CANDLE
+  // animation are discarded — the shared timer/RAF loop are left
+  // running if a quote render/animation is still active. The quote
+  // paint anchor (_lastPaintedMid/_lastPaintedAt) and _quoteAnim are
+  // deliberately left untouched here: they gate/animate ONLY the quote/
+  // priceLine/badge/bid-ask branch above, which is unrelated to
+  // timeframe (same principle _onTFChange() already applies to liveMid/
+  // bid/ask directly) — and the candle branch no longer reads either of
+  // them, so there is nothing left for a timeframe switch to unblock
+  // besides its own animation state.
+  _cancelPendingCandleRender(){
+    this._candleRenderPending=false; this._candleRenderIsNew=false;
+    this._candleAnim=null;
   }
 
   wsUrl(){
@@ -2276,6 +2627,12 @@ class TradingPanel {
       // deliberately left untouched — only live quote state resets.
       // onopen (above) never restores these — it waits for a fresh real
       // tick, same as symbol change.
+      // LIVE-CHART-RENDER-STABILITY-01 — a dropped connection means
+      // nothing pending can ever be delivered; cancel the timer before
+      // the immediate (unthrottled — this is a real state transition,
+      // not a tick flood) bid/ask repaint below so a stray already-
+      // scheduled flush can never fire afterward and repaint over it.
+      this._cancelPendingVisualRender();
       this.bid=null; this.ask=null; this.liveMid=null; this.liveSource=null; this.prevLiveMid=null;
       this._updateBidAsk();
       // PANEL-04 — a socket drop while our own order was in flight must
@@ -2392,8 +2749,10 @@ class TradingPanel {
       if(_src!=null&&_src!=='sim'&&_b!=null&&_a!=null&&_a>_b){
         this.prevLiveMid=this.liveMid;
         this.bid=_b;this.ask=_a;this.liveMid=(_a+_b)/2;this.liveSource=_src;
-        this._updateBidAsk();
-        this._updateLiveQuoteDisplay();
+        // LIVE-CHART-RENDER-STABILITY-01 — state above is unconditional/
+        // immediate on every tick; only the priceLine/badge/bid-ask
+        // paint is coalesced (see _scheduleVisualRender()).
+        this._scheduleVisualRender('quote');
         const _qs=msg.symbol||this.currentSymbol;
         if(_qs){const _qe=quotesLivePx[_qs];quotesLivePx[_qs]={price:this.liveMid,prev:_qe?_qe.price:null};}
         if(document.getElementById('quotesPanel')?.style.display!=='none')renderQuotes(quotesSearch?.value||'');
@@ -2403,7 +2762,35 @@ class TradingPanel {
 
     if(msg.type==='history'&&Array.isArray(msg.data)){
       if(msg.symbol&&msg.symbol!==this.currentSymbol)return;
-      const bars=msg.data.map(c=>({time:normTime(c.time),open:n(c.open),high:n(c.high),low:n(c.low),close:n(c.close)})).filter(b=>b.time&&b.open!=null&&b.high!=null&&b.low!=null&&b.close!=null);
+      // GOLDEN-MARKETDATA-CRYPTO-01 — a stale response for the PREVIOUS
+      // timeframe (same symbol) used to pass this check unconditionally
+      // (no timeframe field existed on this message at all) and could
+      // setData() the wrong candle series. Backend now always includes
+      // timeframe on this message type (see consumers.py::_send_history_
+      // or_unavailable) — falsy-check mirrors the symbol guard above so
+      // an old server response predating this fix (impossible in
+      // practice, defensive only) still degrades to "accept" rather than
+      // silently dropping history forever.
+      if(msg.timeframe&&msg.timeframe!==this.currentTF)return;
+      const bars=msg.data.map(c=>({time:normTime(c.time),open:n(c.open),high:n(c.high),low:n(c.low),close:n(c.close),volume:n(c.volume)})).filter(b=>b.time&&b.open!=null&&b.high!=null&&b.low!=null&&b.close!=null);
+      // CHART-HISTORY-INSTANT-LOAD-01 — a "complete" (depth-fetch)
+      // response arriving after this panel already has bars from the
+      // "initial" fast-paint response must never replace them: live
+      // ticks may already have advanced _bars past what the depth fetch
+      // captured. Only PREPEND the strictly-older portion it found. A
+      // "complete" arriving with no prior bars (e.g. the fast paint had
+      // no closed candles yet) falls through to the normal full-replace
+      // path below instead, since there is nothing live-driven to lose.
+      if((msg.phase||'complete')==='complete'&&this._bars.length){
+        const earliest=this._bars[0].time;
+        const older=bars.filter(b=>b.time<earliest);
+        if(older.length){
+          this._bars=older.concat(this._bars);
+          this.candleSeries.setData(this._bars);this.volumeSeries.setData(this._bars.map(volPointForBar));
+          this._applyIndicators();
+        }
+        return;
+      }
       this._bars=bars;  // canonical store — full replace on every history load
       this.candleSeries.setData(bars);this.volumeSeries.setData(bars.map(volPointForBar));
       this.chart.timeScale().fitContent();if(this.stayLive)this.chart.timeScale().scrollToRealTime();
@@ -2424,12 +2811,16 @@ class TradingPanel {
           if(this._bars.length)this._bars[this._bars.length-1]=b;
           else this._bars.push(b);
         }
-        this.candleSeries.update(b);this.volumeSeries.update(volPointForBar(b));
-        if(this.stayLive)this.chart.timeScale().scrollToRealTime();
         if(msg.type==='candle_new')this.prevCandleClose=this.lastClose??b.open;
         this.prevClose=this.prevCandleClose??b.open;this.lastClose=b.close;this.setPrice(this.lastClose,this.prevClose);
-        if(this.bid==null||this.ask==null)this._updateBidAsk();
-        this._updateIndicatorsLastBar(b, msg.type==='candle_new');
+        // LIVE-CHART-RENDER-STABILITY-01 — _bars/lastClose/prevClose/
+        // setPrice() (PnL/RR titles) above are unconditional/immediate on
+        // every candle_update/candle_new; only candleSeries.update()/
+        // volumeSeries.update()/scrollToRealTime()/indicator redraw is
+        // coalesced (see _scheduleVisualRender()) — it re-reads the
+        // latest bar from this._bars at flush time, so it always paints
+        // this (or a later) bar, never a stale one.
+        this._scheduleVisualRender('candle', msg.type==='candle_new');
       }return;
     }
 
