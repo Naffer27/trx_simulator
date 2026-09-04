@@ -20,6 +20,7 @@ from .models import (
     BrokerEquitySnapshot, AccountEquitySnapshot,
     BrokerRevenueSnapshot,
 )
+from market_data.symbol_specs import get_spec
 
 log = logging.getLogger("simulator.snapshots")
 
@@ -36,41 +37,88 @@ def _retention_days() -> int:
 # Internal helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _position_data(account_ids: list[int]) -> dict[int, dict]:
+def _position_data(account_ids: list[int], leverage_by_account: dict[int, int]) -> dict[int, dict]:
     """
-    One query: fetch all open positions for the given accounts.
-    Returns {account_id: {total_notional, long_notional, short_notional, count}}.
-    Uses avg_price as a proxy for current price (consistent with broker_monitoring.py).
+    One query: fetch all open positions for the given accounts, and compute
+    per-account notional/margin. Uses avg_price as a proxy for current price
+    (consistent with broker_monitoring.py).
+
+    FIX-SNAPSHOTS-CONTRACT-SIZE-01 — two bugs fixed here:
+
+    BUG 1: notional was `qty * price`, missing contract_size — silently
+    correct only for contract_size==1 instruments (crypto); wrong by
+    100,000x for every Forex pair (contract_size=100000). Now
+    `qty * contract_size * price`, contract_size resolved per position
+    from market_data.symbol_specs — same convention already used by
+    exposure_engine.py/broker_risk.py/pnl_engine.py. Prior art: this was a
+    known, documented, unfixed finding — see broker_exposure.py's RISK-01
+    FASE 1 audit.
+
+    BUG 2: margin_used was reconstructed by summing ALL positions' notional
+    first, then dividing the total ONCE by account.leverage — ignoring each
+    symbol's own max_leverage cap entirely. Silently correct only when
+    every open position's symbol.max_leverage >= account.leverage; wrong
+    for any mixed portfolio where a lower-cap symbol (crypto/gold/indices,
+    which cap well below typical Forex caps) is capped below the account's
+    own leverage. Margin must be computed PER POSITION — effective_leverage
+    = max(1, min(account.leverage, symbol.max_leverage)) — then summed,
+    exactly mirroring the canonical per-position formula every real margin
+    path already uses (see consumers.py's calculate_required_margin() call
+    sites, broker_risk.py:701).
+
+    Fallback for a symbol no longer in market_data.symbol_specs
+    (deregistered/renamed since the position was opened — not expected for
+    a currently-tradeable symbol, defensive only): contract_size defaults
+    to 1.0 (same neutral fallback exposure_engine.py::_contract_size()
+    already established); symbol_max_leverage defaults to the account's
+    OWN leverage, i.e. no additional unknown-instrument cap is invented —
+    the same "never fabricate a market-specific number" principle, just
+    applied to the leverage side instead of the size side.
+
+    Scope: snapshots/reporting only (AccountEquitySnapshot/
+    BrokerEquitySnapshot, both INSERT-only) — never touches TradingAccount,
+    Position, Trade, LedgerEntry, execution, runtime margin, risk, stopout,
+    or liquidation. gross_long_usd/gross_short_usd (the "long"/"short" keys
+    below) are deliberately UNCHANGED in kind: pure notional, never divided
+    by leverage — only margin_used required the per-position leverage cap.
+
+    Returns {account_id: {total, long, short, margin_used, count}}.
     """
     if not account_ids:
         return {}
 
     result: dict[int, dict] = {}
     for pos in Position.objects.filter(account_id__in=account_ids).values(
-        "account_id", "side", "qty", "avg_price"
+        "account_id", "symbol", "side", "qty", "avg_price"
     ):
-        aid = pos["account_id"]
+        aid   = pos["account_id"]
         qty   = Decimal(str(pos["qty"]))
         price = Decimal(str(pos["avg_price"]))
-        n     = qty * price          # notional: qty * price (per exposure_engine convention)
+        account_leverage = leverage_by_account.get(aid) or 50
+
+        try:
+            spec = get_spec(pos["symbol"])
+            contract_size = Decimal(str(spec.contract_size))
+            symbol_max_leverage = int(spec.max_leverage)
+        except KeyError:
+            contract_size = Decimal("1")
+            symbol_max_leverage = account_leverage
+
+        notional = qty * contract_size * price          # BUG 1 fix: contract_size now applied
+        effective_leverage = max(1, min(account_leverage, symbol_max_leverage))
+        position_margin = notional / Decimal(str(effective_leverage))   # BUG 2 fix: per-position leverage cap
 
         if aid not in result:
-            result[aid] = {"total": _ZERO, "long": _ZERO, "short": _ZERO, "count": 0}
-        result[aid]["total"] += n
+            result[aid] = {"total": _ZERO, "long": _ZERO, "short": _ZERO, "margin_used": _ZERO, "count": 0}
+        result[aid]["total"] += notional
+        result[aid]["margin_used"] += position_margin
         result[aid]["count"] += 1
         if pos["side"] == "BUY":
-            result[aid]["long"] += n
+            result[aid]["long"] += notional
         else:
-            result[aid]["short"] += n
+            result[aid]["short"] += notional
 
     return result
-
-
-def _margin_from_notional(notional: Decimal, leverage: int) -> Decimal:
-    """Approximate margin_used from position notional and account leverage."""
-    if leverage <= 0:
-        leverage = 50
-    return notional / Decimal(str(leverage))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -94,9 +142,10 @@ def take_all_snapshots() -> dict:
         .values("id", "balance", "equity", "drawdown", "leverage")
     )
     account_ids = [a["id"] for a in accounts]
+    leverage_by_account = {a["id"]: (a["leverage"] or 50) for a in accounts}
 
-    # ── 2. Position notionals — one query ─────────────────────────────────────
-    pos_data = _position_data(account_ids)
+    # ── 2. Position notionals + per-position margin — one query ───────────────
+    pos_data = _position_data(account_ids, leverage_by_account)
 
     # ── 3. Build per-account snapshots + aggregate broker totals ──────────────
     acc_rows: list[AccountEquitySnapshot] = []
@@ -110,11 +159,10 @@ def take_all_snapshots() -> dict:
     for acc in accounts:
         balance  = Decimal(str(acc["balance"] or 0))
         equity   = Decimal(str(acc["equity"]  or 0))
-        leverage = acc["leverage"] or 50
         drawdown = Decimal(str(acc["drawdown"] or 0))
-        pd       = pos_data.get(acc["id"], {"total": _ZERO, "long": _ZERO, "short": _ZERO, "count": 0})
+        pd       = pos_data.get(acc["id"], {"total": _ZERO, "long": _ZERO, "short": _ZERO, "margin_used": _ZERO, "count": 0})
 
-        margin_used  = _margin_from_notional(pd["total"], leverage)
+        margin_used  = pd["margin_used"]   # FIX-SNAPSHOTS-CONTRACT-SIZE-01 — summed per-position, not reconstructed from the total
         free_margin  = max(_ZERO, equity - margin_used)
         floating_pnl = equity - balance
 
