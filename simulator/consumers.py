@@ -1235,6 +1235,14 @@ class TradingConsumer(AsyncWebsocketConsumer):
         elif act == "account:get":
             await self._recalc_account_and_push()
 
+        elif act == "get_closed_trades":
+            # FIX-HISTORY-AUTO-CLOSE-SYNC-01 — on-demand reconciliation
+            # snapshot for the frontend's closedTradesHistory. Account
+            # scope is EXCLUSIVELY self._db_account_id (this connection's
+            # own, already-authorized account) — any account_id the
+            # client might send in `data` is ignored, never read.
+            await self._send_closed_trades_snapshot()
+
         elif act == "order:mode":
             nm = data.get("netting_mode", None)
             if isinstance(nm, bool):
@@ -2438,6 +2446,39 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
         await self._recalc_account_and_push()
         await self._refresh_and_send_positions()
+
+    @database_sync_to_async
+    def _db_get_closed_trades(self):
+        """
+        FIX-HISTORY-AUTO-CLOSE-SYNC-01 — thin sync wrapper around
+        services.history.closed_trades_for_account(), decorated
+        database_sync_to_async for the same reason every other _db_*
+        method in this class is: the ORM query inside is synchronous,
+        and every caller here is `async def` — calling it directly would
+        raise SynchronousOnlyOperation. Same pattern, no new one.
+        """
+        from .services.history import closed_trades_for_account
+        return closed_trades_for_account(self._db_account_id)
+
+    async def _send_closed_trades_snapshot(self):
+        """
+        FIX-HISTORY-AUTO-CLOSE-SYNC-01 — the get_closed_trades response.
+        Never raises to the client: a DB failure here degrades to an
+        empty snapshot (the frontend's reconcileClosedTrades([]) is a
+        documented no-op, never a wipe of existing local History) rather
+        than dropping the connection or leaving the client's request
+        unanswered.
+        """
+        if not self._db_account_id:
+            await self.send_json({"type": "closed_trades_snapshot", "trades": []})
+            return
+        try:
+            trades = await self._db_get_closed_trades()
+        except Exception as exc:
+            log.error("[get_closed_trades] failed for account=%s: %r",
+                      self._db_account_id, exc, exc_info=True)
+            trades = []
+        await self.send_json({"type": "closed_trades_snapshot", "trades": trades})
 
     @database_sync_to_async
     def _db_record_routing_audit_event(self, *, account_id, symbol, routing_decision_id,

@@ -2638,6 +2638,11 @@ class TradingPanel {
       this.ws.send(JSON.stringify({action:'change_symbol',symbol:this.currentSymbol}));
       this.ws.send(JSON.stringify({action:'change_timeframe',timeframe:this.currentTF}));
       this.ws.send(JSON.stringify({action:'get_positions'}));
+      // FIX-HISTORY-AUTO-CLOSE-SYNC-01 — reconcile closedTradesHistory
+      // against the backend on every (re)connect, so an order_close
+      // that never reached this tab (dropped connection, tab
+      // backgrounded, etc.) is recovered instead of missing forever.
+      this.ws.send(JSON.stringify({action:'get_closed_trades'}));
       this._loadHistory();
     };
     this.ws.onmessage=ev=>{try{this._handleMsg(JSON.parse(ev.data));}catch(_){}};
@@ -2918,6 +2923,14 @@ class TradingPanel {
       execToast(side==='sell'?'sell':'buy',side==='sell'?'SELL ejecutado':'BUY ejecutado',fmt?`@ ${fmt}`:'');
       return;
     }
+    if(msg.type==='closed_trades_snapshot'){
+      // FIX-HISTORY-AUTO-CLOSE-SYNC-01 — on-demand reconciliation
+      // response (requested on WS onopen and on entering the History
+      // tab). An empty/absent trades array is a documented no-op —
+      // never wipes the local closedTradesHistory seeded at page load.
+      reconcileClosedTrades(msg.trades||[]);
+      return;
+    }
     if(msg.type==='order_close'){
       const pnlClose=msg.realized_pnl??msg.pnl??msg.profit??msg.result??null;
       const pnlStr=pnlClose!=null?(pnlClose>=0?'+':'')+Number(pnlClose).toFixed(2)+' USD':'cerrado';
@@ -2932,16 +2945,18 @@ class TradingPanel {
       // also matches views.py's initial closed_trades_json seed, which
       // was already built from Trade.id, not Position.id (t['id'] there
       // IS the Trade row's id) — the two were silently inconsistent
-      // before this fix, now aligned. Scanning the whole array (not just
-      // WS-appended entries) still protects that seed for free.
+      // before this fix, now aligned.
+      //
+      // FIX-HISTORY-AUTO-CLOSE-SYNC-01 — dedupe/insertion now delegated
+      // entirely to reconcileClosedTrades() (shared with the snapshot
+      // path above — one merge semantics, not two). ts uses the
+      // server's own close-commit timestamp (msg.ts, seconds) when
+      // present, converted to epoch ms — Date.now() (receipt time) is
+      // only a fallback for an old/compat payload missing ts.
       if(msg.trade_id!=null){
-        const _dupId=String(msg.trade_id);
-        if(!closedTradesHistory.some(t=>String(t.id)===_dupId)){
-          const pnlV=msg.realized_pnl??msg.pnl??msg.profit??msg.result??null;
-          closedTradesHistory.unshift({id:msg.trade_id,position_id:msg.id,symbol:msg.symbol||this.currentSymbol,side:msg.side||'?',qty:msg.qty??msg.quantity??null,entry:msg.avg_entry??msg.avg??msg.entry??null,close:msg.close_px??msg.close??null,pnl:pnlV,ts:Date.now()});
-          if(closedTradesHistory.length>100)closedTradesHistory.pop();
-        }
-        _syncHistorialPanel();
+        const pnlV=msg.realized_pnl??msg.pnl??msg.profit??msg.result??null;
+        const tsV=(msg.ts!=null)?Number(msg.ts)*1000:Date.now();
+        reconcileClosedTrades([{id:msg.trade_id,position_id:msg.id,symbol:msg.symbol||this.currentSymbol,side:msg.side||'?',qty:msg.qty??msg.quantity??null,entry:msg.avg_entry??msg.avg??msg.entry??null,close:msg.close_px??msg.close??null,pnl:pnlV,ts:tsV}]);
       }
       // ORDER-MANAGEMENT-V2B — chart-line/selection cleanup only applies
       // when the Position is actually GONE (full close). A partial close
@@ -4039,7 +4054,13 @@ function showTab(tab){
   }
   if(onSettings)_syncSettingsPanel();
   if(onTrading)_syncTradingPanel();
-  if(onHistorial)_syncHistorialPanel();
+  if(onHistorial){
+    _syncHistorialPanel();
+    // FIX-HISTORY-AUTO-CLOSE-SYNC-01 — reconcile on every entry into
+    // the History tab, not just on connect. No-op if nothing is open.
+    const _hp=_anyOpenPanel();
+    if(_hp&&_hp.ws&&_hp.ws.readyState===WebSocket.OPEN)_hp.ws.send(JSON.stringify({action:'get_closed_trades'}));
+  }
   allPanels.forEach(p=>setTimeout(()=>{p._fixChartHeight();if(p.stayLive)p.chart?.timeScale().scrollToRealTime();},80));
 }
 document.querySelectorAll('.tabbtn').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('.tabbtn').forEach(x=>x.classList.remove('active'));b.classList.add('active');showTab(b.dataset.tab);try{navigator.vibrate&&navigator.vibrate(12);}catch(_){}}));
@@ -4198,6 +4219,39 @@ function _patchTradingPanelPnL(){
     const pnlEl=item.querySelector('.trd-pos-item-pnl');
     if(pnlEl){pnlEl.textContent=raw!=null?(raw>=0?'+':'')+`$${Math.abs(raw).toFixed(2)}`:'—';pnlEl.className=`trd-pos-item-pnl ${raw!=null&&raw>0.00001?'pos':raw!=null&&raw<-0.00001?'neg':''}`;}
   }
+}
+
+/* ── FIX-HISTORY-AUTO-CLOSE-SYNC-01 — single merge/dedupe semantics ── */
+// Shared by the live order_close path and the on-demand
+// closed_trades_snapshot reconciliation (WS onopen / History tab open)
+// — one implementation, never two independent dedupe rules. Key is
+// ALWAYS trade.id (== Trade.id / trade_id), NEVER position_id — the
+// same invariant GOLDEN-SCENARIOS-FIX-01/ORDER-MANAGEMENT-V2B already
+// established (a Position can produce multiple Trade rows via partial
+// close; each must appear as its own row). An empty/missing `trades`
+// is a documented no-op: never clears the seed already in
+// closedTradesHistory (a failed or empty snapshot must never look like
+// "no history exists").
+function reconcileClosedTrades(trades){
+  if(!Array.isArray(trades)||!trades.length)return;
+  const idx=new Map(closedTradesHistory.map((t,i)=>[String(t.id),i]));
+  for(const t of trades){
+    const key=String(t.id);
+    const i=idx.get(key);
+    if(i==null){
+      closedTradesHistory.push(t);
+      idx.set(key,closedTradesHistory.length-1);
+    }else{
+      // Snapshot data (DB-authoritative) overwrites a live-inserted row
+      // in place — same trade_id, never a second row.
+      closedTradesHistory[i]=Object.assign({},closedTradesHistory[i],t);
+    }
+  }
+  // Newest-first by ts; trade_id (numeric, monotonically assigned) is
+  // the deterministic tie-break when two trades share the same second.
+  closedTradesHistory.sort((a,b)=>(b.ts||0)-(a.ts||0)||(Number(b.id)||0)-(Number(a.id)||0));
+  while(closedTradesHistory.length>100)closedTradesHistory.pop();
+  _syncHistorialPanel();
 }
 
 /* ── Historial panel sync ── */

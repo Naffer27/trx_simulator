@@ -36,6 +36,7 @@ from .wallet_ledger import credit_wallet, debit_wallet, transfer_to_account, tra
 from .currencies import to_np_code, CURRENCY_MAP
 from .observability import security_log, get_client_ip
 from .ratelimit import rate_limit
+from .services.history import closed_trades_for_account
 from .funded_payouts import handle_internal_payout_webhook
 from .two_factor import staff_require_2fa, totp_session_verified
 from .audit import (
@@ -509,29 +510,13 @@ def trading_dashboard(request, account_id=None):
         "max_lot_size":       account.max_lot_size_snapshot,
     }
 
-    # Closed trades for History panel — last 50, newest first, this account only
-    _closed_qs = (
-        Trade.objects
-        .filter(account=account, closed_at__isnull=False)
-        .order_by('-closed_at')
-        .values('id', 'symbol', 'trade_type', 'lot_size',
-                'entry_price', 'exit_price', 'profit_loss', 'closed_at')
-        [:50]
-    )
+    # Closed trades for History panel — last 50, newest first, this account
+    # only. FIX-HISTORY-AUTO-CLOSE-SYNC-01 — extracted to
+    # services/history.py so consumers.py's get_closed_trades WS action
+    # (the live-reconciliation counterpart) can reuse this SAME
+    # definition instead of a second, independently-drifting one.
     closed_trades_json = json.dumps(
-        [
-            {
-                'id':     t['id'],
-                'symbol': t['symbol'],
-                'side':   t['trade_type'].lower(),
-                'qty':    float(t['lot_size']),
-                'entry':  float(t['entry_price']),
-                'close':  float(t['exit_price']) if t['exit_price'] is not None else None,
-                'pnl':    float(t['profit_loss']) if t['profit_loss'] is not None else None,
-                'ts':     int(t['closed_at'].timestamp() * 1000),
-            }
-            for t in _closed_qs
-        ],
+        closed_trades_for_account(account),
         cls=DjangoJSONEncoder,
     )
 

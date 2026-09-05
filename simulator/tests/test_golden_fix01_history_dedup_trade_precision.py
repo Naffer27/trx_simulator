@@ -28,6 +28,24 @@ Design lock: GOLDEN-SCENARIOS-FIX-01 (this block). Two independent fixes:
      source, not simulated runtime execution. They are not a substitute
      for a real JS test and are not presented as one.
 
+     FIX-HISTORY-AUTO-CLOSE-SYNC-01 UPDATE — the dedupe/insert/cap logic
+     that used to live inline inside the order_close handler moved into
+     a single shared function, reconcileClosedTrades(trades), also used
+     by the new on-demand closed_trades_snapshot reconciliation (WS
+     onopen / History tab open) — one merge semantics, not two. The
+     tests below were updated to assert against reconcileClosedTrades()
+     instead of the order_close block directly; every invariant they
+     protect (dedupe key is id/trade_id only, no duplicate rows,
+     unconditional _syncHistorialPanel, the 100-item cap, the initial
+     seed stays protected by scanning the whole array) is unchanged and
+     still enforced — only its location moved, and insertion order
+     newest-first is now guaranteed by an explicit sort by ts (more
+     robust than relying on unshift() call order, which a
+     snapshot-driven insert can no longer assume). The live order_close
+     path also stopped using Date.now() as the authoritative close
+     timestamp — msg.ts (the server's own close-commit time) is used
+     when present, exactly per that block's design lock §8/§9.
+
   B. Trade.lot_size — DecimalField(decimal_places=2) truncated BTCUSD's
      minimum lot (0.001, lot_step) to 0.00 when archiving a closed trade.
      Position.qty (decimal_places=6) already had the correct precision
@@ -66,6 +84,12 @@ def _order_close_block(src):
     return src[i:j]
 
 
+def _reconcile_closed_trades_block(src):
+    i = src.index("function reconcileClosedTrades(trades){")
+    j = src.index("/* ── Historial panel sync ── */", i)
+    return src[i:j]
+
+
 def _btm_history_block(src):
     i = src.index("function _renderBtmHistory(){")
     j = src.index("/* ── Bottom panel resize", i)
@@ -86,20 +110,24 @@ class HistoryDedupGuardTests(SimpleTestCase):
     surrounding order_close effects untouched."""
 
     def test_dedupe_guard_present_keyed_on_msg_id(self):
-        # ORDER-MANAGEMENT-V2B — re-keyed from msg.id (position_id) to
-        # msg.trade_id (see this file's module docstring update).
-        block = _order_close_block(_template_source())
-        self.assertIn("const _dupId=String(msg.trade_id);", block)
-        self.assertIn(
-            "if(!closedTradesHistory.some(t=>String(t.id)===_dupId)){", block
-        )
+        # FIX-HISTORY-AUTO-CLOSE-SYNC-01 — dedupe now lives inside the
+        # shared reconcileClosedTrades(), keyed on String(t.id) (t.id ==
+        # msg.trade_id for a live entry, == Trade.id for a snapshot
+        # entry — same field, same value space, never position_id).
+        block = _reconcile_closed_trades_block(_template_source())
+        self.assertIn("const key=String(t.id);", block)
+        self.assertIn("const i=idx.get(key);", block)
+        # order_close still passes id:msg.trade_id into the shared merge.
+        oc_block = _order_close_block(_template_source())
+        self.assertIn("id:msg.trade_id", oc_block)
+        self.assertIn("reconcileClosedTrades(", oc_block)
 
     def test_dedupe_does_not_key_on_symbol_side_pnl_timestamp(self):
         # The guard's condition must reference only id — not compose a key
         # from symbol/side/pnl/ts (design lock A.1: "ÚNICAMENTE por id").
-        block = _order_close_block(_template_source())
-        i = block.index("closedTradesHistory.some(")
-        j = block.index(")", i)
+        block = _reconcile_closed_trades_block(_template_source())
+        i = block.index("const key=String(t.id);")
+        j = block.index(";", i)
         guard_expr = block[i:j]
         self.assertIn("t.id", guard_expr)
         self.assertNotIn("t.symbol", guard_expr)
@@ -108,57 +136,65 @@ class HistoryDedupGuardTests(SimpleTestCase):
         self.assertNotIn("t.ts", guard_expr)
 
     def test_unshift_still_present_inside_guard(self):
-        block = _order_close_block(_template_source())
-        self.assertIn("closedTradesHistory.unshift(", block)
+        # FIX-HISTORY-AUTO-CLOSE-SYNC-01 — insertion is now push() (not
+        # unshift()), because newest-first is guaranteed by an explicit
+        # sort() afterward — correct even for a snapshot's arrival order,
+        # which unshift() alone could not guarantee. Same end guarantee
+        # (new entries end up newest-first, none lost), stronger
+        # mechanism.
+        block = _reconcile_closed_trades_block(_template_source())
+        self.assertIn("closedTradesHistory.push(t);", block)
+        self.assertIn("closedTradesHistory.sort(", block)
 
     def test_array_cap_at_100_preserved(self):
-        block = _order_close_block(_template_source())
-        self.assertIn("if(closedTradesHistory.length>100)closedTradesHistory.pop();", block)
+        block = _reconcile_closed_trades_block(_template_source())
+        self.assertIn("while(closedTradesHistory.length>100)closedTradesHistory.pop();", block)
 
     def test_object_fields_unchanged(self):
         # Design lock: "Preservar exactamente los campos actuales del
         # objeto. NO reescribir estructura innecesariamente."
-        # ORDER-MANAGEMENT-V2B — id now sources from msg.trade_id (the
-        # new dedupe key) with position_id added alongside it so nothing
-        # that needed the Position's own id lost access to it; every
-        # pre-existing field (symbol/side/qty/entry/close/pnl/ts) is
-        # untouched, exactly as this test's own intent requires.
+        # FIX-HISTORY-AUTO-CLOSE-SYNC-01 — the object literal itself is
+        # unchanged field-for-field (id/position_id/symbol/side/qty/
+        # entry/close/pnl/ts) except ts, which is now tsV — the server's
+        # own close-commit timestamp (msg.ts) converted to epoch ms, with
+        # Date.now() only as a fallback for a payload missing ts. This is
+        # the deliberate, authorized fix for that block's own §8/§9 — no
+        # longer "unchanged" for ts specifically, by design.
         block = _order_close_block(_template_source())
         self.assertIn(
-            "closedTradesHistory.unshift({id:msg.trade_id,position_id:msg.id,"
+            "reconcileClosedTrades([{id:msg.trade_id,position_id:msg.id,"
             "symbol:msg.symbol||this.currentSymbol,"
             "side:msg.side||'?',qty:msg.qty??msg.quantity??null,"
             "entry:msg.avg_entry??msg.avg??msg.entry??null,"
-            "close:msg.close_px??msg.close??null,pnl:pnlV,ts:Date.now()});",
+            "close:msg.close_px??msg.close??null,pnl:pnlV,ts:tsV}]);",
             block,
         )
+        self.assertIn("const tsV=(msg.ts!=null)?Number(msg.ts)*1000:Date.now();", block)
 
     def test_sync_historial_panel_called_unconditionally(self):
         # A.4/spec: _syncHistorialPanel() must still run even on a
-        # duplicate (idempotent re-render), outside the dedupe `if`.
-        # ORDER-MANAGEMENT-V2B — outer guard re-keyed to msg.trade_id.
-        block = _order_close_block(_template_source())
-        i = block.index("if(msg.trade_id!=null){")
-        # last occurrence of _syncHistorialPanel() within the msg.id block,
-        # must be OUTSIDE (after) the inner dedupe-guard's closing brace.
-        inner_if = block.index(
-            "if(!closedTradesHistory.some(t=>String(t.id)===_dupId)){", i
-        )
-        inner_close = block.index("}\n        _syncHistorialPanel();", inner_if)
-        self.assertIn("_syncHistorialPanel();", block[inner_close:inner_close + 60])
+        # duplicate (idempotent re-render). FIX-HISTORY-AUTO-CLOSE-SYNC-01
+        # — now lives at the end of reconcileClosedTrades(), AFTER the
+        # per-item loop (which never early-returns on a duplicate, only
+        # updates in place) — still unconditional relative to a dupe.
+        block = _reconcile_closed_trades_block(_template_source())
+        loop_end = block.index("closedTradesHistory.sort(")
+        self.assertIn("_syncHistorialPanel();", block[loop_end:])
 
 
 class HistoryDedupSurroundingEffectsTests(SimpleTestCase):
     """4, 10 — toast / line cleanup / positions refresh untouched by the fix."""
 
     def test_toast_still_fires_outside_dedupe_guard(self):
-        # ORDER-MANAGEMENT-V2B — the toast text itself now branches on
-        # msg.partial (full vs partial close wording); this test's own
-        # concern (toast fires before/outside the dedupe guard) is
-        # otherwise unchanged, guard re-keyed to msg.trade_id.
+        # ORDER-MANAGEMENT-V2B — the toast text itself branches on
+        # msg.partial (full vs partial close wording). FIX-HISTORY-
+        # AUTO-CLOSE-SYNC-01 — the dedupe guard is now inside
+        # reconcileClosedTrades(); this test's concern (toast fires
+        # before/outside it) is unchanged, just compared against the
+        # call to that shared function instead of an inline guard.
         block = _order_close_block(_template_source())
         toast_idx = block.index("execToast('close',msg.partial?'Cierre parcial':'Posición cerrada',pnlStr);")
-        guard_idx = block.index("const _dupId=String(msg.trade_id);")
+        guard_idx = block.index("reconcileClosedTrades([{id:msg.trade_id,")
         self.assertLess(toast_idx, guard_idx)  # toast fires before/outside the guard
 
     def test_line_cleanup_and_positions_refresh_untouched(self):
@@ -178,8 +214,14 @@ class HistoryDedupInvariantDocumentationTests(SimpleTestCase):
         # closed_trades_json seed too — achieved by scanning the FULL
         # closedTradesHistory array (not a separate "seen via WS" set),
         # so an id seeded at page load is already covered.
-        block = _order_close_block(_template_source())
-        self.assertIn("closedTradesHistory.some(t=>String(t.id)===_dupId)", block)
+        # FIX-HISTORY-AUTO-CLOSE-SYNC-01 — the scan is now a fresh Map
+        # built from closedTradesHistory on every reconcileClosedTrades()
+        # call, same "whole array, no separate tracking set" property.
+        block = _reconcile_closed_trades_block(_template_source())
+        self.assertIn(
+            "const idx=new Map(closedTradesHistory.map((t,i)=>[String(t.id),i]));",
+            block,
+        )
         self.assertNotIn("_wsSeenIds", block)  # no separate WS-only tracking set introduced
 
 
