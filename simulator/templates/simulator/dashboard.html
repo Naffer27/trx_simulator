@@ -2252,8 +2252,7 @@ class TradingPanel {
       _updateQtyInputAttrs(this.currentSymbol);
       // PANEL-04 — SL/TP are price levels for the *previous* symbol's
       // scale; they must never carry over to a different instrument.
-      const slEl=document.getElementById('sl'), tpEl=document.getElementById('tp');
-      if(slEl)slEl.value=''; if(tpEl)tpEl.value='';
+      clearOrderProtectionInputs();
       // FIX-01 — symbol change alters notional/margin: refresh the risk preview
       const _qtyNow=parseFloat(document.getElementById('qty')?.value)||0;
       if(_qtyNow>0){
@@ -2876,13 +2875,17 @@ class TradingPanel {
       execToast('close','⚠️ Orden pendiente rechazada',label[msg.code]||msg.message||msg.code||'error');
       return;
     }
-    if(msg.type==='order_pending_new'){execToast('buy','Orden pendiente creada',`${msg.order_type} ${msg.side} @ ${msg.trigger_price}`);return;}
+    if(msg.type==='order_pending_new'){clearOrderProtectionInputs();execToast('buy','Orden pendiente creada',`${msg.order_type} ${msg.side} @ ${msg.trigger_price}`);return;}
     if(msg.type==='order_pending_cancel'){execToast('close','Orden pendiente cancelada','');return;}
     if(msg.type==='order_pending_update'){return;}
     if(msg.type==='order_ack'){
       // Only the panel that owns the in-flight ticket may resolve it —
       // see the 'error' branch above for why this can't be unconditional.
       if(orderTicketPanel===this)_resolveOrderTicket();
+      // FIX-SLTP-RESIDUAL-01 — definitive accept: clear the ticket's
+      // SL/TP now, never on a reject/risk_warning pause (see
+      // clearOrderProtectionInputs()'s own docstring above).
+      clearOrderProtectionInputs();
       const side=(msg.side||'').toLowerCase();
       // O.6c — order_ack.order_id is the REAL backend Position id for
       // this fill, sent by consumers.py right after the DB commit
@@ -3412,6 +3415,19 @@ function _onOrderTicketTimeout(){
   if(panel?.ws?.readyState===WebSocket.OPEN)panel.ws.send(JSON.stringify({action:'get_positions'}));
 }
 
+// FIX-SLTP-RESIDUAL-01 — the order ticket's #sl/#tp are a single global
+// form (shared by every panel/symbol AND by both Market and Pending —
+// sendActiveOrder() reads them once before branching). Clearing them is
+// safe/required on: symbol change, panel switch, and a definitive order
+// ACCEPT (order_ack for Market, order_pending_new for Pending) — never
+// on a reject/risk_warning pause, so the user can correct one field and
+// resend without retyping SL/TP. Never touches sheetSL/sheetTP (the
+// separate existing-position editor) — different ids entirely.
+function clearOrderProtectionInputs(){
+  const slEl=document.getElementById('sl'), tpEl=document.getElementById('tp');
+  if(slEl)slEl.value=''; if(tpEl)tpEl.value='';
+}
+
 /* ── Panel management ── */
 function setActive(panel){
   if(activePanel===panel)return;
@@ -3433,8 +3449,7 @@ function setActive(panel){
   // PANEL-04 — the order ticket is a single global form; switching which
   // panel it applies to must not leak SL/TP price levels from the
   // previous panel's symbol into the new one.
-  const slEl=document.getElementById('sl'), tpEl=document.getElementById('tp');
-  if(slEl)slEl.value=''; if(tpEl)tpEl.value='';
+  clearOrderProtectionInputs();
   const mhdrSymSel=document.getElementById('mhdrSymSel');
   if(mhdrSymSel)mhdrSymSel.value=panel.currentSymbol;
   _syncMhdrTFBadge(panel.currentTF||'15m');
