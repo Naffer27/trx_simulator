@@ -33,6 +33,29 @@ Uses TransactionTestCase throughout: several tests call
 DB work on a different thread — TestCase's uncommitted per-test
 transaction is invisible to (and can deadlock against) that thread on
 SQLite (same reasoning as SPREAD-03's EnsureBackgroundRefreshStartedTests).
+
+ORDER-MANAGEMENT-V2B TEST HARNESS ALIGNMENT — realized_pnl is now
+recomputed AUTHORITATIVELY under lock from the Position's own fresh
+avg_price/qty (never trusted verbatim from a caller's pre-lock estimate
+— see consumers.py::_db_close_position_atomic's docstring for the full
+rationale: a stale caller-supplied realized_pnl combined with a
+concurrent partial close was a real, reproduced double-realization/
+money-creation race). This file's fixtures previously passed "10.00" and
+"-3.00" as realized_pnl for pos1/pos2 while those positions' REAL
+qty=1.0 formula actually produces 1000.00/-1000.00 — a synthetic value
+that only ever worked because realized_pnl used to be trusted verbatim.
+Every affected position's qty was changed (1.0 -> 0.01 for the EUR/USD
++10.00 leg, 1.0 -> 0.003 for the GBP/USD -3.00 leg) so the REAL,
+authoritative pnl_engine formula now produces those exact same
+10.00/-3.00 values this file has always asserted — every hardcoded
+balance/equity checkpoint (183.82, 190.82, 193.82, 198.82, 7.00, ...)
+is preserved byte-for-byte; only the qty inputs changed, never the
+guarantee under test (fresh account balance under lock, lost-update
+prevention, cross-account isolation, reconnect/refresh correctness).
+test_scan_positions_task_does_not_revert_sibling_close (qty still 1.0)
+was NOT touched — it already asserted a loose inequality
+(assertGreater), never a synthetic exact PnL, so it was never affected
+by this class of issue.
 """
 import asyncio
 from decimal import Decimal
@@ -109,9 +132,9 @@ class LostUpdateEliminatedTests(TransactionTestCase):
     def test_sibling_periodic_sync_no_longer_reverts_balance(self):
         account = make_account(balance=Decimal("183.82"))
         pos1 = make_position(account, symbol="EUR/USD", side="BUY",
-                              qty=Decimal("1.0"), avg_price=Decimal("1.10000"))
+                              qty=Decimal("0.01"), avg_price=Decimal("1.10000"))
         pos2 = make_position(account, symbol="GBP/USD", side="BUY",
-                              qty=Decimal("1.0"), avg_price=Decimal("1.30000"))
+                              qty=Decimal("0.003"), avg_price=Decimal("1.30000"))
 
         consumer_A = _fake_consumer(account.pk, balance=183.82, equity=193.82)
         r1 = _db_close_sync(consumer_A, _pos_mem(pos1), 1.11000, "manual", 10.00, 193.82, 193.82)
@@ -149,9 +172,9 @@ class CloseFlowTests(TransactionTestCase):
     def test_two_closes_net_seven_and_ledger_agrees(self):
         account = make_account(balance=Decimal("183.82"))
         pos1 = make_position(account, symbol="EUR/USD", side="BUY",
-                              qty=Decimal("1.0"), avg_price=Decimal("1.10000"))
+                              qty=Decimal("0.01"), avg_price=Decimal("1.10000"))
         pos2 = make_position(account, symbol="GBP/USD", side="BUY",
-                              qty=Decimal("1.0"), avg_price=Decimal("1.30000"))
+                              qty=Decimal("0.003"), avg_price=Decimal("1.30000"))
         consumer = _fake_consumer(account.pk, balance=183.82)
 
         r1 = _db_close_sync(consumer, _pos_mem(pos1), 1.11000, "manual", 10.00, 193.82, 193.82)
@@ -178,7 +201,7 @@ class ReconnectAndRefreshTests(TransactionTestCase):
     def test_fresh_reconnect_hydrates_correct_balance(self):
         account = make_account(balance=Decimal("183.82"))
         pos1 = make_position(account, symbol="EUR/USD", side="BUY",
-                              qty=Decimal("1.0"), avg_price=Decimal("1.10000"))
+                              qty=Decimal("0.01"), avg_price=Decimal("1.10000"))
         consumer_A = _fake_consumer(account.pk, balance=183.82)
         r1 = _db_close_sync(consumer_A, _pos_mem(pos1), 1.11000, "manual", 10.00, 193.82, 193.82)
         consumer_A.account["balance"] = r1["new_balance"]
@@ -190,7 +213,7 @@ class ReconnectAndRefreshTests(TransactionTestCase):
     def test_direct_db_refresh_sees_correct_balance(self):
         account = make_account(balance=Decimal("183.82"))
         pos1 = make_position(account, symbol="EUR/USD", side="BUY",
-                              qty=Decimal("1.0"), avg_price=Decimal("1.10000"))
+                              qty=Decimal("0.01"), avg_price=Decimal("1.10000"))
         consumer_A = _fake_consumer(account.pk, balance=183.82)
         r1 = _db_close_sync(consumer_A, _pos_mem(pos1), 1.11000, "manual", 10.00, 193.82, 193.82)
         consumer_A.account["balance"] = r1["new_balance"]
@@ -204,7 +227,7 @@ class DaemonDoesNotRevertTests(TransactionTestCase):
     def test_close_position_sync_derives_fresh_balance_not_stale_param(self):
         account = make_account(balance=Decimal("183.82"))
         pos = make_position(account, symbol="EUR/USD", side="BUY",
-                             qty=Decimal("1.0"), avg_price=Decimal("1.10000"))
+                             qty=Decimal("0.01"), avg_price=Decimal("1.10000"))
         # A WS panel closes something ELSE on the same account moments
         # before the daemon (with its own STALE running_balance) closes
         # this position — the daemon's write must not clobber the WS close.
@@ -242,7 +265,7 @@ class AccountUpdatePayloadFreshTests(TransactionTestCase):
     def test_both_sockets_report_fresh_balance_after_recalc(self):
         account = make_account(balance=Decimal("183.82"))
         pos1 = make_position(account, symbol="EUR/USD", side="BUY",
-                              qty=Decimal("1.0"), avg_price=Decimal("1.10000"))
+                              qty=Decimal("0.01"), avg_price=Decimal("1.10000"))
         consumer_A = _fake_consumer(account.pk, balance=183.82)
         r1 = _db_close_sync(consumer_A, _pos_mem(pos1), 1.11000, "manual", 10.00, 193.82, 193.82)
         consumer_A.account["balance"] = r1["new_balance"]
@@ -265,9 +288,9 @@ class PartialCloseKeepsFloatingTests(TransactionTestCase):
     def test_closing_one_of_two_preserves_remaining_floating_in_equity(self):
         account = make_account(balance=Decimal("183.82"))
         pos1 = make_position(account, symbol="EUR/USD", side="BUY",
-                              qty=Decimal("1.0"), avg_price=Decimal("1.10000"))
+                              qty=Decimal("0.01"), avg_price=Decimal("1.10000"))
         make_position(account, symbol="GBP/USD", side="BUY",
-                      qty=Decimal("1.0"), avg_price=Decimal("1.30000"))
+                      qty=Decimal("0.003"), avg_price=Decimal("1.30000"))
 
         consumer = _fake_consumer(account.pk, balance=183.82)
         # Closing pos1 (+10 realized) while pos2 is still open with +5 floating:
@@ -287,9 +310,9 @@ class FullCloseStableStateTests(TransactionTestCase):
     def test_closing_everything_leaves_balance_equal_equity(self):
         account = make_account(balance=Decimal("183.82"))
         pos1 = make_position(account, symbol="EUR/USD", side="BUY",
-                              qty=Decimal("1.0"), avg_price=Decimal("1.10000"))
+                              qty=Decimal("0.01"), avg_price=Decimal("1.10000"))
         pos2 = make_position(account, symbol="GBP/USD", side="BUY",
-                              qty=Decimal("1.0"), avg_price=Decimal("1.30000"))
+                              qty=Decimal("0.003"), avg_price=Decimal("1.30000"))
         consumer = _fake_consumer(account.pk, balance=183.82)
 
         r1 = _db_close_sync(consumer, _pos_mem(pos1), 1.11000, "manual", 10.00, 193.82, 193.82)
@@ -340,7 +363,7 @@ class AccountIsolationTests(TransactionTestCase):
         account_1 = make_account(balance=Decimal("183.82"))
         account_2 = make_account(balance=Decimal("500.00"))
         pos1 = make_position(account_1, symbol="EUR/USD", side="BUY",
-                              qty=Decimal("1.0"), avg_price=Decimal("1.10000"))
+                              qty=Decimal("0.01"), avg_price=Decimal("1.10000"))
 
         consumer_1 = _fake_consumer(account_1.pk, balance=183.82)
         r1 = _db_close_sync(consumer_1, _pos_mem(pos1), 1.11000, "manual", 10.00, 193.82, 193.82)

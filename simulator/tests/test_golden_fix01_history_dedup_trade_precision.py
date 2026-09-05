@@ -13,6 +13,16 @@ Design lock: GOLDEN-SCENARIOS-FIX-01 (this block). Two independent fixes:
      bug. Fixed with a dedupe guard keyed on msg.id (position_id — stable,
      never reused, a Position closes exactly once in full).
 
+     ORDER-MANAGEMENT-V2B UPDATE — "a Position closes exactly once in
+     full" stopped being true once partial close shipped: the SAME
+     position_id now repeats across multiple partial closes of a still-
+     open Position. The dedupe key was re-derived from msg.trade_id
+     (unique per realization event, full or partial, never reused) —
+     see that block's design lock §7/§8. The tests below were updated to
+     match the new key; every OTHER invariant they protect (single-field
+     dedupe, toast/cleanup ordering, unconditional _syncHistorialPanel,
+     the 100-item cap) is unchanged and still enforced.
+
      No JS test runner exists in this repo (same situation as FIX-05C) —
      these are textual/structural assertions on the shipped template
      source, not simulated runtime execution. They are not a substitute
@@ -76,8 +86,10 @@ class HistoryDedupGuardTests(SimpleTestCase):
     surrounding order_close effects untouched."""
 
     def test_dedupe_guard_present_keyed_on_msg_id(self):
+        # ORDER-MANAGEMENT-V2B — re-keyed from msg.id (position_id) to
+        # msg.trade_id (see this file's module docstring update).
         block = _order_close_block(_template_source())
-        self.assertIn("const _dupId=String(msg.id);", block)
+        self.assertIn("const _dupId=String(msg.trade_id);", block)
         self.assertIn(
             "if(!closedTradesHistory.some(t=>String(t.id)===_dupId)){", block
         )
@@ -106,9 +118,15 @@ class HistoryDedupGuardTests(SimpleTestCase):
     def test_object_fields_unchanged(self):
         # Design lock: "Preservar exactamente los campos actuales del
         # objeto. NO reescribir estructura innecesariamente."
+        # ORDER-MANAGEMENT-V2B — id now sources from msg.trade_id (the
+        # new dedupe key) with position_id added alongside it so nothing
+        # that needed the Position's own id lost access to it; every
+        # pre-existing field (symbol/side/qty/entry/close/pnl/ts) is
+        # untouched, exactly as this test's own intent requires.
         block = _order_close_block(_template_source())
         self.assertIn(
-            "closedTradesHistory.unshift({id:msg.id,symbol:msg.symbol||this.currentSymbol,"
+            "closedTradesHistory.unshift({id:msg.trade_id,position_id:msg.id,"
+            "symbol:msg.symbol||this.currentSymbol,"
             "side:msg.side||'?',qty:msg.qty??msg.quantity??null,"
             "entry:msg.avg_entry??msg.avg??msg.entry??null,"
             "close:msg.close_px??msg.close??null,pnl:pnlV,ts:Date.now()});",
@@ -118,8 +136,9 @@ class HistoryDedupGuardTests(SimpleTestCase):
     def test_sync_historial_panel_called_unconditionally(self):
         # A.4/spec: _syncHistorialPanel() must still run even on a
         # duplicate (idempotent re-render), outside the dedupe `if`.
+        # ORDER-MANAGEMENT-V2B — outer guard re-keyed to msg.trade_id.
         block = _order_close_block(_template_source())
-        i = block.index("if(msg.id!=null){")
+        i = block.index("if(msg.trade_id!=null){")
         # last occurrence of _syncHistorialPanel() within the msg.id block,
         # must be OUTSIDE (after) the inner dedupe-guard's closing brace.
         inner_if = block.index(
@@ -133,9 +152,13 @@ class HistoryDedupSurroundingEffectsTests(SimpleTestCase):
     """4, 10 — toast / line cleanup / positions refresh untouched by the fix."""
 
     def test_toast_still_fires_outside_dedupe_guard(self):
+        # ORDER-MANAGEMENT-V2B — the toast text itself now branches on
+        # msg.partial (full vs partial close wording); this test's own
+        # concern (toast fires before/outside the dedupe guard) is
+        # otherwise unchanged, guard re-keyed to msg.trade_id.
         block = _order_close_block(_template_source())
-        toast_idx = block.index("execToast('close','Posición cerrada',pnlStr);")
-        guard_idx = block.index("const _dupId=String(msg.id);")
+        toast_idx = block.index("execToast('close',msg.partial?'Cierre parcial':'Posición cerrada',pnlStr);")
+        guard_idx = block.index("const _dupId=String(msg.trade_id);")
         self.assertLess(toast_idx, guard_idx)  # toast fires before/outside the guard
 
     def test_line_cleanup_and_positions_refresh_untouched(self):

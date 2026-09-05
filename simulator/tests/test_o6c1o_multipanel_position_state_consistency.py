@@ -229,13 +229,24 @@ class OpenSyncTests(TransactionTestCase):
 # 2. Close from A — B removes the position without a manual refresh
 # ─────────────────────────────────────────────────────────────────────────
 class CloseSyncTests(TransactionTestCase):
+    # ORDER-MANAGEMENT-V2B TEST HARNESS ALIGNMENT — realized_pnl is now
+    # recomputed authoritatively under lock from the fresh Position
+    # (consumers.py::_db_close_position_atomic's docstring), and
+    # position_changed() was already documented as NEVER trusting the
+    # event's own fields for balance (O.6c-1n Option C: always a DB-fresh
+    # resync) — so panel_b.account["balance"] here always reflects what
+    # _db_close_sync ACTUALLY committed, never this test's hand-rolled
+    # event dict. qty=0.01 (not the original 0.1) so the REAL formula
+    # ((1.11-1.10)*qty*100000) produces exactly the 10.00/10010.00 this
+    # test already asserted, instead of the synthetic 10.0 the old
+    # "trust the caller" contract allowed regardless of qty.
     def setUp(self):
         self.account = make_account(balance=Decimal("10000"))
         self.pos = make_position(self.account, symbol="EUR/USD", side="BUY",
-                                  qty=Decimal("0.1"), avg_price=Decimal("1.10000"))
+                                  qty=Decimal("0.01"), avg_price=Decimal("1.10000"))
 
     def _pos_mem(self):
-        return {"id": self.pos.pk, "symbol": "EUR/USD", "side": "buy", "qty": 0.1,
+        return {"id": self.pos.pk, "symbol": "EUR/USD", "side": "buy", "qty": 0.01,
                 "avg": 1.10000, "sl": None, "tp": None, "opened_at": time.time()}
 
     def test_close_via_db_close_atomic_publishes_and_b_removes_position(self):

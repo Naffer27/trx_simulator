@@ -519,6 +519,7 @@ def _close_position_sync(
     new_equity: float,
     pricing_context: dict | None = None,
     account_currency: str = "USD",
+    close_qty=None,
 ) -> dict:
     """
     Atomic DB-first position close for sync (Celery) callers.
@@ -526,6 +527,23 @@ def _close_position_sync(
       - select_for_update prevents duplicate closes
       - already_closed=True returned (no Trade/LedgerEntry) if position gone
       - raises on unexpected DB error (caller logs and skips)
+
+    close_qty (ORDER-MANAGEMENT-V2B, design lock §5): mirrors
+    TradingConsumer._db_close_position_atomic's own parameter of the same
+    name exactly — None (default) means "close the fresh, lock-read
+    pos.qty in full", identical to every pre-V2B behavior of this
+    function. scan_positions_task's two call sites (SL/TP, stopout/
+    margin-call) never pass this — design lock §5 explicitly keeps the
+    daemon full-close-only; is_full is trivially always True for them
+    (same unreachability argument as the async twin — a live Position row
+    can never hold qty<=0), so this parameter exists here purely for
+    financial-engine equivalence between the two contexts, not because
+    any current caller uses the partial branch.
+
+    realized_pnl (parameter) is used only for the already_closed early
+    return (no DB Position to price against). Once a real Position is
+    locked, realized_pnl is recomputed authoritatively here — see the
+    async twin's docstring for the full rationale (design lock §3).
 
     pricing_context (SPREAD-02): the Trade's pricing_context_open is copied
     verbatim from the locked Position row's pricing_context — never
@@ -566,6 +584,7 @@ def _close_position_sync(
         if pos is None:
             logger.info("[close_sync] pos %r already closed — skipping duplicate", pos_mem["id"])
             return {
+                "ok":             True,
                 "already_closed": True,
                 "new_balance":    new_balance,
                 "new_equity":     new_equity,
@@ -573,7 +592,54 @@ def _close_position_sync(
                 "new_peak":       None,
                 "violations":     [],
                 "trade_id":       None,
+                "partial":        False,
+                "remaining_qty":  None,
             }
+
+        # ORDER-MANAGEMENT-V2B — design lock §2/§4, mirrors the async
+        # twin exactly. fresh_qty read only now, under lock.
+        fresh_qty = pos.qty
+        if close_qty is None:
+            close_qty_d = fresh_qty
+        else:
+            close_qty_d = close_qty if isinstance(close_qty, Decimal) else Decimal(str(close_qty))
+
+        if close_qty_d <= 0:
+            return {"ok": False, "code": "invalid_qty",
+                    "message": "La cantidad a cerrar debe ser mayor que cero."}
+        if close_qty_d > fresh_qty:
+            return {"ok": False, "code": "qty_exceeds_position",
+                    "message": "La cantidad a cerrar excede el tamaño actual de la posición."}
+
+        is_full = (close_qty_d == fresh_qty)
+
+        # ORDER-MANAGEMENT-V2B — FINANCIAL RACE BLOCKER FIX. realized_pnl
+        # recomputed authoritatively, under lock, UNCONDITIONALLY — full
+        # and partial alike. Mirrors the async twin's own retraction
+        # exactly: a prior revision special-cased is_full to trust the
+        # caller's pre-lock realized_pnl, reasoning a full close was still
+        # "binary" post-V2B. That was WRONG — is_full only means
+        # close_qty_d == fresh_qty, the FRESH qty, which a concurrent
+        # PARTIAL close on the same Position can already have shrunk
+        # since the caller's stale pre-lock estimate was computed;
+        # trusting that stale, too-large realized_pnl double-realized the
+        # portion the partial close had already correctly realized
+        # (reproduced empirically — see consumers.py::
+        # _db_close_position_atomic's docstring for the full account).
+        from . import pnl_engine as _pnl_engine_authoritative
+        _authoritative_pnl_result = _pnl_engine_authoritative.calculate_position_pnl(
+            pos_mem["side"], pos.avg_price, close_px, close_qty_d, pos_mem["symbol"],
+            account_currency=account_currency,
+        )
+        if _authoritative_pnl_result.pnl_account is None:
+            logger.critical(
+                "[close_sync] event=pnl_conversion_unsupported symbol=%s account_currency=%s "
+                "error_code=%s — refusing to close, NOT a fabricated PnL.",
+                pos_mem["symbol"], account_currency, _authoritative_pnl_result.error_code,
+            )
+            return {"ok": False, "code": _authoritative_pnl_result.error_code or "pnl_conversion_unsupported",
+                    "message": "No se pudo calcular el PnL de forma segura."}
+        realized_pnl = float(_authoritative_pnl_result.pnl_account)
 
         # ACCOUNT-02 — derive balance_after from the FRESH, locked
         # _acct_row read + realized_pnl — never from new_balance (a
@@ -610,24 +676,23 @@ def _close_position_sync(
                 account_id, realized_pnl, _fresh_balance_after, _shortfall,
             )
 
-        # MARGIN-02 — audit-only recompute of the SAME pure function already
-        # used to derive realized_pnl (same frozen inputs), mirroring
-        # TradingConsumer._db_close_position_atomic. See simulator/pnl_engine.py.
-        from . import pnl_engine as _pnl_engine
+        # ORDER-MANAGEMENT-V2B — pnl_conversion reuses the SAME
+        # authoritative result computed above UNCONDITIONALLY — full and
+        # partial alike — never pos_mem's pre-lock avg/qty.
         _closed_at = _django_tz.now()
-        _pnl_result = _pnl_engine.calculate_position_pnl(
-            pos_mem["side"], pos_mem["avg"], close_px, pos_mem["qty"], pos_mem["symbol"],
-            account_currency=account_currency,
-        )
-        _pnl_conversion = _pnl_result.to_dict()
+        _pnl_conversion = _authoritative_pnl_result.to_dict()
         _pnl_conversion["conversion_timestamp"] = _closed_at.timestamp()
 
         trade = Trade.objects.create(
             account_id    = account_id,
             symbol        = pos_mem["symbol"],
             trade_type    = trade_type,
-            lot_size      = Decimal(str(pos_mem["qty"])),
-            entry_price   = Decimal(str(pos_mem["avg"])),
+            # ORDER-MANAGEMENT-V2B — close_qty_d/pos.avg_price (fresh,
+            # under lock) UNCONDITIONALLY — never pos_mem's pre-lock
+            # copies (the exact source of the double-realization race
+            # this fix retracts).
+            lot_size      = close_qty_d,
+            entry_price   = pos.avg_price,
             exit_price    = Decimal(str(close_px)),
             stop_loss     = Decimal(str(pos_mem["sl"]))   if pos_mem.get("sl") is not None else None,
             take_profit   = Decimal(str(pos_mem["tp"]))   if pos_mem.get("tp") is not None else None,
@@ -804,7 +869,16 @@ def _close_position_sync(
                 },
             )
 
-        pos.delete()
+        # ORDER-MANAGEMENT-V2B, design lock §4.F — mirrors the async twin
+        # exactly. is_full is trivially always True for every current
+        # caller of this function (SL/TP/stopout never pass close_qty).
+        remaining_qty = None
+        if is_full:
+            pos.delete()
+        else:
+            pos.qty = fresh_qty - close_qty_d
+            pos.save(update_fields=["qty"])
+            remaining_qty = float(pos.qty)
 
         # _acct_row was already locked above (before Trade/LedgerEntry creation) —
         # reuse it instead of a second fetch.
@@ -830,9 +904,11 @@ def _close_position_sync(
             final_status = "Activo"
             final_peak   = float(_safe_balance)
 
-    logger.info("[close_sync] OK pos=%r trade=%r realized=%.4f balance=%.2f status=%s",
-                pos_mem["id"], trade.id, realized_pnl, float(_safe_balance), final_status)
+    logger.info("[close_sync] OK pos=%r trade=%r realized=%.4f balance=%.2f status=%s partial=%s remaining=%s",
+                pos_mem["id"], trade.id, realized_pnl, float(_safe_balance), final_status,
+                not is_full, remaining_qty)
     return {
+        "ok":             True,
         "already_closed": False,
         "new_balance":    float(_safe_balance),
         "new_equity":     float(_safe_equity),
@@ -840,6 +916,10 @@ def _close_position_sync(
         "new_peak":       final_peak,
         "violations":     [v.violation_type for v in violations],
         "trade_id":       trade.id,
+        "realized_pnl":   realized_pnl,
+        "close_qty":      float(close_qty_d),
+        "partial":        not is_full,
+        "remaining_qty":  remaining_qty,
     }
 
 

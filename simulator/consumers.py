@@ -1305,17 +1305,39 @@ class TradingConsumer(AsyncWebsocketConsumer):
         new_balance = event.get("new_balance")
         new_status  = event.get("new_status")
         realized    = event.get("realized_pnl")
+        # ORDER-MANAGEMENT-V2B — present for every REAL close, full or
+        # partial (see _db_close_position_atomic's own publish call);
+        # absent for non-financial Position writers (netting merge,
+        # PendingOrder trigger open, admin save_model/delete_model) that
+        # never created a Trade. Used below as the TRADE CLOSED EVENT gate
+        # (design lock §7/§8) — deliberately never `action` alone, since a
+        # partial close publishes ACTION_UPDATE (the Position survives)
+        # yet must still feed History exactly like a full close does.
+        trade_id    = event.get("trade_id")
 
         if action == ws_events.ACTION_CLOSE and pos_id is not None:
             # Optimistic in-memory removal — never the final word (see
             # docstring above); _refresh_and_send_positions() below is
-            # what actually decides self._positions.
+            # what actually decides self._positions. Full close only —
+            # ACTION_UPDATE (partial close, netting merge) never removes;
+            # the position survives with a reduced/changed qty, which the
+            # unconditional resync below picks up from DB (design lock
+            # §9: "rehidratar self._positions... mediante el mecanismo
+            # existente" — no separate optimistic patch for partial).
             before = len(self._positions)
             self._positions = [p for p in self._positions if p["id"] != pos_id]
             if len(self._positions) == before:
                 log.info("[position_changed] pos %s not in memory (other panel/already synced)", pos_id)
-            if realized is not None:
-                self._track_daily_pnl(float(realized))
+
+        # ORDER-MANAGEMENT-V2B — daily PnL tracking keys off realized_pnl
+        # actually being present, not off `action`: a partial close
+        # (ACTION_UPDATE) realizes money exactly like a full close
+        # (ACTION_CLOSE) does, and daily-loss-limit enforcement must see
+        # it either way. realized is None for every non-financial writer
+        # (netting merge, admin save/delete, PendingOrder open) — same
+        # precedent the pre-V2B code already relied on via this same field.
+        if realized is not None:
+            self._track_daily_pnl(float(realized))
 
         if new_balance is not None:
             self.account["balance"] = float(new_balance)
@@ -1349,18 +1371,32 @@ class TradingConsumer(AsyncWebsocketConsumer):
             self._last_db_sync = time.time()
         await self._recalc_account_and_push()
 
-        if action == ws_events.ACTION_CLOSE and pos_id is not None:
+        # ORDER-MANAGEMENT-V2B, design lock §7/§8 — TRADE CLOSED EVENT.
+        # Gated on (action==ACTION_CLOSE OR trade_id present), never on
+        # action alone: preserves the exact pre-V2B behavior for every
+        # existing ACTION_CLOSE publisher that carries no trade_id (e.g.
+        # admin.py PositionAdmin.delete_model, a raw row delete with no
+        # Trade/realized_pnl — still notifies the frontend a position is
+        # gone, unchanged), while ALSO firing for a partial close
+        # (ACTION_UPDATE + trade_id, the new case) so History gets a Trade
+        # event even though the Position itself survives. qty here means
+        # "closed in THIS event" (close_qty, not the position's remaining
+        # size) — for a full close this is exactly the old value.
+        if (action == ws_events.ACTION_CLOSE or trade_id is not None) and pos_id is not None:
             await self.send_json({
-                "type":         "order_close",
-                "id":           pos_id,
-                "symbol":       event.get("symbol"),
-                "side":         event.get("side"),
-                "qty":          event.get("qty"),
-                "avg":          event.get("avg"),
-                "close_px":     event.get("close_px"),
-                "reason":       event.get("reason"),
-                "realized_pnl": realized if realized is not None else 0.0,
-                "ts":           event.get("ts", int(time.time())),
+                "type":          "order_close",
+                "id":            pos_id,
+                "trade_id":      trade_id,
+                "symbol":        event.get("symbol"),
+                "side":          event.get("side"),
+                "qty":           event.get("qty"),
+                "avg":           event.get("avg"),
+                "close_px":      event.get("close_px"),
+                "reason":        event.get("reason"),
+                "realized_pnl":  realized if realized is not None else 0.0,
+                "ts":            event.get("ts", int(time.time())),
+                "partial":       event.get("partial", False),
+                "remaining_qty": event.get("remaining_qty"),
             })
 
         # Stopout / margin-call UI notifications (additive — only for daemon-initiated paths)
@@ -2682,6 +2718,24 @@ class TradingConsumer(AsyncWebsocketConsumer):
             await self.send_json({"type": "warn", "message": "order_close_not_found"})
             return
 
+        # ORDER-MANAGEMENT-V2B — design lock §2. qty absent (None) = full
+        # close, exactly the pre-V2B contract. qty present is parsed as
+        # Decimal here (never float) purely to fail fast on malformed
+        # input, BEFORE touching price/DB — the AUTHORITATIVE validation
+        # (<=0, >fresh_position.qty) only ever happens under the lock
+        # inside _db_close_position_atomic, against the fresh DB qty,
+        # never against this connection's own in-memory found_pos["qty"].
+        close_qty = None
+        _qty_raw = data.get("qty")
+        if _qty_raw is not None:
+            from decimal import Decimal, InvalidOperation
+            try:
+                close_qty = Decimal(str(_qty_raw))
+            except InvalidOperation:
+                await self.send_json({"type": "error", "code": "invalid_qty",
+                                      "message": "cantidad_invalida"})
+                return
+
         # Step B — compute close values BEFORE any memory mutation.
         # O.6c-1s — price authority: self._feed_close_price() (FeedManager
         # global, O.6c-1q), never close_price()/self._bid_state — see
@@ -2702,16 +2756,29 @@ class TradingConsumer(AsyncWebsocketConsumer):
             })
             return
         close_px = round(_raw_close_px, dec)
-        realized = self._realized_pnl_for(found_pos, close_px)
+        # ORDER-MANAGEMENT-V2B — this estimate (realized/new_balance/
+        # new_equity) is PRE-LOCK and no longer authoritative for the real
+        # success path (see _db_close_position_atomic's docstring, design
+        # lock §3) — it's only used as a fallback value for the demo/
+        # anonymous branch and the already_closed early-return, neither of
+        # which represents a real financial event for THIS call. Computed
+        # against close_qty (the requested partial amount) rather than
+        # found_pos["qty"] when qty was provided, purely so those fallback
+        # numbers are plausible rather than always reflecting a full close.
+        _pos_for_estimate = found_pos
+        if close_qty is not None:
+            _pos_for_estimate = dict(found_pos)
+            _pos_for_estimate["qty"] = float(close_qty)
+        realized = self._realized_pnl_for(_pos_for_estimate, close_px)
         new_balance = self.account["balance"] + realized
         remaining_floating = (
             self._unrealized_pnl_total()
-            - self._unrealized_pnl_for(found_pos, close_px)
+            - self._unrealized_pnl_for(_pos_for_estimate, close_px)
         )
         new_equity = round(new_balance + remaining_floating, 2)
 
-        log.info("[close] MATCH pos id=%r sym=%r side=%r close_px=%s realized=%.4f",
-                 found_pos["id"], sym, found_pos["side"], close_px, realized)
+        log.info("[close] MATCH pos id=%r sym=%r side=%r close_px=%s realized=%.4f close_qty=%s",
+                 found_pos["id"], sym, found_pos["side"], close_px, realized, close_qty)
 
         pricing_context_close = self._capture_pricing_context(sym, profile=pricing_ctx.PROFILE_WS_CLOSE)
 
@@ -2719,7 +2786,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
         try:
             result = await self._db_close_position_atomic(
                 found_pos, close_px, "manual", realized, new_balance, new_equity,
-                pricing_context_close=pricing_context_close,
+                pricing_context_close=pricing_context_close, close_qty=close_qty,
             )
         except Exception as exc:
             log.error("[close] DB close failed for pos id=%r: %s", found_pos["id"], exc, exc_info=True)
@@ -2727,11 +2794,42 @@ class TradingConsumer(AsyncWebsocketConsumer):
                                   "message": "no_se_pudo_cerrar_posicion"})
             return  # memory untouched — position still open
 
-        # Step D — DB committed: safe to mutate memory now. The position
-        # is gone from DB either way (this call really closed it, OR a
-        # concurrent connection/daemon already did) — remove it from
-        # memory unconditionally.
-        self._positions = [p for p in self._positions if str(p.get("id")) != str(found_pos["id"])]
+        # ORDER-MANAGEMENT-V2B, design lock §2 — invalid_qty/
+        # qty_exceeds_position: the fresh, lock-validated qty rejected
+        # this request outright. Position stays open, exactly as if this
+        # message had never arrived — same fail-safe contract as the
+        # price_unavailable branch above. NEVER silently coerced into a
+        # full close.
+        if result.get("ok") is False:
+            log.warning("[close] REJECTED pos id=%r close_qty=%s: %s",
+                        found_pos["id"], close_qty, result.get("code"))
+            await self.send_json({
+                "type": "error", "code": result.get("code", "close_rejected"),
+                "message": result.get("message", "no_se_pudo_cerrar_posicion"),
+            })
+            return
+
+        # Step D — DB committed: safe to mutate memory now.
+        if result.get("already_closed"):
+            # The row genuinely doesn't exist anymore (concurrent full
+            # close) — remove unconditionally, same as pre-V2B behavior.
+            self._positions = [p for p in self._positions if str(p.get("id")) != str(found_pos["id"])]
+        elif result.get("partial"):
+            # ORDER-MANAGEMENT-V2B — the Position survives with a reduced
+            # qty. Patch this connection's own mirror in place rather than
+            # removing it; the authoritative DB-fresh resync a few lines
+            # below (_refresh_and_send_positions) is what actually decides
+            # self._positions going forward (design lock §9) — this is
+            # only the fast optimistic patch for THIS connection's
+            # immediate view, same spirit as _order_update()'s existing
+            # in-place SL/TP patch.
+            for p in self._positions:
+                if str(p.get("id")) == str(found_pos["id"]):
+                    p["qty"] = result.get("remaining_qty", p["qty"])
+                    break
+        else:
+            # Full close, genuinely closed by THIS call.
+            self._positions = [p for p in self._positions if str(p.get("id")) != str(found_pos["id"])]
 
         # PANEL-03 — routed through the same already_closed guard every
         # close path now shares (_handle_close_result); this preserves
@@ -2754,7 +2852,11 @@ class TradingConsumer(AsyncWebsocketConsumer):
             self.account["balance"]      = outcome["new_balance"]
             self.account["peak_balance"] = outcome["new_peak"]
             self.account["status"]       = outcome["new_status"]
-            self._track_daily_pnl(realized)
+            # ORDER-MANAGEMENT-V2B — the AUTHORITATIVE realized_pnl
+            # (outcome["notify_item"]["realized_pnl"], sourced from
+            # result["realized_pnl"] — see _handle_close_result), never
+            # this method's own pre-lock `realized` estimate.
+            self._track_daily_pnl(outcome["notify_item"]["realized_pnl"])
 
         # Step E — respond to client (same payloads as before)
         await self._recalc_account_and_push()
@@ -3830,15 +3932,29 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 pos.get("id"),
             )
             return None
+        # ORDER-MANAGEMENT-V2B — result["realized_pnl"]/result["close_qty"]
+        # are the AUTHORITATIVE, lock-computed values (_db_close_position_
+        # atomic's own docstring) — always preferred over this method's
+        # own realized_pnl/pos["qty"] parameters (the caller's pre-lock
+        # estimate). For every pre-V2B caller (full close only) these are
+        # numerically identical to the old parameters in the non-racing
+        # case, since both derive from the same pnl_engine formula over
+        # the same inputs — never a behavior change for the common case,
+        # only a correctness improvement under a genuine race.
+        authoritative_realized = result.get("realized_pnl", realized_pnl)
+        authoritative_qty      = result.get("close_qty", pos["qty"])
         return {
             "new_balance": result["new_balance"],
             "new_peak": result.get("new_peak"),
             "new_status": result.get("new_status"),
             "notify_item": {
                 "id": pos["id"], "symbol": pos["symbol"], "side": pos["side"],
-                "qty": pos["qty"], "avg": pos["avg"],
+                "qty": authoritative_qty, "avg": pos["avg"],
                 "close_px": close_px, "reason": reason,
-                "realized_pnl": realized_pnl, "ts": ts,
+                "realized_pnl": authoritative_realized, "ts": ts,
+                "trade_id": result.get("trade_id"),
+                "partial": result.get("partial", False),
+                "remaining_qty": result.get("remaining_qty"),
             },
         }
 
@@ -5060,14 +5176,50 @@ class TradingConsumer(AsyncWebsocketConsumer):
     def _db_close_position_atomic(self, pos_mem: dict, close_px: float, reason: str,
                                    realized_pnl: float, new_balance: float,
                                    new_equity: float,
-                                   pricing_context_close: dict | None = None) -> dict:
-        """DB-first order close (Phase 1B).
+                                   pricing_context_close: dict | None = None,
+                                   close_qty=None) -> dict:
+        """DB-first order close (Phase 1B; ORDER-MANAGEMENT-V2B — partial close).
 
         Atomically: find+lock Position, create Trade, record LedgerEntry EV_REALIZED,
-        delete Position, update TradingAccount balance/equity, run risk+intelligence engines.
-        All committed before any memory mutation in the caller.
+        delete-or-reduce Position, update TradingAccount balance/equity, run
+        risk+intelligence engines. All committed before any memory mutation
+        in the caller.
 
-        Returns final DB state dict. Raises on failure — caller leaves memory untouched.
+        close_qty (ORDER-MANAGEMENT-V2B, design lock §2/§4):
+          - None (default) — close_qty becomes the FRESH, lock-read pos.qty,
+            i.e. exactly today's full-close behavior for every pre-existing
+            caller (_check_tp_sl, _do_stopout, _do_retail_liquidation, and
+            _order_close when the client sends no qty). These callers never
+            pass this parameter — is_full is trivially always True for them
+            (a live Position row can never hold qty<=0 — see the invariant
+            note at the qty==0 branch below), so the new invalid_qty/
+            qty_exceeds_position rejections below are UNREACHABLE for them
+            by construction. Zero behavior change for any existing caller.
+          - a Decimal/numeric — validated against the FRESH pos.qty (read
+            only after the lock below, never pos_mem's pre-lock copy):
+            <=0 or >fresh_qty is rejected explicitly (ok=False), NEVER
+            silently coerced into a full close (design lock §2's explicit
+            rule). ==fresh_qty reuses the exact full-close branch below
+            (Position.delete()); the strict remainder becomes a genuine
+            partial close (Position.qty -= close_qty, avg_price/sl/tp
+            left untouched — design lock §3/§10).
+
+        realized_pnl (parameter) is used ONLY for the demo/anonymous
+        branch and the already_closed early-return below (no DB Position
+        to price against in either case). Once a real Position is locked,
+        realized_pnl is ALWAYS recomputed authoritatively here, from the
+        fresh pos.avg_price and the validated close_qty — never trusted
+        from the caller's pre-lock estimate (design lock §3: the old
+        "trust the caller" pattern was safe only because a close was
+        previously binary — exists/doesn't — and partial close breaks
+        that; this is the one deliberate, disclosed behavior change from
+        the pre-V2B version of this method, applying uniformly to full
+        and partial alike rather than maintaining two divergent formulas).
+
+        Returns a dict with "ok" (True unless invalid_qty/qty_exceeds_
+        position), "partial" (bool), "remaining_qty" (float|None, None
+        for a full close), plus the pre-existing field set. Raises only on
+        genuine DB error — caller leaves memory untouched in that case.
 
         pricing_context_close (SPREAD-02): the Trade's pricing_context_open is
         copied verbatim from the locked Position row's pricing_context — never
@@ -5075,14 +5227,20 @@ class TradingConsumer(AsyncWebsocketConsumer):
         cannot retroactively alter what was captured at open.
         """
         if not self._db_account_id:
-            # Demo/anonymous session — skip DB, return current values for memory mutation.
+            # Demo/anonymous session — no DB Position to validate close_qty
+            # against; V2B partial close is DB-backed only (design lock
+            # never addresses demo sessions — preserving exact pre-V2B
+            # full-close-only behavior here is the conservative default).
             return {
+                "ok":          True,
                 "new_balance": new_balance,
                 "new_equity":  new_equity,
                 "new_status":  self.account.get("status", "Activo"),
                 "new_peak":    self.account.get("peak_balance", new_balance),
                 "violations":  [],
                 "trade_id":    None,
+                "partial":     False,
+                "remaining_qty": None,
             }
         from decimal import Decimal
         with transaction.atomic():
@@ -5119,6 +5277,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
             if pos is None:
                 log.info("[db_close] pos %r already closed by concurrent close — skipping", pos_mem["id"])
                 return {
+                    "ok":             True,
                     "new_balance":    new_balance,
                     "new_equity":     new_equity,
                     "new_status":     self.account.get("status", "Activo"),
@@ -5126,7 +5285,79 @@ class TradingConsumer(AsyncWebsocketConsumer):
                     "violations":     [],
                     "trade_id":       None,
                     "already_closed": True,
+                    "partial":        False,
+                    "remaining_qty":  None,
                 }
+
+            # ORDER-MANAGEMENT-V2B — design lock §2/§4. fresh_qty is read
+            # from the just-locked `pos` row, never from pos_mem (the
+            # caller's pre-lock in-memory copy) — this is what makes the
+            # validation below race-safe against a concurrent partial
+            # close on the SAME position (see design lock §6's worked
+            # example: A closes 0.70 first, B's 0.50 request is then
+            # validated against the FRESH 0.30 remainder, not the stale
+            # 1.00 B originally saw).
+            fresh_qty = pos.qty
+            if close_qty is None:
+                close_qty_d = fresh_qty
+            else:
+                close_qty_d = close_qty if isinstance(close_qty, Decimal) else Decimal(str(close_qty))
+
+            if close_qty_d <= 0:
+                return {"ok": False, "code": "invalid_qty",
+                        "message": "La cantidad a cerrar debe ser mayor que cero."}
+            if close_qty_d > fresh_qty:
+                # NEVER silently coerced into a full close (design lock §2).
+                return {"ok": False, "code": "qty_exceeds_position",
+                        "message": "La cantidad a cerrar excede el tamaño actual de la posición."}
+
+            is_full = (close_qty_d == fresh_qty)
+
+            # ORDER-MANAGEMENT-V2B — FINANCIAL RACE BLOCKER FIX. realized_pnl
+            # is recomputed AUTORITATIVAMENTE, under lock, UNCONDITIONALLY —
+            # for FULL and PARTIAL alike. This is the ORIGINAL design lock
+            # decision; a prior revision of this method special-cased
+            # is_full to trust the caller's pre-lock realized_pnl parameter
+            # verbatim, reasoning that "a full close is still binary
+            # post-V2B". That reasoning was WRONG and has been retracted:
+            # is_full only means close_qty_d == fresh_qty — the FRESH qty,
+            # which a concurrent PARTIAL close on the same Position can
+            # have already shrunk since the caller computed its pre-lock
+            # estimate. A stale full-close caller (its own in-memory
+            # mirror still showing the pre-partial qty) would then have
+            # its stale, TOO-LARGE realized_pnl trusted verbatim while
+            # Trade.lot_size/entry_price were ALSO taken from that same
+            # stale pos_mem — double-realizing the portion the concurrent
+            # partial close had already correctly realized (reproduced
+            # empirically: BUY 1.00, partial 0.70 commits first, a stale
+            # full-close request created a SECOND Trade for the full
+            # original 1.00 instead of the real 0.30 remainder — 560.00
+            # of fabricated balance). See this block's own audit report
+            # for the full numeric reproduction (BUY manual + SELL daemon).
+            #
+            # Reuses EXACTLY pnl_engine.calculate_position_pnl() — never a
+            # second formula — with close_qty_d (fresh, already validated
+            # against fresh_qty above) and pos.avg_price (fresh, under
+            # lock), never pos_mem's pre-lock copies, in EITHER branch.
+            _authoritative_pnl_result = pnl_engine.calculate_position_pnl(
+                pos_mem["side"], pos.avg_price, close_px, close_qty_d, pos_mem["symbol"],
+                account_currency=self.account.get("currency", "USD"),
+            )
+            if _authoritative_pnl_result.pnl_account is None:
+                # Fail-closed — same contract pnl_engine already requires
+                # of every other real caller. Unreachable today (every
+                # enabled symbol/account_currency combination converts) —
+                # same "impossible but never fabricated" precedent as
+                # _margin_used_total's own unreachable branch.
+                log.critical(
+                    "[db_close] event=pnl_conversion_unsupported symbol=%s account_currency=%s "
+                    "error_code=%s — refusing to close, NOT a fabricated PnL.",
+                    pos_mem["symbol"], self.account.get("currency", "USD"),
+                    _authoritative_pnl_result.error_code,
+                )
+                return {"ok": False, "code": _authoritative_pnl_result.error_code or "pnl_conversion_unsupported",
+                        "message": "No se pudo calcular el PnL de forma segura."}
+            realized_pnl = float(_authoritative_pnl_result.pnl_account)
 
             # ACCOUNT-02 — derive balance_after from the FRESH, locked
             # _acct_row read + realized_pnl — never from new_balance/
@@ -5166,24 +5397,26 @@ class TradingConsumer(AsyncWebsocketConsumer):
                     self._db_account_id, realized_pnl, _fresh_balance_after, _shortfall,
                 )
 
-            # MARGIN-02 — audit-only recompute of the SAME pure function
-            # already used to derive realized_pnl (pos_mem's avg/qty/symbol
-            # + close_px + account currency, all frozen inputs) — never a
-            # second, independently-timed source. See simulator/pnl_engine.py.
+            # ORDER-MANAGEMENT-V2B — pnl_conversion reuses the SAME
+            # authoritative result computed above (_authoritative_pnl_
+            # result) UNCONDITIONALLY — full and partial alike — never a
+            # second, independently-timed recompute, never pos_mem's
+            # pre-lock avg/qty.
             _closed_at = timezone.now()
-            _pnl_result = pnl_engine.calculate_position_pnl(
-                pos_mem["side"], pos_mem["avg"], close_px, pos_mem["qty"], pos_mem["symbol"],
-                account_currency=self.account.get("currency", "USD"),
-            )
-            _pnl_conversion = _pnl_result.to_dict()
+            _pnl_conversion = _authoritative_pnl_result.to_dict()
             _pnl_conversion["conversion_timestamp"] = _closed_at.timestamp()
 
             trade = Trade.objects.create(
                 account_id=self._db_account_id,
                 symbol=pos_mem["symbol"],
                 trade_type=trade_type,
-                lot_size=Decimal(str(pos_mem["qty"])),
-                entry_price=Decimal(str(pos_mem["avg"])),
+                # ORDER-MANAGEMENT-V2B — close_qty_d/pos.avg_price (fresh,
+                # under lock) UNCONDITIONALLY, full and partial alike —
+                # never pos_mem's pre-lock copies (see this block's own
+                # docstring: that was the exact source of the double-
+                # realization race this fix retracts).
+                lot_size=close_qty_d,
+                entry_price=pos.avg_price,
                 exit_price=Decimal(str(close_px)),
                 stop_loss=Decimal(str(pos_mem["sl"])) if pos_mem.get("sl") is not None else None,
                 take_profit=Decimal(str(pos_mem["tp"])) if pos_mem.get("tp") is not None else None,
@@ -5362,9 +5595,21 @@ class TradingConsumer(AsyncWebsocketConsumer):
                     },
                 )
 
-            # 4. Delete Position if it existed in DB.
-            if pos:
+            # 4. ORDER-MANAGEMENT-V2B, design lock §4.F — full vs partial.
+            # is_full was decided above (close_qty_d == fresh_qty), from
+            # values already validated under this same lock — never
+            # re-derived here. A full close reuses the exact pre-V2B
+            # branch (pos.delete()) unchanged; a partial close reduces
+            # qty in place and leaves avg_price/sl/tp untouched (design
+            # lock §3/§10) — never persists qty<=0 (is_full is exactly
+            # True whenever close_qty_d would bring it to zero).
+            remaining_qty = None
+            if is_full:
                 pos.delete()
+            else:
+                pos.qty = fresh_qty - close_qty_d
+                pos.save(update_fields=["qty"])
+                remaining_qty = float(pos.qty)
 
             # 5. Update TradingAccount balance + equity — _acct_row was already
             # locked above (before Trade/LedgerEntry creation), so this reuses
@@ -5407,14 +5652,25 @@ class TradingConsumer(AsyncWebsocketConsumer):
             # converge on this single function, so one call site here is
             # correct and avoids duplicate events per O.6c-1o's own
             # instruction to "emitir una sola vez en el punto común".
+            # ORDER-MANAGEMENT-V2B, design lock §7/§8 — action distinguishes
+            # the POSITION STATE (ACTION_CLOSE: gone; ACTION_UPDATE: still
+            # alive with a reduced qty — reusing the SAME action netting
+            # merges already use, no new action invented). qty in this
+            # event means "closed in THIS event" (close_qty_d) — for a
+            # full close this equals the old pos_mem["qty"] value exactly
+            # (no behavior change there); trade_id is what position_changed()
+            # now gates the TRADE CLOSED (order_close/History) message on,
+            # never the action — see that handler's own updated docstring.
             from . import ws_events
             transaction.on_commit(lambda: ws_events.publish_position_changed(
-                self._db_account_id, action=ws_events.ACTION_CLOSE,
+                self._db_account_id,
+                action=(ws_events.ACTION_UPDATE if not is_full else ws_events.ACTION_CLOSE),
                 position_id=pos_mem["id"], symbol=pos_mem["symbol"],
-                side=pos_mem["side"], qty=pos_mem["qty"], avg=pos_mem["avg"],
+                side=pos_mem["side"], qty=float(close_qty_d), avg=pos_mem["avg"],
                 close_px=close_px, realized_pnl=realized_pnl, reason=reason,
                 trade_id=trade.id, new_balance=float(_safe_balance),
                 new_status=final_status, ts=int(time.time()),
+                partial=not is_full, remaining_qty=remaining_qty,
             ))
             # O.6c-1v — OPEN POSITION FEED COVERAGE, writers #3-7 (manual
             # close, Close All, SL, TP, stopout, retail liquidation — all
@@ -5425,15 +5681,21 @@ class TradingConsumer(AsyncWebsocketConsumer):
             # as _db_open_position_atomic's mark_position_symbol above.
             transaction.on_commit(lambda: self._feed.sync_position_symbol_from_db(pos_mem["symbol"]))
 
-        log.info("[db_close] OK pos_id=%r trade_id=%r realized=%.4f balance=%.2f status=%s",
-                 pos_mem["id"], trade.id, realized_pnl, float(_safe_balance), final_status)
+        log.info("[db_close] OK pos_id=%r trade_id=%r realized=%.4f balance=%.2f status=%s partial=%s remaining=%s",
+                 pos_mem["id"], trade.id, realized_pnl, float(_safe_balance), final_status,
+                 not is_full, remaining_qty)
         return {
-            "new_balance": float(_safe_balance),
-            "new_equity":  float(_safe_equity),
-            "new_status":  final_status,
-            "new_peak":    final_peak,
-            "violations":  [v.violation_type for v in violations],
-            "trade_id":    trade.id,
+            "ok":            True,
+            "new_balance":   float(_safe_balance),
+            "new_equity":    float(_safe_equity),
+            "new_status":    final_status,
+            "new_peak":      final_peak,
+            "violations":    [v.violation_type for v in violations],
+            "trade_id":      trade.id,
+            "realized_pnl":  realized_pnl,
+            "close_qty":     float(close_qty_d),
+            "partial":       not is_full,
+            "remaining_qty": remaining_qty,
         }
 
     @database_sync_to_async

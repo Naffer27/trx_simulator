@@ -1729,6 +1729,15 @@
   <div class="ccm-box">
     <div class="ccm-title">Confirmar Cierre</div>
     <div class="ccm-desc" id="ccmDesc">¿Confirmas el cierre de esta posición?</div>
+    <!-- ORDER-MANAGEMENT-V2B — optional partial-close qty. Hidden by
+         default; shown only for individual-position closes (row/
+         QuickBar), never for Close All (design lock §13: Close All stays
+         100% full, no exceptions). Prefilled with the full open qty —
+         leaving it as-is or emptying it both mean full close. -->
+    <div class="ccm-qty-row" id="ccmQtyRow" style="display:none;margin:10px 0;">
+      <label style="display:block;font-size:.72rem;opacity:.7;margin-bottom:4px;">Cantidad a cerrar (vacío = cierre completo)</label>
+      <input type="number" id="ccmQtyInput" class="rc-input" step="0.01" min="0" style="width:100%;">
+    </div>
     <div class="ccm-actions">
       <button class="ccm-btn-cancel" id="ccmCancel">Cancelar</button>
       <button class="ccm-btn-close-pos" id="ccmConfirm">Cerrar Posición</button>
@@ -2688,7 +2697,7 @@ class TradingPanel {
         if(this.lastSelectedId===rejected.tmpId)this.lastSelectedId=null;
         refreshQB();
       }
-      const label={'max_positions':'Límite de posiciones alcanzado','insufficient_margin':'Margen insuficiente','min_qty_violation':'Tamaño mínimo no alcanzado','rate_limited':'Demasiadas órdenes','extreme_risk':'Riesgo extremo','max_lot_size':'Tamaño de lote excedido'};
+      const label={'max_positions':'Límite de posiciones alcanzado','insufficient_margin':'Margen insuficiente','min_qty_violation':'Tamaño mínimo no alcanzado','rate_limited':'Demasiadas órdenes','extreme_risk':'Riesgo extremo','max_lot_size':'Tamaño de lote excedido','invalid_qty':'Cantidad inválida','qty_exceeds_position':'La cantidad excede el tamaño de la posición'};
       execToast('close','⚠️ Orden rechazada',label[msg.code]||msg.message||msg.code||'error');
       return;
     }
@@ -2909,29 +2918,34 @@ class TradingPanel {
     if(msg.type==='order_close'){
       const pnlClose=msg.realized_pnl??msg.pnl??msg.profit??msg.result??null;
       const pnlStr=pnlClose!=null?(pnlClose>=0?'+':'')+Number(pnlClose).toFixed(2)+' USD':'cerrado';
-      execToast('close','Posición cerrada',pnlStr);
-      // Track for Historial tab — GOLDEN-SCENARIOS-FIX-01: with N panels
-      // open, each has its own WS connection and each receives this SAME
-      // order_close broadcast (position_changed() reaches every connection
-      // for this account) — closedTradesHistory is a single page-global
-      // array, so without a dedupe guard each panel's own unshift() adds
-      // its own copy, producing N visual rows for 1 real Trade (DB/ledger
-      // were always correct — this was purely a rendering bug). msg.id is
-      // the position_id, stable and never reused (a Position is closed
-      // exactly once, in full — no partial-close path exists), so it's a
-      // safe permanent dedupe key. Scanning the whole array (not just
-      // WS-appended entries) also protects the initial closed_trades_json
-      // seed for free — no separate case needed.
-      if(msg.id!=null){
-        const _dupId=String(msg.id);
+      execToast('close',msg.partial?'Cierre parcial':'Posición cerrada',pnlStr);
+      // Track for Historial tab — GOLDEN-SCENARIOS-FIX-01's original
+      // dedupe key (msg.id, the position_id) assumed "a Position is
+      // closed exactly once, in full" — ORDER-MANAGEMENT-V2B breaks that:
+      // the SAME position_id now repeats across multiple partial closes
+      // of a still-open position, which the old key would have silently
+      // discarded as "duplicates". Re-keyed on msg.trade_id — unique per
+      // REALIZATION event (full or partial), never reused, and NOTE this
+      // also matches views.py's initial closed_trades_json seed, which
+      // was already built from Trade.id, not Position.id (t['id'] there
+      // IS the Trade row's id) — the two were silently inconsistent
+      // before this fix, now aligned. Scanning the whole array (not just
+      // WS-appended entries) still protects that seed for free.
+      if(msg.trade_id!=null){
+        const _dupId=String(msg.trade_id);
         if(!closedTradesHistory.some(t=>String(t.id)===_dupId)){
           const pnlV=msg.realized_pnl??msg.pnl??msg.profit??msg.result??null;
-          closedTradesHistory.unshift({id:msg.id,symbol:msg.symbol||this.currentSymbol,side:msg.side||'?',qty:msg.qty??msg.quantity??null,entry:msg.avg_entry??msg.avg??msg.entry??null,close:msg.close_px??msg.close??null,pnl:pnlV,ts:Date.now()});
+          closedTradesHistory.unshift({id:msg.trade_id,position_id:msg.id,symbol:msg.symbol||this.currentSymbol,side:msg.side||'?',qty:msg.qty??msg.quantity??null,entry:msg.avg_entry??msg.avg??msg.entry??null,close:msg.close_px??msg.close??null,pnl:pnlV,ts:Date.now()});
           if(closedTradesHistory.length>100)closedTradesHistory.pop();
         }
         _syncHistorialPanel();
       }
-      const cid=msg.id!=null?String(msg.id):null;
+      // ORDER-MANAGEMENT-V2B — chart-line/selection cleanup only applies
+      // when the Position is actually GONE (full close). A partial close
+      // leaves it open — removing its line/selection here would be wrong;
+      // the position row itself updates via the normal positions snapshot
+      // refresh that _db_close_position_atomic's resync already triggers.
+      const cid=(msg.id!=null&&!msg.partial)?String(msg.id):null;
       if(cid){
         this._removeLines(cid);this.selectedPosIds.delete(cid);if(this.lastSelectedId===cid)this.lastSelectedId=null;refreshQB();
         for(const p of allPanels){if(p===this)continue;p._removeLines(cid);p.selectedPosIds.delete(cid);if(p.lastSelectedId===cid)p.lastSelectedId=null;}
@@ -3575,7 +3589,7 @@ function renderGlobalPositions(){
       <td>${openedStr}</td>
       <td><div class="btm-actions">
         <button class="btm-btn-edit" data-id="${r.id}" data-pid="${r._pid}">Edit</button>
-        <button class="btm-btn-close" data-id="${r.id}" data-pid="${r._pid}">✕</button>
+        <button class="btm-btn-close" data-id="${r.id}" data-pid="${r._pid}" data-qty="${qty}">✕</button>
       </div></td>
     </tr>`;
   }).join('');
@@ -3593,8 +3607,17 @@ function renderGlobalPositions(){
     btn.addEventListener('click',e=>{
       e.stopPropagation();
       const posId=btn.getAttribute('data-id'),pid=btn.getAttribute('data-pid');
+      const maxQty=Number(btn.getAttribute('data-qty'))||null;
       const panel=_anyOpenPanel(pid);if(!panel)return;
-      _showCloseConfirm('¿Confirmas el cierre de esta posición?',()=>panel.ws.send(JSON.stringify({action:'order:close',id:String(posId)})));
+      // ORDER-MANAGEMENT-V2B — qtyVal is null (full close, backward
+      // compatible) unless the user typed a smaller amount in the modal's
+      // optional qty field. Backend is the authority either way (design
+      // lock §13) — this is only what the client chooses to send.
+      _showCloseConfirm('¿Confirmas el cierre de esta posición?',(qtyVal)=>{
+        const payload={action:'order:close',id:String(posId)};
+        if(qtyVal!=null&&maxQty!=null&&qtyVal<maxQty)payload.qty=qtyVal;
+        panel.ws.send(JSON.stringify(payload));
+      },{allowPartial:true,maxQty});
     });
   });
   tbody.querySelectorAll('.btm-btn-edit').forEach(btn=>{
@@ -3853,7 +3876,15 @@ sheet.addEventListener('click',e=>{
 // Close position from sheet
 document.getElementById('sheetClosePos').addEventListener('click',()=>{
   if(!qbPosId||!qbPanel?.ws||qbPanel.ws.readyState!==WebSocket.OPEN)return;
-  _showCloseConfirm('¿Confirmas el cierre de esta posición?',()=>{qbPanel.ws.send(JSON.stringify({action:'order:close',id:String(qbPosId)}));closeSheet();hideQB();});
+  // ORDER-MANAGEMENT-V2B — same optional-qty confirm as the row close
+  // button; maxQty read from this panel's own positionsCache.
+  const _qbPos=qbPanel.positionsCache.find(p=>String(p.id)===String(qbPosId));
+  const maxQty=_qbPos?Number(_qbPos.qty)||null:null;
+  _showCloseConfirm('¿Confirmas el cierre de esta posición?',(qtyVal)=>{
+    const payload={action:'order:close',id:String(qbPosId)};
+    if(qtyVal!=null&&maxQty!=null&&qtyVal<maxQty)payload.qty=qtyVal;
+    qbPanel.ws.send(JSON.stringify(payload));closeSheet();hideQB();
+  },{allowPartial:true,maxQty});
 });
 sheetSave.addEventListener('click',()=>{
   if(!qbPosId||!qbPanel?.ws||qbPanel.ws.readyState!==WebSocket.OPEN)return;
@@ -4401,13 +4432,39 @@ function cancelRiskConfirm(){
 /* ── Close Position Confirm Modal ── */
 let _ccmCallback=null;
 const _ccModal=document.getElementById('closeConfirmModal');
+const _ccmQtyRow=document.getElementById('ccmQtyRow');
+const _ccmQtyInput=document.getElementById('ccmQtyInput');
 document.getElementById('ccmCancel').addEventListener('click',()=>{_ccModal.style.display='none';_ccmCallback=null;});
-document.getElementById('ccmConfirm').addEventListener('click',()=>{_ccModal.style.display='none';const cb=_ccmCallback;_ccmCallback=null;cb?.();});
+document.getElementById('ccmConfirm').addEventListener('click',()=>{
+  _ccModal.style.display='none';
+  const cb=_ccmCallback;_ccmCallback=null;
+  // ORDER-MANAGEMENT-V2B — qty is read ONLY when the qty row was shown
+  // for this confirm (allowPartial). Empty/unchanged-to-full/NaN all
+  // mean "no qty" (full close) — the callback decides what "full" means
+  // (it knows maxQty), this modal never guesses.
+  let qtyVal=null;
+  if(_ccmQtyRow.style.display!=='none'){
+    const raw=_ccmQtyInput.value;
+    if(raw!==''){const n=Number(raw);if(Number.isFinite(n)&&n>0)qtyVal=n;}
+  }
+  cb?.(qtyVal);
+});
 _ccModal.addEventListener('click',e=>{if(e.target===_ccModal){_ccModal.style.display='none';_ccmCallback=null;}});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&_ccModal.style.display==='flex'){_ccModal.style.display='none';_ccmCallback=null;}});
-function _showCloseConfirm(desc,callback){
+function _showCloseConfirm(desc,callback,opts){
   document.getElementById('ccmDesc').textContent=desc;
   _ccmCallback=callback;
+  // ORDER-MANAGEMENT-V2B, design lock §13 — the qty row only ever
+  // appears when the caller explicitly opts in (individual row/QuickBar
+  // close); showCloseAllConfirm() below never passes opts, so it never
+  // shows this row — Close All stays 100% full close, no exceptions.
+  if(opts&&opts.allowPartial){
+    _ccmQtyInput.value=opts.maxQty!=null?String(opts.maxQty):'';
+    _ccmQtyInput.max=opts.maxQty!=null?String(opts.maxQty):'';
+    _ccmQtyRow.style.display='';
+  }else{
+    _ccmQtyRow.style.display='none';
+  }
   _ccModal.style.display='flex';
 }
 function showCloseAllConfirm(){

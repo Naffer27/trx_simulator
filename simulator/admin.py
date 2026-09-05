@@ -1091,7 +1091,13 @@ class PositionAdmin(admin.ModelAdmin):
     list_display = ("id", "account", "symbol", "side", "qty", "avg_price", "sl", "tp", "external_id", "opened_at")
     list_filter = ("side", "symbol", "opened_at", "account")
     search_fields = ("symbol", "account__user__username", "account__user__email", "external_id")
-    readonly_fields = ("opened_at",)
+    # ORDER-MANAGEMENT-V2B, design lock §14 — qty is readonly: a raw
+    # changeform save must never be able to shrink/grow a Position's qty
+    # without generating the Trade/LedgerEntry/BrokerLedger a real
+    # partial/full close produces, nor under the select_for_update lock
+    # _db_close_position_atomic requires. No admin partial-close workflow
+    # is built in V2B (explicit follow-up) — this is hardening only.
+    readonly_fields = ("opened_at", "qty")
     list_editable = ("sl", "tp")
 
     # O.6c-1o — MULTIPANEL-01 fix, writer #10 (Django Admin) from the

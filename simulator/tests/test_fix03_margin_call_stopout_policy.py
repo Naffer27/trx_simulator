@@ -532,9 +532,17 @@ class RetailLiquidationVsDaemonReasonRegressionTests(TransactionTestCase):
     now asserting the CORRECTED reason/event survive the race too."""
 
     def test_daemon_closes_first_ws_liquidation_is_noop_reason_still_correct(self):
+        # ORDER-MANAGEMENT-V2B TEST HARNESS ALIGNMENT — realized_pnl is now
+        # recomputed authoritatively under lock (see consumers.py::
+        # _db_close_position_atomic's docstring); qty=0.01 (not the
+        # original 0.1) so the REAL formula ((1.08-1.10)*qty*100000)
+        # produces exactly the -20.00 this test already asserts, instead
+        # of the synthetic -20.0 the old "trust the caller" contract
+        # allowed regardless of qty. Guarantee under test (already_closed
+        # no-op preserves the daemon's own reason/audit event) unchanged.
         account = make_account(balance=Decimal("10000.00"), status="Activo")
         pos = make_position(account, symbol="EUR/USD", side="BUY",
-                             qty=Decimal("0.1"), avg_price=Decimal("1.1000"))
+                             qty=Decimal("0.01"), avg_price=Decimal("1.1000"))
         pos_mem = _pos_mem_for_task(pos)
         # Daemon closes it first (simulates scan_positions_task beating the WS tick).
         _close_position_sync(pos_mem, account.pk, 1.0800, "daemon_margin_call", -20.0, 9980.0, 9980.0)

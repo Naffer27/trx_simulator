@@ -46,6 +46,21 @@ and the async consumer methods under test both commit for real — genuine
 cross-call visibility (not TestCase's savepoint-per-test isolation) is
 required, matching the established pattern in
 test_account_balance_concurrency.py / test_atomic_guard_lock_order.py.
+
+ORDER-MANAGEMENT-V2B TEST HARNESS ALIGNMENT — realized_pnl passed to
+_close_position_sync is now recomputed AUTHORITATIVELY under lock from
+the Position's own fresh avg_price/qty (never trusted verbatim — see
+consumers.py::_db_close_position_atomic's docstring). Five tests here
+called _close_position_sync(..., "manual", 50.0, ...)/(..., -20.0, ...)
+as a synthetic "the daemon already closed this for some amount" stand-in
+— irrelevant to what each test actually verifies (that a SECOND,
+colliding close path doesn't overwrite/duplicate anything), but with
+qty=0.1 the REAL formula produces 500.00/-200.00, not 50.00/-20.00. qty
+was changed to 0.01 in exactly those five tests (never the assertions,
+never the close/collision logic) so the authoritative formula now
+produces the exact same 50.00/-20.00/10050.00/9980.00 this file already
+asserted — every other test in this file (control cases, and collision
+tests that never assert an exact balance/PnL number) was left untouched.
 """
 import asyncio
 from decimal import Decimal
@@ -150,7 +165,7 @@ class OrderCloseVsDaemonConcurrentTests(TransactionTestCase):
     def test_order_close_does_not_overwrite_stale_balance_when_already_closed_by_daemon(self):
         account = make_account(balance=Decimal("10000.00"))
         pos = make_position(account, symbol="EUR/USD", side="BUY",
-                             qty=Decimal("0.1"), avg_price=Decimal("1.1000"))
+                             qty=Decimal("0.01"), avg_price=Decimal("1.1000"))
         pos_mem = _pos_mem_for_task(pos)
 
         # Daemon closes it for real first: +50 realized.
@@ -191,7 +206,7 @@ class TpSlVsManualCloseConcurrentTests(TransactionTestCase):
     def test_tp_does_not_overwrite_balance_when_already_closed(self):
         account = make_account(balance=Decimal("10000.00"))
         pos = make_position(account, symbol="EUR/USD", side="BUY",
-                             qty=Decimal("0.1"), avg_price=Decimal("1.1000"))
+                             qty=Decimal("0.01"), avg_price=Decimal("1.1000"))
         pos_mem = _pos_mem_for_task(pos)
         _close_position_sync(pos_mem, account.pk, 1.1500, "manual", 50.0, 10050.0, 10050.0)
         account.refresh_from_db()
@@ -211,7 +226,7 @@ class TpSlVsManualCloseConcurrentTests(TransactionTestCase):
     def test_sl_does_not_overwrite_balance_when_already_closed_by_daemon(self):
         account = make_account(balance=Decimal("10000.00"))
         pos = make_position(account, symbol="EUR/USD", side="BUY",
-                             qty=Decimal("0.1"), avg_price=Decimal("1.1000"))
+                             qty=Decimal("0.01"), avg_price=Decimal("1.1000"))
         pos_mem = _pos_mem_for_task(pos)
         # Daemon closes it (e.g. its own SL sweep) first: -20 realized.
         _close_position_sync(pos_mem, account.pk, 1.0800, "manual", -20.0, 9980.0, 9980.0)
@@ -254,7 +269,7 @@ class StopoutVsManualCloseConcurrentTests(TransactionTestCase):
     def test_stopout_does_not_alter_balance_or_duplicate_close_when_already_closed(self):
         account = make_account(balance=Decimal("10000.00"), status="Activo")
         pos = make_position(account, symbol="EUR/USD", side="BUY",
-                             qty=Decimal("0.1"), avg_price=Decimal("1.1000"))
+                             qty=Decimal("0.01"), avg_price=Decimal("1.1000"))
         pos_mem = _pos_mem_for_task(pos)
         _close_position_sync(pos_mem, account.pk, 1.1500, "manual", 50.0, 10050.0, 10050.0)
         account.refresh_from_db()
@@ -283,7 +298,7 @@ class RetailLiquidationVsDaemonConcurrentTests(TransactionTestCase):
     def test_retail_liquidation_does_not_alter_balance_when_already_closed_by_daemon(self):
         account = make_account(balance=Decimal("10000.00"), status="Activo")
         pos = make_position(account, symbol="EUR/USD", side="BUY",
-                             qty=Decimal("0.1"), avg_price=Decimal("1.1000"))
+                             qty=Decimal("0.01"), avg_price=Decimal("1.1000"))
         pos_mem = _pos_mem_for_task(pos)
         _close_position_sync(pos_mem, account.pk, 1.0800, "manual", -20.0, 9980.0, 9980.0)
         account.refresh_from_db()
