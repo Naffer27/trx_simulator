@@ -3326,3 +3326,34 @@ class PayoutWebhookEvent(models.Model):
             f"ref={self.provider_reference or self.provider_batch_id or '(none)'} "
             f"[{self.correlation_status}]"
         )
+
+
+class LastKnownMarketPrice(models.Model):
+    """
+    GOLDEN-WEEKEND-RISK-01 — durable last-good market price, one row per
+    symbol. Written only from a validated live tick (see
+    market_data/feeds.py::FeedManager._update_price_state, the single
+    choke point every provider's tick already passes through) — never a
+    synthetic/simulated price, never a broker execution price, never
+    backfilled or inferred. Survives a Redis restart; the 60s Redis
+    price cache remains the hot/live path and is untouched by this model.
+
+    Read by simulator/broker_exposure.py ONLY when the symbol's market
+    session is officially MARKET_CLOSED (via
+    market_data.sessions.service.evaluate_market_session_for_symbol) —
+    never as a generic fallback for a live feed failure during open
+    market hours. See docs Design Lock GOLDEN-WEEKEND-RISK-01.
+    """
+
+    VALID_SOURCES = ("massive", "binance", "kraken", "finnhub")
+
+    symbol      = models.CharField(max_length=12, unique=True, db_index=True)
+    bid         = models.DecimalField(max_digits=18, decimal_places=6)
+    ask         = models.DecimalField(max_digits=18, decimal_places=6)
+    mid         = models.DecimalField(max_digits=18, decimal_places=6)
+    source      = models.CharField(max_length=16)
+    observed_at = models.DateTimeField()
+    updated_at  = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"LastKnownMarketPrice({self.symbol})={self.mid} source={self.source} observed_at={self.observed_at}"

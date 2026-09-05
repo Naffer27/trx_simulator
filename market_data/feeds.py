@@ -567,6 +567,94 @@ async def _write_price_cache(symbol: str, bid: float, ask: float, source: str) -
     loop.run_in_executor(_redis_write_pool, _write_price_cache_sync, symbol, bid, ask, source)
 
 
+# ─── GOLDEN-WEEKEND-RISK-01 — durable last-known-good market price ─────────────
+# Redis (above) is the hot/live cache: 60s TTL, gone on restart, gone once a
+# symbol's feed loop is idle. LastKnownMarketPrice (simulator/models.py) is
+# the durable twin: one row per symbol, updated at most once every
+# _DURABLE_PRICE_WRITE_INTERVAL_SECS from this SAME choke point
+# (FeedManager._update_price_state, called by every provider's _broadcast),
+# read back only by simulator/broker_exposure.py when a symbol's market
+# session is officially MARKET_CLOSED (never as a generic stale-feed
+# fallback). See Design Lock GOLDEN-WEEKEND-RISK-01.
+#
+# _DURABLE_PRICE_VALID_SOURCES mirrors exactly the `source=` strings this
+# module actually writes via _broadcast()/_update_price_state() today
+# ("massive", "binance", "kraken", "finnhub") — "sim" (the synthetic
+# fallback, feeds.py's own _sim_loop) is deliberately excluded: never
+# persisted as a durable market price.
+_DURABLE_PRICE_VALID_SOURCES = frozenset({"massive", "binance", "kraken", "finnhub"})
+
+# 60s — same window already trusted for Redis freshness (_PRICE_CACHE_TTL)
+# and the existing take-snapshots-1m Beat cadence; not a new arbitrary value.
+_DURABLE_PRICE_WRITE_INTERVAL_SECS = int(os.getenv("DURABLE_PRICE_WRITE_INTERVAL_SECS", "60"))
+
+# Separate single-thread pool (never share with _redis_write_pool — a slow/
+# blocked DB write must never delay a Redis write or vice versa).
+_durable_price_write_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="durable_price")
+
+
+def _write_durable_price_sync(symbol: str, bid: float, ask: float, mid: float,
+                               source: str, observed_at) -> None:
+    """
+    Upsert LastKnownMarketPrice for `symbol`. Called from a thread pool —
+    must never raise, and a DB failure here must never mark a price as
+    persisted (no swallow-then-pretend-success: the row simply isn't
+    written/updated, exactly as if this call never happened).
+
+    Monotonic by observed_at: a delayed write for an OLDER quote can never
+    overwrite an already-stored NEWER one (race between two async writes
+    completing out of order) — enforced via a single conditional UPDATE
+    first, falling back to INSERT only when no row exists yet.
+    """
+    if source not in _DURABLE_PRICE_VALID_SOURCES:
+        return
+    try:
+        from decimal import Decimal
+        from django.db import transaction
+        from simulator.models import LastKnownMarketPrice
+
+        bid_d = Decimal(str(bid))
+        ask_d = Decimal(str(ask))
+        mid_d = Decimal(str(mid))
+
+        with transaction.atomic():
+            updated = (
+                LastKnownMarketPrice.objects
+                .filter(symbol=symbol, observed_at__lte=observed_at)
+                .update(bid=bid_d, ask=ask_d, mid=mid_d, source=source, observed_at=observed_at)
+            )
+            if updated == 0:
+                LastKnownMarketPrice.objects.get_or_create(
+                    symbol=symbol,
+                    defaults={
+                        "bid": bid_d, "ask": ask_d, "mid": mid_d,
+                        "source": source, "observed_at": observed_at,
+                    },
+                )
+    except Exception as exc:
+        # Intentionally swallowed — a DB outage must never crash the feed
+        # loop, and must never be reported as a successful persist either.
+        log.debug("[durable_price] write failed for %s: %r", symbol, exc)
+
+
+async def _write_durable_price(symbol: str, bid: float, ask: float, mid: float, source: str) -> None:
+    """
+    Non-blocking wrapper, mirrors _write_price_cache() exactly. observed_at
+    is captured HERE (before dispatch to the thread pool), not inside the
+    sync function — so a delayed executor run still carries the timestamp
+    of when THIS tick actually arrived, never a later "whenever the thread
+    got scheduled" time. That's what makes the monotonic guard in
+    _write_durable_price_sync() correct under out-of-order completion.
+    """
+    from django.utils import timezone as _tz
+    observed_at = _tz.now()
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(
+        _durable_price_write_pool, _write_durable_price_sync,
+        symbol, bid, ask, mid, source, observed_at,
+    )
+
+
 # ─── singleton ─────────────────────────────────────────────────────────────────
 
 _MANAGER = None
@@ -601,6 +689,12 @@ class FeedManager:
         # always correctly treated as stale/absent by has_price(), never
         # as fresh.
         self._price_ts: dict[str, float] = {}
+        # GOLDEN-WEEKEND-RISK-01 — wall-clock time of the last durable-price
+        # WRITE ATTEMPT per symbol (not the tick timestamp — see
+        # _update_price_state), used only to throttle DB writes to at most
+        # once every _DURABLE_PRICE_WRITE_INTERVAL_SECS. Same in-process,
+        # per-FeedManager-instance pattern as _price_ts above.
+        self._last_durable_write_ts: dict[str, float] = {}
         # O.6c-1v — OPEN POSITION FEED COVERAGE. Symbols with at least one
         # currently-open Position, as last derived from the DB (the sole
         # authority — see sync_position_symbol_from_db()/mark_position_symbol()/
@@ -1628,6 +1722,17 @@ class FeedManager:
             self._price_source[symbol] = source  # O.6c-1w — Quote.source metadata
         # Write to Redis so cross-process readers (Celery daemon) can access prices.
         await _write_price_cache(symbol, bid, ask, source)
+        # GOLDEN-WEEKEND-RISK-01 — durable last-known-good price, throttled
+        # to at most once every _DURABLE_PRICE_WRITE_INTERVAL_SECS per
+        # symbol (never one DB write per tick). Only accepted sources
+        # persist; "sim" and anything else are silently skipped here too
+        # (defense in depth — _write_durable_price_sync() re-checks anyway).
+        if source in _DURABLE_PRICE_VALID_SOURCES:
+            _now_mono = time.time()
+            _last_write = self._last_durable_write_ts.get(symbol, 0.0)
+            if _now_mono - _last_write >= _DURABLE_PRICE_WRITE_INTERVAL_SECS:
+                self._last_durable_write_ts[symbol] = _now_mono
+                await _write_durable_price(symbol, bid, ask, mid, source)
         # FOUNDATION-13 — records only a timestamp (no bid/ask/mid) in the
         # observability store, gated by MARKET_DATA_OBSERVABILITY_ENABLED.
         if self._observability_enabled():

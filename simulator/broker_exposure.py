@@ -74,6 +74,30 @@ mid price per symbol, same simplification exposure_engine.py already
 makes (real execution price differentiation belongs to
 consumers.py:exec_price(), not a portfolio-level exposure aggregator).
 
+── GOLDEN-WEEKEND-RISK-01 — MARKET_CLOSED_FROZEN valuation ──────────────
+A symbol with no fresh live price is no longer automatically "unpriced".
+_resolve_symbol_prices() below distinguishes FOUR states per symbol:
+  FRESH                — has_price() True, live mid used.
+  MARKET_CLOSED_FROZEN — no fresh price, but the symbol's market session
+                         (market_data.sessions.service
+                         .evaluate_market_session_for_symbol) resolves to
+                         OrderPolicy.MARKET_CLOSED (WEEKEND/HOLIDAY/
+                         MAINTENANCE/CLOSED) AND a durable
+                         LastKnownMarketPrice row exists with a
+                         recognized source — its .mid is used, counted
+                         as PRICED (included in notional/coverage).
+  STALE                — no fresh price, session is anything else (OPEN,
+                         PRE_MARKET, AFTER_HOURS, UNKNOWN) — a live feed
+                         failure during tradeable hours, or session
+                         uncertainty. Unpriced, fail-closed, unchanged
+                         from pre-existing behavior.
+  UNAVAILABLE          — session is MARKET_CLOSED but no valid durable
+                         row exists (or its source isn't recognized).
+                         Unpriced, fail-closed — never fabricated.
+LastKnownMarketPrice is consulted ONLY when the session is confirmed
+MARKET_CLOSED — never as a generic fallback for a stale/broken feed
+during open market hours. See Design Lock GOLDEN-WEEKEND-RISK-01.
+
 ── FASE 3 source of truth ───────────────────────────────────────────────
 Position (currently open only) is the sole input for quantity/notional/
 unrealized PnL. margin_used mirrors consumers.py::_margin_used_total()'s
@@ -209,6 +233,16 @@ class BrokerExposureBreakdown:
     pricing_coverage_pct: Decimal = Decimal("100.00")
     stale_or_missing_symbols: list = field(default_factory=list)
 
+    # GOLDEN-WEEKEND-RISK-01 — per-symbol pricing-state observability.
+    # fresh_symbols/market_closed_frozen_symbols together account for every
+    # PRICED symbol; stale_symbols/unavailable_symbols together account for
+    # every symbol in stale_or_missing_symbols (kept unchanged above, for
+    # backward compatibility with existing callers/tests).
+    fresh_symbols: list = field(default_factory=list)
+    market_closed_frozen_symbols: list = field(default_factory=list)
+    stale_symbols: list = field(default_factory=list)
+    unavailable_symbols: list = field(default_factory=list)
+
     # Per-symbol / per-account detail
     by_symbol: dict = field(default_factory=dict)     # {symbol: SymbolExposureBreakdown}
     by_account: dict = field(default_factory=dict)    # {account_id: AccountExposureBreakdown}
@@ -229,21 +263,53 @@ class BrokerExposureBreakdown:
 # ─────────────────────────────────────────────────────────────────────────
 # Price lookup — explicit coverage, never a silent fallback (FASE 4)
 # ─────────────────────────────────────────────────────────────────────────
-def _price_lookup_for_symbols(symbols: set) -> dict:
+def _resolve_symbol_prices(symbols: set) -> dict:
     """
-    Returns {symbol: Decimal(mid_price)} ONLY for symbols with a fresh
-    price (FeedManager.has_price, same TTL PANEL-02 already uses for
-    order-open safety). Symbols without a fresh price are simply absent
-    from the returned dict — callers must treat a missing key as
-    "unpriced", never substitute anything.
+    GOLDEN-WEEKEND-RISK-01 — per-symbol price resolution with four
+    explicit states. Returns {symbol: (Decimal(mid) | None, status)},
+    status one of "FRESH" / "MARKET_CLOSED_FROZEN" / "STALE" /
+    "UNAVAILABLE" — see module docstring. A missing/None price must
+    always be treated as "unpriced", never substituted.
+
+    LastKnownMarketPrice is queried ONCE (batched, symbol__in=...) for
+    only the symbols that need it — never per-symbol, never for a
+    symbol that already has a fresh live price.
     """
     from market_data.feeds import get_feed_manager
+    from market_data.sessions.service import evaluate_market_session_for_symbol
+    from market_data.contracts import OrderPolicy
+    from .models import LastKnownMarketPrice
+
     fm = get_feed_manager()
-    prices = {}
+    resolved: dict = {}
+    needs_session_check = []
+
     for sym in symbols:
         if fm.has_price(sym):
-            prices[sym] = _d(fm.last_price(sym))
-    return prices
+            resolved[sym] = (_d(fm.last_price(sym)), "FRESH")
+        else:
+            needs_session_check.append(sym)
+
+    if needs_session_check:
+        durable_rows = {
+            row.symbol: row
+            for row in LastKnownMarketPrice.objects.filter(symbol__in=needs_session_check)
+        }
+        for sym in needs_session_check:
+            session = evaluate_market_session_for_symbol(sym)
+            if session.order_policy == OrderPolicy.MARKET_CLOSED:
+                row = durable_rows.get(sym)
+                if row is not None and row.source in LastKnownMarketPrice.VALID_SOURCES:
+                    resolved[sym] = (_d(row.mid), "MARKET_CLOSED_FROZEN")
+                else:
+                    resolved[sym] = (None, "UNAVAILABLE")
+            else:
+                # OPEN / PRE_MARKET / AFTER_HOURS / UNKNOWN — a live feed
+                # failure during tradeable hours, or session uncertainty.
+                # LastKnownMarketPrice is NEVER consulted here.
+                resolved[sym] = (None, "STALE")
+
+    return resolved
 
 
 def _spec_cache_for_symbols(symbols: set) -> dict:
@@ -337,7 +403,7 @@ def calculate_broker_exposure(
         positions = [p for p in positions if p.id not in exclude_position_ids]
 
     symbols = {p.symbol for p in positions}
-    prices = _price_lookup_for_symbols(symbols)
+    price_resolution = _resolve_symbol_prices(symbols)
     specs = _spec_cache_for_symbols(symbols)
 
     by_symbol: dict[str, SymbolExposureBreakdown] = {}
@@ -348,7 +414,11 @@ def calculate_broker_exposure(
     total_trader_upnl = _ZERO
     total_margin = _ZERO
     priced_count = unpriced_count = 0
-    stale_symbols = set()
+    stale_or_missing_symbols_set = set()
+    fresh_symbols_set = set()
+    market_closed_frozen_symbols_set = set()
+    stale_symbols_set = set()
+    unavailable_symbols_set = set()
 
     for pos in positions:
         sym = pos.symbol
@@ -393,18 +463,28 @@ def calculate_broker_exposure(
         total_margin += pos_margin
         ab.margin_used += pos_margin
 
-        # ── notional + unrealized PnL — ONLY if this symbol has a fresh price.
-        price = prices.get(sym)
+        # ── notional + unrealized PnL — ONLY if this symbol resolved to a
+        # usable price (FRESH or MARKET_CLOSED_FROZEN). STALE/UNAVAILABLE
+        # are excluded, exactly like the old "no fresh price" branch was.
+        price, price_status = price_resolution.get(sym, (None, "UNAVAILABLE"))
         if price is None:
             unpriced_count += 1
             sb.unpriced_position_count += 1
             ab.unpriced_position_count += 1
-            stale_symbols.add(sym)
+            stale_or_missing_symbols_set.add(sym)
+            if price_status == "UNAVAILABLE":
+                unavailable_symbols_set.add(sym)
+            else:
+                stale_symbols_set.add(sym)
             continue
 
         priced_count += 1
         sb.priced_position_count += 1
         ab.priced_position_count += 1
+        if price_status == "FRESH":
+            fresh_symbols_set.add(sym)
+        else:
+            market_closed_frozen_symbols_set.add(sym)
 
         notional = qty * price * contract_size
         signed_notional = notional if side == "BUY" else -notional
@@ -473,7 +553,11 @@ def calculate_broker_exposure(
         priced_position_count=priced_count,
         unpriced_position_count=unpriced_count,
         pricing_coverage_pct=pricing_coverage_pct,
-        stale_or_missing_symbols=sorted(stale_symbols),
+        stale_or_missing_symbols=sorted(stale_or_missing_symbols_set),
+        fresh_symbols=sorted(fresh_symbols_set),
+        market_closed_frozen_symbols=sorted(market_closed_frozen_symbols_set),
+        stale_symbols=sorted(stale_symbols_set),
+        unavailable_symbols=sorted(unavailable_symbols_set),
         by_symbol=by_symbol,
         by_account=by_account,
         account_id=account_id, account_ids=account_ids, symbol=symbol,
