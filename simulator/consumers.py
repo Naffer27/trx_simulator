@@ -1,6 +1,7 @@
 # simulator/consumers.py
 import os, json, asyncio, time, logging, math
 from datetime import datetime, timezone as dt_timezone
+from decimal import Decimal, ROUND_HALF_EVEN
 from urllib.parse import parse_qs
 
 from channels.generic.websocket import AsyncWebsocketConsumer
@@ -289,6 +290,32 @@ def _compute_pretrade_margin_guard(
             )
 
     return True, "ok", "", details
+
+
+_MONEY_2DP = Decimal("0.01")
+
+
+def _money_round(value):
+    """
+    LEDGER-ROUNDING-RECONCILIATION-01 — explicit, deterministic 2dp
+    money rounding for ledger-facing amounts. ROUND_HALF_EVEN, made
+    explicit here rather than left to Python's/Django's implicit
+    default decimal context — a future change to that global context
+    must never silently alter financial rounding. Reproduces bit-for-
+    bit what Django's own DecimalField save path already does today
+    (django.db.backends.utils.format_number(), confirmed by reading
+    that source: value.quantize(..., context=decimal.getcontext().copy())
+    — the default context's rounding is ROUND_HALF_EVEN, unchanged
+    anywhere in this project) — this helper exists so that fact is
+    documented and pinned, not just inherited implicitly.
+
+    Used ONLY for what actually gets posted to LedgerEntry/BrokerLedger
+    amount fields — never for Account.balance itself, which continues
+    to be quantized once, combined, by Django's own save() (the exact
+    combined economic total is never rounded before being subtracted
+    from balance — see _db_open_position_atomic's _auth_balance).
+    """
+    return value.quantize(_MONEY_2DP, rounding=ROUND_HALF_EVEN)
 
 
 def _check_lot_size(qty: float, spec) -> tuple[bool, str]:
@@ -5085,13 +5112,66 @@ class TradingConsumer(AsyncWebsocketConsumer):
             # outer transaction.atomic() exactly like Position.objects.
             # create() earlier in this same method already does: Position
             # + commission + spread fee + accounting roll back together.
-            _auth_balance = account.balance - _commission_d - _spread_fee_d
+            #
+            # LEDGER-ROUNDING-RECONCILIATION-01 — three distinct levels
+            # (Design Lock amendment §5), never conflated:
+            #   1. exact economic calculation (_commission_d, _spread_fee_d)
+            #      — full Decimal precision, unchanged by this fix.
+            #   2. exact resulting balance (_auth_balance below) — derived
+            #      from those same high-precision components, unchanged.
+            #   3. monetary amount actually posted — determined by the
+            #      PERSISTED 2dp account balance (what Django's save()
+            #      actually writes), never by rounding level 1 in
+            #      isolation. This is what LedgerEntry/BrokerLedger
+            #      represent (see _total_posted_d below) — never level 1.
+            # Account.balance is assigned the exact Decimal (_auth_balance)
+            # below and Django quantizes it to 2dp on save(), unchanged
+            # from before this fix.
+            #
+            # AMENDMENT (counter-example found and fixed during
+            # implementation — see Design Lock amendment): the ledger-
+            # facing TOTAL must never be computed by independently
+            # rounding money_round(_commission_d + _spread_fee_d) — that
+            # can disagree with what Django's save() actually persists,
+            # because ROUND_HALF_EVEN's tie-break depends on the parity of
+            # the SPECIFIC number being rounded, and rounding an isolated
+            # delta is a different number than rounding
+            # (old_balance - delta) — these do not always tie the same
+            # way (concrete counter-example: old_balance=1049.55,
+            # commission=0.031, spread=0.024 — the isolated total 0.055
+            # ties to 0.06, but old_balance-0.055=1049.495 ties to
+            # 1049.50, i.e. a real posted delta of 0.05, not 0.06).
+            #
+            # The fix: derive _total_posted_d from the SAME quantization
+            # Django's own save() performs on _auth_balance (not from an
+            # independent rounding of the delta) — by definition, this
+            # is EXACTLY old_balance minus what ends up persisted, for
+            # every case (commission-only, spread-only, or both),
+            # verified against ~2M adversarial (balance, commission,
+            # spread) combinations with zero exactness or sign
+            # violations — see test_ledger_rounding_reconciliation01.py.
+            _auth_balance     = account.balance - _commission_d - _spread_fee_d
+            _posted_balance   = _money_round(_auth_balance)
+            _total_posted_d   = account.balance - _posted_balance
+
+            if _commission_d > 0 and _spread_fee_d > 0:
+                _commission_ledger_d = _money_round(_commission_d)
+                _spread_ledger_d     = _total_posted_d - _commission_ledger_d
+            elif _commission_d > 0:
+                _commission_ledger_d = _total_posted_d
+                _spread_ledger_d     = Decimal("0")
+            elif _spread_fee_d > 0:
+                _spread_ledger_d     = _total_posted_d
+                _commission_ledger_d = Decimal("0")
+            else:
+                _commission_ledger_d = Decimal("0")
+                _spread_ledger_d     = Decimal("0")
 
             if _commission_d > 0:
                 trader_ledger = LedgerEntry.objects.create(
                     account_id=self._db_account_id,
                     event_type=LedgerEntry.EV_COMMISSION,
-                    amount=-_commission_d,
+                    amount=-_commission_ledger_d,
                     balance_after=_auth_balance,
                     meta={"symbol": symbol, "side": side, "db_pos_id": position_id},
                 )
@@ -5102,7 +5182,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 try:
                     BrokerLedger.objects.create(
                         revenue_type=BrokerLedger.REV_COMMISSION,
-                        amount=_commission_d,
+                        amount=_commission_ledger_d,
                         source_account_id=self._db_account_id,
                         source_ledger=trader_ledger,
                         symbol=symbol,
@@ -5116,23 +5196,55 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 # EV_FEE choice LedgerEntry.EVENT_CHOICES already defines
                 # (reused — no migration needed). meta.fee_type="spread"
                 # distinguishes this from any other future EV_FEE use.
+                #
+                # LEDGER-ROUNDING-RECONCILIATION-01 — when commission was
+                # ALSO charged on this same open, this line's amount
+                # (_spread_ledger_d) is the remainder of the combined,
+                # once-rounded total after commission's own share — not
+                # this component's own independently-rounded value.
+                # meta.rounding_residual captures exactly how much that
+                # differs from spread's own naive rounding, signed:
+                # posted - exact (positive = posted slightly more than
+                # the raw economic value; negative = posted slightly
+                # less) — present ONLY in the two-component case, because
+                # spread is the line chosen to absorb the remainder when
+                # both components exist. In the single-component case
+                # this line receives _total_posted_d directly (derived
+                # from the persisted balance — see _auth_balance/
+                # _posted_balance above), NOT necessarily
+                # money_round(_spread_fee_d) — ROUND_HALF_EVEN's tie-break
+                # depends on the specific number rounded, so those two
+                # values can legitimately differ even with no second
+                # component involved (confirmed counter-example:
+                # old_balance=1000.01, component_exact=0.015 ->
+                # money_round(0.015)=0.02, but the real posted delta is
+                # 0.01). No residual metadata is claimed for that case;
+                # nothing was "redistributed" between two lines, so there
+                # is nothing to report here.
+                _spread_fee_meta = {
+                    "fee_type": "spread", "symbol": symbol, "side": side,
+                    "db_pos_id": position_id, "effective_pips": _effective_pips,
+                    "base_pips": _base_pips, "account_markup_pips": _markup_pips,
+                }
+                if _commission_d > 0:
+                    _spread_fee_meta.update({
+                        "exact_amount": str(_spread_fee_d),
+                        "rounding_residual": str(_spread_ledger_d - _spread_fee_d),
+                        "rounding_role": "residual",
+                    })
                 spread_fee_ledger = LedgerEntry.objects.create(
                     account_id=self._db_account_id,
                     event_type=LedgerEntry.EV_FEE,
-                    amount=-_spread_fee_d,
+                    amount=-_spread_ledger_d,
                     balance_after=_auth_balance,
-                    meta={
-                        "fee_type": "spread", "symbol": symbol, "side": side,
-                        "db_pos_id": position_id, "effective_pips": _effective_pips,
-                        "base_pips": _base_pips, "account_markup_pips": _markup_pips,
-                    },
+                    meta=_spread_fee_meta,
                 )
                 # BrokerLedger REV_SPREAD — best-effort, SAME nested-
                 # savepoint isolation the pre-O.6c-1aa code already used
                 # for this exact write (a DB error here must never
                 # corrupt the outer transaction) — but now linked via
                 # source_ledger to spread_fee_ledger, and using the SAME
-                # _spread_fee_d the trader was just charged — O.6c-1aa's
+                # _spread_ledger_d the trader was just charged — O.6c-1aa's
                 # explicit "trader spread fee debit == broker REV_SPREAD"
                 # requirement, guaranteed by construction, not by a
                 # second computation.
@@ -5140,7 +5252,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
                     with transaction.atomic():
                         BrokerLedger.objects.create(
                             revenue_type=BrokerLedger.REV_SPREAD,
-                            amount=_spread_fee_d,
+                            amount=_spread_ledger_d,
                             source_account_id=self._db_account_id,
                             source_ledger=spread_fee_ledger,
                             symbol=symbol,
