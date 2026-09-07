@@ -2110,6 +2110,18 @@ class TradingPanel {
     // branch only.
     this._lastPaintedMid=null;
     this._lastPaintedAt=null;
+    // CHART-LIVE-VISUAL-FILTER-01 — candle-branch paint anchor, same
+    // shape as the quote anchor above but its OWN state (last b.close
+    // that actually retargeted the candle animation, and when) — never
+    // shared with _lastPaintedMid/_lastPaintedAt. Candle close and
+    // liveMid stay two legitimately different numbers (unchanged, see
+    // MASSIVE-CRYPTO-TRADE-CANDLES-01 above); this only stops a
+    // same-bucket candle_update from repainting for a sub-threshold
+    // wiggle IN THE CANDLE'S OWN VALUE, reusing the exact same
+    // _visualMagnitudeThreshold()/_maxVisualAgeMs() functions the quote
+    // branch already uses — never a second, independently-tuned filter.
+    this._lastPaintedCandleClose=null;
+    this._lastPaintedCandleAt=null;
     // LIVE-CHART-SMOOTH-INTERPOLATION-01 — visual-only interpolation
     // state. ONE shared requestAnimationFrame loop per panel animates
     // BOTH the candle's displayed close and the priceLine toward their
@@ -2325,14 +2337,25 @@ class TradingPanel {
      price=0 or NaN. At most one live price line ever exists per panel:
      this branch creates it exactly once, every subsequent call re-prices
      the SAME object via applyOptions(), never calling createPriceLine()
-     again. */
+     again.
+     CHART-LIVE-VISUAL-FILTER-01 — the price line object is now created/
+     kept axisLabelVisible:false, lineVisible:false: it duplicated the
+     candlestick series' own native last-value axis label with a
+     second, very-close-but-different number (this object carries
+     broker markup; the native label tracks the raw candle close — see
+     that block's audit). The object/tracking logic here is UNCHANGED
+     (still lazily created once per symbol, still re-priced via
+     applyOptions, still removed on symbol switch) — only its two
+     visual properties are off, so pxTag/_drawGlow (the bid/ask
+     ticket's own live price display, untouched) keep working exactly
+     as before. */
   _updateLiveQuoteDisplay(){
     if(this.liveMid==null)return;
     const px=this.liveMid,prev=this.prevLiveMid;
     const p=priceFormatFor(this.currentSymbol).precision;
     if(!this.priceLine){
       if(!this.candleSeries)return;
-      this.priceLine=this.candleSeries.createPriceLine({price:px,color:'rgba(255,255,255,.4)',lineWidth:1,lineStyle:2,axisLabelVisible:true,title:this.currentSymbol.replace('/','')});
+      this.priceLine=this.candleSeries.createPriceLine({price:px,color:'rgba(255,255,255,.4)',lineWidth:1,lineStyle:2,axisLabelVisible:false,lineVisible:false,title:this.currentSymbol.replace('/','')});
     }else{
       this.priceLine.applyOptions({price:px,title:this.currentSymbol.replace('/','')});
     }
@@ -2363,7 +2386,7 @@ class TradingPanel {
   _retargetPriceLineAnimation(px){
     if(!this.candleSeries)return;
     if(!this.priceLine){
-      this.priceLine=this.candleSeries.createPriceLine({price:px,color:'rgba(255,255,255,.4)',lineWidth:1,lineStyle:2,axisLabelVisible:true,title:this.currentSymbol.replace('/','')});
+      this.priceLine=this.candleSeries.createPriceLine({price:px,color:'rgba(255,255,255,.4)',lineWidth:1,lineStyle:2,axisLabelVisible:false,lineVisible:false,title:this.currentSymbol.replace('/','')});
       this._quoteAnim=null;
       return;
     }
@@ -2520,17 +2543,23 @@ class TradingPanel {
     return (symbol.includes('BTC')||symbol.includes('ETH'))?500:1000;
   }
 
-  // MASSIVE-CRYPTO-TRADE-CANDLES-01 — deliberate reversal of LIVE-CHART-
-  // MAGNITUDE-FILTER-01's single shared decision: candle and quote are
-  // no longer numerically the same value (candle close = last Massive
-  // TRADE via XT; priceLine/badge/bid-ask = quote bid/ask/mid via XQ —
-  // two distinct, legitimately-diverging semantics, see price_trade()/
-  // price_tick() on the backend). Gating the candle by liveMid movement
-  // would silently withhold a real, distinct trade just because the
-  // unrelated quote hadn't moved — exactly what this split avoids.
-  // Candle: ONLY the 100ms throttle below, no magnitude gate — every
-  // trade that survives the throttle paints. Quote: unchanged magnitude
-  // + max-age filter, gating priceLine/badge/bid-ask only.
+  // MASSIVE-CRYPTO-TRADE-CANDLES-01 — candle and quote are still two
+  // legitimately different numbers (candle close = raw feed mid/last
+  // trade; priceLine/badge/bid-ask = quote bid/ask/mid — see
+  // price_trade()/price_tick() on the backend, unchanged by this
+  // block). CHART-LIVE-VISUAL-FILTER-01 — the ORIGINAL reasoning here
+  // was never "the candle must repaint on every real tick with zero
+  // filtering", it was "the candle must never be gated by the UNRELATED
+  // quote's movement" (LIVE-CHART-MAGNITUDE-FILTER-01's old shared
+  // anchor did exactly that). Those are different claims: a same-bucket
+  // candle_update can now be gated by its OWN close's movement — via
+  // the SAME _visualMagnitudeThreshold()/_maxVisualAgeMs() functions
+  // the quote branch already uses, against its OWN separate anchor
+  // (_lastPaintedCandleClose/_lastPaintedCandleAt, never
+  // _lastPaintedMid/_lastPaintedAt) — without reintroducing any
+  // coupling to liveMid. A brand new bucket (candle_new) always paints
+  // unconditionally regardless (see isNew branch below) — the filter
+  // only applies to candle_update.
   _flushVisualRender(){
     if(this._candleRenderPending){
       this._candleRenderPending=false;
@@ -2552,12 +2581,23 @@ class TradingPanel {
         // meaningful "from" to animate away from (it would visually
         // blend two different candles), so it paints directly, once,
         // with the real bar, and cancels whatever candle animation was
-        // still running for the PREVIOUS bar.
+        // still running for the PREVIOUS bar. _bars/OHLC/history are
+        // never touched by any of this — only whether/when the pixels
+        // move.
         if(isNew){
           this._candleAnim=null;
           this.candleSeries.update(b);
+          this._lastPaintedCandleClose=b.close; this._lastPaintedCandleAt=Date.now();
         }else{
-          this._retargetCandleAnimation(b);
+          const now=Date.now();
+          const current=b.close;
+          const shouldPaintCandle = this._lastPaintedCandleClose==null
+            || Math.abs(current-this._lastPaintedCandleClose) >= this._visualMagnitudeThreshold(this.currentSymbol, this._lastPaintedCandleClose)
+            || (now-this._lastPaintedCandleAt) >= this._maxVisualAgeMs(this.currentSymbol);
+          if(shouldPaintCandle){
+            this._lastPaintedCandleClose=current; this._lastPaintedCandleAt=now;
+            this._retargetCandleAnimation(b);
+          }
         }
       }
     }
@@ -2596,23 +2636,25 @@ class TradingPanel {
     if(this._visualRenderTimer!=null){clearTimeout(this._visualRenderTimer);this._visualRenderTimer=null;}
     this._quoteRenderPending=false; this._candleRenderPending=false; this._candleRenderIsNew=false;
     this._lastPaintedMid=null; this._lastPaintedAt=null;
+    this._lastPaintedCandleClose=null; this._lastPaintedCandleAt=null;
     this._cancelVisualAnimation();
   }
 
   // Partial reset — timeframe switch: only the pending CANDLE paint
-  // (belongs to the old timeframe's bar) and any in-flight CANDLE
-  // animation are discarded — the shared timer/RAF loop are left
-  // running if a quote render/animation is still active. The quote
-  // paint anchor (_lastPaintedMid/_lastPaintedAt) and _quoteAnim are
-  // deliberately left untouched here: they gate/animate ONLY the quote/
-  // priceLine/badge/bid-ask branch above, which is unrelated to
-  // timeframe (same principle _onTFChange() already applies to liveMid/
-  // bid/ask directly) — and the candle branch no longer reads either of
-  // them, so there is nothing left for a timeframe switch to unblock
-  // besides its own animation state.
+  // (belongs to the old timeframe's bar), the candle paint anchor
+  // (CHART-LIVE-VISUAL-FILTER-01 — belongs to the old timeframe's
+  // close, must never gate the new timeframe's first bar), and any
+  // in-flight CANDLE animation are discarded — the shared timer/RAF
+  // loop are left running if a quote render/animation is still active.
+  // The quote paint anchor (_lastPaintedMid/_lastPaintedAt) and
+  // _quoteAnim are deliberately left untouched here: they gate/animate
+  // ONLY the quote/priceLine/badge/bid-ask branch above, which is
+  // unrelated to timeframe (same principle _onTFChange() already
+  // applies to liveMid/bid/ask directly).
   _cancelPendingCandleRender(){
     this._candleRenderPending=false; this._candleRenderIsNew=false;
     this._candleAnim=null;
+    this._lastPaintedCandleClose=null; this._lastPaintedCandleAt=null;
   }
 
   wsUrl(){
@@ -3263,7 +3305,7 @@ class TradingPanel {
     const VS=`vol-${this.id}`;
     this.volumeSeries=this.chart.addHistogramSeries({priceScaleId:VS,priceFormat:{type:'volume'},priceLineVisible:false,lastValueVisible:false,color:'rgba(255,255,255,0.07)'});
     this.chart.priceScale(VS).applyOptions({scaleMargins:{top:0.82,bottom:0},visible:false,borderVisible:false});
-    this.priceLine=this.candleSeries.createPriceLine({price:0,color:'rgba(255,255,255,.4)',lineWidth:1,lineStyle:2,axisLabelVisible:true,title:this.currentSymbol.replace('/','')});
+    this.priceLine=this.candleSeries.createPriceLine({price:0,color:'rgba(255,255,255,.4)',lineWidth:1,lineStyle:2,axisLabelVisible:false,lineVisible:false,title:this.currentSymbol.replace('/','')});
     this.chart.timeScale().fitContent();
     this.chart.timeScale().subscribeVisibleLogicalRangeChange(()=>{this.stayLive=this.chart.timeScale().scrollPosition()<1.2;});
     this._resizeObs=new ResizeObserver(()=>this._fixChartHeight());

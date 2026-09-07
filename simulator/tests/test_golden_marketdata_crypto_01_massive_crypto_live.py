@@ -1280,9 +1280,16 @@ class PriceLineLifecycleTests(SimpleTestCase):
         src = self._template_source()
         body = self._method_body(src, "_updateLiveQuoteDisplay(){", max_len=900)
         self.assertIn("if(!this.priceLine){", body)
+        # CHART-LIVE-VISUAL-FILTER-01 — axisLabelVisible/lineVisible are
+        # now false (this price line duplicated the candle series' own
+        # native last-value label with a second, close-but-different
+        # number; see that block's audit) — the lazy-creation/price/
+        # title contract this test exists to guard is otherwise
+        # UNCHANGED, asserted below exactly as before.
         self.assertIn(
             "this.priceLine=this.candleSeries.createPriceLine({price:px,"
-            "color:'rgba(255,255,255,.4)',lineWidth:1,lineStyle:2,axisLabelVisible:true,"
+            "color:'rgba(255,255,255,.4)',lineWidth:1,lineStyle:2,"
+            "axisLabelVisible:false,lineVisible:false,"
             "title:this.currentSymbol.replace('/','')});",
             body,
         )

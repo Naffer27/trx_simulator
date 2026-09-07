@@ -10,16 +10,31 @@ was deliberately reversed once crypto candles moved to Massive TRADES
 (XT — see consumers.py::price_trade()) while priceLine/badge/bid-ask
 stayed on Massive QUOTES (XQ — price_tick()): the two are no longer the
 same number, and gating a real, distinct trade by an unrelated quote's
-lack of movement would silently hide real chart data. Current contract:
-  - CANDLE (candleSeries.update()/volumeSeries.update()/indicators):
-    ONLY the 100ms throttle — no magnitude gate at all. Every candle
-    message that survives the throttle paints, unconditionally.
+lack of movement would silently hide real chart data.
+
+CHART-LIVE-VISUAL-FILTER-01 update: the claim "candle has NO magnitude
+gate at all" is no longer true — it never had to be true for the reason
+above to hold. What had to stay true (and still does) is narrower: the
+candle must never be gated by the UNRELATED quote's lack of movement.
+A same-bucket candle_update CAN now be gated by its OWN close's lack of
+movement, via the exact same _visualMagnitudeThreshold()/
+_maxVisualAgeMs() functions the quote branch already used — reusing the
+functions, never sharing the anchor. Current contract:
+  - CANDLE, candle_new (isNew=true, new bucket): unconditional, no gate
+    — a brand new bar is always painted directly, exactly as before.
+  - CANDLE, candle_update (isNew=false, same bucket):
+    100ms throttle, THEN a magnitude+max-age gate against its OWN
+    anchor (_lastPaintedCandleClose/_lastPaintedCandleAt) — never
+    _lastPaintedMid/_lastPaintedAt (that would reintroduce the old
+    coupling this block's audit confirmed was never the point).
   - QUOTE (priceLine/badge/bid-ask via _updateBidAsk()/
     _updateLiveQuoteDisplay()): unchanged magnitude+max-age filter,
     gated against the last PAINTED liveMid.
 Both still update financial/derived state (_bars/bid/ask/liveMid/
 setPrice) unconditionally on every message — this file only asserts
-things about the PAINT decision, never state.
+things about the PAINT decision, never state. candleSeries.update()'s
+underlying `b` (open/high/low/close, from _bars) is never altered by
+the gate — only whether/when the animation retargets toward it.
 
 Design-lock-mandated pip correction (still in force, unaffected by the
 split above): the pip threshold must NEVER be derived from
@@ -102,24 +117,45 @@ class MaxVisualAgeSourceTests(SimpleTestCase):
 
 class SplitDecisionSourceTests(SimpleTestCase):
     """MASSIVE-CRYPTO-TRADE-CANDLES-01 — candle and quote are INDEPENDENT
-    branches again: candle has no magnitude gate, quote keeps one. This
-    replaces the prior "single shared decision" contract this file used
-    to assert (deliberately reversed — see module docstring)."""
+    branches: each has its OWN magnitude+max-age gate now
+    (CHART-LIVE-VISUAL-FILTER-01), against its OWN anchor — never a
+    shared decision, never a shared anchor. This replaces the prior
+    "candle has no gate at all" contract this file used to assert
+    (deliberately reversed — see module docstring)."""
 
-    def test_candle_branch_has_no_should_paint_gate(self):
+    def test_candle_branch_gates_only_the_same_bucket_update_path(self):
         src = _template_source()
         body = _method_body(src, "_flushVisualRender(){")
         i_candle_start = body.index("if(this._candleRenderPending){")
         i_quote_start = body.index("if(this._quoteRenderPending){")
         candle_branch = body[i_candle_start:i_quote_start]
-        self.assertNotIn("shouldPaint", candle_branch)
-        self.assertNotIn("_visualMagnitudeThreshold", candle_branch)
-        self.assertNotIn("_maxVisualAgeMs", candle_branch)
+        # The gate exists, uses the shared threshold functions, and its
+        # own dedicated anchor — but NEVER the quote's anchor.
+        self.assertIn("shouldPaintCandle", candle_branch)
+        self.assertIn("this._visualMagnitudeThreshold(", candle_branch)
+        self.assertIn("this._maxVisualAgeMs(", candle_branch)
+        self.assertIn("_lastPaintedCandleClose", candle_branch)
+        self.assertIn("_lastPaintedCandleAt", candle_branch)
         self.assertNotIn("_lastPaintedMid", candle_branch)
-        # The candle paint calls must be unconditional inside their branch.
-        self.assertIn("this.candleSeries.update(", candle_branch)
+        self.assertNotIn("_lastPaintedAt=", candle_branch)  # the quote anchor's own setter, never here
+        # volume/scrollToRealTime/indicators stay unconditional — only
+        # candleSeries.update()'s retarget is gated.
         self.assertIn("this.volumeSeries.update(", candle_branch)
         self.assertIn("this._updateIndicatorsLastBar(", candle_branch)
+
+    def test_candle_new_bucket_path_is_unconditional(self):
+        src = _template_source()
+        body = _method_body(src, "_flushVisualRender(){")
+        i_candle_start = body.index("if(this._candleRenderPending){")
+        i_quote_start = body.index("if(this._quoteRenderPending){")
+        candle_branch = body[i_candle_start:i_quote_start]
+        i_isnew = candle_branch.index("if(isNew){")
+        i_else = candle_branch.index("}else{", i_isnew)
+        new_bucket_path = candle_branch[i_isnew:i_else]
+        self.assertIn("this.candleSeries.update(b)", new_bucket_path)
+        self.assertNotIn("shouldPaintCandle", new_bucket_path)
+        self.assertNotIn("_visualMagnitudeThreshold", new_bucket_path)
+        self.assertNotIn("_maxVisualAgeMs", new_bucket_path)
 
     def test_quote_branch_still_has_should_paint_gate(self):
         src = _template_source()
@@ -145,22 +181,29 @@ class SplitDecisionSourceTests(SimpleTestCase):
 
 
 class LifecycleResetSourceTests(SimpleTestCase):
-    """Point 5 — symbol switch: full quote-anchor reset (unchanged).
-    Timeframe switch: no longer touches the quote anchor at all — the
-    candle branch doesn't read it, and the quote/priceLine contract is
-    explicitly unaffected by a timeframe-only change."""
+    """Point 5 — symbol switch: full reset of BOTH anchors (quote —
+    unchanged — and, CHART-LIVE-VISUAL-FILTER-01, candle). Timeframe
+    switch: never touches the quote anchor (the candle branch doesn't
+    read it, and the quote/priceLine contract is explicitly unaffected
+    by a timeframe-only change) but DOES reset the candle anchor — the
+    old timeframe's close must never gate the new timeframe's first
+    bar."""
 
-    def test_symbol_switch_resets_paint_anchor(self):
+    def test_symbol_switch_resets_both_paint_anchors(self):
         src = _template_source()
         body = _method_body(src, "_cancelPendingVisualRender(){")
         self.assertIn("this._lastPaintedMid=null", body)
         self.assertIn("this._lastPaintedAt=null", body)
+        self.assertIn("this._lastPaintedCandleClose=null", body)
+        self.assertIn("this._lastPaintedCandleAt=null", body)
 
-    def test_timeframe_switch_no_longer_touches_paint_anchor(self):
+    def test_timeframe_switch_resets_candle_anchor_only(self):
         src = _template_source()
         body = _method_body(src, "_cancelPendingCandleRender(){")
         self.assertNotIn("_lastPaintedMid", body)
-        self.assertNotIn("_lastPaintedAt", body)
+        self.assertNotIn("_lastPaintedAt=null", body)  # the quote anchor's setter, never here
+        self.assertIn("this._lastPaintedCandleClose=null", body)
+        self.assertIn("this._lastPaintedCandleAt=null", body)
 
 
 class ThrottleUnchangedSourceTests(SimpleTestCase):
@@ -246,6 +289,8 @@ class MagnitudeFilterBehaviorTests(SimpleTestCase):
             this._candleRenderIsNew=false;
             this._lastPaintedMid=null;
             this._lastPaintedAt=null;
+            this._lastPaintedCandleClose=null;
+            this._lastPaintedCandleAt=null;
             this._bars=[];
             this.bid=1; this.ask=1.1; this.stayLive=false; this.liveMid=null;
             this.candleSeries={{ update: () => {{ this.counters.candleUpdate++; }} }};
@@ -290,9 +335,9 @@ class MagnitudeFilterBehaviorTests(SimpleTestCase):
             this.liveMid=mid;
             this._scheduleVisualRender('quote');
           }}
-          tickCandle(closePrice){{
+          tickCandle(closePrice, isNew=false){{
             this._bars.push({{time: Math.floor(Date.now()/1000), open:closePrice, high:closePrice, low:closePrice, close:closePrice}});
-            this._scheduleVisualRender('candle', false);
+            this._scheduleVisualRender('candle', isNew);
           }}
           tick(mid){{
             this.tickQuote(mid);
@@ -321,9 +366,11 @@ class MagnitudeFilterBehaviorTests(SimpleTestCase):
                 self.fail(f"node harness failed:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}")
             return json.loads(result.stdout.strip().splitlines()[-1])
 
-    # ---- candle: no magnitude gate, every scheduled candle paints ----
+    # ---- candle: CHART-LIVE-VISUAL-FILTER-01 — same-bucket updates now
+    # gated by their OWN magnitude+max-age filter; a brand new bucket
+    # always paints regardless ----
 
-    def test_candle_never_suppressed_by_magnitude(self):
+    def test_candle_same_bucket_sub_threshold_move_suppressed(self):
         out = self._run_scenario("""
           const p = new FakePanel('BTCUSD');
           p.tickCandle(80000);
@@ -334,7 +381,49 @@ class MagnitudeFilterBehaviorTests(SimpleTestCase):
           await new Promise(r => setTimeout(r, 150));
           console.log(JSON.stringify({candleUpdate: p.counters.candleUpdate}));
         """)
-        self.assertEqual(out["candleUpdate"], 3)  # every one painted, no gate at all
+        self.assertEqual(out["candleUpdate"], 1)  # only the first (anchor-establishing) paint
+
+    def test_candle_same_bucket_move_crossing_threshold_paints(self):
+        out = self._run_scenario("""
+          const p = new FakePanel('BTCUSD');
+          p.tickCandle(80000);
+          await new Promise(r => setTimeout(r, 150));
+          const afterFirst = p.counters.candleUpdate;
+          p.tickCandle(80013); // +$13 from the anchor — above the 1.5bps/$12 threshold
+          await new Promise(r => setTimeout(r, 150));
+          console.log(JSON.stringify({afterFirst, afterCross: p.counters.candleUpdate}));
+        """)
+        self.assertEqual(out["afterFirst"], 1)
+        self.assertEqual(out["afterCross"], 2)
+
+    def test_candle_new_bucket_always_paints_even_for_trivial_move(self):
+        out = self._run_scenario("""
+          const p = new FakePanel('BTCUSD');
+          p.tickCandle(80000, true);  // candle_new
+          await new Promise(r => setTimeout(r, 150));
+          p.tickCandle(80000.001, true); // another candle_new, trivial move — must still paint
+          await new Promise(r => setTimeout(r, 150));
+          console.log(JSON.stringify({candleUpdate: p.counters.candleUpdate}));
+        """)
+        self.assertEqual(out["candleUpdate"], 2)  # isNew bypasses the gate entirely
+
+    def test_candle_max_age_forces_render_without_threshold_cross(self):
+        out = self._run_scenario("""
+          const p = new FakePanel('BTCUSD');
+          p.tickCandle(80000);
+          await new Promise(r => setTimeout(r, 150));
+          const afterFirst = p.counters.candleUpdate;
+          p.tickCandle(80000.001);
+          await new Promise(r => setTimeout(r, 150));
+          const afterSubThreshold = p.counters.candleUpdate;
+          await new Promise(r => setTimeout(r, 450));
+          p.tickCandle(80000.001);
+          await new Promise(r => setTimeout(r, 150));
+          console.log(JSON.stringify({afterFirst, afterSubThreshold, afterMaxAge: p.counters.candleUpdate}));
+        """)
+        self.assertEqual(out["afterFirst"], 1)
+        self.assertEqual(out["afterSubThreshold"], 1)
+        self.assertEqual(out["afterMaxAge"], 2)  # BTC max-age is 500ms — forced even without crossing
 
     def test_candle_paints_immediately_regardless_of_prior_quote_state(self):
         # No dependency on this.liveMid/_lastPaintedMid whatsoever.
@@ -416,18 +505,40 @@ class MagnitudeFilterBehaviorTests(SimpleTestCase):
 
     # ---- candle and quote can now legitimately diverge ----
 
-    def test_candle_and_quote_can_diverge(self):
+    def test_candle_and_quote_gate_independently_on_their_own_anchors(self):
+        # CHART-LIVE-VISUAL-FILTER-01 — both branches are now filtered,
+        # but against SEPARATE anchors: the same real-world moment can
+        # cross the candle's own threshold while staying sub-threshold
+        # for the quote (or vice versa) — this is what "independent"
+        # means now, not "candle is unfiltered".
         out = self._run_scenario("""
           const p = new FakePanel('EUR/USD');
-          p.tick(1.16000); // both fire once, anchors establish
+          p.tick(1.16000); // both fire once, both anchors establish at the same value
           await new Promise(r => setTimeout(r, 150));
-          p.tickCandle(1.16000001); // trivial candle move — must still paint
-          p.tickQuote(1.16002);     // 0.2 pip quote move — sub-threshold, suppressed
+          p.tickCandle(1.16006); // +6 pips — crosses the candle's OWN threshold
+          p.tickQuote(1.16002);  // +0.2 pip — sub-threshold for the quote's OWN anchor
           await new Promise(r => setTimeout(r, 150));
           console.log(JSON.stringify({candleUpdate: p.counters.candleUpdate, quoteDisplay: p.counters.quoteDisplay}));
         """)
-        self.assertEqual(out["candleUpdate"], 2)   # both candle events painted
-        self.assertEqual(out["quoteDisplay"], 1)   # second quote event suppressed
+        self.assertEqual(out["candleUpdate"], 2)   # crossed its own threshold — painted
+        self.assertEqual(out["quoteDisplay"], 1)   # stayed sub-threshold — suppressed
+
+    def test_candle_trivial_move_does_not_leak_into_quote_anchor_or_vice_versa(self):
+        # The two anchors are genuinely separate state — a move that
+        # only affects one must never influence the other's decision.
+        out = self._run_scenario("""
+          const p = new FakePanel('EUR/USD');
+          p.tick(1.16000);
+          await new Promise(r => setTimeout(r, 150));
+          p.tickCandle(1.16000001); // trivial candle move — suppressed
+          await new Promise(r => setTimeout(r, 150));
+          const midAnchor = p._lastPaintedMid;
+          const candleAnchor = p._lastPaintedCandleClose;
+          console.log(JSON.stringify({candleUpdate: p.counters.candleUpdate, midAnchor, candleAnchor}));
+        """)
+        self.assertEqual(out["candleUpdate"], 1)  # only the first, anchor-establishing paint
+        self.assertEqual(out["midAnchor"], 1.16)
+        self.assertEqual(out["candleAnchor"], 1.16)
 
     # ---- lifecycle ----
 
@@ -460,19 +571,28 @@ class MagnitudeFilterBehaviorTests(SimpleTestCase):
         """)
         self.assertEqual(out["quoteDisplay"], 1)
 
-    def test_timeframe_switch_candle_paints_unconditionally_anyway(self):
-        # Not because of any anchor reset (there is none to reset
-        # anymore) — simply because the candle branch never checks one.
+    def test_timeframe_switch_resets_candle_anchor_so_next_bar_paints_then_gates_again(self):
+        # CHART-LIVE-VISUAL-FILTER-01 — _cancelPendingCandleRender() now
+        # resets the candle anchor (the OLD timeframe's close must never
+        # gate the NEW timeframe's first bar): the immediate next candle
+        # after a TF switch paints unconditionally (anchor==null), same
+        # observable outcome as before this block — but a SECOND trivial
+        # move right after that must now be suppressed, proving the gate
+        # is genuinely active again (not "candle never checks one").
         out = self._run_scenario("""
           const p = new FakePanel('EUR/USD');
           p.tickCandle(1.16000);
           await new Promise(r => setTimeout(r, 150));
           p._cancelPendingCandleRender();
-          p.tickCandle(1.16000001); // trivial move
+          p.tickCandle(1.16000001); // trivial move, but anchor was just reset — paints
           await new Promise(r => setTimeout(r, 150));
-          console.log(JSON.stringify({candleUpdate: p.counters.candleUpdate}));
+          const afterReset = p.counters.candleUpdate;
+          p.tickCandle(1.16000002); // trivial move again, anchor now set — suppressed
+          await new Promise(r => setTimeout(r, 150));
+          console.log(JSON.stringify({afterReset, afterSecondTrivialMove: p.counters.candleUpdate}));
         """)
-        self.assertEqual(out["candleUpdate"], 2)
+        self.assertEqual(out["afterReset"], 2)
+        self.assertEqual(out["afterSecondTrivialMove"], 2)
 
     def test_throttle_still_one_timer_per_burst(self):
         out = self._run_scenario("""
