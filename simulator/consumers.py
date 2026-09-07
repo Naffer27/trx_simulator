@@ -2745,23 +2745,53 @@ class TradingConsumer(AsyncWebsocketConsumer):
         sl  = data.get("sl", None)
         tp  = data.get("tp", None)
 
-        found = False
+        found_pos = None
         if pid is not None:
             for p in self._positions:
                 if str(p.get("id")) == str(pid) and p.get("symbol")==sym:
-                    if sl is not None: p["sl"] = float(sl)
-                    if tp is not None: p["tp"] = float(tp)
-                    found = True
-                    await self._db_mirror_update_sl_tp(pid, sym, p.get("sl"), p.get("tp"))
+                    found_pos = p
                     break
 
-        if not found:
+        if found_pos is None:
             log.warning("[order_update] no position matched pid=%r sym=%r — SL/TP update ignored", pid, sym)
-
-        if found:
-            await self._refresh_and_send_positions()
-        else:
             await self.send_json({"type":"warn","message":"order_update_not_found"})
+            return
+
+        # FIX-SLTP-UPDATE-VALIDATION-01 — GOLDEN-AUTO-CLOSE-UNEXPECTED-01
+        # found this was the one SL/TP write path with no side-aware
+        # validation: _order_new()/_order_pending_new()/
+        # _trigger_pending_order_core() all reject a wrong-side SL/TP at
+        # creation time via _validate_sl_tp(), but an already-open
+        # position could still receive one here (chart-drag lines, sheet
+        # editor) — trivially satisfying _check_tp_sl()'s (correct,
+        # untouched) side-aware trigger condition from the very next
+        # tick, with no real price movement. Reuses _validate_sl_tp()
+        # verbatim (same function every creation path already trusts),
+        # with _feed_close_price() as the reference price — the same
+        # side-aware price authority _check_tp_sl()/_unrealized_pnl_total()
+        # already use for every SL/TP/close decision on an open position,
+        # never a second, independently-invented reference. Only the
+        # field(s) actually present in this update are validated; a
+        # request touching both SL and TP is validated as one atomic
+        # unit — either both apply or neither does.
+        if sl is not None or tp is not None:
+            ref_price = self._feed_close_price(sym, found_pos["side"])
+            if ref_price is None:
+                await self.send_json({
+                    "type": "error", "code": "price_unavailable",
+                    "message": "no_se_pudo_validar_sl_tp_precio_no_disponible",
+                })
+                return
+            _ok, _code, _msg = _validate_sl_tp(found_pos["side"], sl, tp, ref_price)
+            if not _ok:
+                await self.send_json({"type": "error", "code": _code, "message": _msg})
+                return
+
+        if sl is not None: found_pos["sl"] = float(sl)
+        if tp is not None: found_pos["tp"] = float(tp)
+        await self._db_mirror_update_sl_tp(pid, sym, found_pos.get("sl"), found_pos.get("tp"))
+
+        await self._refresh_and_send_positions()
 
     async def _order_close(self, data: dict):
         pid      = data.get("id")          # may arrive as str or int

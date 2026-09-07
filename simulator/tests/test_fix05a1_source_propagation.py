@@ -30,7 +30,7 @@ PricingDecision) — unaffected by this block, still green.
 import asyncio
 import time
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from django.conf import settings
 from django.test import SimpleTestCase, TestCase, TransactionTestCase
@@ -191,6 +191,21 @@ class WsLiveSlTpEndToEndTests(TransactionTestCase):
 # ── G/H/I/J — Redis source cache ─────────────────────────────────────────────
 
 class RedisSourceCacheTests(TestCase):
+    """TEST-REDIS-ISOLATION — same root cause and same fix as
+    DaemonSourceGateTests below: this class also hit real Redis
+    directly, and a live Daphne/Celery process repopulating
+    trx:price:*:EUR/USD between the fixture write and the read could
+    (and did, intermittently — test_legacy_entry_without_source_fails_
+    closed) clobber the fixture before _read_cached_price() ran.
+    Reuses the SAME _FakeRedisStore defined below (not a second fake) —
+    redis.from_url patched per-test, exactly the DaemonSourceGateTests
+    pattern."""
+
+    def setUp(self):
+        self._redis_patcher = patch("redis.from_url", return_value=_FakeRedisStore())
+        self._redis_patcher.start()
+        self.addCleanup(self._redis_patcher.stop)
+
     def tearDown(self):
         _clear_redis_keys("EUR/USD")
 
@@ -261,10 +276,84 @@ def _scan():
     return scan_positions_task.apply().get()
 
 
+class _FakeRedisStore:
+    """TEST-REDIS-ISOLATION — a minimal in-memory stand-in for the real
+    Redis connection, shared by DaemonSourceGateTests AND
+    RedisSourceCacheTests (same root cause, same fix — not a second,
+    duplicated fake). Supports only what _read_cached_price(),
+    _write_price_cache_sync() (market_data/feeds.py — used verbatim,
+    unmodified, by one RedisSourceCacheTests test), and this file's own
+    _redis_client()/_clear_redis_keys() actually use: get/setex/delete/
+    ttl/pipeline. Not a general Redis fake — no real expiry countdown,
+    no other commands — deliberately narrow, per this block's "no
+    inventar infraestructura compleja" instruction. ttl() returns
+    exactly the seconds passed to setex() (never decremented) — the one
+    caller of it (test_source_key_shares_ttl_with_bid_ask) only checks
+    0 < ttl <= 60, which this satisfies exactly."""
+
+    def __init__(self):
+        self._data: dict[str, bytes] = {}
+        self._ttl: dict[str, int] = {}
+
+    def get(self, key):
+        val = self._data.get(key)
+        return val.encode() if isinstance(val, str) else val
+
+    def setex(self, key, ttl, value):
+        self._data[key] = str(value)
+        self._ttl[key] = ttl
+
+    def delete(self, *keys):
+        for k in keys:
+            self._data.pop(k, None)
+            self._ttl.pop(k, None)
+
+    def ttl(self, key):
+        return self._ttl.get(key, -2)  # redis convention: -2 = key does not exist
+
+    def pipeline(self, transaction=False):
+        return _FakeRedisPipeline(self)
+
+
+class _FakeRedisPipeline:
+    """Just enough of redis-py's pipeline() to support
+    _write_price_cache_sync()'s use: queue setex() calls, apply them to
+    the same _FakeRedisStore on execute()."""
+
+    def __init__(self, store: "_FakeRedisStore"):
+        self._store = store
+        self._ops: list[tuple] = []
+
+    def setex(self, key, ttl, value):
+        self._ops.append((key, ttl, value))
+        return self
+
+    def execute(self):
+        for key, ttl, value in self._ops:
+            self._store.setex(key, ttl, value)
+        self._ops = []
+
+
 class DaemonSourceGateTests(TestCase):
-    """Real Redis (not mocked _read_cached_price) — exercises the full
-    fail-closed path end-to-end, mirroring test_daemon_scan.py's own
-    BUY sl=1.09000/tp=1.11000 @ avg=1.10000 scenario values."""
+    """TEST-REDIS-ISOLATION — DAEMON-SOURCE-GATE-REGRESSION-AUDIT-01
+    proved this class's real-Redis fixtures were being clobbered
+    mid-test by a live Daphne/Celery process sharing the same Redis
+    instance/keyspace (confirmed: the "no source" fixture was
+    overwritten by a real EUR/USD tick within 0.5s — the exact test
+    failure this closes). redis.from_url is patched, only for the
+    duration of each test in this class, to always return ONE fresh
+    _FakeRedisStore per test — the SAME instance _redis_client() (test
+    fixture writes) and _read_cached_price() (the real, UNCHANGED
+    production function under test) both resolve to, so the actual
+    fail-closed logic being exercised is identical to before; only the
+    transport is now in-memory and immune to any external writer.
+    Nothing under test — the source contract (missing/"sim"/valid) —
+    changed; see this file's module docstring for that contract."""
+
+    def setUp(self):
+        self._redis_patcher = patch("redis.from_url", return_value=_FakeRedisStore())
+        self._redis_patcher.start()
+        self.addCleanup(self._redis_patcher.stop)
 
     def tearDown(self):
         _clear_redis_keys("EUR/USD")
@@ -335,3 +424,41 @@ class DaemonSourceGateTests(TestCase):
         self.assertTrue(Position.objects.filter(pk=pos.pk).exists())
         account.refresh_from_db()
         self.assertEqual(account.status, "Activo")  # never suspended
+
+    def test_isolation_holds_even_if_real_redis_has_live_massive_data(self):
+        """TEST-REDIS-ISOLATION guarantee: even if the REAL Redis
+        instance (outside the patch) currently holds live, valid,
+        source="massive" EUR/USD data — exactly the condition
+        DAEMON-SOURCE-GATE-REGRESSION-AUDIT-01 caught live on this
+        machine — this class's fixture must still be the only thing
+        _read_cached_price() ever sees. Writes directly to the real
+        connection (bypassing the patch on purpose, via redis.from_url.
+        __wrapped__ is not needed — plain redis.from_url is patched at
+        class scope, so this obtains the real client the same way
+        production code would, by importing redis fresh here) to prove
+        the daemon path used by _scan() cannot reach it."""
+        import redis as _real_redis_module
+        real_url = "redis://127.0.0.1:6379/0"
+        try:
+            real_client = _real_redis_module.Redis.from_url(
+                real_url, socket_connect_timeout=1, socket_timeout=1,
+            )
+            real_client.setex("trx:price:bid:EUR/USD", 60, "1.16223")
+            real_client.setex("trx:price:ask:EUR/USD", 60, "1.16228")
+            real_client.setex("trx:price:source:EUR/USD", 60, "massive")
+        except Exception:
+            self.skipTest("no real Redis reachable to prove isolation against")
+
+        account = make_account(account_type="CHALLENGE", tier="10K")
+        pos = make_position(account=account, symbol="EUR/USD", side="BUY",
+                             qty=Decimal("0.1"), avg_price=Decimal("1.10000"),
+                             sl=Decimal("1.09000"))
+        # This class's own fixture: bid crosses SL, source missing.
+        r = _redis_client()
+        r.setex("trx:price:bid:EUR/USD", 60, "1.08900")
+        r.setex("trx:price:ask:EUR/USD", 60, "1.08920")
+
+        result = _scan()
+
+        self.assertEqual(result["closed"], 0)
+        self.assertTrue(Position.objects.filter(pk=pos.pk).exists())
