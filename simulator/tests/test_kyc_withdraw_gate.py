@@ -3,15 +3,22 @@
 KYC gate on withdrawals — ensures only KYC-approved users can initiate
 withdrawals and that the banner is shown when KYC is not approved.
 
+WITHDRAWAL-SECURITY-EXTENSION-01 note: the withdrawal flow is now two
+steps. The KYC gate itself is UNCHANGED — still checked at step 1, before
+anything else — so "blocked" means "no WithdrawalEmailOTPChallenge
+created" and "approved" means step 1 creates a challenge (WithdrawalRequest
++ debit only happen after the email-OTP step).
+
 Covers:
-  1.  No KYC profile → blocked, no WR, wallet unchanged.
+  1.  No KYC profile → blocked, no challenge, wallet unchanged.
   2.  KYC status not_started → blocked.
   3.  KYC status pending → blocked.
   4.  KYC status rejected → blocked.
   5.  Any non-approved status → wallet balance unchanged.
-  6.  Any non-approved status → no WithdrawalRequest created.
-  7.  KYC approved → passes gate, WR created as PENDING.
-  8.  KYC approved → wallet debited.
+  6.  Any non-approved status → no WithdrawalEmailOTPChallenge created.
+  7.  KYC approved → passes gate, challenge created; completing the email
+      OTP step then creates the WithdrawalRequest as PENDING.
+  8.  KYC approved (full flow) → wallet debited.
   9.  Banner shown on GET when KYC not approved (no profile).
   10. Banner shown on GET when KYC pending.
   11. Banner contains /kyc/ link.
@@ -25,8 +32,9 @@ from unittest.mock import patch
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 
-from simulator.models import KYCProfile, WithdrawalRequest, TOTPDevice
-from simulator.tests.factories import make_user, make_wallet
+from simulator.models import KYCProfile, WithdrawalEmailOTPChallenge, WithdrawalRequest, TOTPDevice
+from simulator.tests.factories import make_user, make_wallet, make_verified_withdrawal_wallet
+from simulator.tests.withdrawal_flow_helpers import PATCH_EMAIL as _PATCH_OTP_EMAIL, full_withdraw_flow
 
 User = get_user_model()
 
@@ -45,11 +53,11 @@ def _make_device(user) -> TOTPDevice:
     )
 
 
-def _wr_payload(amount="50.00"):
+def _wr_payload(amount="1500.00", wallet_pk=""):
     return {
         "amount_usd":      amount,
-        "crypto_currency": "btc",
-        "wallet_address":  "bc1qtest000000000000000000000000000000000",
+        "crypto_currency": "usdttrc20",
+        "wallet_address":  str(wallet_pk),
         "otp_code":        "000000",
     }
 
@@ -72,8 +80,9 @@ class KYCGateBlockedTests(TestCase):
         _PATCH_TOTP.start()
         _PATCH_EMAIL.start()
         self.user   = make_user()
-        self.wallet = make_wallet(self.user, initial_balance=Decimal("200"))
+        self.wallet = make_wallet(self.user, initial_balance=Decimal("5000"))
         _make_device(self.user)
+        self.vw = make_verified_withdrawal_wallet(self.user)
         self.client.force_login(self.user)
 
     def tearDown(self):
@@ -82,39 +91,39 @@ class KYCGateBlockedTests(TestCase):
         _PATCH_EMAIL.stop()
 
     def _post(self):
-        return self.client.post(WITHDRAW_URL, _wr_payload())
+        return self.client.post(WITHDRAW_URL, _wr_payload(wallet_pk=self.vw.pk))
 
     def test_no_kyc_profile_blocks_withdrawal(self):
         r = self._post()
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(WithdrawalRequest.objects.filter(user=self.user).count(), 0)
+        self.assertEqual(WithdrawalEmailOTPChallenge.objects.filter(user=self.user).count(), 0)
 
     def test_kyc_not_started_blocks_withdrawal(self):
         _set_kyc(self.user, KYCProfile.STATUS_NOT_STARTED)
         r = self._post()
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(WithdrawalRequest.objects.filter(user=self.user).count(), 0)
+        self.assertEqual(WithdrawalEmailOTPChallenge.objects.filter(user=self.user).count(), 0)
 
     def test_kyc_pending_blocks_withdrawal(self):
         _set_kyc(self.user, KYCProfile.STATUS_PENDING)
         self.assertEqual(self._post().status_code, 200)
-        self.assertEqual(WithdrawalRequest.objects.filter(user=self.user).count(), 0)
+        self.assertEqual(WithdrawalEmailOTPChallenge.objects.filter(user=self.user).count(), 0)
 
     def test_kyc_rejected_blocks_withdrawal(self):
         _set_kyc(self.user, KYCProfile.STATUS_REJECTED)
         self.assertEqual(self._post().status_code, 200)
-        self.assertEqual(WithdrawalRequest.objects.filter(user=self.user).count(), 0)
+        self.assertEqual(WithdrawalEmailOTPChallenge.objects.filter(user=self.user).count(), 0)
 
     def test_kyc_blocked_wallet_balance_unchanged(self):
         _set_kyc(self.user, KYCProfile.STATUS_PENDING)
         self._post()
         self.wallet.refresh_from_db()
-        self.assertEqual(self.wallet.available_balance, Decimal("200"))
+        self.assertEqual(self.wallet.available_balance, Decimal("5000"))
 
     def test_no_kyc_wallet_balance_unchanged(self):
         self._post()
         self.wallet.refresh_from_db()
-        self.assertEqual(self.wallet.available_balance, Decimal("200"))
+        self.assertEqual(self.wallet.available_balance, Decimal("5000"))
 
     def test_kyc_rejected_no_wr_created(self):
         _set_kyc(self.user, KYCProfile.STATUS_REJECTED)
@@ -139,9 +148,10 @@ class KYCGateApprovedTests(TestCase):
         _PATCH_TOTP.start()
         _PATCH_EMAIL.start()
         self.user   = make_user()
-        self.wallet = make_wallet(self.user, initial_balance=Decimal("200"))
+        self.wallet = make_wallet(self.user, initial_balance=Decimal("5000"))
         _make_device(self.user)
         _set_kyc(self.user, KYCProfile.STATUS_APPROVED)
+        self.vw = make_verified_withdrawal_wallet(self.user)
         self.client.force_login(self.user)
 
     def tearDown(self):
@@ -149,16 +159,21 @@ class KYCGateApprovedTests(TestCase):
         _PATCH_TOTP.stop()
         _PATCH_EMAIL.stop()
 
-    def test_approved_kyc_creates_pending_wr(self):
-        self.client.post(WITHDRAW_URL, _wr_payload())
+    def test_approved_kyc_creates_challenge(self):
+        self.client.post(WITHDRAW_URL, _wr_payload(wallet_pk=self.vw.pk))
+        self.assertEqual(WithdrawalEmailOTPChallenge.objects.filter(user=self.user).count(), 1)
+        self.assertEqual(WithdrawalRequest.objects.filter(user=self.user).count(), 0)
+
+    def test_approved_kyc_full_flow_creates_pending_wr_and_debits(self):
+        with _PATCH_OTP_EMAIL:
+            r1, r2, challenge = full_withdraw_flow(
+                self.client, self.user, verified_wallet=self.vw, amount_usd=Decimal("1500.00"),
+            )
         wr = WithdrawalRequest.objects.filter(user=self.user).first()
         self.assertIsNotNone(wr)
         self.assertEqual(wr.status, WithdrawalRequest.STATUS_PENDING)
-
-    def test_approved_kyc_debits_wallet(self):
-        self.client.post(WITHDRAW_URL, _wr_payload())
         self.wallet.refresh_from_db()
-        self.assertEqual(self.wallet.available_balance, Decimal("150"))
+        self.assertEqual(self.wallet.available_balance, Decimal("3500.00"))
 
 
 class KYCBannerTests(TestCase):

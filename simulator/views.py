@@ -23,6 +23,7 @@ from .models import (
     EmailVerification, TermsAcceptance, TERMS_VERSION, RISK_DISCLOSURE_VERSION,
     KYCProfile, SupportTicket,
     FundedConfig, FundedPayoutRequest,
+    WithdrawalEmailOTPChallenge, VerifiedWithdrawalWallet,
 )
 from .challenge_engine import (
     evaluate_phase as _ce_evaluate_phase,
@@ -31,7 +32,11 @@ from .challenge_engine import (
     FAILED as _CE_FAILED,
     activate_challenge_enrollment as _ce_activate,
 )
-from .forms import LoginForm, RegisterForm, DepositForm, WithdrawForm, CreateAccountForm, FundAccountForm, WithdrawAccountForm, KYCProfileForm, UserProfileForm
+from .forms import (
+    LoginForm, RegisterForm, DepositForm, WithdrawForm, CreateAccountForm, FundAccountForm,
+    WithdrawAccountForm, KYCProfileForm, UserProfileForm,
+    WithdrawOTPVerifyForm, RegisterWithdrawalWalletForm,
+)
 from .wallet_ledger import credit_wallet, debit_wallet, transfer_to_account, transfer_to_wallet, get_or_create_wallet, InsufficientFunds
 from .currencies import to_np_code, CURRENCY_MAP
 from .observability import security_log, get_client_ip
@@ -39,6 +44,16 @@ from .ratelimit import rate_limit
 from .services.history import closed_trades_for_account
 from .funded_payouts import handle_internal_payout_webhook
 from .two_factor import staff_require_2fa, totp_session_verified
+from .address_validators import ASSET_NETWORK_BY_CURRENCY, CURRENCY_BY_ASSET_NETWORK
+from .verified_wallets import get_active_wallet, create_pending_wallet, AddressChangeAlreadyPending
+from .withdrawal_otp import (
+    create_challenge as create_otp_challenge,
+    verify_challenge as verify_otp_challenge,
+    mark_challenge_used, resend_challenge, can_resend,
+    ActiveChallengeExists, ChallengeNotFound, ChallengeNotVerifiable,
+    ChallengeExpired, ChallengeLocked, InvalidCode, ResendCooldownActive,
+)
+from .withdrawal_emails import send_withdrawal_otp_email
 from .audit import (
     log_audit,
     EV_AUTH_LOGIN_SUCCESS, EV_AUTH_LOGIN_FAILED,
@@ -46,6 +61,9 @@ from .audit import (
     EV_WITHDRAW_REQUEST, EV_WITHDRAW_CALLBACK, EV_WITHDRAW_APPROVED,
     EV_WITHDRAW_REJECTED, EV_WITHDRAW_COMPLETE,
     EV_WITHDRAW_FAILED, EV_WITHDRAW_REFUNDED,
+    EV_WITHDRAW_OTP_CHALLENGE_CREATED, EV_WITHDRAW_OTP_VERIFIED,
+    EV_WITHDRAW_OTP_FAILED, EV_WITHDRAW_OTP_LOCKED,
+    EV_ADDRESS_CHANGE_REQUESTED, EV_ADDRESS_CHANGE_ACTIVATED,
     EV_ACCOUNT_FUNDED, EV_ACCOUNT_WITHDRAWN,
     EV_ADMIN_VIEW,
 )
@@ -2293,15 +2311,16 @@ def funded_payout_request_view(request):
 @rate_limit("withdraw", limit=5, window=60, by="user")
 def withdraw_view(request):
     """
-    GET  /withdraw/  — show withdrawal form with wallet balance.
-    POST /withdraw/  — validate, debit wallet atomically, create WithdrawalRequest.
-    Funds are reserved immediately; admin approval triggers the NP payout.
+    GET  /withdraw/  — show withdrawal form with wallet balance + verified wallets.
+    POST /withdraw/  — validate + create a WithdrawalEmailOTPChallenge
+                        (purpose=WITHDRAWAL) with the congealed payload,
+                        email the code, redirect to /withdraw/otp/.
 
-    Double-withdrawal prevention:
-      Inside the atomic block, the wallet row is locked with select_for_update()
-      BEFORE checking pending withdrawals. This serializes all concurrent
-      withdrawal attempts for the same user — concurrent requests block on the
-      wallet lock, so the pending check is race-condition safe.
+    WITHDRAWAL-SECURITY-EXTENSION-01 — step 1 of 2. No WithdrawalRequest is
+    created here and no wallet debit happens here; both happen only after a
+    successful OTP verification (withdraw_otp_verify_view), built
+    exclusively from the challenge's frozen payload (see Design Lock
+    rule 3 / sections G-H) — never from data resubmitted at that second step.
     """
     wallet, _ = get_or_create_wallet(request.user)
     error = None
@@ -2316,9 +2335,9 @@ def withdraw_view(request):
     daily_used     = _get_daily_withdrawal_used(request.user)
 
     if request.method == "POST":
-        form = WithdrawForm(request.POST)
+        form = WithdrawForm(request.POST, user=request.user)
         if form.is_valid():
-            # ── Compliance gates (email → terms → 2FA) ────────────────────────
+            # ── Compliance gates (email → terms → 2FA → KYC) — SAME order as before ──
             if not _is_email_verified(request.user):
                 error = _EMAIL_GATE_MSG
             elif not _has_accepted_terms(request.user):
@@ -2344,110 +2363,75 @@ def withdraw_view(request):
             if not error and not kyc_approved:
                 error = _KYC_GATE_MSG
 
+            withdraw_all = False
             if error:
                 pass  # fall through to re-render form with error
             else:
-                amount_usd      = form.cleaned_data["amount_usd"]
+                withdraw_all    = form.cleaned_data["withdraw_all"]
+                amount_usd      = form.cleaned_data.get("amount_usd")
                 crypto_currency = form.cleaned_data["crypto_currency"]
-                wallet_address  = form.cleaned_data["wallet_address"]
+                verified_wallet = form.cleaned_data.get("verified_wallet")
 
-            # ── Minimum withdrawal amount ──────────────────────────────────────
-            if not error:
-                from django.conf import settings as _settings
-                _min_wd = Decimal(str(_settings.MIN_WITHDRAWAL_USD))
-                if amount_usd < _min_wd:
-                    error = f"El monto mínimo de retiro es ${_min_wd:,.2f} USD."
+                if verified_wallet is None:
+                    error = "Selecciona una wallet verificada de destino."
 
-            # ── Original financial flow — only reached when 2FA passed ─────────
-            if not error and wallet.available_balance < amount_usd:
+            # ── Minimum withdrawal — manual partial only, Withdraw All bypasses it ──
+            if not error and not withdraw_all and amount_usd < min_withdrawal:
+                error = f"El monto mínimo de retiro es ${min_withdrawal:,.2f} USD."
+
+            if not error and not withdraw_all and wallet.available_balance < amount_usd:
                 error = f"Balance insuficiente. Disponible: ${wallet.available_balance:,.2f}"
 
+            if not error and withdraw_all and wallet.available_balance <= 0:
+                error = "No tienes balance disponible para retirar."
+
+            # ── Early advisory guard — the authoritative check happens again,
+            # under lock, at OTP-verify time (withdraw_otp_verify_view) ──────────
+            if not error and WithdrawalRequest.objects.filter(
+                user=request.user, status=WithdrawalRequest.STATUS_PENDING,
+            ).exists():
+                error = (
+                    "Ya tienes un retiro pendiente. "
+                    "Espera a que sea procesado antes de solicitar otro."
+                )
+
             if not error:
+                asset, network = ASSET_NETWORK_BY_CURRENCY[crypto_currency]
                 try:
-                    with transaction.atomic():
-                        # Lock wallet row — serializes ALL concurrent withdrawal
-                        # attempts for this user on both the pending check and debit.
-                        Wallet.objects.select_for_update().get(pk=wallet.id)
-
-                        # Guard: one PENDING withdrawal per user at a time.
-                        if WithdrawalRequest.objects.filter(
-                            user=request.user,
-                            status=WithdrawalRequest.STATUS_PENDING,
-                        ).exists():
-                            raise _PendingWithdrawalExists()
-
-                        debit_tx = debit_wallet(
-                            wallet.id,
-                            amount_usd,
-                            WalletTransaction.TX_WITHDRAW,
-                            note=f"Retiro #{crypto_currency.upper()} → {wallet_address[:16]}… (pendiente)",
-                            initiated_by=request.user,
-                        )
-                        wr = WithdrawalRequest.objects.create(
-                            user=request.user,
-                            amount_usd=amount_usd,
-                            crypto_currency=crypto_currency,
-                            wallet_address=wallet_address,
-                            status=WithdrawalRequest.STATUS_PENDING,
-                            debit_tx=debit_tx,
-                        )
-
-                    logger.info(
-                        "[withdraw] created wr_id=%d user=%s amount_usd=%s currency=%s",
-                        wr.id, request.user.username, amount_usd, crypto_currency,
+                    challenge, code = create_otp_challenge(
+                        request.user,
+                        purpose=WithdrawalEmailOTPChallenge.PURPOSE_WITHDRAWAL,
+                        asset=asset, network=network,
+                        wallet_address=verified_wallet.address,
+                        amount_usd=(amount_usd if not withdraw_all else wallet.available_balance),
+                        withdraw_all=withdraw_all,
                     )
+                except ActiveChallengeExists:
+                    error = (
+                        "Ya tienes una verificación de retiro en curso. "
+                        "Complétala o espera a que expire antes de solicitar otra."
+                    )
+                else:
+                    try:
+                        send_withdrawal_otp_email(challenge, code)
+                    except Exception as mail_exc:
+                        logger.warning(
+                            "[withdraw] OTP email failed challenge=%d: %s", challenge.id, mail_exc,
+                        )
                     log_audit(
-                        request, EV_WITHDRAW_REQUEST,
-                        f"Withdrawal #{wr.id} requested — ${amount_usd} {crypto_currency.upper()}",
+                        request, EV_WITHDRAW_OTP_CHALLENGE_CREATED,
+                        f"Withdrawal OTP challenge #{challenge.id} created for user {request.user.username}",
                         detail={
-                            "withdrawal_id":  wr.id,
-                            "amount_usd":     str(amount_usd),
-                            "currency":       crypto_currency,
-                            "wallet_address": wallet_address,
-                            "debit_tx_id":    debit_tx.id,
+                            "challenge_id": challenge.id,
+                            "asset": asset, "network": network,
+                            "withdraw_all": withdraw_all,
+                            "amount_usd": str(challenge.amount_usd),
                         },
                     )
-
-                    _masked_addr = _mask_wallet(wallet_address)
-                    try:
-                        from .withdrawal_emails import send_withdrawal_status_email, EVENT_REQUESTED
-                        send_withdrawal_status_email(wr, EVENT_REQUESTED)
-                    except Exception as mail_exc:
-                        logger.warning("[withdraw] user confirmation email failed wr=%d: %s", wr.id, mail_exc)
-
-                    try:
-                        from .tasks import send_email_async as _send_email
-                        _admin_email = settings.ADMINS[0][1] if settings.ADMINS else None
-                        if _admin_email:
-                            _send_email.delay(
-                                subject=f"[Admin] Nueva solicitud de retiro #{wr.id} — ${amount_usd}",
-                                message=(
-                                    f"Usuario:    {request.user.username} ({request.user.email})\n"
-                                    f"Monto:      ${amount_usd} USD\n"
-                                    f"Moneda:     {crypto_currency.upper()}\n"
-                                    f"Dirección:  {_masked_addr}\n"
-                                    f"WR ID:      #{wr.id}\n\n"
-                                    f"Revisar en el panel de administración."
-                                ),
-                                recipient_list=[_admin_email],
-                            )
-                    except Exception as mail_exc:
-                        logger.warning("[withdraw] admin notification email failed wr=%d: %s", wr.id, mail_exc)
-
-                    return redirect("simulator:withdraw_history")
-
-                except _PendingWithdrawalExists:
-                    error = (
-                        "Ya tienes un retiro pendiente. "
-                        "Espera a que sea procesado antes de solicitar otro."
-                    )
-                except InsufficientFunds:
-                    error = "Balance insuficiente."
-                except Exception as exc:
-                    logger.error("[withdraw] failed user=%s: %s", request.user.username, exc, exc_info=True)
-                    error = "Error al procesar la solicitud. Intenta de nuevo."
+                    request.session["withdraw_otp_challenge_id"] = challenge.id
+                    return redirect("simulator:withdraw_otp_verify")
     else:
-        form = WithdrawForm()
+        form = WithdrawForm(user=request.user)
 
     wallet.refresh_from_db()
     daily_used = _get_daily_withdrawal_used(request.user)
@@ -2455,16 +2439,240 @@ def withdraw_view(request):
     _totp_enabled = _TD.objects.filter(user=request.user, confirmed=True).exists()
     from .readiness import get_user_readiness as _get_readiness
     _readiness = _get_readiness(request.user)
+
+    has_verified_wallet = any(
+        get_active_wallet(request.user, asset=a, network=n) is not None
+        for a, n in ASSET_NETWORK_BY_CURRENCY.values()
+    )
+
     return render(request, "simulator/withdraw.html", {
+        "form":                form,
+        "wallet":              wallet,
+        "error":               error,
+        "kyc_approved":        kyc_approved,
+        "daily_used":          daily_used,
+        "min_withdrawal":      min_withdrawal,
+        "totp_enabled":        _totp_enabled,
+        "readiness":           _readiness,
+        "has_verified_wallet": has_verified_wallet,
+        "active_section":      "withdraw",
+    })
+
+
+@login_required
+@rate_limit("withdraw_otp_verify", limit=10, window=60, by="user")
+def withdraw_otp_verify_view(request):
+    """
+    GET  /withdraw/otp/  — show the pending challenge summary + code form.
+    POST /withdraw/otp/  — verify the code; on success, create the
+                            WithdrawalRequest from the challenge's frozen
+                            payload + debit_wallet(), inside the SAME atomic
+                            block that also marks the challenge USED
+                            (Design Lock sections G/H). Carries ONLY
+                            {challenge_id, code} — amount/asset/network/
+                            address can never be changed here.
+
+    If the code was already verified in a previous request but finalization
+    (debit+create) failed for some reason (e.g. the pending-withdrawal guard
+    raced), this view retries finalization directly on GET/resend — it does
+    NOT ask for the code again, since the challenge is already VERIFIED.
+    """
+    challenge_id = request.session.get("withdraw_otp_challenge_id")
+    challenge = None
+    if challenge_id:
+        challenge = WithdrawalEmailOTPChallenge.objects.filter(
+            pk=challenge_id, user=request.user,
+            purpose=WithdrawalEmailOTPChallenge.PURPOSE_WITHDRAWAL,
+        ).first()
+
+    if challenge is None or challenge.status not in (
+        WithdrawalEmailOTPChallenge.STATUS_PENDING, WithdrawalEmailOTPChallenge.STATUS_VERIFIED,
+    ):
+        request.session.pop("withdraw_otp_challenge_id", None)
+        return redirect("simulator:withdraw")
+
+    def _finalize(verified_challenge):
+        """Create WithdrawalRequest + debit_wallet() from the frozen payload."""
+        wallet, _ = get_or_create_wallet(request.user)
+        try:
+            with transaction.atomic():
+                wallet_locked = Wallet.objects.select_for_update().get(pk=wallet.id)
+
+                if WithdrawalRequest.objects.filter(
+                    user=request.user, status=WithdrawalRequest.STATUS_PENDING,
+                ).exists():
+                    raise _PendingWithdrawalExists()
+
+                if verified_challenge.withdraw_all:
+                    final_amount = wallet_locked.available_balance
+                else:
+                    final_amount = verified_challenge.amount_usd
+
+                if final_amount is None or final_amount <= 0:
+                    raise InsufficientFunds(f"Wallet #{wallet_locked.id}: nothing available to withdraw.")
+
+                crypto_currency = CURRENCY_BY_ASSET_NETWORK[(verified_challenge.asset, verified_challenge.network)]
+                required_approvals = 2 if final_amount > Decimal("1000") else 1
+
+                debit_tx = debit_wallet(
+                    wallet_locked.id,
+                    final_amount,
+                    WalletTransaction.TX_WITHDRAW,
+                    note=(
+                        f"Retiro #{crypto_currency.upper()} → "
+                        f"{verified_challenge.wallet_address[:16]}… (pendiente)"
+                    ),
+                    initiated_by=request.user,
+                )
+                wr = WithdrawalRequest.objects.create(
+                    user=request.user,
+                    amount_usd=final_amount,
+                    crypto_currency=crypto_currency,
+                    wallet_address=verified_challenge.wallet_address,
+                    status=WithdrawalRequest.STATUS_PENDING,
+                    debit_tx=debit_tx,
+                    otp_challenge=verified_challenge,
+                    required_approvals=required_approvals,
+                )
+                mark_challenge_used(verified_challenge)
+        except _PendingWithdrawalExists:
+            return None, (
+                "Ya tienes un retiro pendiente. "
+                "Espera a que sea procesado antes de solicitar otro."
+            )
+        except InsufficientFunds:
+            return None, "Balance insuficiente."
+        except Exception as exc:
+            logger.error(
+                "[withdraw_otp] failed to create WithdrawalRequest user=%s challenge=%d: %s",
+                request.user.username, verified_challenge.id, exc, exc_info=True,
+            )
+            return None, "Error al procesar la solicitud. Intenta de nuevo."
+
+        logger.info(
+            "[withdraw_otp] created wr_id=%d user=%s amount_usd=%s currency=%s required_approvals=%d",
+            wr.id, request.user.username, final_amount, crypto_currency, required_approvals,
+        )
+        log_audit(
+            request, EV_WITHDRAW_REQUEST,
+            f"Withdrawal #{wr.id} requested — ${final_amount} {crypto_currency.upper()}",
+            detail={
+                "withdrawal_id":  wr.id,
+                "amount_usd":     str(final_amount),
+                "currency":       crypto_currency,
+                "wallet_address": verified_challenge.wallet_address,
+                "debit_tx_id":    debit_tx.id,
+                "challenge_id":   verified_challenge.id,
+                "required_approvals": required_approvals,
+            },
+        )
+        log_audit(
+            request, EV_WITHDRAW_OTP_VERIFIED,
+            f"Withdrawal OTP challenge #{verified_challenge.id} verified",
+            detail={"challenge_id": verified_challenge.id, "withdrawal_id": wr.id},
+        )
+
+        _masked_addr = _mask_wallet(verified_challenge.wallet_address)
+        try:
+            from .withdrawal_emails import send_withdrawal_status_email, EVENT_REQUESTED
+            send_withdrawal_status_email(wr, EVENT_REQUESTED)
+        except Exception as mail_exc:
+            logger.warning("[withdraw_otp] user confirmation email failed wr=%d: %s", wr.id, mail_exc)
+
+        try:
+            from .tasks import send_email_async as _send_email
+            _admin_email = settings.ADMINS[0][1] if settings.ADMINS else None
+            if _admin_email:
+                _send_email.delay(
+                    subject=f"[Admin] Nueva solicitud de retiro #{wr.id} — ${final_amount}",
+                    message=(
+                        f"Usuario:    {request.user.username} ({request.user.email})\n"
+                        f"Monto:      ${final_amount} USD\n"
+                        f"Moneda:     {crypto_currency.upper()}\n"
+                        f"Dirección:  {_masked_addr}\n"
+                        f"WR ID:      #{wr.id}\n"
+                        f"Aprobaciones requeridas: {required_approvals}\n\n"
+                        f"Revisar en el panel de administración."
+                    ),
+                    recipient_list=[_admin_email],
+                )
+        except Exception as mail_exc:
+            logger.warning("[withdraw_otp] admin notification email failed wr=%d: %s", wr.id, mail_exc)
+
+        return wr, None
+
+    error = None
+    resend_msg = None
+
+    if challenge.status == WithdrawalEmailOTPChallenge.STATUS_VERIFIED:
+        wr, err = _finalize(challenge)
+        if wr is not None:
+            request.session.pop("withdraw_otp_challenge_id", None)
+            return redirect("simulator:withdraw_history")
+        error = err
+
+    elif request.method == "POST":
+        if request.POST.get("action") == "resend":
+            try:
+                _, _code = resend_challenge(challenge)
+            except ResendCooldownActive as exc:
+                error = f"Espera {exc.retry_after_seconds}s antes de reenviar el código."
+            except ChallengeNotVerifiable:
+                error = "Este challenge ya no admite reenvío."
+            else:
+                try:
+                    send_withdrawal_otp_email(challenge, _code)
+                except Exception as mail_exc:
+                    logger.warning(
+                        "[withdraw_otp] resend email failed challenge=%d: %s", challenge.id, mail_exc,
+                    )
+                resend_msg = "Código reenviado — revisa tu email."
+        else:
+            form = WithdrawOTPVerifyForm(request.POST)
+            if form.is_valid() and form.cleaned_data["challenge_id"] == challenge.id:
+                code = form.cleaned_data["code"]
+                try:
+                    verified_challenge = verify_otp_challenge(challenge.id, code, user=request.user)
+                except ChallengeNotFound:
+                    request.session.pop("withdraw_otp_challenge_id", None)
+                    return redirect("simulator:withdraw")
+                except ChallengeExpired:
+                    error = "El código expiró. Vuelve a iniciar la solicitud de retiro."
+                except ChallengeLocked:
+                    log_audit(
+                        request, EV_WITHDRAW_OTP_LOCKED,
+                        f"Withdrawal OTP challenge #{challenge.id} locked (max attempts)",
+                        detail={"challenge_id": challenge.id},
+                    )
+                    error = "Demasiados intentos incorrectos. Vuelve a iniciar la solicitud de retiro."
+                except InvalidCode:
+                    log_audit(
+                        request, EV_WITHDRAW_OTP_FAILED,
+                        f"Wrong OTP code for challenge #{challenge.id}",
+                        detail={"challenge_id": challenge.id},
+                    )
+                    error = "Código incorrecto."
+                except ChallengeNotVerifiable:
+                    error = "Este challenge ya no es válido."
+                else:
+                    wr, err = _finalize(verified_challenge)
+                    if wr is not None:
+                        request.session.pop("withdraw_otp_challenge_id", None)
+                        return redirect("simulator:withdraw_history")
+                    error = err
+            else:
+                error = "Formulario inválido."
+
+    can_resend_now, resend_wait = can_resend(challenge)
+    form = WithdrawOTPVerifyForm(initial={"challenge_id": challenge.id})
+    return render(request, "simulator/withdraw_otp_verify.html", {
+        "challenge":      challenge,
         "form":           form,
-        "wallet":         wallet,
         "error":          error,
-        "kyc_approved":   kyc_approved,
-        "daily_used":      daily_used,
-        "min_withdrawal":  min_withdrawal,
-        "totp_enabled":    _totp_enabled,
-        "readiness":       _readiness,
-        "active_section":  "withdraw",
+        "resend_msg":     resend_msg,
+        "can_resend_now": can_resend_now,
+        "resend_wait":    resend_wait,
+        "active_section": "withdraw",
     })
 
 
@@ -2476,6 +2684,213 @@ def withdraw_history_view(request):
         "wallet":         wallet,
         "withdrawals":    withdrawals,
         "active_section": "withdraw_history",
+    })
+
+
+# ─────────────────────────────────────────────
+# WITHDRAWAL-SECURITY-EXTENSION-01 — VerifiedWithdrawalWallet registration
+# ─────────────────────────────────────────────
+
+@login_required
+def withdrawal_wallets_view(request):
+    """GET /withdraw/wallets/ — list the user's verified/pending/deactivated wallets."""
+    for asset, network in ASSET_NETWORK_BY_CURRENCY.values():
+        get_active_wallet(request.user, asset=asset, network=network)  # lazy activation sweep
+    wallets = VerifiedWithdrawalWallet.objects.filter(user=request.user).order_by("-created_at")
+    return render(request, "simulator/withdrawal_wallets.html", {
+        "wallets": wallets,
+        "active_section": "withdraw_wallets",
+    })
+
+
+@login_required
+@rate_limit("withdraw_wallet_register", limit=5, window=60, by="user")
+def withdrawal_wallet_register_view(request):
+    """
+    GET  /withdraw/wallets/register/  — form: asset + address + TOTP.
+    POST — validate TOTP + local address format, create a
+           WithdrawalEmailOTPChallenge(purpose=ADDRESS_CHANGE), email the code.
+    """
+    error = None
+    if request.method == "POST":
+        form = RegisterWithdrawalWalletForm(request.POST)
+        if form.is_valid():
+            if not _is_email_verified(request.user):
+                error = _EMAIL_GATE_MSG
+            elif not _has_accepted_terms(request.user):
+                error = _TERMS_GATE_MSG
+
+            if not error:
+                from .models import TOTPDevice
+                from .two_factor import verify_totp as _verify_totp
+                has_device = TOTPDevice.objects.filter(user=request.user, confirmed=True).exists()
+                if not has_device:
+                    error = "Debes activar 2FA antes de registrar una wallet."
+                elif not _verify_totp(request.user, form.cleaned_data["otp_code"]):
+                    security_log(
+                        "withdrawal_wallet.2fa_failed",
+                        username=request.user.username, user_id=request.user.pk,
+                    )
+                    error = "Código 2FA incorrecto."
+
+            if not error:
+                currency_key = form.cleaned_data["asset"]
+                address = form.cleaned_data["address"]
+                asset, network = ASSET_NETWORK_BY_CURRENCY[currency_key]
+                try:
+                    challenge, code = create_otp_challenge(
+                        request.user,
+                        purpose=WithdrawalEmailOTPChallenge.PURPOSE_ADDRESS_CHANGE,
+                        asset=asset, network=network, wallet_address=address,
+                    )
+                except ActiveChallengeExists:
+                    error = "Ya tienes una verificación en curso. Complétala o espera a que expire."
+                else:
+                    try:
+                        send_withdrawal_otp_email(challenge, code)
+                    except Exception as mail_exc:
+                        logger.warning(
+                            "[withdraw_wallet] OTP email failed challenge=%d: %s", challenge.id, mail_exc,
+                        )
+                    log_audit(
+                        request, EV_ADDRESS_CHANGE_REQUESTED,
+                        f"Address change requested for {asset}/{network}",
+                        detail={"challenge_id": challenge.id, "asset": asset, "network": network},
+                    )
+                    request.session["withdraw_wallet_challenge_id"] = challenge.id
+                    return redirect("simulator:withdraw_wallet_otp_verify")
+    else:
+        form = RegisterWithdrawalWalletForm()
+
+    return render(request, "simulator/withdrawal_wallet_register.html", {
+        "form": form, "error": error, "active_section": "withdraw_wallets",
+    })
+
+
+@login_required
+@rate_limit("withdraw_wallet_otp_verify", limit=10, window=60, by="user")
+def withdrawal_wallet_otp_verify_view(request):
+    """
+    GET  /withdraw/wallets/otp/  — show the pending address-change challenge + code form.
+    POST /withdraw/wallets/otp/  — verify the code; on success, create the
+                                    VerifiedWithdrawalWallet (PENDING_COOLDOWN)
+                                    from the challenge's frozen payload.
+    """
+    challenge_id = request.session.get("withdraw_wallet_challenge_id")
+    challenge = None
+    if challenge_id:
+        challenge = WithdrawalEmailOTPChallenge.objects.filter(
+            pk=challenge_id, user=request.user,
+            purpose=WithdrawalEmailOTPChallenge.PURPOSE_ADDRESS_CHANGE,
+        ).first()
+
+    if challenge is None or challenge.status not in (
+        WithdrawalEmailOTPChallenge.STATUS_PENDING, WithdrawalEmailOTPChallenge.STATUS_VERIFIED,
+    ):
+        request.session.pop("withdraw_wallet_challenge_id", None)
+        return redirect("simulator:withdraw_wallet_register")
+
+    def _finalize(verified_challenge):
+        try:
+            with transaction.atomic():
+                vw = create_pending_wallet(
+                    request.user,
+                    asset=verified_challenge.asset, network=verified_challenge.network,
+                    address=verified_challenge.wallet_address, challenge=verified_challenge,
+                )
+                mark_challenge_used(verified_challenge)
+        except AddressChangeAlreadyPending:
+            return None, "Ya tienes un cambio de dirección pendiente para esta ruta."
+        except Exception as exc:
+            logger.error(
+                "[withdraw_wallet_otp] failed to create VerifiedWithdrawalWallet user=%s challenge=%d: %s",
+                request.user.username, verified_challenge.id, exc, exc_info=True,
+            )
+            return None, "Error al procesar el registro. Intenta de nuevo."
+
+        log_audit(
+            request, EV_ADDRESS_CHANGE_ACTIVATED,
+            f"VerifiedWithdrawalWallet #{vw.id} registered, cooldown until {vw.cooldown_until}",
+            detail={
+                "wallet_id": vw.id, "asset": vw.asset, "network": vw.network,
+                "cooldown_until": vw.cooldown_until.isoformat(),
+            },
+        )
+        return vw, None
+
+    error = None
+    resend_msg = None
+
+    if challenge.status == WithdrawalEmailOTPChallenge.STATUS_VERIFIED:
+        vw, err = _finalize(challenge)
+        if vw is not None:
+            request.session.pop("withdraw_wallet_challenge_id", None)
+            return redirect("simulator:withdraw_wallets")
+        error = err
+
+    elif request.method == "POST":
+        if request.POST.get("action") == "resend":
+            try:
+                _, _code = resend_challenge(challenge)
+            except ResendCooldownActive as exc:
+                error = f"Espera {exc.retry_after_seconds}s antes de reenviar el código."
+            except ChallengeNotVerifiable:
+                error = "Este challenge ya no admite reenvío."
+            else:
+                try:
+                    send_withdrawal_otp_email(challenge, _code)
+                except Exception as mail_exc:
+                    logger.warning(
+                        "[withdraw_wallet_otp] resend email failed challenge=%d: %s", challenge.id, mail_exc,
+                    )
+                resend_msg = "Código reenviado — revisa tu email."
+        else:
+            form = WithdrawOTPVerifyForm(request.POST)
+            if form.is_valid() and form.cleaned_data["challenge_id"] == challenge.id:
+                code = form.cleaned_data["code"]
+                try:
+                    verified_challenge = verify_otp_challenge(challenge.id, code, user=request.user)
+                except ChallengeNotFound:
+                    request.session.pop("withdraw_wallet_challenge_id", None)
+                    return redirect("simulator:withdraw_wallet_register")
+                except ChallengeExpired:
+                    error = "El código expiró. Vuelve a registrar la dirección."
+                except ChallengeLocked:
+                    log_audit(
+                        request, EV_WITHDRAW_OTP_LOCKED,
+                        f"Address-change OTP challenge #{challenge.id} locked",
+                        detail={"challenge_id": challenge.id},
+                    )
+                    error = "Demasiados intentos incorrectos. Vuelve a registrar la dirección."
+                except InvalidCode:
+                    log_audit(
+                        request, EV_WITHDRAW_OTP_FAILED,
+                        f"Wrong OTP code for address-change challenge #{challenge.id}",
+                        detail={"challenge_id": challenge.id},
+                    )
+                    error = "Código incorrecto."
+                except ChallengeNotVerifiable:
+                    error = "Este challenge ya no es válido."
+                else:
+                    vw, err = _finalize(verified_challenge)
+                    if vw is not None:
+                        request.session.pop("withdraw_wallet_challenge_id", None)
+                        return redirect("simulator:withdraw_wallets")
+                    error = err
+            else:
+                error = "Formulario inválido."
+
+    can_resend_now, resend_wait = can_resend(challenge)
+    form = WithdrawOTPVerifyForm(initial={"challenge_id": challenge.id})
+    return render(request, "simulator/withdraw_otp_verify.html", {
+        "challenge":         challenge,
+        "form":              form,
+        "error":             error,
+        "resend_msg":        resend_msg,
+        "can_resend_now":    can_resend_now,
+        "resend_wait":       resend_wait,
+        "active_section":    "withdraw_wallets",
+        "is_address_change": True,
     })
 
 

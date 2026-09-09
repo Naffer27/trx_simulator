@@ -27,6 +27,7 @@ from simulator.models import (
 )
 from simulator.tests.factories import (
     make_user, make_wallet, make_account_product, make_challenge_product,
+    make_verified_withdrawal_wallet,
 )
 
 User = get_user_model()
@@ -81,25 +82,26 @@ class WithdrawTermsGateTests(TestCase):
     def setUp(self):
         _PATCH_RATELIMIT.start()
         self.user = _make_no_terms_user()
-        self.wallet = make_wallet(self.user, initial_balance=Decimal("500"))
+        self.wallet = make_wallet(self.user, initial_balance=Decimal("5000"))
+        self.vw = make_verified_withdrawal_wallet(self.user)
         self.client.force_login(self.user)
 
     def tearDown(self):
         _PATCH_RATELIMIT.stop()
 
     def test_user_without_terms_cannot_withdraw(self):
-        """POST /withdraw/ without terms → blocked, no WR created, wallet untouched."""
+        """POST /withdraw/ without terms → blocked at step 1, no challenge/WR created, wallet untouched."""
         r = self.client.post(WITHDRAW_URL, {
-            "amount_usd": "50.00",
-            "crypto_currency": "btc",
-            "wallet_address": "bc1qtest000000000000000000000000000000000",
+            "amount_usd": "1500.00",
+            "crypto_currency": "usdttrc20",
+            "wallet_address": str(self.vw.pk),
             "otp_code": "000000",
         })
         self.assertEqual(r.status_code, 200)
         self.assertContains(r, "términos")
         self.assertEqual(WithdrawalRequest.objects.filter(user=self.user).count(), 0)
         self.wallet.refresh_from_db()
-        self.assertEqual(self.wallet.available_balance, Decimal("500"))
+        self.assertEqual(self.wallet.available_balance, Decimal("5000"))
 
 
 class CreateAccountTermsGateTests(TestCase):

@@ -1,0 +1,64 @@
+{% extends "simulator/base_app.html" %}
+{% load static %}
+{% block title %}Registrar wallet — Money Broker{% endblock %}
+{% block page_title %}Registrar wallet{% endblock %}
+
+{% block extra_head %}
+<style>
+  .wd-wrap { min-height: calc(100vh - 56px); display: flex; align-items: center; justify-content: center; padding: 40px 16px; }
+  .wd-card { background: #0d0d14; border: 1px solid rgba(255,215,0,.15); border-radius: 16px; padding: 40px 36px; width: 100%; max-width: 480px; box-shadow: 0 8px 40px rgba(0,0,0,.6); }
+  .wd-card h2 { font-family: 'Orbitron', sans-serif; font-size: 1.3rem; font-weight: 700; color: #FFD700; letter-spacing: .06em; margin-bottom: 6px; }
+  .wd-card .subtitle { color: #787b86; font-size: .82rem; margin-bottom: 28px; }
+  .field-label { font-size: .78rem; font-weight: 600; color: rgba(255,255,255,.55); letter-spacing: .05em; text-transform: uppercase; margin-bottom: 8px; }
+  .deposit-input { width: 100%; background: #05050a; border: 1px solid rgba(255,215,0,.2); border-radius: 8px; color: #fff; font-size: .95rem; padding: 12px 14px; outline: none; box-sizing: border-box; }
+  .deposit-input:focus { border-color: #FFD700; box-shadow: 0 0 0 2px rgba(255,215,0,.12); }
+  .form-group { margin-bottom: 20px; }
+  .submit-btn { width: 100%; background: linear-gradient(135deg, #FFD700, #FFA500); border: none; border-radius: 8px; color: #000; font-family: 'Orbitron', sans-serif; font-size: .88rem; font-weight: 700; letter-spacing: .07em; padding: 14px; cursor: pointer; margin-top: 10px; }
+  .wd-error { background: rgba(239,83,80,.12); border: 1px solid rgba(239,83,80,.4); border-radius: 8px; color: #ef5350; font-size: .83rem; padding: 12px 14px; margin-bottom: 20px; }
+  .warn-box { background: rgba(255,152,0,.08); border: 1px solid rgba(255,152,0,.3); border-radius: 8px; color: rgba(255,165,0,.9); font-size: .78rem; padding: 12px 14px; margin-top: 20px; line-height: 1.6; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="wd-wrap">
+  <div class="wd-card">
+    <h2>Registrar wallet de retiro</h2>
+    <p class="subtitle">La nueva dirección entra en cooldown de seguridad antes de poder usarse.</p>
+
+    {% if error %}<div class="wd-error">{{ error }}</div>{% endif %}
+
+    <form method="post">
+      {% csrf_token %}
+      <div class="form-group">
+        <div class="field-label">Criptomoneda</div>
+        {{ form.asset }}
+        {% if form.asset.errors %}<div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{{ form.asset.errors|join:", " }}</div>{% endif %}
+      </div>
+      <div class="form-group">
+        <div class="field-label">Nueva dirección</div>
+        {{ form.address }}
+        {% if form.address.errors %}<div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{{ form.address.errors|join:", " }}</div>{% endif %}
+      </div>
+      <div class="form-group">
+        <div class="field-label">Código TOTP (2FA)</div>
+        {{ form.otp_code }}
+        {% if form.otp_code.errors %}<div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{{ form.otp_code.errors|join:", " }}</div>{% endif %}
+      </div>
+      <button type="submit" class="submit-btn">CONTINUAR</button>
+    </form>
+
+    <div class="warn-box">
+      <strong>&#9888; La wallet nueva no queda disponible de inmediato.</strong><br>
+      Debe pasar el período de cooldown de seguridad antes de poder retirar hacia ella.
+      Tu wallet anterior (si tienes una) sigue activa mientras tanto.
+    </div>
+
+    <hr style="border:none;border-top:1px solid rgba(255,215,0,.08);margin:24px 0;">
+    <div style="text-align:center;">
+      <a href="{% url 'simulator:withdraw_wallets' %}" style="color:rgba(255,215,0,.6);font-size:.78rem;text-decoration:none;">
+        Ver mis wallets →
+      </a>
+    </div>
+  </div>
+</div>
+{% endblock %}

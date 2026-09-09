@@ -133,3 +133,46 @@ def send_withdrawal_status_email(wr, event: str) -> None:
     logger.info(
         "[withdrawal_email] queued event=%s wr=%d to=%s", event, wr_id, wr.user.email
     )
+
+
+def send_withdrawal_otp_email(challenge, code: str) -> None:
+    """
+    Queue the one-time code email for a WithdrawalEmailOTPChallenge
+    (WITHDRAWAL-SECURITY-EXTENSION-01). *code* is the plaintext code —
+    never persisted anywhere (only challenge.code_hash is stored).
+
+    Caller is always responsible for wrapping with try/except so a
+    queuing failure never aborts the parent transaction (same contract
+    as send_withdrawal_status_email above).
+    """
+    from .tasks import send_email_async
+    from .models import WithdrawalEmailOTPChallenge
+
+    username    = challenge.user.username
+    expires_min = max(1, round((challenge.expires_at - timezone.now()).total_seconds() / 60))
+
+    if challenge.purpose == WithdrawalEmailOTPChallenge.PURPOSE_ADDRESS_CHANGE:
+        subject = f"Código de verificación — cambio de wallet — {_BRAND}"
+        intro   = "Estás registrando una nueva dirección de retiro."
+    else:
+        subject = f"Código de verificación — retiro — {_BRAND}"
+        intro   = "Estás confirmando una solicitud de retiro."
+
+    body = (
+        f"Hola {username},\n\n"
+        f"{intro}\n\n"
+        f"  Código: {code}\n\n"
+        f"Este código vence en {expires_min} minutos y solo puede usarse una vez.\n"
+        f"Si no fuiste tú, ignora este email y no compartas el código con nadie.\n\n"
+        f"— {_BRAND}"
+    )
+
+    send_email_async.delay(
+        subject=subject,
+        message=body,
+        recipient_list=[challenge.user.email],
+    )
+    logger.info(
+        "[withdrawal_email] queued OTP email challenge=%d purpose=%s to=%s",
+        challenge.id, challenge.purpose, challenge.user.email,
+    )

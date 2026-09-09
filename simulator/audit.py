@@ -45,6 +45,15 @@ EV_WITHDRAW_WEBHOOK_ORPHANED          = "withdrawal.webhook.orphaned"
 EV_WITHDRAW_WEBHOOK_REPLAY_RESOLVED   = "withdrawal.webhook.replay_resolved"
 EV_WITHDRAW_WEBHOOK_MANUAL_REVIEW     = "withdrawal.webhook.manual_review"
 
+# WITHDRAWAL-SECURITY-EXTENSION-01
+EV_WITHDRAW_OTP_CHALLENGE_CREATED = "withdrawal.otp.challenge_created"
+EV_WITHDRAW_OTP_VERIFIED          = "withdrawal.otp.verified"
+EV_WITHDRAW_OTP_FAILED            = "withdrawal.otp.failed"
+EV_WITHDRAW_OTP_LOCKED            = "withdrawal.otp.locked"
+EV_WITHDRAW_FIRST_APPROVED        = "withdrawal.first_approved"
+EV_ADDRESS_CHANGE_REQUESTED       = "withdrawal.address.change_requested"
+EV_ADDRESS_CHANGE_ACTIVATED       = "withdrawal.address.change_activated"
+
 EV_ACCOUNT_FUNDED    = "account.funded"
 EV_ACCOUNT_WITHDRAWN = "account.withdrawn"
 EV_ACCOUNT_CREATED   = "account.created"

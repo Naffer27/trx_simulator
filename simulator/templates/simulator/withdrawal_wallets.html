@@ -1,0 +1,46 @@
+{% extends "simulator/base_app.html" %}
+{% load static %}
+{% block title %}Mis wallets — Money Broker{% endblock %}
+{% block page_title %}Wallets de retiro{% endblock %}
+
+{% block extra_head %}
+<style>
+  .wd-wrap { min-height: calc(100vh - 56px); padding: 40px 16px; display: flex; justify-content: center; }
+  .wd-card { background: #0d0d14; border: 1px solid rgba(255,215,0,.15); border-radius: 16px; padding: 32px; width: 100%; max-width: 620px; box-shadow: 0 8px 40px rgba(0,0,0,.6); }
+  .wd-card h2 { font-family: 'Orbitron', sans-serif; font-size: 1.3rem; font-weight: 700; color: #FFD700; letter-spacing: .06em; margin-bottom: 20px; }
+  .wallet-row { display: flex; justify-content: space-between; align-items: center; padding: 14px 0; border-bottom: 1px solid rgba(255,215,0,.08); font-size: .85rem; }
+  .wallet-row:last-child { border-bottom: none; }
+  .badge { font-size: .68rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; padding: 3px 8px; border-radius: 6px; }
+  .badge.active { background: rgba(39,174,96,.15); color: #27ae60; }
+  .badge.pending_cooldown { background: rgba(255,152,0,.15); color: #FFA500; }
+  .badge.deactivated { background: rgba(120,123,134,.15); color: #787b86; }
+  .badge.rejected { background: rgba(239,83,80,.15); color: #ef5350; }
+  .submit-btn { display: inline-block; background: linear-gradient(135deg, #FFD700, #FFA500); border: none; border-radius: 8px; color: #000; font-family: 'Orbitron', sans-serif; font-size: .82rem; font-weight: 700; letter-spacing: .07em; padding: 12px 20px; cursor: pointer; text-decoration: none; margin-top: 20px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="wd-wrap">
+  <div class="wd-card">
+    <h2>Mis wallets de retiro</h2>
+
+    {% if wallets %}
+      {% for w in wallets %}
+      <div class="wallet-row">
+        <div>
+          <strong>{{ w.asset }}/{{ w.network }}</strong> — {{ w.address|slice:":6" }}…{{ w.address|slice:"-4:" }}
+          {% if w.status == "pending_cooldown" and w.cooldown_until %}
+            <div style="color:#787b86;font-size:.72rem;margin-top:2px;">Disponible desde {{ w.cooldown_until }}</div>
+          {% endif %}
+        </div>
+        <span class="badge {{ w.status }}">{{ w.get_status_display }}</span>
+      </div>
+      {% endfor %}
+    {% else %}
+      <p style="color:#787b86;font-size:.85rem;">No tienes wallets registradas todavía.</p>
+    {% endif %}
+
+    <a href="{% url 'simulator:withdraw_wallet_register' %}" class="submit-btn">REGISTRAR NUEVA WALLET</a>
+  </div>
+</div>
+{% endblock %}

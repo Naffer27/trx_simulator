@@ -37,7 +37,8 @@ from django.test import TestCase, RequestFactory
 from django.utils import timezone
 
 from simulator.models import Wallet, WalletTransaction, WithdrawalRequest, TOTPDevice
-from simulator.tests.factories import make_user, make_wallet, make_kyc_approved
+from simulator.tests.factories import make_user, make_wallet, make_kyc_approved, make_verified_withdrawal_wallet
+from simulator.tests.withdrawal_flow_helpers import full_withdraw_flow
 from simulator.withdrawal_emails import (
     send_withdrawal_status_email,
     EVENT_REQUESTED, EVENT_APPROVED, EVENT_REJECTED,
@@ -115,13 +116,20 @@ def _make_approved_wr(user, wallet, payout_id="pay_001", batch_id="bat_001", amo
 # ── 1. requested ─────────────────────────────────────────────────────────────
 
 class RequestedEmailTests(TestCase):
+    """
+    WITHDRAWAL-SECURITY-EXTENSION-01: the EVENT_REQUESTED email is now
+    queued at the SECOND step (after email-OTP verification creates the
+    WithdrawalRequest), not at the first POST /withdraw/ — the WR itself
+    doesn't exist yet at step 1. full_withdraw_flow() drives both steps.
+    """
     def setUp(self):
         _PATCH_RATELIMIT.start()
         _PATCH_TOTP.start()
         self.user   = make_user(email="req@test.com")
-        self.wallet = make_wallet(self.user, initial_balance=Decimal("500"))
+        self.wallet = make_wallet(self.user, initial_balance=Decimal("5000"))
         _make_device(self.user)
         make_kyc_approved(self.user)
+        self.vw = make_verified_withdrawal_wallet(self.user)
         self.client.force_login(self.user)
 
     def tearDown(self):
@@ -130,7 +138,7 @@ class RequestedEmailTests(TestCase):
 
     @_PATCH_EMAIL
     def test_requested_queues_user_email(self, mock_delay):
-        self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+        full_withdraw_flow(self.client, self.user, verified_wallet=self.vw, amount_usd=Decimal("1500.00"))
         user_calls = [
             c for c in mock_delay.call_args_list
             if self.user.email in c.kwargs.get("recipient_list", [])
@@ -140,7 +148,7 @@ class RequestedEmailTests(TestCase):
     @_PATCH_EMAIL
     def test_requested_email_failure_does_not_abort_withdrawal(self, mock_delay):
         mock_delay.side_effect = Exception("Celery down")
-        self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+        full_withdraw_flow(self.client, self.user, verified_wallet=self.vw, amount_usd=Decimal("1500.00"))
         self.assertEqual(WithdrawalRequest.objects.filter(user=self.user).count(), 1)
 
 

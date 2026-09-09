@@ -281,6 +281,17 @@
     <div class="wd-error">{{ error }}</div>
     {% endif %}
 
+    {% if not has_verified_wallet %}
+    <div class="kyc-banner">
+      <i class="fa-solid fa-triangle-exclamation" style="flex-shrink:0;"></i>
+      <span>
+        No tienes ninguna wallet verificada todavía. Debes registrar y verificar
+        una dirección de retiro antes de poder solicitar un retiro —
+        <a href="{% url 'simulator:withdraw_wallet_register' %}">registrar wallet &rarr;</a>
+      </span>
+    </div>
+    {% endif %}
+
     <form method="post" id="wdForm">
       {% csrf_token %}
 
@@ -288,16 +299,19 @@
       <div class="form-group">
         <div class="field-label">Monto en USD</div>
         <div class="preset-grid" id="presetGrid">
-          <button type="button" class="preset-btn" data-amount="50">$50</button>
-          <button type="button" class="preset-btn" data-amount="100">$100</button>
-          <button type="button" class="preset-btn" data-amount="250">$250</button>
-          <button type="button" class="preset-btn" data-amount="500">$500</button>
           <button type="button" class="preset-btn" data-amount="1000">$1,000</button>
-          <button type="button" class="preset-btn" data-amount="{{ wallet.available_balance|floatformat:0 }}">MAX</button>
+          <button type="button" class="preset-btn" data-amount="2500">$2,500</button>
+          <button type="button" class="preset-btn" data-amount="5000">$5,000</button>
         </div>
         {{ form.amount_usd }}
         {% if form.amount_usd.errors %}
           <div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{{ form.amount_usd.errors|join:", " }}</div>
+        {% endif %}
+        <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:.83rem;color:rgba(255,255,255,.75);">
+          {{ form.withdraw_all }} Retirar todo el balance disponible (${{ wallet.available_balance|floatformat:2 }})
+        </label>
+        {% if form.withdraw_all.errors %}
+          <div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{{ form.withdraw_all.errors|join:", " }}</div>
         {% endif %}
       </div>
 
@@ -312,13 +326,14 @@
         {% endif %}
       </div>
 
-      <!-- Wallet address -->
+      <!-- Wallet address (must already be verified — see /withdraw/wallets/) -->
       <div class="form-group">
-        <div class="field-label">Dirección de tu wallet</div>
+        <div class="field-label">Wallet destino verificada</div>
         {{ form.wallet_address }}
-        <div class="addr-check" id="addrHint">
+        <div class="addr-check">
           <i class="fa-solid fa-circle-info"></i>
-          Ingresa la dirección exacta de tu wallet personal.
+          Solo puedes retirar a una wallet previamente verificada.
+          <a href="{% url 'simulator:withdraw_wallets' %}" style="color:var(--gold);">Gestionar wallets &rarr;</a>
         </div>
         {% if form.wallet_address.errors %}
           <div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{{ form.wallet_address.errors|join:", " }}</div>
@@ -372,11 +387,11 @@
 
     <div class="info-row">
       <span>&#9432;</span>
-      Los fondos se reservan inmediatamente. El pago se envía tras aprobación del equipo.
+      Recibirás un código de verificación por email antes de confirmar el retiro.
     </div>
     <div class="info-row">
       <span>&#128274;</span>
-      Tiempo de procesamiento: 24-48h hábiles · Mínimo $20 USD.
+      Tiempo de procesamiento: 24-48h hábiles · Mínimo ${{ min_withdrawal|floatformat:2 }} USD (excepto Retirar Todo).
     </div>
 
     <hr class="divider">
@@ -391,44 +406,31 @@
 
 {% block extra_scripts %}
 <script>
-  const amtInput  = document.getElementById('id_wd_amount');
-  const addrInput = document.getElementById('id_wd_address');
-  const addrHint  = document.getElementById('addrHint');
+  const amtInput = document.getElementById('id_wd_amount');
+  const allCheck = document.getElementById('id_wd_all');
   const available = {{ wallet.available_balance|floatformat:2 }};
 
   // Preset buttons
   document.querySelectorAll('.preset-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       amtInput.value = btn.dataset.amount;
+      if (allCheck) { allCheck.checked = false; }
       document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
     });
   });
-  amtInput.addEventListener('input', () => {
-    document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
-    const v = parseFloat(amtInput.value);
-    document.querySelectorAll('.preset-btn').forEach(b => {
-      if (parseFloat(b.dataset.amount) === v) b.classList.add('active');
+
+  // "Withdraw all" disables the manual amount field
+  if (allCheck) {
+    allCheck.addEventListener('change', () => {
+      amtInput.disabled = allCheck.checked;
+      if (allCheck.checked) { amtInput.value = ''; }
     });
-  });
+  }
 
-  // Address length hint
-  addrInput.addEventListener('input', () => {
-    const len = addrInput.value.trim().length;
-    if (len === 0) {
-      addrHint.className = 'addr-check';
-      addrHint.innerHTML = '<i class="fa-solid fa-circle-info"></i> Ingresa la dirección exacta de tu wallet personal.';
-    } else if (len < 20) {
-      addrHint.className = 'addr-check warn';
-      addrHint.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> Dirección demasiado corta.';
-    } else {
-      addrHint.className = 'addr-check ok';
-      addrHint.innerHTML = '<i class="fa-solid fa-circle-check"></i> Dirección válida — verifica que sea correcta.';
-    }
-  });
-
-  // Disable submit if amount > available
+  // Disable submit if manual amount > available (Withdraw All is exact, always allowed)
   document.getElementById('wdForm').addEventListener('submit', function(e) {
+    if (allCheck && allCheck.checked) { return; }
     const v = parseFloat(amtInput.value);
     if (v > available) {
       e.preventDefault();

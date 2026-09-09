@@ -357,8 +357,11 @@ class BeatScheduleTests(SimpleTestCase):
         # reconciliation / durable webhook replay) + ORDER-MANAGEMENT-V2A's
         # 1 new entry ("scan-pending-orders-30s" — offline pending-order
         # trigger/expiry daemon, dedicated schedule per that block's design
-        # lock section 8, not folded into "scan-positions-30s").
-        self.assertEqual(len(schedule), 15)
+        # lock section 8, not folded into "scan-positions-30s") +
+        # WITHDRAWAL-SECURITY-EXTENSION-01's 1 new entry
+        # ("sweep-verified-wallets-15m" — VerifiedWithdrawalWallet cooldown
+        # activation sweep, defensive backup to the lazy on-read activation).
+        self.assertEqual(len(schedule), 16)
 
     def test_no_other_task_names_were_renamed_or_removed(self):
         from django.conf import settings

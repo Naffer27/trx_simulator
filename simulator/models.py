@@ -753,6 +753,32 @@ class WithdrawalRequest(models.Model):
         related_name="withdrawal_request",
     )
 
+    # WITHDRAWAL-SECURITY-EXTENSION-01 — the challenge whose congealed
+    # payload produced this WithdrawalRequest (audit trail only; the
+    # amount/asset/network/address written above are already final).
+    otp_challenge = models.OneToOneField(
+        "WithdrawalEmailOTPChallenge", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="withdrawal_request",
+    )
+
+    # WITHDRAWAL-SECURITY-EXTENSION-01 — dual approval. required_approvals is
+    # computed once at creation time from the final amount_usd (>1000 -> 2,
+    # <=1000 -> 1) and never recomputed. reviewed_by/reviewed_at above are
+    # UNCHANGED — still written by payout_orchestrator.submit_withdrawal_to_provider()
+    # and mean "the approver who triggered submission" (== second_approved_by
+    # when required_approvals==2, == first_approved_by when ==1).
+    required_approvals = models.PositiveSmallIntegerField(default=1)
+    first_approved_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="withdrawals_first_approved",
+    )
+    first_approved_at = models.DateTimeField(null=True, blank=True)
+    second_approved_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="withdrawals_second_approved",
+    )
+    second_approved_at = models.DateTimeField(null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -3357,3 +3383,151 @@ class LastKnownMarketPrice(models.Model):
 
     def __str__(self):
         return f"LastKnownMarketPrice({self.symbol})={self.mid} source={self.source} observed_at={self.observed_at}"
+
+
+# ─────────────────────────────────────────────
+# WITHDRAWAL-SECURITY-EXTENSION-01
+# ─────────────────────────────────────────────
+
+_WOTP_NON_TERMINAL_STATUSES = ("pending", "verified")
+
+
+class WithdrawalEmailOTPChallenge(models.Model):
+    """
+    Email one-time-code challenge, gating either a new withdrawal request
+    (purpose=WITHDRAWAL) or a new/changed withdrawal wallet address
+    (purpose=ADDRESS_CHANGE) — Design Lock section C.
+
+    The WITHDRAWAL payload (amount/withdraw_all/asset/network/wallet_address)
+    is congealed here at creation time. The WithdrawalRequest created after a
+    successful verification uses EXACTLY these frozen values — never data
+    re-read from the verification POST. No money moves while only a
+    challenge exists: debit_wallet() only runs after verification succeeds
+    (see withdraw_otp_verify_view), so an expired/locked/abandoned challenge
+    needs no refund logic at all.
+
+    code_hash is sha256(code) — NEVER the plaintext code (same primitive
+    already used identically at auth_password_views.py for one-time
+    password-reset tokens). Verified with hmac.compare_digest (constant-time).
+    """
+    PURPOSE_WITHDRAWAL     = "WITHDRAWAL"
+    PURPOSE_ADDRESS_CHANGE = "ADDRESS_CHANGE"
+    PURPOSE_CHOICES = [
+        (PURPOSE_WITHDRAWAL,     "Withdrawal"),
+        (PURPOSE_ADDRESS_CHANGE, "Address Change"),
+    ]
+
+    STATUS_PENDING  = "pending"
+    STATUS_VERIFIED = "verified"
+    STATUS_USED     = "used"
+    STATUS_EXPIRED  = "expired"
+    STATUS_LOCKED   = "locked"
+    STATUS_CHOICES = [
+        (STATUS_PENDING,  "Pending"),
+        (STATUS_VERIFIED, "Verified"),
+        (STATUS_USED,     "Used"),
+        (STATUS_EXPIRED,  "Expired"),
+        (STATUS_LOCKED,   "Locked"),
+    ]
+
+    NON_TERMINAL_STATUSES = _WOTP_NON_TERMINAL_STATUSES
+
+    user   = models.ForeignKey(User, on_delete=models.CASCADE, related_name="withdrawal_otp_challenges")
+    purpose = models.CharField(max_length=20, choices=PURPOSE_CHOICES)
+
+    # Congealed WITHDRAWAL payload (blank/zero for purpose=ADDRESS_CHANGE)
+    amount_usd     = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    withdraw_all   = models.BooleanField(default=False)
+    asset          = models.CharField(max_length=10)
+    network        = models.CharField(max_length=20)
+    wallet_address = models.CharField(max_length=200)
+
+    code_hash    = models.CharField(max_length=64)
+    expires_at   = models.DateTimeField()
+    attempts     = models.PositiveSmallIntegerField(default=0)
+    max_attempts = models.PositiveSmallIntegerField()
+
+    created_at   = models.DateTimeField(auto_now_add=True)
+    last_sent_at = models.DateTimeField()
+    verified_at  = models.DateTimeField(null=True, blank=True)
+    used_at      = models.DateTimeField(null=True, blank=True)
+
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_PENDING, db_index=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["user", "status"], name="wotp_user_status_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user"],
+                condition=models.Q(status__in=_WOTP_NON_TERMINAL_STATUSES),
+                name="wotp_one_active_per_user",
+            ),
+        ]
+
+    def __str__(self):
+        return f"WithdrawalEmailOTPChallenge #{self.id} user={self.user_id} purpose={self.purpose} [{self.status}]"
+
+
+class VerifiedWithdrawalWallet(models.Model):
+    """
+    A user's whitelisted withdrawal destination for a given (asset, network)
+    — Design Lock section D. Rows are created ONLY after their own
+    WithdrawalEmailOTPChallenge(purpose=ADDRESS_CHANGE) has been verified —
+    a row never exists in an "unverified" state, it is born PENDING_COOLDOWN.
+
+    Activation (PENDING_COOLDOWN -> ACTIVE once cooldown_until has passed,
+    deactivating any prior ACTIVE row for the same user+asset+network) is
+    lazy-on-read plus a periodic Celery sweep — see verified_wallets.py.
+    """
+    STATUS_PENDING_COOLDOWN = "pending_cooldown"
+    STATUS_ACTIVE           = "active"
+    STATUS_DEACTIVATED      = "deactivated"
+    STATUS_REJECTED         = "rejected"
+    STATUS_CHOICES = [
+        (STATUS_PENDING_COOLDOWN, "Pending Cooldown"),
+        (STATUS_ACTIVE,           "Active"),
+        (STATUS_DEACTIVATED,      "Deactivated"),
+        (STATUS_REJECTED,         "Rejected"),
+    ]
+
+    user    = models.ForeignKey(User, on_delete=models.CASCADE, related_name="verified_withdrawal_wallets")
+    asset   = models.CharField(max_length=10)
+    network = models.CharField(max_length=20)
+    address = models.CharField(max_length=200)
+
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING_COOLDOWN, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    verified_at     = models.DateTimeField(null=True, blank=True)
+    cooldown_until  = models.DateTimeField(null=True, blank=True)
+    activated_at    = models.DateTimeField(null=True, blank=True)
+    deactivated_at  = models.DateTimeField(null=True, blank=True)
+
+    created_by_challenge = models.ForeignKey(
+        "WithdrawalEmailOTPChallenge", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="verified_wallets_created",
+    )
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["user", "asset", "network", "status"], name="vww_user_route_status_idx"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "asset", "network"],
+                condition=models.Q(status="active"),
+                name="vww_one_active_per_route",
+            ),
+            models.UniqueConstraint(
+                fields=["user", "asset", "network"],
+                condition=models.Q(status="pending_cooldown"),
+                name="vww_one_pending_per_route",
+            ),
+        ]
+
+    def __str__(self):
+        return f"VerifiedWithdrawalWallet #{self.id} user={self.user_id} {self.asset}/{self.network} [{self.status}]"

@@ -109,46 +109,166 @@ class DepositForm(forms.Form):
 
 
 class WithdrawForm(forms.Form):
-    """Crypto withdrawal request — amount in USD + destination address."""
+    """
+    Crypto withdrawal request — first step of the WITHDRAWAL-SECURITY-EXTENSION-01
+    two-step flow (this form only creates a WithdrawalEmailOTPChallenge; the
+    WithdrawalRequest itself is created later, from the challenge's frozen
+    payload, by WithdrawOTPVerifyForm — see views.withdraw_otp_verify_view).
+
+    amount_usd is required unless withdraw_all is checked — Wallet.available_balance
+    is what actually gets debited for withdraw_all (see wallet_ledger.debit_wallet
+    call site), never a client-supplied amount.
+
+    wallet_address is a choice of the user's own ACTIVE VerifiedWithdrawalWallet
+    rows — Design Lock rule 4 ("no se ofrece texto libre"): the destination
+    must already be a verified/authorized wallet, never typed at withdrawal time.
+    """
 
     amount_usd = forms.DecimalField(
         label="Monto (USD)",
-        min_value=Decimal("20"),
+        required=False,
+        min_value=Decimal("0.01"),
         max_digits=12,
         decimal_places=2,
         widget=forms.NumberInput(attrs={
             "class": "deposit-input",
-            "min": "20",
             "step": "1",
-            "placeholder": "Mínimo $20",
             "id": "id_wd_amount",
         }),
+    )
+    withdraw_all = forms.BooleanField(
+        label="Retirar todo el balance disponible",
+        required=False,
+        widget=forms.CheckboxInput(attrs={"id": "id_wd_all"}),
     )
     crypto_currency = forms.ChoiceField(
         label="Criptomoneda",
         widget=forms.Select(attrs={"class": "deposit-input", "id": "id_wd_crypto"}),
     )
-    wallet_address = forms.CharField(
-        label="Dirección destino",
-        max_length=200,
+    wallet_address = forms.ChoiceField(
+        label="Wallet destino verificada",
+        widget=forms.Select(attrs={"class": "deposit-input", "id": "id_wd_address"}),
+    )
+
+    def __init__(self, *args, user=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.user = user
+
+        from .currencies import WITHDRAWAL_CURRENCY_MAP
+        enabled = [
+            k for k in settings.WALLET_WITHDRAWAL_ENABLED_ASSETS
+            if k in WITHDRAWAL_CURRENCY_MAP
+        ]
+        self.fields["crypto_currency"].choices = [
+            (k, WITHDRAWAL_CURRENCY_MAP[k][1]) for k in enabled
+        ]
+
+        wallet_choices = []
+        if user is not None:
+            from .models import VerifiedWithdrawalWallet
+            from .verified_wallets import get_active_wallet
+            from .address_validators import ASSET_NETWORK_BY_CURRENCY
+            # Lazily activate any due PENDING_COOLDOWN row before listing —
+            # same lookup withdraw_otp_verify_view uses at submission time.
+            seen = set()
+            for asset, network in ASSET_NETWORK_BY_CURRENCY.values():
+                w = get_active_wallet(user, asset=asset, network=network)
+                if w is not None and w.pk not in seen:
+                    seen.add(w.pk)
+                    label = f"{w.asset}/{w.network} — {w.address[:6]}…{w.address[-4:]}"
+                    wallet_choices.append((str(w.pk), label))
+        self.fields["wallet_address"].choices = wallet_choices
+
+    def clean(self):
+        cleaned = super().clean()
+        withdraw_all = cleaned.get("withdraw_all")
+        amount_usd = cleaned.get("amount_usd")
+
+        if not withdraw_all and amount_usd is None:
+            self.add_error("amount_usd", "Monto requerido (o marca 'Retirar todo').")
+
+        crypto_currency = cleaned.get("crypto_currency")
+        wallet_pk = cleaned.get("wallet_address")
+        if crypto_currency and wallet_pk and self.user is not None:
+            from .models import VerifiedWithdrawalWallet
+            from .address_validators import ASSET_NETWORK_BY_CURRENCY
+            try:
+                vw = VerifiedWithdrawalWallet.objects.get(
+                    pk=wallet_pk, user=self.user, status=VerifiedWithdrawalWallet.STATUS_ACTIVE,
+                )
+            except (VerifiedWithdrawalWallet.DoesNotExist, ValueError, TypeError):
+                self.add_error("wallet_address", "Wallet inválida o no verificada.")
+            else:
+                expected = ASSET_NETWORK_BY_CURRENCY.get(crypto_currency)
+                if expected != (vw.asset, vw.network):
+                    self.add_error(
+                        "wallet_address",
+                        "La wallet seleccionada no corresponde a la moneda elegida.",
+                    )
+                else:
+                    cleaned["verified_wallet"] = vw
+        return cleaned
+
+
+class WithdrawOTPVerifyForm(forms.Form):
+    """
+    Second step of the withdrawal flow — ONLY a challenge id + the 6-digit
+    code. Deliberately carries no amount/asset/network/address fields: the
+    WithdrawalRequest is built exclusively from the challenge's frozen
+    payload (Design Lock rule 3 — "no permitir cambiar amount/wallet/network
+    después del OTP sin crear un challenge nuevo").
+    """
+    challenge_id = forms.IntegerField(widget=forms.HiddenInput())
+    code = forms.CharField(
+        label="Código de verificación",
+        max_length=6,
+        min_length=6,
         widget=forms.TextInput(attrs={
-            "class": "deposit-input",
-            "placeholder": "Dirección de tu wallet personal",
-            "id": "id_wd_address",
-            "autocomplete": "off",
+            "class": "deposit-input", "id": "id_wd_otp_code",
+            "autocomplete": "one-time-code", "inputmode": "numeric",
         }),
     )
 
+    def clean_code(self):
+        code = self.cleaned_data.get("code", "").strip()
+        if not code.isdigit():
+            raise forms.ValidationError("El código debe ser numérico.")
+        return code
+
+
+class RegisterWithdrawalWalletForm(forms.Form):
+    """
+    First step of the wallet change/registration flow (Design Lock rule 6):
+    picks the asset + types the new address. TOTP is required at this step
+    (checked in the view, same gate style as WithdrawForm); a
+    WithdrawalEmailOTPChallenge(purpose=ADDRESS_CHANGE) is created next.
+    """
+    asset = forms.ChoiceField(label="Criptomoneda")
+    address = forms.CharField(
+        label="Nueva dirección de retiro",
+        max_length=200,
+        widget=forms.TextInput(attrs={"class": "deposit-input", "autocomplete": "off"}),
+    )
+    otp_code = forms.CharField(label="Código TOTP", max_length=10)
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        from .currencies import WITHDRAWAL_CHOICES
-        self.fields["crypto_currency"].choices = WITHDRAWAL_CHOICES
+        from .currencies import WITHDRAWAL_CURRENCY_MAP
+        enabled = [
+            k for k in settings.WALLET_WITHDRAWAL_ENABLED_ASSETS
+            if k in WITHDRAWAL_CURRENCY_MAP
+        ]
+        self.fields["asset"].choices = [(k, WITHDRAWAL_CURRENCY_MAP[k][1]) for k in enabled]
 
-    def clean_wallet_address(self):
-        addr = self.cleaned_data.get("wallet_address", "").strip()
-        if len(addr) < 20:
-            raise forms.ValidationError("Dirección inválida (mínimo 20 caracteres).")
-        return addr
+    def clean(self):
+        cleaned = super().clean()
+        currency_key = cleaned.get("asset")
+        address = (cleaned.get("address") or "").strip()
+        if currency_key and address:
+            from .address_validators import validate_address_for_currency
+            if not validate_address_for_currency(currency_key, address):
+                self.add_error("address", "Dirección inválida para la red seleccionada.")
+        return cleaned
 
 
 # ──────────────────────────────────────────────────────────────

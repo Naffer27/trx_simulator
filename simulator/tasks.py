@@ -1858,3 +1858,29 @@ def record_celery_beat_heartbeat_task(self) -> dict:
     written = event is not None
     logger.info("[record_celery_beat_heartbeat] written=%s elapsed_ms=%d", written, elapsed_ms)
     return {"written": written, "elapsed_ms": elapsed_ms}
+
+
+# ──────────────────────────────────────────────────────
+# WITHDRAWAL-SECURITY-EXTENSION-01 — VerifiedWithdrawalWallet cooldown sweep
+# Defensive backup to verified_wallets.get_active_wallet()'s lazy
+# activation — same dual (lazy + daemon) pattern as scan_pending_orders_task
+# above relative to consumers.py's lazy PendingOrder expiry check. Only
+# ever activates rows whose cooldown_until has already elapsed; never
+# touches Wallet/WalletTransaction/WithdrawalRequest — cannot move money.
+# ──────────────────────────────────────────────────────
+@shared_task(
+    name="simulator.sweep_verified_wallets",
+    bind=True,
+    max_retries=0,
+    acks_late=True,
+    soft_time_limit=15,
+    time_limit=19,
+)
+def sweep_verified_wallets_task(self) -> dict:
+    import time as _t
+    from .verified_wallets import sweep_activate_due_wallets
+    t0 = _t.monotonic()
+    activated = sweep_activate_due_wallets()
+    elapsed_ms = round((_t.monotonic() - t0) * 1000)
+    logger.info("[sweep_verified_wallets] activated=%d elapsed_ms=%d", activated, elapsed_ms)
+    return {"activated": activated, "elapsed_ms": elapsed_ms}

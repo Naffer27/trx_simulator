@@ -36,8 +36,12 @@ from .views import (
     snapshots_view,
     # Withdrawals
     withdraw_view,
+    withdraw_otp_verify_view,
     withdraw_history_view,
     withdraw_payout_callback,
+    withdrawal_wallets_view,
+    withdrawal_wallet_register_view,
+    withdrawal_wallet_otp_verify_view,
     # Capital flow
     accounts_view,
     create_account_view,
@@ -113,9 +117,13 @@ urlpatterns = [
     path("history/", history_view, name="history"),
 
     # Retiros crypto
-    path("withdraw/",          withdraw_view,             name="withdraw"),
-    path("withdraw/callback/", withdraw_payout_callback,  name="withdraw_payout_callback"),
-    path("withdraw/history/",  withdraw_history_view,     name="withdraw_history"),
+    path("withdraw/",                 withdraw_view,                       name="withdraw"),
+    path("withdraw/otp/",             withdraw_otp_verify_view,            name="withdraw_otp_verify"),
+    path("withdraw/callback/",        withdraw_payout_callback,            name="withdraw_payout_callback"),
+    path("withdraw/history/",         withdraw_history_view,               name="withdraw_history"),
+    path("withdraw/wallets/",         withdrawal_wallets_view,             name="withdraw_wallets"),
+    path("withdraw/wallets/register/", withdrawal_wallet_register_view,    name="withdraw_wallet_register"),
+    path("withdraw/wallets/otp/",     withdrawal_wallet_otp_verify_view,   name="withdraw_wallet_otp_verify"),
 
     # Depósitos
     path("deposit/",                              deposit_view,         name="deposit"),

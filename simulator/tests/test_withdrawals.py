@@ -3,6 +3,16 @@
 Withdrawal safety tests — double-debit prevention, atomicity, idempotency,
 audit logging, email notifications, and 2FA enforcement.
 
+WITHDRAWAL-SECURITY-EXTENSION-01 note: the withdrawal flow is now two
+steps (POST /withdraw/ creates a WithdrawalEmailOTPChallenge; POST
+/withdraw/otp/ with the email code creates the actual WithdrawalRequest +
+debits the wallet, inside one atomic block). Every gate/guard tested here
+(2FA, KYC, sufficient balance, one-pending guard, atomic rollback, audit
+log, email notifications) is UNCHANGED in mechanism — only WHEN the
+WithdrawalRequest/debit/EVENT_REQUESTED-email/audit-log actually happen
+has moved from step 1 to step 2. full_withdraw_flow() drives both steps
+with a fixed, known email-OTP code.
+
 Covers:
   - Sufficient balance required to create withdrawal
   - Successful withdrawal creates pending WR and debits wallet once
@@ -22,14 +32,17 @@ import json
 from decimal import Decimal
 from unittest.mock import patch, call
 
-from django.test import TestCase, RequestFactory
+from django.test import TestCase, RequestFactory, override_settings
 from django.urls import reverse
 from django.contrib.auth import get_user_model
 
 from simulator.models import (
-    AuditLog, Wallet, WalletTransaction, WithdrawalRequest, TOTPDevice,
+    AuditLog, Wallet, WalletTransaction, WithdrawalEmailOTPChallenge, WithdrawalRequest, TOTPDevice,
 )
-from simulator.tests.factories import make_user, make_wallet, make_kyc_approved
+from simulator.tests.factories import make_user, make_wallet, make_kyc_approved, make_verified_withdrawal_wallet
+from simulator.tests.withdrawal_flow_helpers import (
+    PATCH_EMAIL as _PATCH_OTP_EMAIL, full_withdraw_flow, submit_withdraw_request, fixed_otp_code,
+)
 
 User = get_user_model()
 
@@ -51,11 +64,11 @@ def _make_device(user) -> TOTPDevice:
     )
 
 
-def _wr_payload(amount="50.00"):
+def _wr_payload(amount="1500.00", wallet_pk=""):
     return {
         "amount_usd":      amount,
-        "crypto_currency": "btc",
-        "wallet_address":  "bc1qtest000000000000000000000000000000000",
+        "crypto_currency": "usdttrc20",
+        "wallet_address":  str(wallet_pk),
         "otp_code":        "000000",  # dummy; real verification patched in tests
     }
 
@@ -77,9 +90,10 @@ class WithdrawalCreationTests(TestCase):
         _PATCH_RATELIMIT.start()
         _PATCH_TOTP.start()
         self.user   = make_user(email="wd@test.com")
-        self.wallet = make_wallet(self.user, initial_balance=Decimal("200"))
+        self.wallet = make_wallet(self.user, initial_balance=Decimal("2000"))
         _make_device(self.user)
         make_kyc_approved(self.user)
+        self.vw = make_verified_withdrawal_wallet(self.user)
         self.client.force_login(self.user)
 
     def tearDown(self):
@@ -87,36 +101,44 @@ class WithdrawalCreationTests(TestCase):
         _PATCH_TOTP.stop()
 
     def test_withdrawal_requires_sufficient_balance(self):
-        r = self.client.post(WITHDRAW_URL, _wr_payload("300.00"))
+        r = self.client.post(WITHDRAW_URL, _wr_payload("3000.00", self.vw.pk))
         self.assertEqual(r.status_code, 200)  # re-renders form with error
-        self.assertEqual(WithdrawalRequest.objects.filter(user=self.user).count(), 0)
+        self.assertEqual(WithdrawalEmailOTPChallenge.objects.filter(user=self.user).count(), 0)
 
     def test_withdrawal_creates_pending_request(self):
-        self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+        with _PATCH_OTP_EMAIL:
+            full_withdraw_flow(self.client, self.user, verified_wallet=self.vw, amount_usd=Decimal("1500.00"))
         wr = WithdrawalRequest.objects.filter(user=self.user).first()
         self.assertIsNotNone(wr)
         self.assertEqual(wr.status, WithdrawalRequest.STATUS_PENDING)
-        self.assertEqual(wr.amount_usd, Decimal("50.00"))
+        self.assertEqual(wr.amount_usd, Decimal("1500.00"))
 
     def test_withdrawal_debits_wallet_exactly_once(self):
-        self.client.post(WITHDRAW_URL, _wr_payload("75.00"))
+        with _PATCH_OTP_EMAIL:
+            full_withdraw_flow(self.client, self.user, verified_wallet=self.vw, amount_usd=Decimal("1500.00"))
         self.wallet.refresh_from_db()
-        self.assertEqual(self.wallet.available_balance, Decimal("125.00"))
+        self.assertEqual(self.wallet.available_balance, Decimal("500.00"))
 
     def test_withdrawal_creates_debit_tx(self):
-        self.client.post(WITHDRAW_URL, _wr_payload("40.00"))
+        with _PATCH_OTP_EMAIL:
+            full_withdraw_flow(self.client, self.user, verified_wallet=self.vw, amount_usd=Decimal("1500.00"))
         wr = WithdrawalRequest.objects.get(user=self.user)
         self.assertIsNotNone(wr.debit_tx_id)
         self.assertEqual(wr.debit_tx.tx_type, WalletTransaction.TX_WITHDRAW)
 
     def test_insufficient_balance_does_not_debit_wallet(self):
-        self.client.post(WITHDRAW_URL, _wr_payload("9999.00"))
+        self.client.post(WITHDRAW_URL, _wr_payload("9999.00", self.vw.pk))
         self.wallet.refresh_from_db()
-        self.assertEqual(self.wallet.available_balance, Decimal("200"))
+        self.assertEqual(self.wallet.available_balance, Decimal("2000"))
 
-    def test_successful_withdrawal_redirects(self):
-        r = self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
-        self.assertRedirects(r, reverse("simulator:withdraw_history"), fetch_redirect_response=False)
+    def test_step1_redirects_to_otp_verify(self):
+        r = self.client.post(WITHDRAW_URL, _wr_payload("1500.00", self.vw.pk))
+        self.assertRedirects(r, reverse("simulator:withdraw_otp_verify"), fetch_redirect_response=False)
+
+    def test_full_flow_redirects_to_history(self):
+        with _PATCH_OTP_EMAIL:
+            r1, r2, challenge = full_withdraw_flow(self.client, self.user, verified_wallet=self.vw, amount_usd=Decimal("1500.00"))
+        self.assertRedirects(r2, reverse("simulator:withdraw_history"), fetch_redirect_response=False)
 
 
 # ── Duplicate PENDING guard ───────────────────────────────────────────────────
@@ -126,52 +148,64 @@ class DuplicatePendingWithdrawalTests(TestCase):
         _PATCH_RATELIMIT.start()
         _PATCH_TOTP.start()
         self.user   = make_user(email="dup@test.com")
-        self.wallet = make_wallet(self.user, initial_balance=Decimal("500"))
+        self.wallet = make_wallet(self.user, initial_balance=Decimal("5000"))
         _make_device(self.user)
         make_kyc_approved(self.user)
+        self.vw = make_verified_withdrawal_wallet(self.user)
         self.client.force_login(self.user)
 
     def tearDown(self):
         _PATCH_RATELIMIT.stop()
         _PATCH_TOTP.stop()
 
+    def _complete_one_withdrawal(self, amount="1500.00"):
+        with _PATCH_OTP_EMAIL:
+            full_withdraw_flow(self.client, self.user, verified_wallet=self.vw, amount_usd=Decimal(amount))
+
     def test_duplicate_pending_withdrawal_rejected(self):
-        """Second withdrawal request while first is PENDING must be rejected."""
-        self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
-        r = self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+        """Second withdrawal request while first is PENDING must be rejected at step 1."""
+        self._complete_one_withdrawal()
+        r = self.client.post(WITHDRAW_URL, _wr_payload("1500.00", self.vw.pk))
         self.assertEqual(r.status_code, 200)  # re-renders form with error
         self.assertEqual(WithdrawalRequest.objects.filter(user=self.user).count(), 1)
 
     def test_duplicate_pending_does_not_double_debit_wallet(self):
         """Wallet must be debited only once even if user submits twice."""
-        self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
-        self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+        self._complete_one_withdrawal()
+        self.client.post(WITHDRAW_URL, _wr_payload("1500.00", self.vw.pk))
         self.wallet.refresh_from_db()
-        self.assertEqual(self.wallet.available_balance, Decimal("450.00"))
+        self.assertEqual(self.wallet.available_balance, Decimal("3500.00"))
 
     def test_duplicate_pending_shows_clear_error_message(self):
-        self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
-        r = self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+        self._complete_one_withdrawal()
+        r = self.client.post(WITHDRAW_URL, _wr_payload("1500.00", self.vw.pk))
         self.assertContains(r, "pendiente")
 
     def test_can_withdraw_again_after_first_is_no_longer_pending(self):
         """Once the first WR is no longer PENDING, a new one can be created."""
-        self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+        self._complete_one_withdrawal()
         wr = WithdrawalRequest.objects.get(user=self.user)
         wr.status = WithdrawalRequest.STATUS_COMPLETED
         wr.save()
 
-        self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
-        self.assertEqual(WithdrawalRequest.objects.filter(user=self.user).count(), 2)
+        r = self.client.post(WITHDRAW_URL, _wr_payload("1500.00", self.vw.pk))
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(
+            WithdrawalEmailOTPChallenge.objects.filter(
+                user=self.user, status=WithdrawalEmailOTPChallenge.STATUS_PENDING,
+            ).count(),
+            1,
+        )
 
     def test_rejected_wr_allows_new_withdrawal(self):
         """After admin rejects, user should be able to request again."""
-        self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+        self._complete_one_withdrawal()
         wr = WithdrawalRequest.objects.get(user=self.user)
         wr.status = WithdrawalRequest.STATUS_REJECTED
         wr.save()
 
-        self.client.post(WITHDRAW_URL, _wr_payload("30.00"))
+        with _PATCH_OTP_EMAIL:
+            full_withdraw_flow(self.client, self.user, verified_wallet=self.vw, amount_usd=Decimal("1200.00"))
         self.assertEqual(
             WithdrawalRequest.objects.filter(user=self.user, status=WithdrawalRequest.STATUS_PENDING).count(),
             1,
@@ -185,43 +219,47 @@ class WithdrawalAtomicRollbackTests(TestCase):
         _PATCH_RATELIMIT.start()
         _PATCH_TOTP.start()
         self.user   = make_user(email="atomic@test.com")
-        self.wallet = make_wallet(self.user, initial_balance=Decimal("300"))
+        self.wallet = make_wallet(self.user, initial_balance=Decimal("3000"))
         _make_device(self.user)
         make_kyc_approved(self.user)
+        self.vw = make_verified_withdrawal_wallet(self.user)
         self.client.force_login(self.user)
 
     def tearDown(self):
         _PATCH_RATELIMIT.stop()
         _PATCH_TOTP.stop()
 
+    def _post_step2_with_wr_create_failing(self):
+        with _PATCH_OTP_EMAIL, fixed_otp_code("123456") as code:
+            r1, challenge = submit_withdraw_request(
+                self.client, self.user, verified_wallet=self.vw, amount_usd=Decimal("1000.00"),
+            )
+            with patch(
+                "simulator.views.WithdrawalRequest.objects.create",
+                side_effect=Exception("DB error"),
+            ):
+                r2 = self.client.post("/withdraw/otp/", {"challenge_id": challenge.id, "code": code})
+        return r2
+
     def test_failed_wr_create_does_not_debit_wallet(self):
         """If WithdrawalRequest.create() fails, the wallet debit must roll back."""
-        with patch(
-            "simulator.views.WithdrawalRequest.objects.create",
-            side_effect=Exception("DB error"),
-        ):
-            self.client.post(WITHDRAW_URL, _wr_payload("100.00"))
+        self._post_step2_with_wr_create_failing()
         self.wallet.refresh_from_db()
-        self.assertEqual(self.wallet.available_balance, Decimal("300"))
+        self.assertEqual(self.wallet.available_balance, Decimal("3000"))
 
     def test_failed_wr_create_does_not_create_wr(self):
-        with patch(
-            "simulator.views.WithdrawalRequest.objects.create",
-            side_effect=Exception("DB error"),
-        ):
-            self.client.post(WITHDRAW_URL, _wr_payload("100.00"))
+        self._post_step2_with_wr_create_failing()
         self.assertEqual(WithdrawalRequest.objects.filter(user=self.user).count(), 0)
 
     def test_failed_wr_create_shows_generic_error(self):
-        with patch(
-            "simulator.views.WithdrawalRequest.objects.create",
-            side_effect=Exception("DB error"),
-        ):
-            r = self.client.post(WITHDRAW_URL, _wr_payload("100.00"))
-        self.assertEqual(r.status_code, 200)
+        r2 = self._post_step2_with_wr_create_failing()
+        self.assertEqual(r2.status_code, 200)
 
 
 # ── Payout callback — refund on FAILED ───────────────────────────────────────
+# (Unchanged: constructs an already-debited WR directly, bypassing the view
+# entirely — this exercises payout_orchestrator/webhook code, which this
+# block never touches.)
 
 _PATCH_PAYOUT_RATELIMIT = patch("simulator.ratelimit.rate_check", return_value=(True, 0))
 
@@ -299,13 +337,15 @@ class WithdrawalUserIsolationTests(TestCase):
         _PATCH_RATELIMIT.start()
         _PATCH_TOTP.start()
         self.user_a  = make_user()
-        self.wallet_a = make_wallet(self.user_a, initial_balance=Decimal("300"))
+        self.wallet_a = make_wallet(self.user_a, initial_balance=Decimal("5000"))
         self.user_b  = make_user()
-        self.wallet_b = make_wallet(self.user_b, initial_balance=Decimal("300"))
+        self.wallet_b = make_wallet(self.user_b, initial_balance=Decimal("5000"))
         _make_device(self.user_a)
         _make_device(self.user_b)
         make_kyc_approved(self.user_a)
         make_kyc_approved(self.user_b)
+        self.vw_a = make_verified_withdrawal_wallet(self.user_a)
+        self.vw_b = make_verified_withdrawal_wallet(self.user_b)
 
     def tearDown(self):
         _PATCH_RATELIMIT.stop()
@@ -313,7 +353,7 @@ class WithdrawalUserIsolationTests(TestCase):
 
     def test_user_a_pending_does_not_block_user_b(self):
         """User A's pending withdrawal must not prevent User B from withdrawing."""
-        # Create pending for User A
+        # Create pending for User A (bypassing the view — direct model creation).
         WithdrawalRequest.objects.create(
             user=self.user_a,
             amount_usd=Decimal("50"),
@@ -321,9 +361,10 @@ class WithdrawalUserIsolationTests(TestCase):
             wallet_address="bc1qtest",
             status=WithdrawalRequest.STATUS_PENDING,
         )
-        # User B should still be able to withdraw
+        # User B should still be able to withdraw.
         self.client.force_login(self.user_b)
-        self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+        with _PATCH_OTP_EMAIL:
+            full_withdraw_flow(self.client, self.user_b, verified_wallet=self.vw_b, amount_usd=Decimal("1500.00"))
         self.assertEqual(
             WithdrawalRequest.objects.filter(
                 user=self.user_b, status=WithdrawalRequest.STATUS_PENDING
@@ -333,9 +374,10 @@ class WithdrawalUserIsolationTests(TestCase):
 
     def test_withdraw_only_debits_requesting_user_wallet(self):
         self.client.force_login(self.user_a)
-        self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+        with _PATCH_OTP_EMAIL:
+            full_withdraw_flow(self.client, self.user_a, verified_wallet=self.vw_a, amount_usd=Decimal("1500.00"))
         self.wallet_b.refresh_from_db()
-        self.assertEqual(self.wallet_b.available_balance, Decimal("300"))
+        self.assertEqual(self.wallet_b.available_balance, Decimal("5000"))
 
 
 # ── Audit log ────────────────────────────────────────────────────────────────
@@ -349,9 +391,10 @@ class WithdrawalAuditLogTests(TestCase):
         _PATCH_EMAIL.start()
         _PATCH_TOTP.start()
         self.user   = make_user(email="audit@test.com")
-        self.wallet = make_wallet(self.user, initial_balance=Decimal("500"))
+        self.wallet = make_wallet(self.user, initial_balance=Decimal("5000"))
         _make_device(self.user)
         make_kyc_approved(self.user)
+        self.vw = make_verified_withdrawal_wallet(self.user)
         self.client.force_login(self.user)
 
     def tearDown(self):
@@ -359,19 +402,22 @@ class WithdrawalAuditLogTests(TestCase):
         _PATCH_EMAIL.stop()
         _PATCH_TOTP.stop()
 
+    def _complete_withdrawal(self, amount="1500.00"):
+        full_withdraw_flow(self.client, self.user, verified_wallet=self.vw, amount_usd=Decimal(amount))
+
     def test_requested_creates_audit_log(self):
-        self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+        self._complete_withdrawal()
         self.assertTrue(
             AuditLog.objects.filter(event_type="withdrawal.requested").exists()
         )
 
     def test_requested_audit_log_has_correct_user(self):
-        self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+        self._complete_withdrawal()
         log = AuditLog.objects.get(event_type="withdrawal.requested")
         self.assertEqual(log.user, self.user)
 
     def test_requested_audit_log_detail_has_withdrawal_id(self):
-        self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+        self._complete_withdrawal()
         log = AuditLog.objects.get(event_type="withdrawal.requested")
         self.assertIn("withdrawal_id", log.detail)
 
@@ -417,7 +463,12 @@ class WithdrawalAuditLogTests(TestCase):
 
 
 class WithdrawalAdminAuditLogTests(TestCase):
-    """Audit logs for admin approve and reject actions."""
+    """
+    Audit logs for admin approve and reject actions. Constructs the WR
+    directly (bypassing the view) — this exercises admin.py, which this
+    block only touched via the new dual-approval gate (a no-op for these
+    amounts, all < $1,000 -> required_approvals defaults to 1).
+    """
 
     def setUp(self):
         self.admin = make_user(email="admin@test.com", is_staff=True, is_superuser=True)
@@ -490,24 +541,41 @@ class WithdrawalAdminAuditLogTests(TestCase):
 
 # ── Email notifications ───────────────────────────────────────────────────────
 
+@override_settings(WALLET_WITHDRAWAL_ENABLED_ASSETS=["usdttrc20", "btc"])
 class WithdrawalEmailTests(TestCase):
     def setUp(self):
         _PATCH_RATELIMIT.start()
         _PATCH_TOTP.start()
         self.user   = make_user(email="emailtest@test.com")
-        self.wallet = make_wallet(self.user, initial_balance=Decimal("500"))
+        self.wallet = make_wallet(self.user, initial_balance=Decimal("2000"))
         _make_device(self.user)
         make_kyc_approved(self.user)
+        # Same literal address the original suite asserted a masked form of
+        # ("bc1qte...0000") — factory bypasses form validation, so the
+        # literal string is preserved exactly.
+        self.vw = make_verified_withdrawal_wallet(
+            self.user, asset="BTC", network="BTC_MAINNET",
+            address="bc1qtest000000000000000000000000000000000",
+        )
         self.client.force_login(self.user)
 
     def tearDown(self):
         _PATCH_RATELIMIT.stop()
         _PATCH_TOTP.stop()
 
+    def _complete_withdrawal(self, mock_delay=None):
+        with fixed_otp_code("123456") as code:
+            r1, challenge = submit_withdraw_request(
+                self.client, self.user, verified_wallet=self.vw, amount_usd=Decimal("1500.00"),
+                crypto_currency="btc",
+            )
+            if mock_delay is not None:
+                mock_delay.reset_mock()
+            self.client.post("/withdraw/otp/", {"challenge_id": challenge.id, "code": code})
+
     @patch("simulator.tasks.send_email_async.delay")
     def test_user_confirmation_email_queued_on_request(self, mock_delay):
-        self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
-        # At least one call whose recipient_list includes the user's email
+        self._complete_withdrawal(mock_delay)
         user_email_calls = [
             c for c in mock_delay.call_args_list
             if self.user.email in c.kwargs.get("recipient_list", [])
@@ -520,7 +588,7 @@ class WithdrawalEmailTests(TestCase):
         admin_email = settings.ADMINS[0][1] if settings.ADMINS else None
         if not admin_email:
             self.skipTest("ADMINS not configured")
-        self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+        self._complete_withdrawal(mock_delay)
         admin_calls = [
             c for c in mock_delay.call_args_list
             if admin_email in c.kwargs.get("recipient_list", [])
@@ -531,7 +599,7 @@ class WithdrawalEmailTests(TestCase):
     def test_wallet_address_masked_in_user_email(self, mock_delay):
         """Full wallet address must NOT appear in any outbound email body."""
         full_addr = "bc1qtest000000000000000000000000000000000"
-        self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+        self._complete_withdrawal(mock_delay)
         for c in mock_delay.call_args_list:
             body = c.kwargs.get("message", "")
             self.assertNotIn(full_addr, body,
@@ -540,10 +608,11 @@ class WithdrawalEmailTests(TestCase):
     @patch("simulator.tasks.send_email_async.delay")
     def test_wallet_address_masked_format_in_user_email(self, mock_delay):
         """Masked address in the format 'bc1qte...0000' must appear in user email."""
-        self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+        self._complete_withdrawal(mock_delay)
         user_calls = [
             c for c in mock_delay.call_args_list
             if self.user.email in c.kwargs.get("recipient_list", [])
+            and "recibida" in c.kwargs.get("subject", "")  # EVENT_REQUESTED status email, not the OTP code email
         ]
         self.assertTrue(len(user_calls) >= 1)
         body = user_calls[0].kwargs.get("message", "")
@@ -553,7 +622,7 @@ class WithdrawalEmailTests(TestCase):
     def test_email_failure_does_not_break_withdrawal_creation(self, mock_delay):
         """If email queuing raises, the WR must still be created."""
         mock_delay.side_effect = Exception("Celery down")
-        self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+        self._complete_withdrawal()
         self.assertEqual(WithdrawalRequest.objects.filter(user=self.user).count(), 1)
 
     @patch("simulator.tasks.send_email_async.delay")
@@ -606,14 +675,15 @@ class WithdrawalEmailTests(TestCase):
 # ── 2FA enforcement ───────────────────────────────────────────────────────────
 
 class WithdrawalTwoFATests(TestCase):
-    """Verify that TOTP 2FA is enforced for every withdrawal request."""
+    """Verify that TOTP 2FA is enforced for every withdrawal request (step 1)."""
 
     def setUp(self):
         _PATCH_RATELIMIT.start()
         self.mock_email = _PATCH_EMAIL.start()
         self.user   = make_user(email="2fa@test.com")
-        self.wallet = make_wallet(self.user, initial_balance=Decimal("200"))
+        self.wallet = make_wallet(self.user, initial_balance=Decimal("2000"))
         make_kyc_approved(self.user)
+        self.vw = make_verified_withdrawal_wallet(self.user)
         self.client.force_login(self.user)
 
     def tearDown(self):
@@ -621,73 +691,73 @@ class WithdrawalTwoFATests(TestCase):
         _PATCH_EMAIL.stop()
 
     def test_withdrawal_without_2fa_device_rejected(self):
-        """No confirmed TOTPDevice → rejected with 2FA error, no WR created."""
-        r = self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+        """No confirmed TOTPDevice → rejected with 2FA error, no challenge created."""
+        r = self.client.post(WITHDRAW_URL, _wr_payload("1500.00", self.vw.pk))
         self.assertEqual(r.status_code, 200)
         self.assertContains(r, "2FA")
-        self.assertEqual(WithdrawalRequest.objects.filter(user=self.user).count(), 0)
+        self.assertEqual(WithdrawalEmailOTPChallenge.objects.filter(user=self.user).count(), 0)
 
     def test_withdrawal_with_2fa_enabled_requires_code(self):
-        """Device present but code is wrong → rejected, no WR created."""
+        """Device present but code is wrong → rejected, no challenge created."""
         _make_device(self.user)
         with patch("simulator.two_factor.verify_totp_code", return_value=False):
-            r = self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+            r = self.client.post(WITHDRAW_URL, _wr_payload("1500.00", self.vw.pk))
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(WithdrawalRequest.objects.filter(user=self.user).count(), 0)
+        self.assertEqual(WithdrawalEmailOTPChallenge.objects.filter(user=self.user).count(), 0)
 
     def test_withdrawal_with_missing_otp_rejected_no_debit(self):
-        """POST without otp_code field → verify fails → no WR, wallet unchanged."""
+        """POST without otp_code field → verify fails → no challenge, wallet unchanged."""
         _make_device(self.user)
-        payload = _wr_payload("50.00")
+        payload = _wr_payload("1500.00", self.vw.pk)
         del payload["otp_code"]
         with patch("simulator.two_factor.verify_totp_code", return_value=False):
             self.client.post(WITHDRAW_URL, payload)
         self.wallet.refresh_from_db()
-        self.assertEqual(self.wallet.available_balance, Decimal("200"))
-        self.assertEqual(WithdrawalRequest.objects.filter(user=self.user).count(), 0)
+        self.assertEqual(self.wallet.available_balance, Decimal("2000"))
+        self.assertEqual(WithdrawalEmailOTPChallenge.objects.filter(user=self.user).count(), 0)
 
     def test_withdrawal_with_invalid_otp_rejected_no_debit(self):
-        """Invalid TOTP code → no WR created, wallet not debited."""
+        """Invalid TOTP code → no challenge created, wallet not debited."""
         _make_device(self.user)
         with patch("simulator.two_factor.verify_totp_code", return_value=False):
-            self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+            self.client.post(WITHDRAW_URL, _wr_payload("1500.00", self.vw.pk))
         self.wallet.refresh_from_db()
-        self.assertEqual(self.wallet.available_balance, Decimal("200"))
-        self.assertEqual(WithdrawalRequest.objects.filter(user=self.user).count(), 0)
+        self.assertEqual(self.wallet.available_balance, Decimal("2000"))
+        self.assertEqual(WithdrawalEmailOTPChallenge.objects.filter(user=self.user).count(), 0)
 
     def test_withdrawal_with_valid_otp_creates_pending_request(self):
-        """Valid TOTP code → WR created as PENDING."""
+        """Valid TOTP code, then completing the email OTP step → WR created as PENDING."""
         _make_device(self.user)
         with patch("simulator.two_factor.verify_totp_code", return_value=True):
-            self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+            full_withdraw_flow(self.client, self.user, verified_wallet=self.vw, amount_usd=Decimal("1500.00"))
         wr = WithdrawalRequest.objects.filter(user=self.user).first()
         self.assertIsNotNone(wr)
         self.assertEqual(wr.status, WithdrawalRequest.STATUS_PENDING)
 
     def test_withdrawal_with_valid_otp_debits_wallet_once(self):
-        """Valid TOTP code → wallet debited exactly once."""
+        """Valid TOTP code, full flow → wallet debited exactly once."""
         _make_device(self.user)
         with patch("simulator.two_factor.verify_totp_code", return_value=True):
-            self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+            full_withdraw_flow(self.client, self.user, verified_wallet=self.vw, amount_usd=Decimal("1500.00"))
         self.wallet.refresh_from_db()
-        self.assertEqual(self.wallet.available_balance, Decimal("150.00"))
+        self.assertEqual(self.wallet.available_balance, Decimal("500.00"))
 
     def test_duplicate_pending_still_rejected_with_valid_otp(self):
         """Even with valid 2FA, duplicate PENDING WR is blocked; wallet debited once."""
         _make_device(self.user)
         with patch("simulator.two_factor.verify_totp_code", return_value=True):
-            self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
-            self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+            full_withdraw_flow(self.client, self.user, verified_wallet=self.vw, amount_usd=Decimal("1500.00"))
+            self.client.post(WITHDRAW_URL, _wr_payload("1500.00", self.vw.pk))
         self.assertEqual(WithdrawalRequest.objects.filter(user=self.user).count(), 1)
         self.wallet.refresh_from_db()
-        self.assertEqual(self.wallet.available_balance, Decimal("150.00"))
+        self.assertEqual(self.wallet.available_balance, Decimal("500.00"))
 
     def test_failed_otp_does_not_send_emails(self):
         """Invalid TOTP code → no user or admin email queued."""
         _make_device(self.user)
         self.mock_email.reset_mock()
         with patch("simulator.two_factor.verify_totp_code", return_value=False):
-            self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+            self.client.post(WITHDRAW_URL, _wr_payload("1500.00", self.vw.pk))
         self.mock_email.assert_not_called()
 
     def test_failed_otp_creates_security_log(self):
@@ -695,5 +765,5 @@ class WithdrawalTwoFATests(TestCase):
         _make_device(self.user)
         with patch("simulator.two_factor.verify_totp_code", return_value=False):
             with self.assertLogs("simulator.security", level="WARNING") as cm:
-                self.client.post(WITHDRAW_URL, _wr_payload("50.00"))
+                self.client.post(WITHDRAW_URL, _wr_payload("1500.00", self.vw.pk))
         self.assertTrue(any("withdrawal.2fa_failed" in line for line in cm.output))

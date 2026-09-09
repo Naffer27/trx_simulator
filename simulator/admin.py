@@ -29,6 +29,7 @@ from .models import (
     LiquidityProvider, LiquidityDecision, LiquidityLedger,
     DealingDeskDecision,
     PendingOrder,
+    WithdrawalEmailOTPChallenge, VerifiedWithdrawalWallet,
 )
 from . import challenge_engine
 from .secure_media import broker_document_secure_widget, kyc_secure_widget
@@ -1852,6 +1853,106 @@ def _mask_wallet(addr: str) -> str:
     return f"{addr[:6]}...{addr[-4:]}"
 
 
+def _apply_second_approval(wr, actor):
+    """
+    WITHDRAWAL-SECURITY-EXTENSION-01 — lock order WithdrawalRequest ONLY
+    (same as submit_withdrawal_to_provider's own lock, payout_orchestrator.py:138
+    — no Wallet, no network call inside this atomic block).
+
+    For required_approvals==1 rows: no-op, returns (True, None) immediately
+    — today's single-approval behavior, unchanged.
+
+    For required_approvals==2 rows: requires first_approved_by already set
+    by a DIFFERENT admin than *actor* (first_approve_withdrawals below);
+    records second_approved_by/at. Idempotent — a second click by the same
+    admin after already recording the approval just proceeds (does not
+    error), since submit_withdrawal_to_provider()'s own claim-check
+    (WithdrawalAlreadyClaimed / ActivePayoutAttemptExists) is the real
+    guard against a duplicate payout submission.
+
+    Returns (ok: bool, error_message: str | None).
+    """
+    with transaction.atomic():
+        wr_locked = WithdrawalRequest.objects.select_for_update().get(pk=wr.pk)
+        if wr_locked.status != WithdrawalRequest.STATUS_PENDING:
+            return False, f"#{wr_locked.id}: ya no está pendiente (status={wr_locked.status})."
+        if wr_locked.required_approvals <= 1:
+            return True, None
+        if wr_locked.first_approved_by_id is None:
+            return False, f"#{wr_locked.id}: requiere primera aprobación (retiro > $1,000) antes de esta."
+        if wr_locked.first_approved_by_id == actor.id:
+            return False, f"#{wr_locked.id}: el mismo admin no puede dar ambas aprobaciones."
+        if wr_locked.second_approved_by_id is None:
+            wr_locked.second_approved_by = actor
+            wr_locked.second_approved_at = now()
+            wr_locked.save(update_fields=["second_approved_by", "second_approved_at"])
+    return True, None
+
+
+@admin.action(description="1️⃣ Primera aprobación (retiros > $1,000)")
+def first_approve_withdrawals(modeladmin, request, queryset):
+    """
+    WITHDRAWAL-SECURITY-EXTENSION-01 — records the FIRST of two required
+    approvals for a WithdrawalRequest with required_approvals==2. Does NOT
+    call submit_withdrawal_to_provider() and does NOT touch payout_orchestrator
+    at all — that only happens from the existing approve_withdrawals action
+    below, once a DIFFERENT admin approves a second time. No-op
+    (informational skip) for required_approvals==1 rows — use the normal
+    "Aprobar" action for those, exactly as before this block.
+    """
+    pending = queryset.filter(status=WithdrawalRequest.STATUS_PENDING)
+    if not pending.exists():
+        modeladmin.message_user(request, "No hay retiros pendientes seleccionados.", messages.WARNING)
+        return
+
+    done, skipped, errs = 0, 0, []
+    for wr in pending:
+        with transaction.atomic():
+            wr_locked = WithdrawalRequest.objects.select_for_update().get(pk=wr.pk)
+            if wr_locked.status != WithdrawalRequest.STATUS_PENDING:
+                errs.append(f"#{wr_locked.id}: ya no está pendiente.")
+                continue
+            if wr_locked.required_approvals <= 1:
+                skipped += 1
+                continue
+            if wr_locked.first_approved_by_id is not None:
+                skipped += 1
+                continue
+            wr_locked.first_approved_by = request.user
+            wr_locked.first_approved_at = now()
+            wr_locked.save(update_fields=["first_approved_by", "first_approved_at"])
+            done += 1
+        if wr_locked.first_approved_by_id == request.user.id and wr_locked.first_approved_at:
+            try:
+                from .audit import log_audit, EV_WITHDRAW_FIRST_APPROVED
+                log_audit(
+                    request, EV_WITHDRAW_FIRST_APPROVED,
+                    f"Withdrawal #{wr.id} first-approved by {request.user.username}",
+                    detail={"withdrawal_id": wr.id},
+                )
+            except Exception:
+                pass
+
+    if done:
+        modeladmin.message_user(
+            request,
+            f"{done} retiro(s) con primera aprobación registrada. "
+            "Falta un admin DISTINTO para la segunda aprobación y envío.",
+            messages.SUCCESS,
+        )
+    if skipped:
+        modeladmin.message_user(
+            request,
+            f"{skipped} retiro(s) omitidos (ya tenían 1ª aprobación, o requieren solo 1 — usa 'Aprobar').",
+            messages.WARNING,
+        )
+    for e in errs:
+        modeladmin.message_user(request, f"Error — {e}", messages.ERROR)
+
+
+first_approve_withdrawals = superuser_required_action(first_approve_withdrawals)
+
+
 @admin.action(description="✅ Aprobar — enviar pago crypto vía NowPayments")
 def approve_withdrawals(modeladmin, request, queryset):
     """
@@ -1862,6 +1963,15 @@ def approve_withdrawals(modeladmin, request, queryset):
     to 'pending' after the payout attempt has been created. See
     simulator/payout_orchestrator.py::submit_withdrawal_to_provider()
     for the actual sequence (estimate -> TXN1 -> create_payout -> TXN2).
+
+    WITHDRAWAL-SECURITY-EXTENSION-01 — the ONLY change in this function is
+    the _apply_second_approval() gate right below, inserted before the call
+    to submit_withdrawal_to_provider(). For required_approvals==1 rows it's
+    a no-op (identical to before this block). For required_approvals==2
+    rows, this action now doubles as the "second approval" step — a
+    different admin than first_approve_withdrawals' actor must be the one
+    clicking this. submit_withdrawal_to_provider() itself is completely
+    unmodified.
     """
     from django.urls import reverse as _rev
 
@@ -1879,6 +1989,13 @@ def approve_withdrawals(modeladmin, request, queryset):
 
     ok, unknown, errs = 0, 0, []
     for wr in pending:
+        # ── WITHDRAWAL-SECURITY-EXTENSION-01 gate — the ONLY insertion point.
+        # Everything from here down is the pre-existing FIX-02A.2 code, untouched. ──
+        approval_ok, approval_err = _apply_second_approval(wr, request.user)
+        if not approval_ok:
+            errs.append(approval_err)
+            continue
+
         try:
             result = submit_withdrawal_to_provider(
                 wr, adapter=adapter, actor=request.user, callback_url=cb_url, request=request,
@@ -2062,13 +2179,14 @@ class WithdrawalRequestAdmin(admin.ModelAdmin):
 
     list_display  = (
         "id", "user_col", "amount_col", "crypto_currency", "address_short",
-        "status_badge", "crypto_col", "np_payout_id", "created_at", "reviewed_by",
+        "status_badge", "crypto_col", "np_payout_id", "created_at",
+        "required_approvals", "first_approved_by", "reviewed_by",
     )
     list_filter   = ("status", "crypto_currency", "created_at")
     search_fields = ("user__username", "user__email", "wallet_address", "np_payout_id", "np_batch_id")
     ordering      = ("-created_at",)
     date_hierarchy = "created_at"
-    actions       = [approve_withdrawals, reject_withdrawals]
+    actions       = [first_approve_withdrawals, approve_withdrawals, reject_withdrawals]
 
     # FIX-02A.3 — read-only total. Derivado de _meta.fields (no una lista
     # manual) para que status/admin_note y cualquier campo futuro del
@@ -2102,11 +2220,18 @@ class WithdrawalRequestAdmin(admin.ModelAdmin):
         ("Review", {
             "fields": ("status", "admin_note", "reviewed_by", "reviewed_at"),
         }),
+        ("Dual Approval (WITHDRAWAL-SECURITY-EXTENSION-01)", {
+            "fields": (
+                "required_approvals",
+                "first_approved_by", "first_approved_at",
+                "second_approved_by", "second_approved_at",
+            ),
+        }),
         ("NowPayments Payout", {
             "fields": ("np_batch_id", "np_payout_id", "np_payout_status", "crypto_amount"),
         }),
         ("Ledger", {
-            "fields": ("debit_tx",),
+            "fields": ("debit_tx", "otp_challenge"),
         }),
         ("Timestamps", {
             "classes": ("collapse",),
@@ -2199,6 +2324,67 @@ class PayoutWebhookEventAdmin(admin.ModelAdmin):
         "event_fingerprint", "correlated_attempt__id",
     )
     ordering = ("-received_at",)
+
+
+@admin.register(WithdrawalEmailOTPChallenge)
+class WithdrawalEmailOTPChallengeAdmin(admin.ModelAdmin):
+    """
+    WITHDRAWAL-SECURITY-EXTENSION-01 — strictly view-only. Never
+    add/change/delete from here — the only writers are withdrawal_otp.py's
+    create_challenge()/verify_challenge()/resend_challenge()/
+    mark_challenge_used(). code_hash is a sha256 digest, not the plaintext
+    code — nothing sensitive is exposed by making this readonly-visible.
+    """
+    readonly_fields = [f.name for f in WithdrawalEmailOTPChallenge._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    list_display = (
+        "id", "user", "purpose", "status", "amount_usd", "withdraw_all",
+        "asset", "network", "attempts", "max_attempts", "created_at", "expires_at",
+    )
+    list_filter = ("purpose", "status", "asset", "network")
+    search_fields = ("user__username", "user__email", "wallet_address")
+    ordering = ("-created_at",)
+
+
+@admin.register(VerifiedWithdrawalWallet)
+class VerifiedWithdrawalWalletAdmin(admin.ModelAdmin):
+    """
+    WITHDRAWAL-SECURITY-EXTENSION-01 — strictly view-only. Never
+    add/change/delete from here — the only writers are
+    verified_wallets.create_pending_wallet() / _try_activate().
+    """
+    readonly_fields = [f.name for f in VerifiedWithdrawalWallet._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    list_display = (
+        "id", "user", "asset", "network", "address_short", "status",
+        "created_at", "cooldown_until", "activated_at", "deactivated_at",
+    )
+    list_filter = ("status", "asset", "network")
+    search_fields = ("user__username", "user__email", "address")
+    ordering = ("-created_at",)
+
+    @admin.display(description="Address")
+    def address_short(self, obj):
+        a = obj.address
+        return f"{a[:10]}…{a[-6:]}" if len(a) > 18 else a
 
 
 # ─────────────────────────────────────────────

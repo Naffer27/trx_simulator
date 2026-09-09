@@ -431,6 +431,15 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": celery_td(seconds=30),
         "options":  {"expires": 28},   # drop if not picked up before next firing
     },
+    # WITHDRAWAL-SECURITY-EXTENSION-01 — VerifiedWithdrawalWallet cooldown
+    # sweep, defensive backup to the lazy on-read activation. Cooldown is
+    # hours-scale, so a 15 min cadence (same as the reconcile-* audit
+    # tasks) is plenty — no urgency, just a backstop.
+    "sweep-verified-wallets-15m": {
+        "task":     "simulator.sweep_verified_wallets",
+        "schedule": crontab(minute="*/15"),
+        "options":  {"expires": 14 * 60},
+    },
     # Broker revenue snapshot every 5 min — equity curve + trend analytics
     "take-revenue-snapshot-5m": {
         "task":     "simulator.take_revenue_snapshot",
@@ -968,9 +977,44 @@ NOWPAYMENTS_EMAIL         = os.getenv("NOWPAYMENTS_EMAIL", "")
 NOWPAYMENTS_PASSWORD      = os.getenv("NOWPAYMENTS_PASSWORD", "")
 
 # Daily withdrawal cap — sum of pending/processing/approved/completed withdrawals
+# NEVER enforced (WITHDRAWAL-SECURITY-EXTENSION-01 Design Lock rule 9 — no daily
+# cap, by deliberate product decision). Kept only for display purposes in
+# _get_daily_withdrawal_used(); do not wire this into a validation gate.
 MAX_WITHDRAWAL_DAILY_USD = int(os.getenv("MAX_WITHDRAWAL_DAILY_USD", "1500"))
-# Minimum single withdrawal amount
-MIN_WITHDRAWAL_USD = int(os.getenv("MIN_WITHDRAWAL_USD", "25"))
+# Minimum single withdrawal amount (manual partial only — Withdraw All bypasses
+# this and uses Wallet.available_balance exactly, regardless of amount).
+MIN_WITHDRAWAL_USD = int(os.getenv("MIN_WITHDRAWAL_USD", "1000"))
+
+# ── WITHDRAWAL-SECURITY-EXTENSION-01 ───────────────────────────────────────────
+# Wallet-withdrawal-only asset allowlist. Deliberately NOT currencies.py's
+# WITHDRAWAL_CURRENCY_MAP — that map is also consumed by the unrelated
+# FUNDED_INTERNAL account flow (views.py FUNDED_INTERNAL crypto_currency
+# check); editing it would silently change that flow too. This list controls
+# ONLY the user-facing Wallet withdrawal form/flow. Format: comma-separated
+# currencies.py DB keys. BTC starts disabled — its address validator is fully
+# implemented, but NowPayments' real payout support for BTC address formats
+# is NOT VERIFIED (Design Lock Correction 1) — enable by adding "btc" here
+# once confirmed, no code change required.
+WALLET_WITHDRAWAL_ENABLED_ASSETS = [
+    a.strip().lower() for a in os.getenv("WALLET_WITHDRAWAL_ENABLED_ASSETS", "usdttrc20").split(",") if a.strip()
+]
+
+# Email OTP challenge (withdrawal + address-change) — WithdrawalEmailOTPChallenge
+WITHDRAWAL_OTP_EXPIRY_MINUTES         = int(os.getenv("WITHDRAWAL_OTP_EXPIRY_MINUTES", "10"))
+WITHDRAWAL_OTP_MAX_ATTEMPTS           = int(os.getenv("WITHDRAWAL_OTP_MAX_ATTEMPTS", "5"))
+WITHDRAWAL_OTP_RESEND_COOLDOWN_SECONDS = int(os.getenv("WITHDRAWAL_OTP_RESEND_COOLDOWN_SECONDS", "60"))
+# Dedicated HMAC key for WithdrawalEmailOTPChallenge.code_hash — keyed
+# hashing so a DB copy alone can't offline-bruteforce the 10^6 code space
+# (see withdrawal_otp.py::_get_hash_key()). If unset, falls back to
+# SECRET_KEY at hash-computation time, with a warning log — same
+# runtime-fallback discipline as TOTP_ENCRYPTION_KEY's _get_fernet()
+# above (dev/test convenience; a dedicated key is still preferred and
+# should be set in staging/production .env files).
+WITHDRAWAL_OTP_HASH_KEY = os.getenv("WITHDRAWAL_OTP_HASH_KEY", "").strip()
+
+# VerifiedWithdrawalWallet — cooldown before a newly-registered/changed
+# withdrawal address becomes usable.
+WALLET_ADDRESS_CHANGE_COOLDOWN_HOURS = int(os.getenv("WALLET_ADDRESS_CHANGE_COOLDOWN_HOURS", "24"))
 
 # FIX-02A.4 — Payout reconciliation / durable webhook inbox settings.
 # A malformed or unsafely-low env value must never crash Django startup

@@ -383,6 +383,55 @@ def make_kyc_approved(user) -> "KYCProfile":
     return kyc
 
 
+def make_totp_device(user, confirmed: bool = True) -> "TOTPDevice":
+    """Create a confirmed TOTPDevice for *user* with a fixed dev-mode secret."""
+    from simulator.models import TOTPDevice
+    return TOTPDevice.objects.create(
+        user=user,
+        secret="b64:MFSWS3TFMJPXI6TFNFXW4IDXNFXQ====",
+        confirmed=confirmed,
+    )
+
+
+# Real, checksum-valid test addresses (WITHDRAWAL-SECURITY-EXTENSION-01) —
+# safe to reuse across tests that exercise real local address validation.
+VALID_TRC20_ADDRESS       = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+VALID_TRC20_ADDRESS_ALT   = "TA4Y62o6YC2Zsck9rZVGTvqW1AQ7X9zTnj"
+VALID_BTC_ADDRESS         = "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"
+
+
+def make_verified_withdrawal_wallet(
+    user=None,
+    asset: str = "USDT",
+    network: str = "TRC20",
+    address: str | None = None,
+    status: str | None = None,
+) -> "VerifiedWithdrawalWallet":
+    """
+    Create a VerifiedWithdrawalWallet — ACTIVE (already past cooldown) by
+    default, so withdrawal-flow tests that aren't specifically about the
+    wallet-registration/cooldown mechanism can just call this and withdraw.
+    Pass status=STATUS_PENDING_COOLDOWN to test the cooldown gate itself.
+    """
+    from django.utils import timezone as _tz
+    from datetime import timedelta as _td
+    from simulator.models import VerifiedWithdrawalWallet
+    if user is None:
+        user = make_user()
+    if address is None:
+        address = VALID_TRC20_ADDRESS if asset == "USDT" else VALID_BTC_ADDRESS
+    status = status or VerifiedWithdrawalWallet.STATUS_ACTIVE
+    now = _tz.now()
+    is_active = status == VerifiedWithdrawalWallet.STATUS_ACTIVE
+    return VerifiedWithdrawalWallet.objects.create(
+        user=user, asset=asset, network=network, address=address,
+        status=status,
+        verified_at=now,
+        cooldown_until=(now - _td(seconds=1)) if is_active else (now + _td(hours=24)),
+        activated_at=now if is_active else None,
+    )
+
+
 def make_funded_config(
     enrollment: ChallengeEnrollment | None = None,
     funded_type: str = FundedConfig.FUNDED_SIM,

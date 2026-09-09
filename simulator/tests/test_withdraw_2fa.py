@@ -2,10 +2,20 @@
 """
 2FA validation for withdrawal requests.
 
+WITHDRAWAL-SECURITY-EXTENSION-01 note: the withdrawal flow is now two
+steps (POST /withdraw/ creates a WithdrawalEmailOTPChallenge; POST
+/withdraw/otp/ with the email code creates the actual WithdrawalRequest +
+debits the wallet). The 2FA (TOTP) gate itself is UNCHANGED — still
+checked at step 1, in the same order, before anything else — so "blocked"
+here means "no challenge created" and "allowed" means "challenge created,
+and completing the email-OTP step then produces the WithdrawalRequest".
+
 Covers:
-  1. User without a confirmed TOTPDevice cannot withdraw.
-  2. User with a confirmed TOTPDevice and a currently valid TOTP code can withdraw.
-  3. Invalid (wrong) TOTP code rejects the withdrawal.
+  1. User without a confirmed TOTPDevice cannot withdraw (no challenge created).
+  2. User with a confirmed TOTPDevice and a currently valid TOTP code can
+     proceed to step 1 (challenge created), and completing step 2 creates
+     the WithdrawalRequest and debits the wallet.
+  3. Invalid (wrong) TOTP code rejects the withdrawal at step 1.
   4. b64:-prefixed secret is decoded correctly by verify_totp_code.
 """
 import base64
@@ -17,8 +27,9 @@ import pyotp
 from django.test import TestCase
 from django.utils import timezone
 
-from simulator.models import TOTPDevice, WithdrawalRequest
-from simulator.tests.factories import make_user, make_wallet, make_kyc_approved
+from simulator.models import TOTPDevice, WithdrawalEmailOTPChallenge, WithdrawalRequest
+from simulator.tests.factories import make_user, make_wallet, make_kyc_approved, make_verified_withdrawal_wallet
+from simulator.tests.withdrawal_flow_helpers import PATCH_EMAIL as _PATCH_OTP_EMAIL, full_withdraw_flow
 from simulator.two_factor import verify_totp, verify_totp_code
 
 WITHDRAW_URL = "/withdraw/"
@@ -45,11 +56,11 @@ def _valid_code(raw_secret: str = _RAW_SECRET) -> str:
     return pyotp.TOTP(raw_secret).now()
 
 
-def _wr_payload(otp_code: str = "000000", amount: str = "50.00") -> dict:
+def _wr_payload(otp_code: str = "000000", amount: str = "1500.00", wallet_pk=None) -> dict:
     return {
         "amount_usd":      amount,
-        "crypto_currency": "btc",
-        "wallet_address":  "bc1qtest000000000000000000000000000000000",
+        "crypto_currency": "usdttrc20",
+        "wallet_address":  str(wallet_pk) if wallet_pk is not None else "",
         "otp_code":        otp_code,
     }
 
@@ -61,8 +72,9 @@ class NoDeviceGateTest(TestCase):
         _PATCH_RATELIMIT.start()
         _PATCH_EMAIL.start()
         self.user = make_user()
-        make_wallet(self.user, initial_balance=Decimal("200"))
+        make_wallet(self.user, initial_balance=Decimal("5000"))
         make_kyc_approved(self.user)
+        self.vw = make_verified_withdrawal_wallet(self.user)
         self.client.force_login(self.user)
 
     def tearDown(self):
@@ -70,11 +82,11 @@ class NoDeviceGateTest(TestCase):
         _PATCH_EMAIL.stop()
 
     def test_no_confirmed_device_blocks_withdrawal(self):
-        """No TOTPDevice confirmed=True → 200 with 2FA error, no WR created."""
-        r = self.client.post(WITHDRAW_URL, _wr_payload())
+        """No TOTPDevice confirmed=True → 200 with 2FA error, no challenge created."""
+        r = self.client.post(WITHDRAW_URL, _wr_payload(wallet_pk=self.vw.pk))
         self.assertEqual(r.status_code, 200)
         self.assertContains(r, "2FA")
-        self.assertEqual(WithdrawalRequest.objects.filter(user=self.user).count(), 0)
+        self.assertEqual(WithdrawalEmailOTPChallenge.objects.filter(user=self.user).count(), 0)
 
     def test_unconfirmed_device_also_blocks_withdrawal(self):
         """TOTPDevice with confirmed=False counts as no device."""
@@ -83,43 +95,52 @@ class NoDeviceGateTest(TestCase):
             secret=_B64_SECRET,
             confirmed=False,
         )
-        r = self.client.post(WITHDRAW_URL, _wr_payload())
+        r = self.client.post(WITHDRAW_URL, _wr_payload(wallet_pk=self.vw.pk))
         self.assertContains(r, "2FA")
-        self.assertEqual(WithdrawalRequest.objects.filter(user=self.user).count(), 0)
+        self.assertEqual(WithdrawalEmailOTPChallenge.objects.filter(user=self.user).count(), 0)
 
 
-# ── 2. Valid TOTP code → withdrawal created ───────────────────────────────────
+# ── 2. Valid TOTP code → challenge created, and completing it withdraws ──────
 
 class ValidCodeTest(TestCase):
     def setUp(self):
         _PATCH_RATELIMIT.start()
         _PATCH_EMAIL.start()
         self.user = make_user()
-        self.wallet = make_wallet(self.user, initial_balance=Decimal("200"))
+        self.wallet = make_wallet(self.user, initial_balance=Decimal("5000"))
         make_kyc_approved(self.user)
         _make_confirmed_device(self.user)
+        self.vw = make_verified_withdrawal_wallet(self.user)
         self.client.force_login(self.user)
 
     def tearDown(self):
         _PATCH_RATELIMIT.stop()
         _PATCH_EMAIL.stop()
 
-    def test_valid_current_code_creates_pending_wr(self):
-        """Real current TOTP code → WithdrawalRequest created as PENDING."""
+    def test_valid_current_code_creates_challenge_not_wr_yet(self):
+        """Real current TOTP code → step 1 creates a challenge, no WR/debit yet."""
         code = _valid_code()
-        r = self.client.post(WITHDRAW_URL, _wr_payload(otp_code=code))
-        # Successful creation redirects to withdraw history
-        self.assertEqual(r.status_code, 302)
+        r = self.client.post(WITHDRAW_URL, _wr_payload(otp_code=code, wallet_pk=self.vw.pk))
+        self.assertEqual(r.status_code, 302)  # redirects to /withdraw/otp/
+        self.assertEqual(WithdrawalEmailOTPChallenge.objects.filter(user=self.user).count(), 1)
+        self.assertEqual(WithdrawalRequest.objects.filter(user=self.user).count(), 0)
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.available_balance, Decimal("5000"))
+
+    def test_valid_code_then_email_otp_creates_pending_wr_and_debits(self):
+        """Real current TOTP code, then the email OTP step → WR PENDING, wallet debited."""
+        code = _valid_code()
+        with _PATCH_OTP_EMAIL:
+            r1, r2, challenge = full_withdraw_flow(
+                self.client, self.user, verified_wallet=self.vw, amount_usd=Decimal("1500.00"),
+                totp_code=code,
+            )
+        self.assertRedirects(r2, "/withdraw/history/", fetch_redirect_response=False)
         wr = WithdrawalRequest.objects.filter(user=self.user).first()
         self.assertIsNotNone(wr)
         self.assertEqual(wr.status, WithdrawalRequest.STATUS_PENDING)
-
-    def test_valid_code_debits_wallet(self):
-        """Real current TOTP code → wallet debited by the requested amount."""
-        code = _valid_code()
-        self.client.post(WITHDRAW_URL, _wr_payload(otp_code=code, amount="50.00"))
         self.wallet.refresh_from_db()
-        self.assertEqual(self.wallet.available_balance, Decimal("150.00"))
+        self.assertEqual(self.wallet.available_balance, Decimal("3500.00"))
 
 
 # ── 3. Invalid code → withdrawal rejected ────────────────────────────────────
@@ -129,9 +150,10 @@ class InvalidCodeTest(TestCase):
         _PATCH_RATELIMIT.start()
         _PATCH_EMAIL.start()
         self.user = make_user()
-        self.wallet = make_wallet(self.user, initial_balance=Decimal("200"))
+        self.wallet = make_wallet(self.user, initial_balance=Decimal("5000"))
         make_kyc_approved(self.user)
         _make_confirmed_device(self.user)
+        self.vw = make_verified_withdrawal_wallet(self.user)
         self.client.force_login(self.user)
 
     def tearDown(self):
@@ -139,24 +161,24 @@ class InvalidCodeTest(TestCase):
         _PATCH_EMAIL.stop()
 
     def test_wrong_code_rejects_withdrawal(self):
-        """Incorrect 6-digit code → 200 with error, no WR created."""
-        r = self.client.post(WITHDRAW_URL, _wr_payload(otp_code="000000"))
+        """Incorrect 6-digit code → 200 with error, no challenge created."""
+        r = self.client.post(WITHDRAW_URL, _wr_payload(otp_code="000000", wallet_pk=self.vw.pk))
         self.assertEqual(r.status_code, 200)
         self.assertContains(r, "2FA")
-        self.assertEqual(WithdrawalRequest.objects.filter(user=self.user).count(), 0)
+        self.assertEqual(WithdrawalEmailOTPChallenge.objects.filter(user=self.user).count(), 0)
 
     def test_wrong_code_does_not_debit_wallet(self):
         """Incorrect code → wallet balance unchanged."""
-        self.client.post(WITHDRAW_URL, _wr_payload(otp_code="000000"))
+        self.client.post(WITHDRAW_URL, _wr_payload(otp_code="000000", wallet_pk=self.vw.pk))
         self.wallet.refresh_from_db()
-        self.assertEqual(self.wallet.available_balance, Decimal("200"))
+        self.assertEqual(self.wallet.available_balance, Decimal("5000"))
 
     def test_empty_code_rejects_withdrawal(self):
-        """Empty otp_code field → rejected, no WR created."""
-        payload = _wr_payload(otp_code="")
+        """Empty otp_code field → rejected, no challenge created."""
+        payload = _wr_payload(otp_code="", wallet_pk=self.vw.pk)
         r = self.client.post(WITHDRAW_URL, payload)
         self.assertContains(r, "2FA")
-        self.assertEqual(WithdrawalRequest.objects.filter(user=self.user).count(), 0)
+        self.assertEqual(WithdrawalEmailOTPChallenge.objects.filter(user=self.user).count(), 0)
 
 
 # ── 4. b64: secret decodes correctly ─────────────────────────────────────────

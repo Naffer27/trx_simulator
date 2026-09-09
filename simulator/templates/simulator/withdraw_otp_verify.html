@@ -1,0 +1,80 @@
+{% extends "simulator/base_app.html" %}
+{% load static %}
+{% block title %}Verificación — Money Broker{% endblock %}
+{% block page_title %}Verificación{% endblock %}
+
+{% block extra_head %}
+<style>
+  .wd-wrap { min-height: calc(100vh - 56px); display: flex; align-items: center; justify-content: center; padding: 40px 16px; }
+  .wd-card {
+    background: #0d0d14; border: 1px solid rgba(255,215,0,.15); border-radius: 16px;
+    padding: 40px 36px; width: 100%; max-width: 460px; box-shadow: 0 8px 40px rgba(0,0,0,.6);
+  }
+  .wd-card h2 { font-family: 'Orbitron', sans-serif; font-size: 1.3rem; font-weight: 700; color: #FFD700; letter-spacing: .06em; margin-bottom: 6px; }
+  .wd-card .subtitle { color: #787b86; font-size: .82rem; margin-bottom: 28px; }
+  .deposit-input {
+    width: 100%; background: #05050a; border: 1px solid rgba(255,215,0,.2); border-radius: 8px;
+    color: #fff; font-size: 1.1rem; padding: 12px 14px; outline: none; box-sizing: border-box;
+    letter-spacing: .35em; text-align: center;
+  }
+  .deposit-input:focus { border-color: #FFD700; box-shadow: 0 0 0 2px rgba(255,215,0,.12); }
+  .submit-btn {
+    width: 100%; background: linear-gradient(135deg, #FFD700, #FFA500); border: none; border-radius: 8px;
+    color: #000; font-family: 'Orbitron', sans-serif; font-size: .88rem; font-weight: 700;
+    letter-spacing: .07em; padding: 14px; cursor: pointer; margin-top: 20px;
+  }
+  .resend-btn {
+    width: 100%; background: transparent; border: 1px solid rgba(255,215,0,.25); border-radius: 8px;
+    color: rgba(255,215,0,.85); font-size: .8rem; padding: 10px; cursor: pointer; margin-top: 10px;
+  }
+  .resend-btn:disabled { opacity: .4; cursor: not-allowed; }
+  .wd-error { background: rgba(239,83,80,.12); border: 1px solid rgba(239,83,80,.4); border-radius: 8px; color: #ef5350; font-size: .83rem; padding: 12px 14px; margin-bottom: 20px; }
+  .wd-msg { background: rgba(39,174,96,.1); border: 1px solid rgba(39,174,96,.35); border-radius: 8px; color: #27ae60; font-size: .83rem; padding: 12px 14px; margin-bottom: 20px; }
+  .summary-box {
+    background: rgba(255,215,0,.05); border: 1px solid rgba(255,215,0,.12); border-radius: 8px;
+    padding: 14px 16px; margin-bottom: 20px; font-size: .8rem; color: rgba(255,255,255,.7);
+  }
+  .summary-box div { display: flex; justify-content: space-between; margin-bottom: 4px; }
+  .summary-box .v { color: #fff; font-weight: 600; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="wd-wrap">
+  <div class="wd-card">
+    <h2>{% if is_address_change %}Verificar nueva wallet{% else %}Verificar retiro{% endif %}</h2>
+    <p class="subtitle">Ingresa el código de 6 dígitos que enviamos a tu email.</p>
+
+    <div class="summary-box">
+      {% if not is_address_change %}
+      <div><span>Monto</span><span class="v">
+        {% if challenge.withdraw_all %}Balance completo (${{ challenge.amount_usd|floatformat:2 }} al momento de la solicitud){% else %}${{ challenge.amount_usd|floatformat:2 }}{% endif %}
+      </span></div>
+      {% endif %}
+      <div><span>Red</span><span class="v">{{ challenge.asset }}/{{ challenge.network }}</span></div>
+      <div><span>Dirección</span><span class="v">{{ challenge.wallet_address|slice:":6" }}…{{ challenge.wallet_address|slice:"-4:" }}</span></div>
+    </div>
+
+    {% if error %}<div class="wd-error">{{ error }}</div>{% endif %}
+    {% if resend_msg %}<div class="wd-msg">{{ resend_msg }}</div>{% endif %}
+
+    <form method="post">
+      {% csrf_token %}
+      {{ form.challenge_id }}
+      {{ form.code }}
+      {% if form.code.errors %}
+        <div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{{ form.code.errors|join:", " }}</div>
+      {% endif %}
+      <button type="submit" class="submit-btn">CONFIRMAR</button>
+    </form>
+
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="resend">
+      <button type="submit" class="resend-btn" {% if not can_resend_now %}disabled{% endif %}>
+        {% if can_resend_now %}Reenviar código{% else %}Reenviar disponible en {{ resend_wait }}s{% endif %}
+      </button>
+    </form>
+  </div>
+</div>
+{% endblock %}
