@@ -2035,6 +2035,118 @@ def approve_withdrawals(modeladmin, request, queryset):
 approve_withdrawals = superuser_required_action(approve_withdrawals)
 
 
+@admin.action(description="🔁 Reintentar envío (retiros auto-autorizados ≤ $1,000)")
+def retry_auto_authorized_payout(modeladmin, request, queryset):
+    """
+    WITHDRAWAL-POLICY-CORRECTION-01 — operational retry, NOT an approval.
+
+    Withdrawals <=$1,000 are AUTO-AUTHORIZED at creation (KYC + TOTP +
+    email OTP + verified/ACTIVE wallet + cooldown + balance already
+    verified — see withdraw_otp_verify_view._finalize()) and submitted to
+    the provider immediately, with NO staff review. If that automatic
+    submission fails BEFORE the provider accepts it (EstimateFailed, or
+    any exception raised before submit_withdrawal_to_provider()'s TXN1
+    durably creates a PayoutAttempt), the WithdrawalRequest is left
+    exactly as it was: status=PENDING, reviewed_by=None. This action lets
+    staff nudge that submission again — it does NOT re-authorize anything
+    (the authorization already happened and is not staff's to grant), so
+    it calls submit_withdrawal_to_provider() with actor=None, exactly like
+    the original auto-path — reviewed_by stays None and the orchestrator's
+    own EV_WITHDRAW_APPROVED audit line still reads "system
+    (auto-authorized)", never the retrying admin's username. The admin who
+    triggered the retry is recorded separately, via
+    EV_WITHDRAW_PAYOUT_RETRY_TRIGGERED, as an operational action, not an
+    approval.
+
+    Eligibility is deliberately narrow and self-verifying:
+      status=PENDING + required_approvals=1
+    derive_withdrawal_status() (payout_state_machine.py) maps every
+    PayoutAttempt status (SUBMITTED/PROCESSING/UNKNOWN/COMPLETED/FAILED)
+    to something other than "pending" — so a row still PENDING here is
+    structural proof that NO PayoutAttempt was ever durably created for
+    it, making a fresh submit_withdrawal_to_provider() call safe (no
+    duplicate PayoutAttempt, no duplicate Wallet debit — the debit already
+    happened once, at WithdrawalRequest creation, and is never repeated by
+    this function). required_approvals=2 rows are excluded unconditionally
+    — they follow the unmodified dual-approval flow only. Rows already in
+    PROCESSING/UNKNOWN (an attempt exists) are excluded by the same
+    status!=PENDING fact and remain exclusively under the existing
+    reconciliation service — this action never touches them.
+    """
+    from django.urls import reverse as _rev
+
+    from .payout_orchestrator import EstimateFailed, WithdrawalAlreadyClaimed, submit_withdrawal_to_provider
+    from .payout_providers import NowPaymentsAdapter
+    from .payout_state_machine import ActivePayoutAttemptExists
+    from .audit import log_audit, EV_WITHDRAW_PAYOUT_RETRY_TRIGGERED
+
+    eligible = queryset.filter(
+        status=WithdrawalRequest.STATUS_PENDING, required_approvals=1,
+    )
+    if not eligible.exists():
+        modeladmin.message_user(
+            request,
+            "Ningún retiro elegible seleccionado (solo aplica a retiros "
+            "auto-autorizados ≤ $1,000 que quedaron pendientes de envío).",
+            messages.WARNING,
+        )
+        return
+
+    adapter = NowPaymentsAdapter()
+    cb_url = request.build_absolute_uri(_rev("simulator:withdraw_payout_callback"))
+
+    ok, unknown, errs = 0, 0, []
+    for wr in eligible:
+        log_audit(
+            request, EV_WITHDRAW_PAYOUT_RETRY_TRIGGERED,
+            f"Withdrawal #{wr.id} payout retry triggered by {request.user.username}",
+            detail={
+                "withdrawal_id": wr.id,
+                "triggered_by": request.user.username,
+                "reason": "operational_retry_after_submission_failure",
+            },
+        )
+        try:
+            # actor=None — same as the original auto-path. This is a retry
+            # of an already-authorized withdrawal, never a new approval.
+            result = submit_withdrawal_to_provider(
+                wr, adapter=adapter, actor=None, callback_url=cb_url, request=request,
+            )
+        except (WithdrawalAlreadyClaimed, ActivePayoutAttemptExists) as exc:
+            _wlog.warning("[admin] retry wr #%d skipped — %s", wr.pk, exc)
+            continue
+        except EstimateFailed as exc:
+            _wlog.error("[admin] retry wr #%d estimate failed: %s", wr.pk, exc)
+            errs.append(f"#{wr.id}: no se pudo estimar el monto — reintenta más tarde. Detalle: {exc}")
+            continue
+        except Exception as exc:
+            _wlog.error("[admin] retry withdrawal #%d failed unexpectedly: %s", wr.id, exc, exc_info=True)
+            errs.append(f"#{wr.id}: error inesperado — {exc}")
+            continue
+
+        if result["outcome"] == "processing":
+            ok += 1
+        elif result["outcome"] == "unknown":
+            unknown += 1
+        else:  # "failed" — rejected pre-send, already refunded by the orchestrator
+            errs.append(f"#{wr.id}: rechazado por el provider antes de enviarse — reembolsado automáticamente.")
+
+    if ok:
+        modeladmin.message_user(request, f"{ok} retiro(s) reenviados exitosamente.", messages.SUCCESS)
+    if unknown:
+        modeladmin.message_user(
+            request,
+            f"{unknown} retiro(s) quedaron en estado ambiguo (sin confirmación del provider) — "
+            "requieren reconciliación. NO reintentar manualmente.",
+            messages.WARNING,
+        )
+    for e in errs:
+        modeladmin.message_user(request, f"Error — {e}", messages.ERROR)
+
+
+retry_auto_authorized_payout = superuser_required_action(retry_auto_authorized_payout)
+
+
 @admin.action(description="❌ Rechazar — devolver fondos al wallet")
 def reject_withdrawals(modeladmin, request, queryset):
     """
@@ -2186,7 +2298,10 @@ class WithdrawalRequestAdmin(admin.ModelAdmin):
     search_fields = ("user__username", "user__email", "wallet_address", "np_payout_id", "np_batch_id")
     ordering      = ("-created_at",)
     date_hierarchy = "created_at"
-    actions       = [first_approve_withdrawals, approve_withdrawals, reject_withdrawals]
+    actions       = [
+        first_approve_withdrawals, approve_withdrawals,
+        retry_auto_authorized_payout, reject_withdrawals,
+    ]
 
     # FIX-02A.3 — read-only total. Derivado de _meta.fields (no una lista
     # manual) para que status/admin_note y cualquier campo futuro del

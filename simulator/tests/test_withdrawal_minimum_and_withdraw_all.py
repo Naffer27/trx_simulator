@@ -1,15 +1,15 @@
 # simulator/tests/test_withdrawal_minimum_and_withdraw_all.py
 """
-WITHDRAWAL-SECURITY-EXTENSION-01 — rules 1/2/7 (minimum + Withdraw All),
-driven through the real two-step HTTP flow.
+WITHDRAWAL-POLICY-CORRECTION-01 — no fixed minimum + Withdraw All, driven
+through the real two-step HTTP flow.
 
 Covers:
-  1.  Manual partial $999 -> rejected (no challenge, no WithdrawalRequest).
-  2.  Manual partial $1000 -> accepted.
-  3.  Manual partial $1000.01 -> accepted.
+  1.  Manual partial $999 -> accepted, auto-authorized (no fixed minimum).
+  2.  Manual partial $1000 -> accepted, auto-authorized.
+  3.  Manual partial $1000.01 -> accepted, needs two approvals.
   4.  Withdraw All with balance < $1000 -> allowed, debits EXACTLY available_balance.
-  5.  Withdraw All with balance >= $1000 -> ALSO allowed (Design Lock Correction 1
-      — Withdraw All is independent of the $1000 floor either way).
+  5.  Withdraw All with balance >= $1000 -> ALSO allowed (Withdraw All is
+      independent of any amount threshold — always the full balance).
   6.  Withdraw All ignores any manually-typed amount_usd — always uses the
       fresh Wallet.available_balance read at verify time, not a stale value.
   7.  Withdraw All debits use TradingAccount.balance NEVER — only Wallet.available_balance.
@@ -20,7 +20,7 @@ Covers:
 """
 from decimal import Decimal
 
-from django.test import TestCase, override_settings
+from django.test import TestCase
 
 from simulator.models import TOTPDevice, WalletTransaction, WithdrawalRequest
 from simulator.tests.factories import make_user, make_wallet, make_kyc_approved, make_verified_withdrawal_wallet
@@ -28,7 +28,6 @@ from simulator.tests.withdrawal_flow_helpers import PATCH_TOTP, PATCH_EMAIL, PAT
 from simulator.wallet_ledger import credit_wallet
 
 
-@override_settings(MIN_WITHDRAWAL_USD=1000)
 class MinimumWithdrawalTests(TestCase):
     def setUp(self):
         self.user = make_user()
@@ -38,11 +37,16 @@ class MinimumWithdrawalTests(TestCase):
         self.vw = make_verified_withdrawal_wallet(self.user)
         self.client.force_login(self.user)
 
-    def test_manual_999_rejected(self):
+    def test_manual_999_accepted_auto_authorized(self):
+        """WITHDRAWAL-POLICY-CORRECTION-01: no fixed minimum — $999 <= $1000 is auto-authorized."""
         with PATCH_TOTP, PATCH_EMAIL, PATCH_RATELIMIT:
             r1, r2, challenge = full_withdraw_flow(self.client, self.user, verified_wallet=self.vw, amount_usd=Decimal("999"))
-        self.assertIsNone(challenge)
-        self.assertEqual(WithdrawalRequest.objects.count(), 0)
+        self.assertIsNotNone(challenge)
+        self.assertRedirects(r2, "/withdraw/history/", fetch_redirect_response=False)
+        wr = WithdrawalRequest.objects.get(user=self.user)
+        self.assertEqual(wr.amount_usd, Decimal("999.00"))
+        self.assertEqual(wr.required_approvals, 1)
+        self.assertIsNone(wr.reviewed_by)
 
     def test_manual_1000_accepted(self):
         with PATCH_TOTP, PATCH_EMAIL, PATCH_RATELIMIT:
@@ -60,7 +64,6 @@ class MinimumWithdrawalTests(TestCase):
         self.assertEqual(wr.required_approvals, 2)
 
 
-@override_settings(MIN_WITHDRAWAL_USD=1000)
 class WithdrawAllTests(TestCase):
     def setUp(self):
         self.user = make_user()

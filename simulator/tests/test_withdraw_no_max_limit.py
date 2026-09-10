@@ -18,7 +18,8 @@ Garantías que deben seguir vigentes:
   - KYC aprobado
   - 2FA válido
   - Balance suficiente (available_balance >= amount)
-  - Monto mínimo (MIN_WITHDRAWAL_USD)
+  - Monto mínimo técnico (WithdrawForm.amount_usd min_value=0.01 — sin piso
+    fijo de política, ver WITHDRAWAL-POLICY-CORRECTION-01)
   - Rate limit (anti-spam)
   - Pending guard (un solo challenge/WR pendiente a la vez)
   - WithdrawalRequest pendiente creado + admin review
@@ -41,7 +42,7 @@ Escenarios cubiertos:
 from decimal import Decimal
 from unittest.mock import patch
 
-from django.test import TestCase, override_settings
+from django.test import TestCase
 
 from simulator.models import WithdrawalEmailOTPChallenge, WithdrawalRequest, TOTPDevice
 from simulator.tests.factories import make_user, make_wallet, make_kyc_approved, make_verified_withdrawal_wallet
@@ -234,35 +235,10 @@ class WithdrawSecurityGatesStillActiveTests(TestCase):
         self.assertEqual(WithdrawalEmailOTPChallenge.objects.filter(user=user).count(), 0)
 
 
-# ── Mínimo de retiro sigue vigente ───────────────────────────────────────────
-
-class WithdrawMinimumStillEnforcedTests(TestCase):
-
-    def setUp(self):
-        _PATCH_RATELIMIT.start()
-        _PATCH_TOTP.start()
-        _PATCH_EMAIL.start()
-        self.user   = make_user(email="mintest@test.com")
-        self.wallet = make_wallet(self.user, initial_balance=Decimal("5000"))
-        _make_device(self.user)
-        make_kyc_approved(self.user)
-        self.vw = make_verified_withdrawal_wallet(self.user)
-        self.client.force_login(self.user)
-
-    def tearDown(self):
-        _PATCH_RATELIMIT.stop()
-        _PATCH_TOTP.stop()
-        _PATCH_EMAIL.stop()
-
-    @override_settings(MIN_WITHDRAWAL_USD=25)
-    def test_below_minimum_is_blocked(self):
-        """Amount below MIN_WITHDRAWAL_USD is rejected regardless of balance."""
-        r = self.client.post(WITHDRAW_URL, _wr_payload("10.00", wallet_pk=self.vw.pk))
-        self.assertEqual(r.status_code, 200)
-        self.assertEqual(WithdrawalEmailOTPChallenge.objects.filter(user=self.user).count(), 0)
-
-    @override_settings(MIN_WITHDRAWAL_USD=25)
-    def test_at_minimum_succeeds(self):
-        """Amount exactly equal to MIN_WITHDRAWAL_USD is accepted at step 1."""
-        r = self.client.post(WITHDRAW_URL, _wr_payload("25.00", wallet_pk=self.vw.pk))
-        self.assertEqual(r.status_code, 302)
+# WITHDRAWAL-POLICY-CORRECTION-01 — the fixed $X minimum this module used to
+# test here (WithdrawMinimumStillEnforcedTests) was removed as Money Broker
+# policy. The only remaining floor is WithdrawForm.amount_usd's own
+# min_value=Decimal("0.01") — see test_withdrawal_minimum.py for that
+# coverage, and test_withdrawal_auto_authorization.py for the <=$1,000
+# auto-authorized / >$1,000 dual-approval boundary this module's old
+# "minimum" concept has been replaced by.

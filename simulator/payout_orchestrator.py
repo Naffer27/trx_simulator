@@ -160,13 +160,18 @@ def submit_withdrawal_to_provider(withdrawal_request, *, adapter, actor, callbac
         PayoutAttempt.objects.filter(pk=attempt.pk).update(provider_amount=provider_amount)
         attempt.provider_amount = provider_amount
 
+    # WITHDRAWAL-POLICY-CORRECTION-01 — actor is None for auto-authorized
+    # (<=$1,000, no staff review) and operational-retry submissions; only a
+    # real admin User has actor.username. The fallback label makes that
+    # explicit here without attributing approval to nobody/"None".
+    _actor_label = getattr(actor, "username", None) or "system (auto-authorized)"
     log_audit(
         request, EV_WITHDRAW_APPROVED,
-        f"Withdrawal #{wr.id} approved by {getattr(actor, 'username', actor)} — ${wr.amount_usd}",
+        f"Withdrawal #{wr.id} approved by {_actor_label} — ${wr.amount_usd}",
         detail={
             "withdrawal_id": wr.id, "amount_usd": str(wr.amount_usd),
             "currency": wr.crypto_currency, "payout_attempt_id": attempt.pk,
-            "reviewed_by": getattr(actor, "username", str(actor)),
+            "reviewed_by": _actor_label,
         },
     )
     _send_status_email_safe(wr, "approved")

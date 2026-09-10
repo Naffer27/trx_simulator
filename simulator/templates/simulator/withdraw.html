@@ -213,10 +213,6 @@
     <div class="daily-limit-box">
       <div class="dl-title"><i class="fa-solid fa-shield-halved"></i>&nbsp; Información de retiros</div>
       <div class="daily-limit-row">
-        <span>Mínimo por retiro</span>
-        <span class="dl-val">${{ min_withdrawal|floatformat:2 }}</span>
-      </div>
-      <div class="daily-limit-row">
         <span>Retirado hoy</span>
         <span class="dl-val used">${{ daily_used|floatformat:2 }}</span>
       </div>
@@ -391,7 +387,7 @@
     </div>
     <div class="info-row">
       <span>&#128274;</span>
-      Tiempo de procesamiento: 24-48h hábiles · Mínimo ${{ min_withdrawal|floatformat:2 }} USD (excepto Retirar Todo).
+      Tiempo de procesamiento: retiros hasta $1,000 se procesan automáticamente · Retiros mayores requieren doble aprobación.
     </div>
 
     <hr class="divider">

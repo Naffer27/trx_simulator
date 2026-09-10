@@ -63,6 +63,7 @@ from .audit import (
     EV_WITHDRAW_FAILED, EV_WITHDRAW_REFUNDED,
     EV_WITHDRAW_OTP_CHALLENGE_CREATED, EV_WITHDRAW_OTP_VERIFIED,
     EV_WITHDRAW_OTP_FAILED, EV_WITHDRAW_OTP_LOCKED,
+    EV_WITHDRAW_AUTO_AUTHORIZED,
     EV_ADDRESS_CHANGE_REQUESTED, EV_ADDRESS_CHANGE_ACTIVATED,
     EV_ACCOUNT_FUNDED, EV_ACCOUNT_WITHDRAWN,
     EV_ADMIN_VIEW,
@@ -2359,8 +2360,6 @@ def withdraw_view(request):
     except KYCProfile.DoesNotExist:
         kyc_approved = False
 
-    from django.conf import settings as _settings
-    min_withdrawal = Decimal(str(_settings.MIN_WITHDRAWAL_USD))
     daily_used     = _get_daily_withdrawal_used(request.user)
 
     if request.method == "POST":
@@ -2404,10 +2403,9 @@ def withdraw_view(request):
                 if verified_wallet is None:
                     error = "Selecciona una wallet verificada de destino."
 
-            # ── Minimum withdrawal — manual partial only, Withdraw All bypasses it ──
-            if not error and not withdraw_all and amount_usd < min_withdrawal:
-                error = f"El monto mínimo de retiro es ${min_withdrawal:,.2f} USD."
-
+            # WITHDRAWAL-POLICY-CORRECTION-01 — no fixed minimum withdrawal
+            # amount as Money Broker policy. The only floor is
+            # WithdrawForm.amount_usd's own min_value=Decimal("0.01").
             if not error and not withdraw_all and wallet.available_balance < amount_usd:
                 error = f"Balance insuficiente. Disponible: ${wallet.available_balance:,.2f}"
 
@@ -2480,7 +2478,6 @@ def withdraw_view(request):
         "error":               error,
         "kyc_approved":        kyc_approved,
         "daily_used":          daily_used,
-        "min_withdrawal":      min_withdrawal,
         "totp_enabled":        _totp_enabled,
         "readiness":           _readiness,
         "has_verified_wallet": has_verified_wallet,
@@ -2627,6 +2624,62 @@ def withdraw_otp_verify_view(request):
                 )
         except Exception as mail_exc:
             logger.warning("[withdraw_otp] admin notification email failed wr=%d: %s", wr.id, mail_exc)
+
+        # WITHDRAWAL-POLICY-CORRECTION-01 — withdrawals <=$1,000 are
+        # AUTO-AUTHORIZED: the user already satisfied KYC + TOTP + email
+        # OTP + verified/ACTIVE wallet + cooldown + balance checks above,
+        # which IS the authorization — no staff review is required or
+        # implied. EV_WITHDRAW_AUTO_AUTHORIZED is the semantic record of
+        # that fact, logged once here regardless of what happens next.
+        # required_approvals==2 rows are untouched — they stay pending for
+        # the existing admin dual-approval flow (admin.py), exactly as before.
+        if required_approvals == 1:
+            log_audit(
+                request, EV_WITHDRAW_AUTO_AUTHORIZED,
+                f"Withdrawal #{wr.id} auto-authorized by user controls — ${final_amount}",
+                detail={
+                    "withdrawal_id": wr.id,
+                    "authorization_method": "kyc+totp+email_otp+verified_wallet",
+                    "amount_usd": str(final_amount),
+                },
+            )
+            from .payout_orchestrator import (
+                submit_withdrawal_to_provider, EstimateFailed, WithdrawalAlreadyClaimed,
+            )
+            from .payout_providers import NowPaymentsAdapter
+            from .payout_state_machine import ActivePayoutAttemptExists
+            payout_cb_url = request.build_absolute_uri(
+                reverse("simulator:withdraw_payout_callback")
+            )
+            try:
+                # actor=None — this is an operational submission triggered by
+                # the user's own already-completed authorization, never a
+                # staff approval. See payout_orchestrator's EV_WITHDRAW_APPROVED
+                # fallback label ("system (auto-authorized)") for the same
+                # discipline applied downstream.
+                submit_withdrawal_to_provider(
+                    wr, adapter=NowPaymentsAdapter(), actor=None,
+                    callback_url=payout_cb_url, request=request,
+                )
+            except (WithdrawalAlreadyClaimed, ActivePayoutAttemptExists) as exc:
+                logger.warning(
+                    "[withdraw_otp] auto-submit skipped wr=%d — %s", wr.id, exc,
+                )
+            except EstimateFailed as exc:
+                logger.error(
+                    "[withdraw_otp] auto-submit estimate failed wr=%d: %s", wr.id, exc,
+                )
+            except Exception as exc:
+                logger.error(
+                    "[withdraw_otp] auto-submit failed unexpectedly wr=%d: %s",
+                    wr.id, exc, exc_info=True,
+                )
+            # In every case above, wr already exists and is correctly
+            # accounted for (debited atomically at creation) — the user
+            # proceeds to withdraw_history normally regardless of the
+            # submission outcome; an admin can retry via
+            # retry_auto_authorized_payout if the submission never reached
+            # the provider (wr.status stays PENDING in that case only).
 
         return wr, None
 

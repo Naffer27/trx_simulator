@@ -981,9 +981,13 @@ NOWPAYMENTS_PASSWORD      = os.getenv("NOWPAYMENTS_PASSWORD", "")
 # cap, by deliberate product decision). Kept only for display purposes in
 # _get_daily_withdrawal_used(); do not wire this into a validation gate.
 MAX_WITHDRAWAL_DAILY_USD = int(os.getenv("MAX_WITHDRAWAL_DAILY_USD", "1500"))
-# Minimum single withdrawal amount (manual partial only — Withdraw All bypasses
-# this and uses Wallet.available_balance exactly, regardless of amount).
-MIN_WITHDRAWAL_USD = int(os.getenv("MIN_WITHDRAWAL_USD", "1000"))
+
+# WITHDRAWAL-POLICY-CORRECTION-01 — no minimum withdrawal amount as a Money
+# Broker policy. The only floor is WithdrawForm.amount_usd's own
+# min_value=Decimal("0.01"). If NowPayments enforces a technical per-asset/
+# network minimum, that is a provider constraint to surface separately, not
+# a fixed Money Broker policy — MIN_WITHDRAWAL_USD is deliberately removed,
+# not repurposed.
 
 # ── WITHDRAWAL-SECURITY-EXTENSION-01 ───────────────────────────────────────────
 # Wallet-withdrawal-only asset allowlist. Deliberately NOT currencies.py's

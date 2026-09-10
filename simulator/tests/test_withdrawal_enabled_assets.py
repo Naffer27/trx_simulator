@@ -58,7 +58,7 @@ class WalletWithdrawFormAssetTests(TestCase):
         self.assertFalse(form.is_valid())
         self.assertIn("crypto_currency", form.errors)
 
-    @override_settings(WALLET_WITHDRAWAL_ENABLED_ASSETS=["usdttrc20", "btc"], MIN_WITHDRAWAL_USD=1000)
+    @override_settings(WALLET_WITHDRAWAL_ENABLED_ASSETS=["usdttrc20", "btc"])
     def test_btc_enabled_via_settings_can_withdraw(self):
         self.client.force_login(self.user)
         make_kyc_approved(self.user)

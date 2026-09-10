@@ -12,6 +12,7 @@ patching "simulator.withdrawal_otp.generate_code" makes both
 create_challenge() and resend_challenge() deterministic.
 """
 from contextlib import contextmanager
+from decimal import Decimal
 from unittest.mock import patch
 
 from simulator.models import WithdrawalEmailOTPChallenge
@@ -21,6 +22,33 @@ FIXED_OTP_CODE = "123456"
 PATCH_TOTP      = patch("simulator.two_factor.verify_totp_code", return_value=True)
 PATCH_EMAIL     = patch("simulator.tasks.send_email_async.delay")
 PATCH_RATELIMIT = patch("simulator.ratelimit.rate_check", return_value=(True, 0))
+
+
+# WITHDRAWAL-POLICY-CORRECTION-01 — withdrawals <=$1,000 now trigger
+# submit_withdrawal_to_provider() automatically from inside
+# withdraw_otp_verify_view._finalize() (no admin action in between). Every
+# test that drives the full two-step flow through this helper must NOT hit
+# the real NowPayments API — same fake-adapter shape already used by
+# test_withdrawal_second_approval.py's admin-triggered path.
+class _FakeAutoPayoutAdapter:
+    provider_name = "nowpayments"
+
+    def estimate(self, amount_usd, asset):
+        return Decimal("0.001")
+
+    def create_payout(self, attempt, *, callback_url=""):
+        class _Result:
+            accepted = True
+            provider_reference = "wd-auto-test"
+            provider_batch_id = "batch-auto-test"
+            provider_amount = Decimal("0.001")
+            raw_status = "CREATED"
+        return _Result()
+
+
+PATCH_AUTO_PAYOUT_ADAPTER = patch(
+    "simulator.payout_providers.NowPaymentsAdapter", return_value=_FakeAutoPayoutAdapter()
+)
 
 
 @contextmanager
@@ -58,8 +86,14 @@ def submit_withdraw_request(
 
 
 def submit_withdraw_otp(client, challenge, code: str):
-    """POST /withdraw/otp/ — step 2."""
-    return client.post("/withdraw/otp/", {"challenge_id": challenge.id, "code": code})
+    """
+    POST /withdraw/otp/ — step 2. For required_approvals==1 challenges this
+    now also triggers the automatic payout submission (WITHDRAWAL-POLICY-
+    CORRECTION-01) — wrapped in PATCH_AUTO_PAYOUT_ADAPTER so it never hits
+    the real NowPayments API.
+    """
+    with PATCH_AUTO_PAYOUT_ADAPTER:
+        return client.post("/withdraw/otp/", {"challenge_id": challenge.id, "code": code})
 
 
 def full_withdraw_flow(

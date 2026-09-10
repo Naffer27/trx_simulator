@@ -34,6 +34,16 @@ EV_WITHDRAW_APPROVED = "withdrawal.approved"
 EV_WITHDRAW_REJECTED = "withdrawal.rejected"
 EV_WITHDRAW_COMPLETE = "withdrawal.completed"
 EV_WITHDRAW_FAILED   = "withdrawal.failed"
+
+# WITHDRAWAL-POLICY-CORRECTION-01 — auto-authorized withdrawals (<=$1,000,
+# no staff approval). EV_WITHDRAW_AUTO_AUTHORIZED is the semantic record of
+# WHY the withdrawal proceeded (user controls, not human review).
+# EV_WITHDRAW_PAYOUT_RETRY_TRIGGERED records an admin operationally
+# retrying a failed submission — never an approval; actor passed to
+# submit_withdrawal_to_provider() for both the original auto-path and any
+# retry stays None, so reviewed_by is never populated by either event.
+EV_WITHDRAW_AUTO_AUTHORIZED       = "withdrawal.auto_authorized"
+EV_WITHDRAW_PAYOUT_RETRY_TRIGGERED = "withdrawal.payout_retry_triggered"
 EV_WITHDRAW_REFUNDED = "withdrawal.refunded"
 
 # FIX-02A.4 — UNKNOWN reconciliation / durable webhook inbox. Deliberately

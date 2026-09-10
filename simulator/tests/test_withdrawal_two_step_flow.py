@@ -18,12 +18,15 @@ Covers:
   7.  The challenge ends in status=USED with used_at set.
   8.  A wrong code does not create a WithdrawalRequest and does not debit.
   9.  provider submission (submit_withdrawal_to_provider) is never called
-      by either step — that's admin-only, later.
+      by either step for amounts > $1,000 (required_approvals=2) — that
+      stays admin-only. For amounts <= $1,000, WITHDRAWAL-POLICY-
+      CORRECTION-01 changed this: step 2 now auto-triggers submission —
+      see test_withdrawal_auto_authorization.py for that dedicated coverage.
 """
 from decimal import Decimal
 from unittest.mock import patch
 
-from django.test import TestCase, override_settings
+from django.test import TestCase
 
 from simulator.models import (
     Wallet, WalletTransaction, WithdrawalEmailOTPChallenge, WithdrawalRequest,
@@ -34,7 +37,6 @@ from simulator.tests.withdrawal_flow_helpers import (
 )
 
 
-@override_settings(MIN_WITHDRAWAL_USD=1000)
 class WithdrawalTwoStepFlowTests(TestCase):
     def setUp(self):
         self.user = make_user()
@@ -111,7 +113,8 @@ class WithdrawalTwoStepFlowTests(TestCase):
         self.wallet.refresh_from_db()
         self.assertEqual(self.wallet.available_balance, Decimal("5000"))
 
-    def test_provider_submission_never_called_by_either_step(self):
+    def test_provider_submission_never_called_by_either_step_above_1000(self):
+        """amount > $1,000 -> required_approvals=2 -> stays admin-only, no auto-trigger."""
         with PATCH_TOTP, PATCH_EMAIL, PATCH_RATELIMIT, \
              patch("simulator.payout_orchestrator.submit_withdrawal_to_provider") as mock_submit:
             full_withdraw_flow(self.client, self.user, verified_wallet=self.vw, amount_usd=Decimal("1500"))
