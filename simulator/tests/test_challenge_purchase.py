@@ -43,18 +43,34 @@ _PATCH_RATELIMIT = patch("simulator.ratelimit.rate_check", return_value=(True, 0
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _ipn(payment_id, payment_status, order_id="", amount="100.00"):
+    """
+    Build an IPN body using the REAL NowPayments field name ("actually_paid",
+    never "actually_paid_amount" — see FIX-NOWPAYMENTS-DEPOSIT-CREDIT-AMOUNT-01).
+    `amount` doubles as both the USD price_amount and the pay_currency
+    actually_paid figure for simplicity — these tests don't model real
+    crypto/USD FX, only whether the callback's payment-sufficiency signal is
+    read from the right field and compared in the right unit.
+    """
     return json.dumps({
-        "payment_id":           payment_id,
-        "payment_status":       payment_status,
-        "order_id":             str(order_id),
-        "actually_paid_amount": amount,
-        "pay_currency":         "btc",
-        "price_currency":       "usd",
-        "price_amount":         float(amount),
+        "payment_id":     payment_id,
+        "payment_status": payment_status,
+        "order_id":       str(order_id),
+        "actually_paid":  float(amount),
+        "pay_currency":   "btc",
+        "price_currency": "usd",
+        "price_amount":   float(amount),
     })
 
 
-def _make_challenge_deposit(user, product, payment_id="cp_pay_001", credited=False):
+def _make_challenge_deposit(user, product, payment_id="cp_pay_001", credited=False,
+                            pay_amount=None):
+    """
+    pay_amount defaults to product.price_usd — the "required" crypto-units
+    figure the challenge underpayment gate compares actually_paid against
+    (see deposit_callback()'s challenge_product_id branch). Tests that need
+    a specific pay_amount (e.g. to prove currency-matched underpayment) pass
+    it explicitly.
+    """
     return Deposit.objects.create(
         user=user,
         amount_usd=product.price_usd,
@@ -63,6 +79,7 @@ def _make_challenge_deposit(user, product, payment_id="cp_pay_001", credited=Fal
         status="pending",
         credited=credited,
         challenge_product=product,
+        pay_amount=pay_amount if pay_amount is not None else product.price_usd,
     )
 
 
@@ -404,7 +421,15 @@ def _ipn_no_confirmed(payment_id, payment_status, order_id="", amount="100.00"):
 
 
 class CallbackWalletConfirmedAmountTests(TestCase):
-    """Wallet top-up credits confirmed amount, not requested amount."""
+    """
+    Wallet top-up credits deposit.amount_usd — the fixed USD obligation Money
+    Broker sent to NowPayments at creation time — never a provider-reported
+    crypto figure (actually_paid/actually_paid_amount/outcome_amount).
+    FIX-NOWPAYMENTS-DEPOSIT-CREDIT-AMOUNT-01: the previous expectation here
+    (wallet gets whatever a fictional "actually_paid_amount" field said) was
+    the exact real-money bug (Deposit #45, $0.00 instead of $20.00) — it is
+    not a valid behavior to preserve.
+    """
 
     def setUp(self):
         _PATCH_RATELIMIT.start()
@@ -414,15 +439,15 @@ class CallbackWalletConfirmedAmountTests(TestCase):
         _PATCH_RATELIMIT.stop()
 
     @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
-    def test_credits_confirmed_amount_not_requested(self, _sig):
-        """finished IPN with actually_paid_amount=$95 on $100 deposit → wallet gets $95."""
+    def test_credits_requested_amount_usd_not_provider_crypto_figure(self, _sig):
+        """finished IPN reporting a different (lower) provider figure still credits amount_usd in full."""
         wallet  = make_wallet(user=self.user)
         deposit = make_deposit(self.user, amount_usd=Decimal("100.00"), payment_id="amt_001")
         body = _ipn("amt_001", "finished", deposit.pk, "95.00")
         r = self.client.post(CALLBACK_URL, body, content_type="application/json")
         self.assertEqual(r.status_code, 200)
         wallet.refresh_from_db()
-        self.assertEqual(wallet.available_balance, Decimal("95.00"))
+        self.assertEqual(wallet.available_balance, Decimal("100.00"))
 
     @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
     def test_credits_full_confirmed_when_amounts_match(self, _sig):
@@ -467,7 +492,13 @@ class CallbackWalletConfirmedAmountTests(TestCase):
 
 
 class CallbackPartialPaymentStorageTests(TestCase):
-    """partially_paid status stores confirmed_amount_usd and stays uncredited."""
+    """
+    partially_paid status never credits and stays uncredited.
+    FIX-NOWPAYMENTS-DEPOSIT-CREDIT-AMOUNT-01: confirmed_amount_usd is never
+    populated from a provider-reported crypto figure — no reliable USD
+    source exists in the real payload for this, so the field stays None
+    rather than silently mislabeling crypto units as USD.
+    """
 
     def setUp(self):
         _PATCH_RATELIMIT.start()
@@ -477,12 +508,12 @@ class CallbackPartialPaymentStorageTests(TestCase):
         _PATCH_RATELIMIT.stop()
 
     @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
-    def test_partial_payment_stores_confirmed_amount_usd(self, _sig):
+    def test_partial_payment_does_not_populate_confirmed_amount_usd(self, _sig):
         deposit = make_deposit(self.user, amount_usd=Decimal("100.00"), payment_id="pp_001")
         body = _ipn("pp_001", "partially_paid", deposit.pk, "60.00")
         self.client.post(CALLBACK_URL, body, content_type="application/json")
         deposit.refresh_from_db()
-        self.assertEqual(deposit.confirmed_amount_usd, Decimal("60.00"))
+        self.assertIsNone(deposit.confirmed_amount_usd)
 
     @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
     def test_partial_payment_wallet_not_credited(self, _sig):
@@ -511,7 +542,15 @@ class CallbackPartialPaymentStorageTests(TestCase):
 
 
 class CallbackChallengeUnderpaidTests(TestCase):
-    """Challenge purchase with confirmed amount below product price must NOT activate."""
+    """
+    Challenge underpayment gate — FIX-NOWPAYMENTS-DEPOSIT-CREDIT-AMOUNT-01
+    challenge-underpayment extension. Compares actually_paid vs
+    deposit.pay_amount, BOTH in pay_currency (crypto units) — never USD.
+    This is a structurally different question from "how much USD to
+    credit" (that's FIX A, deposit.amount_usd, tested elsewhere) and must
+    never reuse amount_usd/price_usd, which are equal by construction and
+    can never detect underpayment.
+    """
 
     def setUp(self):
         _PATCH_RATELIMIT.start()
@@ -523,9 +562,9 @@ class CallbackChallengeUnderpaidTests(TestCase):
 
     @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
     def test_finished_underpaid_does_not_create_enrollment(self, _sig):
-        """finished IPN but confirmed amount < price → no enrollment."""
+        """finished IPN but actually_paid < deposit.pay_amount → no enrollment."""
         deposit = _make_challenge_deposit(self.user, self.product, "cup_001")
-        underpaid = str(deposit.challenge_product.price_usd - Decimal("1.00"))
+        underpaid = str(deposit.pay_amount - Decimal("1.00"))
         body = _ipn("cup_001", "finished", deposit.pk, underpaid)
         self.client.post(CALLBACK_URL, body, content_type="application/json")
         self.assertEqual(ChallengeEnrollment.objects.filter(deposit=deposit).count(), 0)
@@ -533,26 +572,87 @@ class CallbackChallengeUnderpaidTests(TestCase):
     @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
     def test_finished_underpaid_deposit_not_credited(self, _sig):
         deposit = _make_challenge_deposit(self.user, self.product, "cup_002")
-        underpaid = str(deposit.challenge_product.price_usd - Decimal("1.00"))
+        underpaid = str(deposit.pay_amount - Decimal("1.00"))
         body = _ipn("cup_002", "finished", deposit.pk, underpaid)
         self.client.post(CALLBACK_URL, body, content_type="application/json")
         deposit.refresh_from_db()
         self.assertFalse(deposit.credited)
 
     @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
-    def test_finished_underpaid_stores_confirmed_amount(self, _sig):
+    def test_finished_underpaid_does_not_populate_confirmed_amount_usd(self, _sig):
+        """
+        confirmed_amount_usd stays None even on underpayment — it is never
+        populated from a crypto-denominated field (FIX A decision), and the
+        underpayment gate itself compares crypto units, not USD.
+        """
         deposit = _make_challenge_deposit(self.user, self.product, "cup_003")
-        underpaid = deposit.challenge_product.price_usd - Decimal("5.00")
+        underpaid = deposit.pay_amount - Decimal("5.00")
         body = _ipn("cup_003", "finished", deposit.pk, str(underpaid))
         self.client.post(CALLBACK_URL, body, content_type="application/json")
         deposit.refresh_from_db()
-        self.assertEqual(deposit.confirmed_amount_usd, underpaid)
+        self.assertIsNone(deposit.confirmed_amount_usd)
 
     @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
-    def test_finished_exact_price_activates_enrollment(self, _sig):
-        """Edge: confirmed == price exactly → should activate."""
+    def test_finished_exact_pay_amount_activates_enrollment(self, _sig):
+        """Edge: actually_paid == deposit.pay_amount exactly → should activate."""
         deposit = _make_challenge_deposit(self.user, self.product, "cup_004")
-        exact = str(deposit.challenge_product.price_usd)
+        exact = str(deposit.pay_amount)
         body = _ipn("cup_004", "finished", deposit.pk, exact)
         self.client.post(CALLBACK_URL, body, content_type="application/json")
         self.assertEqual(ChallengeEnrollment.objects.filter(deposit=deposit).count(), 1)
+
+    @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
+    def test_finished_overpaid_activates_enrollment(self, _sig):
+        """actually_paid > deposit.pay_amount → still sufficient, activates."""
+        deposit = _make_challenge_deposit(self.user, self.product, "cup_005")
+        overpaid = str(deposit.pay_amount + Decimal("10.00"))
+        body = _ipn("cup_005", "finished", deposit.pk, overpaid)
+        self.client.post(CALLBACK_URL, body, content_type="application/json")
+        self.assertEqual(ChallengeEnrollment.objects.filter(deposit=deposit).count(), 1)
+
+    @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
+    def test_finished_missing_actually_paid_fails_closed(self, _sig):
+        """finished IPN with no actually_paid field at all → NOT sufficient, no enrollment, no 500."""
+        deposit = _make_challenge_deposit(self.user, self.product, "cup_006")
+        body = json.dumps({
+            "payment_id":     "cup_006",
+            "payment_status": "finished",
+            "order_id":       str(deposit.pk),
+            "pay_currency":   "btc",
+            "price_currency": "usd",
+            "price_amount":   float(deposit.amount_usd),
+            # deliberately no actually_paid
+        })
+        resp = self.client.post(CALLBACK_URL, body, content_type="application/json")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(ChallengeEnrollment.objects.filter(deposit=deposit).count(), 0)
+        deposit.refresh_from_db()
+        self.assertFalse(deposit.credited)
+
+    @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
+    def test_finished_missing_local_pay_amount_fails_closed(self, _sig):
+        """Deposit row with no locally-stored pay_amount → NOT sufficient, no enrollment, no 500."""
+        deposit = _make_challenge_deposit(self.user, self.product, "cup_007", pay_amount=None)
+        deposit.pay_amount = None
+        deposit.save(update_fields=["pay_amount"])
+        body = _ipn("cup_007", "finished", deposit.pk, str(self.product.price_usd))
+        resp = self.client.post(CALLBACK_URL, body, content_type="application/json")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(ChallengeEnrollment.objects.filter(deposit=deposit).count(), 0)
+
+    @patch("simulator.nowpayments.verify_ipn_signature", return_value=True)
+    def test_finished_invalid_actually_paid_fails_closed_no_500(self, _sig):
+        """actually_paid that cannot convert to Decimal → NOT sufficient, no 500."""
+        deposit = _make_challenge_deposit(self.user, self.product, "cup_008")
+        body = json.dumps({
+            "payment_id":     "cup_008",
+            "payment_status": "finished",
+            "order_id":       str(deposit.pk),
+            "actually_paid":  "not-a-number",
+            "pay_currency":   "btc",
+            "price_currency": "usd",
+            "price_amount":   float(deposit.amount_usd),
+        })
+        resp = self.client.post(CALLBACK_URL, body, content_type="application/json")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(ChallengeEnrollment.objects.filter(deposit=deposit).count(), 0)

@@ -1,5 +1,5 @@
 # simulator/views.py
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from django.utils import timezone
 from django.shortcuts import render, redirect
 from django.core.serializers.json import DjangoJSONEncoder
@@ -1773,25 +1773,51 @@ def deposit_callback(request):
         if not deposit.nowpayments_payment_id and payment_id:
             update_fields["nowpayments_payment_id"] = payment_id
 
-        actually_paid = data.get("actually_paid_amount") or data.get("outcome_amount")
-        _confirmed_dec = Decimal(str(actually_paid)) if actually_paid else None
-        if _confirmed_dec:
-            update_fields["confirmed_amount_usd"] = _confirmed_dec
-
-        # Credit the amount NowPayments confirmed. Fall back to the requested amount
-        # only when the provider sends no confirmation field at all.
-        credit_amount = _confirmed_dec if (_confirmed_dec and _confirmed_dec > 0) else deposit.amount_usd
+        # FIX-NOWPAYMENTS-DEPOSIT-CREDIT-AMOUNT-01 — deposit.amount_usd is the
+        # fixed USD obligation Money Broker sent to NowPayments as
+        # price_amount/price_currency=usd at creation time, and is the only
+        # reliable USD source. actually_paid/actually_paid_at_fiat are
+        # denominated in pay_currency (crypto units) or unreliable, and
+        # outcome_amount/outcome_currency is NowPayments' internal settlement
+        # leg (can be an unrelated currency, e.g. BTC for crypto2crypto) —
+        # none of these may ever be treated as USD or used to credit Wallet.
+        credit_amount = deposit.amount_usd
 
         if payment_status in Deposit.CREDITED_STATUSES:
             if deposit.challenge_product_id:
                 # ── Challenge purchase ────────────────────────────────────────────
-                # Confirmed amount must cover the full product price before activating.
-                required = deposit.challenge_product.price_usd
-                if credit_amount < required:
+                # FIX-NOWPAYMENTS-DEPOSIT-CREDIT-AMOUNT-01 — challenge sufficiency
+                # is a DIFFERENT question than "how much USD to credit" and must
+                # never reuse credit_amount/amount_usd for it: amount_usd equals
+                # challenge_product.price_usd by construction, so comparing them
+                # can never detect underpayment. Instead compare the actual
+                # provider-reported payment against the expected payment, both in
+                # pay_currency (crypto units) — never converted to USD.
+                # Fail-closed: any missing/invalid field means NOT sufficient.
+                required_pay_amount = deposit.pay_amount
+                provider_paid_raw   = data.get("actually_paid")
+                sufficient = False
+                if required_pay_amount is not None and provider_paid_raw is not None:
+                    try:
+                        provider_paid = Decimal(str(provider_paid_raw))
+                    except (InvalidOperation, TypeError, ValueError):
+                        provider_paid = None
+                    if provider_paid is not None:
+                        callback_currency = str(data.get("pay_currency") or "").lower()
+                        currency_ok = (
+                            not callback_currency
+                            or callback_currency == deposit.crypto_currency.lower()
+                        )
+                        if currency_ok:
+                            sufficient = provider_paid >= required_pay_amount
+
+                if not sufficient:
                     logger.warning(
-                        "[callback] CHALLENGE UNDERPAID deposit_id=%d required=%s "
-                        "confirmed=%s — enrollment NOT created",
-                        deposit.id, required, credit_amount,
+                        "[callback] CHALLENGE UNDERPAID deposit_id=%d "
+                        "required_pay_amount=%s actually_paid=%s pay_currency=%s "
+                        "— enrollment NOT created",
+                        deposit.id, required_pay_amount, provider_paid_raw,
+                        deposit.crypto_currency,
                     )
                     # credited stays False; status row is updated for support visibility
                 else:
@@ -1874,11 +1900,14 @@ def deposit_callback(request):
                 update_fields["confirmed_at"] = timezone.now()
 
         elif payment_status == Deposit.STATUS_PARTIALLY_PAID:
-            # Partial payment: save confirmed amount for support, do NOT credit.
+            # Partial payment: do NOT credit. Log the raw provider-reported
+            # crypto amount (NOT labeled as USD/confirmed) for support triage —
+            # actually_paid is denominated in pay_currency, never USD.
             logger.warning(
-                "[callback] PARTIAL PAYMENT deposit_id=%d requested=%s confirmed=%s "
-                "— NOT credited, pending support review",
-                deposit.id, deposit.amount_usd, credit_amount,
+                "[callback] PARTIAL PAYMENT deposit_id=%d requested_usd=%s "
+                "actually_paid_raw=%s pay_currency=%s — NOT credited, pending support review",
+                deposit.id, deposit.amount_usd,
+                data.get("actually_paid"), deposit.crypto_currency,
             )
 
         elif payment_status == Deposit.STATUS_CONFIRMING:

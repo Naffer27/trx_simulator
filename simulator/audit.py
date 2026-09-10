@@ -26,6 +26,7 @@ EV_AUTH_LOGIN_FAILED  = "auth.login_failed"
 EV_DEPOSIT_CREATED   = "deposit.created"
 EV_DEPOSIT_CREDITED  = "deposit.credited"
 EV_DEPOSIT_CALLBACK  = "deposit.callback"
+EV_DEPOSIT_CORRECTED = "deposit.corrected"
 
 EV_WITHDRAW_REQUEST  = "withdrawal.requested"
 EV_WITHDRAW_CALLBACK = "withdrawal.callback"

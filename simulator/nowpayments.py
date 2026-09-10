@@ -387,8 +387,18 @@ def verify_ipn_signature(body_bytes: bytes, signature: str) -> bool:
     """
     Verify the x-nowpayments-sig HMAC-SHA512 signature sent with every IPN.
 
-    NowPayments signs: JSON-encoded body with keys sorted alphabetically,
-    no spaces, no trailing commas.
+    NOWPAYMENTS-IPN-SIGNATURE-CONTRACT-AUDIT-01 — confirmed empirically
+    against a real signed callback: NowPayments signs the RAW HTTP body
+    bytes exactly as transmitted, NOT a reparsed/reserialized copy of it.
+    The body happens to already arrive with keys in alphabetical order and
+    no extra whitespace, which is why the previous json.loads()→json.dumps
+    (sort_keys=True, separators=(",", ":")) approach looked equivalent on
+    paper — but Python's float repr does not always match the original
+    wire representation (e.g. the wire sends "0.000037", Python's
+    json.dumps re-renders the same parsed float as "3.7e-05"), which
+    silently corrupts the signed message and made every real IPN fail
+    signature verification regardless of the secret. Do NOT reintroduce
+    a json.loads/json.dumps round-trip here — sign body_bytes directly.
 
     Returns True only if the signature matches. Any exception → False.
     Rejects immediately if NOWPAYMENTS_IPN_SECRET is not set.
@@ -403,11 +413,9 @@ def verify_ipn_signature(body_bytes: bytes, signature: str) -> bool:
         return False
 
     try:
-        payload   = json.loads(body_bytes)
-        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-        computed  = _hmac.new(
+        computed = _hmac.new(
             secret.encode("utf-8"),
-            canonical.encode("utf-8"),
+            body_bytes,
             hashlib.sha512,
         ).hexdigest()
         match = _hmac.compare_digest(computed, signature)
