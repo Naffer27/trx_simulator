@@ -132,6 +132,25 @@ def create_challenge(
     with transaction.atomic():
         Wallet.objects.select_for_update().get(pk=wallet.id)
 
+        # WITHDRAWAL-WALLET-OTP-PENDING-CHALLENGE-01 — a PENDING challenge
+        # whose expires_at has already passed by wall clock would otherwise
+        # block this user forever: the wotp_one_active_per_user constraint
+        # (and the .exists() check right below) key off `status`, not off
+        # expires_at, and nothing else ever flips a stale row's status —
+        # verify_challenge() only does that lazily, as a side effect of
+        # someone actually attempting a code on THAT specific row. Normalize
+        # here, BEFORE the active-check, so the row is physically no longer
+        # NON_TERMINAL by the time the constraint/check run — same
+        # transition verify_challenge() would perform, just materialized
+        # proactively instead of waiting for a verify attempt that may
+        # never come. Preserves id/created_at/code_hash/attempts/purpose/
+        # last_sent_at — only `status` changes.
+        WithdrawalEmailOTPChallenge.objects.filter(
+            user=user,
+            status=WithdrawalEmailOTPChallenge.STATUS_PENDING,
+            expires_at__lte=now,
+        ).update(status=WithdrawalEmailOTPChallenge.STATUS_EXPIRED)
+
         if WithdrawalEmailOTPChallenge.objects.filter(
             user=user, status__in=WithdrawalEmailOTPChallenge.NON_TERMINAL_STATUSES,
         ).exists():

@@ -94,6 +94,123 @@ class CreateChallengeTests(TestCase):
         self.assertEqual(WithdrawalEmailOTPChallenge.objects.filter(user=self.user).count(), 1)
 
 
+class ExpiredChallengeNormalizationTests(TestCase):
+    """
+    WITHDRAWAL-WALLET-OTP-PENDING-CHALLENGE-01 — a PENDING challenge whose
+    expires_at has passed by wall clock must not block create_challenge()
+    forever. create_challenge() normalizes any such stale row to EXPIRED,
+    in the same transaction, BEFORE the active-challenge check — the exact
+    transition verify_challenge() would perform lazily, just materialized
+    proactively instead of waiting for a verify attempt that may never come.
+    """
+
+    def setUp(self):
+        self.user = make_user()
+
+    def _make_challenge(self, purpose, **kwargs):
+        defaults = dict(asset="USDT", network="TRC20", wallet_address="Taddr1")
+        defaults.update(kwargs)
+        if purpose == WithdrawalEmailOTPChallenge.PURPOSE_WITHDRAWAL:
+            defaults.setdefault("amount_usd", Decimal("500"))
+        return otp.create_challenge(self.user, purpose=purpose, **defaults)
+
+    def _expire(self, challenge):
+        WithdrawalEmailOTPChallenge.objects.filter(pk=challenge.pk).update(
+            expires_at=timezone.now() - timezone.timedelta(minutes=1),
+        )
+
+    def test_pending_not_expired_still_blocks_new_challenge(self):
+        """1. A genuinely still-valid PENDING challenge keeps blocking, as before."""
+        self._make_challenge(WithdrawalEmailOTPChallenge.PURPOSE_ADDRESS_CHANGE)
+        with self.assertRaises(otp.ActiveChallengeExists):
+            self._make_challenge(WithdrawalEmailOTPChallenge.PURPOSE_ADDRESS_CHANGE, wallet_address="Taddr2")
+
+    def test_pending_expired_is_auto_marked_expired(self):
+        """2. A stale PENDING row is normalized to EXPIRED by the next create_challenge() call."""
+        old, _ = self._make_challenge(WithdrawalEmailOTPChallenge.PURPOSE_ADDRESS_CHANGE)
+        self._expire(old)
+        self._make_challenge(WithdrawalEmailOTPChallenge.PURPOSE_ADDRESS_CHANGE, wallet_address="Taddr2")
+        old.refresh_from_db()
+        self.assertEqual(old.status, WithdrawalEmailOTPChallenge.STATUS_EXPIRED)
+
+    def test_new_challenge_can_be_created_after_normalization(self):
+        """3. Once normalized, a brand new challenge is created successfully."""
+        old, _ = self._make_challenge(WithdrawalEmailOTPChallenge.PURPOSE_ADDRESS_CHANGE)
+        self._expire(old)
+        new, code = self._make_challenge(WithdrawalEmailOTPChallenge.PURPOSE_ADDRESS_CHANGE, wallet_address="Taddr2")
+        self.assertNotEqual(new.pk, old.pk)
+        self.assertEqual(new.status, WithdrawalEmailOTPChallenge.STATUS_PENDING)
+        self.assertEqual(len(code), 6)
+
+    def test_old_row_remains_in_db(self):
+        """4. The old row is never deleted — normalization only changes status."""
+        old, _ = self._make_challenge(WithdrawalEmailOTPChallenge.PURPOSE_ADDRESS_CHANGE)
+        self._expire(old)
+        self._make_challenge(WithdrawalEmailOTPChallenge.PURPOSE_ADDRESS_CHANGE, wallet_address="Taddr2")
+        self.assertEqual(WithdrawalEmailOTPChallenge.objects.filter(pk=old.pk).count(), 1)
+        self.assertEqual(WithdrawalEmailOTPChallenge.objects.filter(user=self.user).count(), 2)
+
+    def test_historical_fields_preserved(self):
+        """5. code_hash/attempts/purpose/created_at/wallet_address survive normalization untouched."""
+        old, old_code = self._make_challenge(
+            WithdrawalEmailOTPChallenge.PURPOSE_ADDRESS_CHANGE, wallet_address="TaddrHistorical",
+        )
+        with self.assertRaises(otp.InvalidCode):
+            otp.verify_challenge(old.id, "000000", user=self.user)
+        old.refresh_from_db()
+        pre_code_hash   = old.code_hash
+        pre_attempts    = old.attempts
+        pre_purpose     = old.purpose
+        pre_created_at  = old.created_at
+        pre_wallet_addr = old.wallet_address
+        self._expire(old)
+        self._make_challenge(WithdrawalEmailOTPChallenge.PURPOSE_ADDRESS_CHANGE, wallet_address="Taddr2")
+        old.refresh_from_db()
+        self.assertEqual(old.code_hash, pre_code_hash)
+        self.assertEqual(old.attempts, pre_attempts)
+        self.assertEqual(old.purpose, pre_purpose)
+        self.assertEqual(old.created_at, pre_created_at)
+        self.assertEqual(old.wallet_address, pre_wallet_addr)
+        self.assertEqual(old.status, WithdrawalEmailOTPChallenge.STATUS_EXPIRED)
+
+    def test_one_active_per_user_constraint_still_enforced(self):
+        """6. The constraint still blocks two simultaneous non-expired challenges."""
+        self._make_challenge(WithdrawalEmailOTPChallenge.PURPOSE_ADDRESS_CHANGE)
+        with self.assertRaises(otp.ActiveChallengeExists):
+            self._make_challenge(WithdrawalEmailOTPChallenge.PURPOSE_ADDRESS_CHANGE, wallet_address="Taddr2")
+        self.assertEqual(WithdrawalEmailOTPChallenge.objects.filter(user=self.user).count(), 1)
+
+    def test_two_non_expired_challenges_still_prohibited(self):
+        """7. Two genuinely non-expired PENDING challenges for the same user remain impossible."""
+        self._make_challenge(WithdrawalEmailOTPChallenge.PURPOSE_WITHDRAWAL)
+        with self.assertRaises(otp.ActiveChallengeExists):
+            self._make_challenge(WithdrawalEmailOTPChallenge.PURPOSE_WITHDRAWAL, wallet_address="Taddr2")
+        self.assertEqual(WithdrawalEmailOTPChallenge.objects.filter(user=self.user).count(), 1)
+
+    def test_verify_challenge_on_expired_row_still_works_as_before(self):
+        """8. verify_challenge()'s own lazy-expiry path is unchanged by this fix."""
+        old, code = self._make_challenge(WithdrawalEmailOTPChallenge.PURPOSE_ADDRESS_CHANGE)
+        self._expire(old)
+        with self.assertRaises(otp.ChallengeExpired):
+            otp.verify_challenge(old.id, code, user=self.user)
+        old.refresh_from_db()
+        self.assertEqual(old.status, WithdrawalEmailOTPChallenge.STATUS_EXPIRED)
+
+    def test_address_change_purpose_covered(self):
+        """9. ADDRESS_CHANGE purpose normalizes and unblocks correctly."""
+        old, _ = self._make_challenge(WithdrawalEmailOTPChallenge.PURPOSE_ADDRESS_CHANGE)
+        self._expire(old)
+        new, _ = self._make_challenge(WithdrawalEmailOTPChallenge.PURPOSE_ADDRESS_CHANGE, wallet_address="Taddr2")
+        self.assertEqual(new.purpose, WithdrawalEmailOTPChallenge.PURPOSE_ADDRESS_CHANGE)
+
+    def test_withdrawal_purpose_covered(self):
+        """10. WITHDRAWAL purpose normalizes and unblocks correctly."""
+        old, _ = self._make_challenge(WithdrawalEmailOTPChallenge.PURPOSE_WITHDRAWAL)
+        self._expire(old)
+        new, _ = self._make_challenge(WithdrawalEmailOTPChallenge.PURPOSE_WITHDRAWAL, wallet_address="Taddr2")
+        self.assertEqual(new.purpose, WithdrawalEmailOTPChallenge.PURPOSE_WITHDRAWAL)
+
+
 class VerifyChallengeTests(TestCase):
     def setUp(self):
         self.user = make_user()
