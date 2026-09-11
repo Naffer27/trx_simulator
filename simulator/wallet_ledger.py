@@ -231,6 +231,15 @@ def transfer_to_wallet(wallet_id: int, trading_account_id: int, amount, *, note:
 
     Raises ValueError if account balance < amount or account has open positions
     that would make the withdrawal reduce equity below margin requirements.
+
+    MONEY-INTEGRITY-FIX-01 — also raises ValueError if the account's
+    account_type is not in TradingAccount.WITHDRAWABLE_ACCOUNT_TYPES (e.g.
+    DEMO/CHALLENGE/FUNDED — synthetic balance, never backed by a real
+    Wallet debit). This check runs BEFORE any InternalTransfer row is
+    created — a denied attempt leaves zero trace (no InternalTransfer, no
+    WalletTransaction, no LedgerEntry, balances untouched), unlike the
+    open-positions/insufficient-balance checks below, which keep their
+    existing behavior of recording a FAILED InternalTransfer.
     """
     from .models import (
         Wallet, TradingAccount, InternalTransfer, LedgerEntry, WalletTransaction, Position
@@ -239,6 +248,21 @@ def transfer_to_wallet(wallet_id: int, trading_account_id: int, amount, *, note:
     amount = Decimal(str(amount))
     if amount <= 0:
         raise ValueError(f"transfer_to_wallet: amount must be > 0, got {amount}")
+
+    # Fail-closed account_type gate — locked read, own short-lived
+    # transaction, commits/releases before any InternalTransfer exists.
+    with transaction.atomic():
+        account_type = (
+            TradingAccount.objects.select_for_update()
+            .values_list("account_type", flat=True)
+            .get(pk=trading_account_id)
+        )
+        if account_type not in TradingAccount.WITHDRAWABLE_ACCOUNT_TYPES:
+            raise ValueError(
+                f"Account #{trading_account_id} is account_type={account_type!r} — "
+                "its balance does not represent real client funds and cannot be "
+                "transferred to Wallet."
+            )
 
     xfer = InternalTransfer.objects.create(
         wallet_id=wallet_id,

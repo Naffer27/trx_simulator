@@ -64,6 +64,23 @@ class TradingAccount(models.Model):
         ('FUNDED',    'Funded'),
     ]
 
+    # MONEY-INTEGRITY-FIX-01 — positive allowlist (fail-closed) of account
+    # types whose .balance is traceable to a real Wallet debit at creation
+    # (RETAIL/ECN/STANDARD/CRYPTO all go through wallet_ledger.transfer_to_account()
+    # in create_account_view — see that view for the evidence). DEMO,
+    # CHALLENGE and FUNDED all start from a synthetic catalog value
+    # (AccountProduct.default_balance / ChallengeProduct.account_size) with
+    # no wallet= debit ever occurring — their balance must never be movable
+    # back into Wallet.available_balance via transfer_to_wallet(). Any
+    # future account_type NOT explicitly listed here is denied by default,
+    # not by name — see wallet_ledger.transfer_to_wallet().
+    WITHDRAWABLE_ACCOUNT_TYPES = frozenset({
+        "RETAIL",
+        "ECN",
+        "STANDARD",
+        "CRYPTO",
+    })
+
     user         = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True)
     wallet       = models.ForeignKey(
         "Wallet", on_delete=models.PROTECT,

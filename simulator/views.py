@@ -1055,6 +1055,15 @@ def withdraw_account_view(request, account_id):
     if not account:
         return redirect("simulator:accounts")
 
+    # MONEY-INTEGRITY-FIX-01 — UX-only early check; the real protection
+    # lives in wallet_ledger.transfer_to_wallet() itself (see there), which
+    # enforces this regardless of how/where it's called from.
+    if account.account_type not in TradingAccount.WITHDRAWABLE_ACCOUNT_TYPES:
+        request.session["acct_error"] = (
+            "This account type does not hold withdrawable funds — its balance cannot be transferred to your wallet."
+        )
+        return redirect("simulator:accounts")
+
     form = WithdrawAccountForm(request.POST)
     if not form.is_valid():
         request.session["acct_error"] = "Invalid amount."

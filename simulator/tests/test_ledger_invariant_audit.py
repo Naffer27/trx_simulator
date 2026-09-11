@@ -486,7 +486,7 @@ class TestFundConservationRoundTrip(TestCase):
 
     def setUp(self):
         self.user    = make_user()
-        self.account = make_account(user=self.user, balance=Decimal("10000"))
+        self.account = make_account(user=self.user, account_type="RETAIL", balance=Decimal("10000"))
         self.wallet  = make_wallet(user=self.user, initial_balance=Decimal("500"))
 
     def test_transfer_to_account_and_back_conserves_wallet(self):

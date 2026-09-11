@@ -320,7 +320,7 @@ class TestTransferToWallet(TestCase):
         from .factories import make_account, make_user
         user = make_user()
         wallet = make_wallet(user=user, initial_balance=Decimal("0"))
-        account = make_account(user=user, balance=Decimal("500.00"))
+        account = make_account(user=user, account_type="RETAIL", balance=Decimal("500.00"))
 
         transfer_to_wallet(wallet.id, account.id, Decimal("300.00"))
 
@@ -335,7 +335,7 @@ class TestTransferToWallet(TestCase):
         from .factories import make_account, make_user
         user = make_user()
         wallet = make_wallet(user=user)
-        account = make_account(user=user, balance=Decimal("300.00"))
+        account = make_account(user=user, account_type="RETAIL", balance=Decimal("300.00"))
 
         xfer = transfer_to_wallet(wallet.id, account.id, Decimal("100.00"))
 
@@ -346,7 +346,7 @@ class TestTransferToWallet(TestCase):
         from .factories import make_account, make_user
         user = make_user()
         wallet = make_wallet(user=user)
-        account = make_account(user=user, balance=Decimal("300.00"))
+        account = make_account(user=user, account_type="RETAIL", balance=Decimal("300.00"))
 
         transfer_to_wallet(wallet.id, account.id, Decimal("120.00"))
 
@@ -362,7 +362,7 @@ class TestTransferToWallet(TestCase):
         from .factories import make_account, make_position, make_user
         user = make_user()
         wallet = make_wallet(user=user)
-        account = make_account(user=user, balance=Decimal("500.00"))
+        account = make_account(user=user, account_type="RETAIL", balance=Decimal("500.00"))
         make_position(account)  # posición abierta
 
         with self.assertRaises(ValueError):
@@ -381,7 +381,7 @@ class TestTransferToWallet(TestCase):
         from .factories import make_account, make_position, make_user
         user = make_user()
         wallet = make_wallet(user=user)
-        account = make_account(user=user, balance=Decimal("500.00"))
+        account = make_account(user=user, account_type="RETAIL", balance=Decimal("500.00"))
         make_position(account)
 
         try:
@@ -399,7 +399,7 @@ class TestTransferToWallet(TestCase):
         from .factories import make_account, make_user
         user = make_user()
         wallet = make_wallet(user=user)
-        account = make_account(user=user, balance=Decimal("50.00"))
+        account = make_account(user=user, account_type="RETAIL", balance=Decimal("50.00"))
 
         with self.assertRaises(InsufficientFunds):
             transfer_to_wallet(wallet.id, account.id, Decimal("999.00"))
@@ -412,10 +412,237 @@ class TestTransferToWallet(TestCase):
         from .factories import make_account, make_user
         user = make_user()
         wallet = make_wallet(user=user, initial_balance=Decimal("50.00"))
-        account = make_account(user=user, balance=Decimal("400.00"))
+        account = make_account(user=user, account_type="RETAIL", balance=Decimal("400.00"))
 
         transfer_to_wallet(wallet.id, account.id, Decimal("200.00"))
 
         result = reconcile_wallet(wallet.id)
         self.assertTrue(result["ok"], f"Drift: {result['drift']}")
         self.assertEqual(result["stored"], Decimal("250.00"))  # 50 inicial + 200 recibidos
+
+
+class TestTransferToWalletAccountTypeGate(TestCase):
+    """
+    MONEY-INTEGRITY-FIX-01 — transfer_to_wallet() must deny any account
+    whose account_type is not in TradingAccount.WITHDRAWABLE_ACCOUNT_TYPES
+    (synthetic balance — DEMO/CHALLENGE/FUNDED/anything not explicitly
+    allowlisted) BEFORE creating any InternalTransfer row. Open-positions
+    and insufficient-balance rejections for otherwise-valid account types
+    keep their existing behavior (InternalTransfer created and marked
+    FAILED) — untouched by this fix.
+    """
+
+    def _counts(self):
+        from simulator.models import InternalTransfer, LedgerEntry
+        return (
+            InternalTransfer.objects.count(),
+            WalletTransaction.objects.count(),
+            LedgerEntry.objects.count(),
+        )
+
+    def test_demo_denied(self):
+        from simulator.wallet_ledger import transfer_to_wallet
+        from .factories import make_account, make_user
+        user = make_user()
+        wallet = make_wallet(user=user)
+        account = make_account(user=user, account_type="DEMO", balance=Decimal("500.00"))
+        before = self._counts()
+
+        with self.assertRaises(ValueError):
+            transfer_to_wallet(wallet.id, account.id, Decimal("100.00"))
+
+        self.assertEqual(self._counts(), before)
+        account.refresh_from_db()
+        wallet.refresh_from_db()
+        self.assertEqual(account.balance, Decimal("500.00"))
+        self.assertEqual(wallet.available_balance, Decimal("0"))
+
+    def test_challenge_denied(self):
+        from simulator.wallet_ledger import transfer_to_wallet
+        from .factories import make_account, make_user
+        user = make_user()
+        wallet = make_wallet(user=user)
+        account = make_account(user=user, account_type="CHALLENGE", balance=Decimal("500.00"))
+        before = self._counts()
+
+        with self.assertRaises(ValueError):
+            transfer_to_wallet(wallet.id, account.id, Decimal("100.00"))
+
+        self.assertEqual(self._counts(), before)
+
+    def test_funded_denied(self):
+        from simulator.wallet_ledger import transfer_to_wallet
+        from .factories import make_account, make_user
+        user = make_user()
+        wallet = make_wallet(user=user)
+        account = make_account(user=user, account_type="FUNDED", balance=Decimal("500.00"))
+        before = self._counts()
+
+        with self.assertRaises(ValueError):
+            transfer_to_wallet(wallet.id, account.id, Decimal("100.00"))
+
+        self.assertEqual(self._counts(), before)
+
+    def test_unknown_account_type_denied_fail_closed(self):
+        """A future/unlisted account_type must deny by default, not by name."""
+        from simulator.wallet_ledger import transfer_to_wallet
+        from simulator.models import TradingAccount
+        from .factories import make_account, make_user
+        user = make_user()
+        wallet = make_wallet(user=user)
+        account = make_account(user=user, account_type="RETAIL", balance=Decimal("500.00"))
+        # Simulate a hypothetical future type not in the allowlist, bypassing
+        # model-level choices validation (raw DB write, same as a migration
+        # adding a new choice would do).
+        TradingAccount.objects.filter(pk=account.pk).update(account_type="SANDBOX")
+        before = self._counts()
+
+        with self.assertRaises(ValueError):
+            transfer_to_wallet(wallet.id, account.id, Decimal("100.00"))
+
+        self.assertEqual(self._counts(), before)
+
+    def test_no_internal_transfer_row_created_on_denial(self):
+        from simulator.wallet_ledger import transfer_to_wallet
+        from simulator.models import InternalTransfer
+        from .factories import make_account, make_user
+        user = make_user()
+        wallet = make_wallet(user=user)
+        account = make_account(user=user, account_type="DEMO", balance=Decimal("500.00"))
+
+        with self.assertRaises(ValueError):
+            transfer_to_wallet(wallet.id, account.id, Decimal("100.00"))
+
+        self.assertFalse(
+            InternalTransfer.objects.filter(wallet=wallet, trading_account=account).exists()
+        )
+
+    def test_retail_allowed(self):
+        from simulator.wallet_ledger import transfer_to_wallet
+        from .factories import make_account, make_user
+        user = make_user()
+        wallet = make_wallet(user=user)
+        account = make_account(user=user, account_type="RETAIL", balance=Decimal("500.00"))
+
+        transfer_to_wallet(wallet.id, account.id, Decimal("100.00"))
+
+        wallet.refresh_from_db()
+        self.assertEqual(wallet.available_balance, Decimal("100.00"))
+
+    def test_ecn_allowed(self):
+        from simulator.wallet_ledger import transfer_to_wallet
+        from .factories import make_account, make_user
+        user = make_user()
+        wallet = make_wallet(user=user)
+        account = make_account(user=user, account_type="ECN", balance=Decimal("500.00"))
+
+        transfer_to_wallet(wallet.id, account.id, Decimal("100.00"))
+
+        wallet.refresh_from_db()
+        self.assertEqual(wallet.available_balance, Decimal("100.00"))
+
+    def test_standard_allowed(self):
+        from simulator.wallet_ledger import transfer_to_wallet
+        from .factories import make_account, make_user
+        user = make_user()
+        wallet = make_wallet(user=user)
+        account = make_account(user=user, account_type="STANDARD", balance=Decimal("500.00"))
+
+        transfer_to_wallet(wallet.id, account.id, Decimal("100.00"))
+
+        wallet.refresh_from_db()
+        self.assertEqual(wallet.available_balance, Decimal("100.00"))
+
+    def test_crypto_allowed(self):
+        from simulator.wallet_ledger import transfer_to_wallet
+        from .factories import make_account, make_user
+        user = make_user()
+        wallet = make_wallet(user=user)
+        account = make_account(user=user, account_type="CRYPTO", balance=Decimal("500.00"))
+
+        transfer_to_wallet(wallet.id, account.id, Decimal("100.00"))
+
+        wallet.refresh_from_db()
+        self.assertEqual(wallet.available_balance, Decimal("100.00"))
+
+    def test_direct_service_call_with_demo_fails_not_just_view(self):
+        """Calling transfer_to_wallet() directly (bypassing the view) still denies DEMO."""
+        from simulator.wallet_ledger import transfer_to_wallet
+        from .factories import make_account, make_user
+        user = make_user()
+        wallet = make_wallet(user=user)
+        account = make_account(user=user, account_type="DEMO", balance=Decimal("9999.00"))
+
+        with self.assertRaises(ValueError) as ctx:
+            transfer_to_wallet(wallet.id, account.id, Decimal("50.00"))
+        self.assertIn("account_type", str(ctx.exception))
+
+    def test_open_positions_gate_still_works_for_valid_type(self):
+        """Regression: RETAIL with open positions still blocks and still marks InternalTransfer FAILED."""
+        from simulator.wallet_ledger import transfer_to_wallet
+        from simulator.models import InternalTransfer
+        from .factories import make_account, make_position, make_user
+        user = make_user()
+        wallet = make_wallet(user=user)
+        account = make_account(user=user, account_type="RETAIL", balance=Decimal("500.00"))
+        make_position(account)
+
+        with self.assertRaises(ValueError):
+            transfer_to_wallet(wallet.id, account.id, Decimal("100.00"))
+
+        xfer = InternalTransfer.objects.filter(wallet=wallet, trading_account=account).first()
+        self.assertIsNotNone(xfer)
+        self.assertEqual(xfer.status, InternalTransfer.ST_FAILED)
+
+    def test_insufficient_balance_gate_still_works_for_valid_type(self):
+        from simulator.wallet_ledger import transfer_to_wallet, InsufficientFunds
+        from .factories import make_account, make_user
+        user = make_user()
+        wallet = make_wallet(user=user)
+        account = make_account(user=user, account_type="RETAIL", balance=Decimal("50.00"))
+
+        with self.assertRaises(InsufficientFunds):
+            transfer_to_wallet(wallet.id, account.id, Decimal("999.00"))
+
+        account.refresh_from_db()
+        self.assertEqual(account.balance, Decimal("50.00"))
+
+
+class TestWithdrawAccountViewAccountTypeGate(TestCase):
+    """
+    MONEY-INTEGRITY-FIX-01 — withdraw_account_view()'s own early check
+    (UX-only; the real protection is in transfer_to_wallet() above).
+    """
+
+    def test_demo_denied_with_friendly_message_no_side_effects(self):
+        from simulator.models import InternalTransfer
+        from .factories import make_account, make_user
+        user = make_user()
+        wallet = make_wallet(user=user)
+        account = make_account(user=user, account_type="DEMO", balance=Decimal("500.00"))
+        self.client.force_login(user)
+
+        resp = self.client.post(
+            f"/accounts/{account.id}/withdraw/", {"amount": "100.00"},
+        )
+        self.assertEqual(resp.status_code, 302)
+
+        wallet.refresh_from_db()
+        account.refresh_from_db()
+        self.assertEqual(wallet.available_balance, Decimal("0"))
+        self.assertEqual(account.balance, Decimal("500.00"))
+        self.assertFalse(
+            InternalTransfer.objects.filter(wallet=wallet, trading_account=account).exists()
+        )
+
+    def test_retail_allowed_via_view(self):
+        from .factories import make_account, make_user
+        user = make_user()
+        wallet = make_wallet(user=user)
+        account = make_account(user=user, account_type="RETAIL", balance=Decimal("500.00"))
+        self.client.force_login(user)
+
+        self.client.post(f"/accounts/{account.id}/withdraw/", {"amount": "100.00"})
+
+        wallet.refresh_from_db()
+        self.assertEqual(wallet.available_balance, Decimal("100.00"))
