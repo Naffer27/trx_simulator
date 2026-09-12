@@ -400,6 +400,12 @@ class LedgerEntry(models.Model):
     EV_FEE = 'FEE'
     EV_ADJUST        = 'ADJUSTMENT'
     EV_FUNDED_PAYOUT = 'FUNDED_PAYOUT'   # debit on funded account when payout is approved (H.2/H.3)
+    # MONEY-INTEGRITY-FIX-02 — dedicated event for owner_actions.
+    # owner_trading_account_adjustment(), distinct from the generic
+    # EV_ADJUST so this specific ledger entry type is unambiguously
+    # attributable to an Owner Root manual correction, never confused
+    # with any other adjustment source. Exactly 16 chars (max_length=16).
+    EV_OWNER_CORRECTION = 'OWNER_CORRECTION'
 
     EVENT_CHOICES = [
         (EV_DEPOSIT,        EV_DEPOSIT),
@@ -409,6 +415,7 @@ class LedgerEntry(models.Model):
         (EV_FEE,            EV_FEE),
         (EV_ADJUST,         EV_ADJUST),
         (EV_FUNDED_PAYOUT,  'Funded Payout'),
+        (EV_OWNER_CORRECTION, 'Owner Correction'),
     ]
 
     account = models.ForeignKey(TradingAccount, on_delete=models.CASCADE, related_name='ledger')
@@ -2260,6 +2267,15 @@ class SupportTicket(models.Model):
         verbose_name        = "Support Ticket"
         verbose_name_plural = "Support Tickets"
         ordering            = ["-created_at"]
+        permissions = [
+            # MONEY-INTEGRITY-FIX-02 — marker-only permission for now.
+            # Grantable to multiple agents (no singleton semantics, unlike
+            # Owner Root / Ops Admin) via TreasuryHardenedUserAdmin's normal
+            # user_permissions widget. Not yet checked anywhere — the
+            # support panel that will enforce it is CUSTOMER-SUPPORT-01,
+            # deliberately out of scope here.
+            ("is_customer_support", "Is Customer Support agent"),
+        ]
 
     def __str__(self):
         return f"Ticket #{self.pk} [{self.status}] {self.subject[:40]}"
@@ -3548,3 +3564,172 @@ class VerifiedWithdrawalWallet(models.Model):
 
     def __str__(self):
         return f"VerifiedWithdrawalWallet #{self.id} user={self.user_id} {self.asset}/{self.network} [{self.status}]"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MONEY-INTEGRITY-FIX-02 — Owner Root + Ops Admin + Owner Financial Control
+#
+# Closes Finding #2 of MONEY-INTEGRITY-AND-FRAUD-SURFACE-AUDIT-01
+# (TradingAccount.balance/.equity editable directly in Django admin) and
+# establishes an explicit authority hierarchy: OWNER ROOT > OPS ADMIN >
+# CUSTOMER SUPPORT (marker permission only, see SupportTicket.Meta above)
+# > future staff. See:
+#   - MONEY-INTEGRITY-FIX-02 Design Lock (final)
+#   - Design Lock Correction #2 (OwnerWalletAdjustment idempotency,
+#     OpsAdminProfile singleton replacing the earlier is_ops_admin
+#     permission idea)
+#   - Design Lock Correction #3 (CheckConstraint hardening — a bare
+#     UniqueConstraint(singleton_enforcer) alone does NOT prevent a
+#     False row from coexisting with a True row; the CheckConstraint
+#     forces every row to have singleton_enforcer=True, so the
+#     UniqueConstraint on that column makes a second row structurally
+#     impossible at the database level — enforced by the DB engine
+#     itself, not by Django validation, so it holds even against a raw
+#     SQL insert or manage.py shell bypass of the ORM's own defaults/
+#     editable=False.)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class OwnerRoot(models.Model):
+    """
+    Exactly one row can ever exist, for the life of this table — the
+    application's Owner Root identity lives here as DATA (never a
+    hardcoded username/email, never inferred from user.is_superuser,
+    which a second/future superuser could otherwise appear to hold).
+
+    Never created, changed, or deleted through Django Admin — see
+    OwnerRootAdmin below, which returns False for add/change/delete
+    unconditionally, for every user including superusers. The only
+    legitimate way this row is ever created is a deliberate, one-off
+    shell/migration action, exactly like this session's own precedent
+    for Deposit #45's recovery and WithdrawalRequest #3's cleanup —
+    established_by/established_at record that fact honestly.
+    """
+    user = models.OneToOneField(User, on_delete=models.PROTECT, related_name="owner_root")
+
+    # Column whose only legal value is True. The CheckConstraint below
+    # enforces that at the database level (rejects any row where this is
+    # False, from any INSERT path); the UniqueConstraint then makes it
+    # structurally impossible for a second row to ever exist, because
+    # every row is forced to share the same value. editable=False keeps
+    # it off any ModelForm as defense in depth, but the real guarantee is
+    # the two DB constraints, not this.
+    singleton_enforcer = models.BooleanField(default=True, editable=False)
+
+    established_at = models.DateTimeField(auto_now_add=True)
+    established_by = models.CharField(max_length=100)  # e.g. "shell", "migration" — never fabricated
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(singleton_enforcer=True),
+                name="ownerroot_singleton_enforcer_must_be_true",
+            ),
+            models.UniqueConstraint(
+                fields=["singleton_enforcer"],
+                name="only_one_ownerroot_ever",
+            ),
+        ]
+
+    def __str__(self):
+        return f"OwnerRoot(user={self.user_id})"
+
+
+class OpsAdminProfile(models.Model):
+    """
+    Exactly one non-Owner OPS_ADMIN can exist at a time — same singleton
+    pattern as OwnerRoot, but this row CAN be replaced over its lifetime
+    (unlike OwnerRoot, which is intended to be permanent). Replacement
+    only ever happens through simulator.owner_actions.replace_ops_admin()
+    (Owner Root only) — never through Django Admin (see
+    OpsAdminProfileAdmin: add/change/delete all False, unconditionally).
+
+    "Who is OPS_ADMIN today" is resolved by querying this table for the
+    row with singleton_enforcer=True and reading .user — never by
+    comparing a username/email string in code.
+    """
+    user = models.OneToOneField(User, on_delete=models.PROTECT, related_name="ops_admin_profile")
+    singleton_enforcer = models.BooleanField(default=True, editable=False)
+    assigned_by = models.ForeignKey(
+        User, on_delete=models.PROTECT, related_name="ops_admin_assignments_made",
+    )
+    assigned_at = models.DateTimeField(auto_now_add=True)
+    reason = models.TextField(blank=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(singleton_enforcer=True),
+                name="opsadminprofile_singleton_enforcer_must_be_true",
+            ),
+            models.UniqueConstraint(
+                fields=["singleton_enforcer"],
+                name="only_one_ops_admin_profile",
+            ),
+        ]
+
+    def __str__(self):
+        return f"OpsAdminProfile(user={self.user_id})"
+
+
+class ManualBalanceAdjustment(models.Model):
+    """
+    Owner Root's dedicated, auditable mechanism for correcting a
+    TradingAccount's .balance directly — the ONLY sanctioned path now
+    that TradingAccountAdmin makes balance/equity/initial_balance
+    readonly for everyone (Finding #2 closure). Never created directly
+    (no admin add/change/delete) — always via
+    simulator.owner_actions.owner_trading_account_adjustment().
+
+    idempotency_key carries a real UNIQUE constraint (not just an
+    application-level check) — a retried request with the same key is
+    rejected at the database level as the structural backstop behind the
+    explicit pre-check in the service function.
+    """
+    trading_account = models.ForeignKey(TradingAccount, on_delete=models.PROTECT)
+    amount          = models.DecimalField(max_digits=12, decimal_places=2)  # signed
+    reason          = models.TextField()
+    idempotency_key = models.CharField(max_length=64, unique=True)
+    actor           = models.ForeignKey(User, on_delete=models.PROTECT, related_name="manual_balance_adjustments")
+    balance_before  = models.DecimalField(max_digits=12, decimal_places=2)
+    balance_after   = models.DecimalField(max_digits=12, decimal_places=2)
+    equity_before   = models.DecimalField(max_digits=12, decimal_places=2)
+    equity_after    = models.DecimalField(max_digits=12, decimal_places=2)
+    reference       = models.CharField(max_length=40, unique=True)
+    created_at      = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"ManualBalanceAdjustment #{self.pk} account={self.trading_account_id} amount={self.amount}"
+
+
+class OwnerWalletAdjustment(models.Model):
+    """
+    Owner Root's dedicated, solitary path for an extraordinary Wallet
+    credit/debit — structurally SEPARATE from TreasuryOperationRequest,
+    which keeps its existing 3-distinct-actor segregation of duties
+    unchanged for all Ops/staff use. Never created directly (no admin
+    add/change/delete) — always via
+    simulator.owner_actions.owner_wallet_adjustment(), which reuses
+    wallet_ledger.credit_wallet()/debit_wallet() unmodified.
+    """
+    wallet             = models.ForeignKey(Wallet, on_delete=models.PROTECT)
+    amount             = models.DecimalField(max_digits=18, decimal_places=2)  # signed
+    reason             = models.TextField()
+    idempotency_key    = models.CharField(max_length=64, unique=True)
+    actor              = models.ForeignKey(User, on_delete=models.PROTECT, related_name="owner_wallet_adjustments")
+    balance_before     = models.DecimalField(max_digits=18, decimal_places=2)
+    balance_after      = models.DecimalField(max_digits=18, decimal_places=2)
+    wallet_transaction = models.OneToOneField(
+        WalletTransaction, on_delete=models.PROTECT, null=True, blank=True,
+        related_name="owner_adjustment",
+    )
+    reference          = models.CharField(max_length=40, unique=True)
+    created_at         = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"OwnerWalletAdjustment #{self.pk} wallet={self.wallet_id} amount={self.amount}"

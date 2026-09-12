@@ -426,15 +426,22 @@ class TestTradingAccountBalanceReadonly(TestCase):
         self.assertIn("equity", ro)
         self.assertIn("initial_balance", ro)
 
-    def test_superuser_balance_not_readonly(self):
+    def test_superuser_balance_also_readonly(self):
+        # MONEY-INTEGRITY-FIX-02 closed the residual gap from
+        # MONEY-INTEGRITY-AND-FRAUD-SURFACE-AUDIT-01's Finding #2: balance/
+        # equity/initial_balance are now readonly for EVERYONE, including
+        # superusers — the only sanctioned path to correct a balance is
+        # owner_trading_account_adjustment() (simulator/owner_actions.py),
+        # which is audited, TOTP-gated, and idempotent.
         ro = self.ta_admin.get_readonly_fields(self._super_req(), obj=self.account)
-        self.assertNotIn("balance", ro)
-        self.assertNotIn("equity", ro)
-        self.assertNotIn("initial_balance", ro)
+        self.assertIn("balance", ro)
+        self.assertIn("equity", ro)
+        self.assertIn("initial_balance", ro)
 
-    def test_add_form_balance_not_readonly_for_staff(self):
+    def test_add_form_balance_readonly_for_staff(self):
+        # Same MONEY-INTEGRITY-FIX-02 hardening applies to the add form too.
         ro = self.ta_admin.get_readonly_fields(self._staff_req(), obj=None)
-        self.assertNotIn("balance", ro)
+        self.assertIn("balance", ro)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

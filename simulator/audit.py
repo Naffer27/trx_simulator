@@ -46,6 +46,16 @@ EV_WITHDRAW_AUTO_AUTHORIZED       = "withdrawal.auto_authorized"
 EV_WITHDRAW_PAYOUT_RETRY_TRIGGERED = "withdrawal.payout_retry_triggered"
 EV_WITHDRAW_REFUNDED = "withdrawal.refunded"
 
+# MONEY-INTEGRITY-FIX-02 — Owner Root financial controls + Ops Admin
+# lifecycle. EV_OWNER_TRADING_ADJUSTMENT / EV_OWNER_WALLET_ADJUSTMENT are
+# written exactly once per completed owner_actions.* call (never on a
+# rejected/no-op attempt); EV_OPS_ADMIN_REPLACED is written exactly once
+# per replace_ops_admin() invocation, regardless of whether it hit the
+# initial-create race-retry path or the normal update path.
+EV_OWNER_TRADING_ADJUSTMENT = "owner.trading_adjustment"
+EV_OWNER_WALLET_ADJUSTMENT  = "owner.wallet_adjustment"
+EV_OPS_ADMIN_REPLACED       = "ops_admin.replaced"
+
 # FIX-02A.4 — UNKNOWN reconciliation / durable webhook inbox. Deliberately
 # sparse: routine "still unknown, nothing changed" cycles are NOT logged
 # here (would spam AuditLog every 15 min per unresolved attempt) — only

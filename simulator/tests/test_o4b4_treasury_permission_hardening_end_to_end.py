@@ -605,9 +605,14 @@ class RegressionE2ETests(TestCase):
         target.refresh_from_db()
         self.assertTrue(target.user_permissions.filter(pk=perm.pk).exists())
 
-    def test_is_staff_field_not_hardened_by_o4b(self):
-        # O.4b explicitly left is_staff out of scope — a non-superuser
-        # with auth.change_user can still toggle is_staff normally.
+    def test_is_staff_field_now_hardened_by_owner_root(self):
+        # O.4b explicitly left is_staff out of scope, but
+        # MONEY-INTEGRITY-FIX-02 closed that gap: is_staff can now only be
+        # toggled by Owner Root (never any other actor, even one holding
+        # auth.change_user, including a superuser who isn't Owner Root).
+        # The field is disabled server-side, so Django's ModelForm ignores
+        # the POSTed value and keeps the instance's current value — same
+        # mechanism as the pre-existing is_superuser hardening.
         staff = make_user(username="o4b4_regress_isstaff_actor", is_staff=True)
         _grant_user_admin_access(staff)
         target = make_user(
@@ -619,7 +624,7 @@ class RegressionE2ETests(TestCase):
         resp = client.post(_user_change_url(target), data=payload)
         self.assertEqual(resp.status_code, 302)
         target.refresh_from_db()
-        self.assertFalse(target.is_staff)
+        self.assertTrue(target.is_staff)
 
     @override_settings(TOTP_ADMIN_TREASURY_REQUIRED=True, TREASURY_ROLE_CONCENTRATION_BLOCKING=True)
     def test_o4a_2fa_gate_still_enforced_alongside_o4b_flags(self):

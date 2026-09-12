@@ -30,6 +30,7 @@ from .models import (
     DealingDeskDecision,
     PendingOrder,
     WithdrawalEmailOTPChallenge, VerifiedWithdrawalWallet,
+    OwnerRoot, OpsAdminProfile, ManualBalanceAdjustment, OwnerWalletAdjustment,
 )
 from . import challenge_engine
 from .secure_media import broker_document_secure_widget, kyc_secure_widget
@@ -596,13 +597,22 @@ class TradingAccountAdmin(admin.ModelAdmin):
     def get_fieldsets(self, request, obj=None):
         return self._ADD_FIELDSETS if obj is None else self._CHANGE_FIELDSETS
 
+    # MONEY-INTEGRITY-FIX-02 (closes Finding #2 of
+    # MONEY-INTEGRITY-AND-FRAUD-SURFACE-AUDIT-01) — balance/equity/
+    # initial_balance are readonly for EVERYONE now, superusers and Owner
+    # Root included, on both the add and change forms. Editing them here
+    # used to be the exact exploit path (no LedgerEntry, no AuditLog, no
+    # second actor, no TOTP). The only sanctioned way to move a
+    # TradingAccount's balance now is owner_actions.
+    # owner_trading_account_adjustment() (Owner Root only, TOTP-gated,
+    # fully audited) or the existing transfer_to_account()/
+    # transfer_to_wallet() ledger functions — never this form, for anyone.
+    _BALANCE_FIELDS = ("balance", "equity", "initial_balance")
+
     def get_readonly_fields(self, request, obj=None):
         if obj is None:
-            return ("created_at",)
-        base = self.readonly_fields
-        if not request.user.is_superuser:
-            base = base + ("balance", "equity", "initial_balance")
-        return base
+            return ("created_at",) + self._BALANCE_FIELDS
+        return self.readonly_fields + self._BALANCE_FIELDS
 
     inlines = [RiskRuleInline, TraderIntelligenceInline, ViolationInline, DrawdownSnapshotInline, PositionInline, TradeInline]
     actions = [reset_balance, suspend_accounts, activate_accounts, enable_netting, disable_netting,
@@ -5723,6 +5733,86 @@ def _audit_admin_treasury_permission_change(*, action, actor, target, permission
 from django.contrib.auth.admin import UserAdmin as _DjangoUserAdmin
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# MONEY-INTEGRITY-FIX-02 — Owner Root / Ops Admin / Owner financial control
+#
+# The four models below are never created, changed, or deleted through
+# Django Admin — has_add/change/delete_permission all return False,
+# unconditionally, for every user including superusers. Same append-only-
+# via-admin discipline already established for BrokerAuditEvent/
+# WalletTransaction elsewhere in this file. OwnerRoot/OpsAdminProfile are
+# only ever written by a deliberate one-off shell action (OwnerRoot) or by
+# owner_actions.replace_ops_admin() (OpsAdminProfile); ManualBalance
+# Adjustment/OwnerWalletAdjustment are only ever written by
+# owner_actions.owner_trading_account_adjustment()/owner_wallet_
+# adjustment(). All four are registered here purely for read/audit
+# visibility in the admin.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@admin.register(OwnerRoot)
+class OwnerRootAdmin(admin.ModelAdmin):
+    list_display = ("user", "established_at", "established_by")
+    readonly_fields = [f.name for f in OwnerRoot._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(OpsAdminProfile)
+class OpsAdminProfileAdmin(admin.ModelAdmin):
+    list_display = ("user", "assigned_by", "assigned_at")
+    readonly_fields = [f.name for f in OpsAdminProfile._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ManualBalanceAdjustment)
+class ManualBalanceAdjustmentAdmin(admin.ModelAdmin):
+    list_display = ("reference", "trading_account", "amount", "actor", "created_at")
+    search_fields = ("reference", "trading_account__id", "actor__username", "idempotency_key")
+    ordering = ("-created_at",)
+    readonly_fields = [f.name for f in ManualBalanceAdjustment._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(OwnerWalletAdjustment)
+class OwnerWalletAdjustmentAdmin(admin.ModelAdmin):
+    list_display = ("reference", "wallet", "amount", "actor", "created_at")
+    search_fields = ("reference", "wallet__id", "actor__username", "idempotency_key")
+    ordering = ("-created_at",)
+    readonly_fields = [f.name for f in OwnerWalletAdjustment._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
 class TreasuryHardenedUserAdmin(_DjangoUserAdmin):
     """
     Subclasses Django's own auth.UserAdmin directly — every existing
@@ -5746,6 +5836,33 @@ class TreasuryHardenedUserAdmin(_DjangoUserAdmin):
             # attribute. Applies identically whether the non-superuser
             # is editing themselves or anyone else (O.4b-2 requirement 5).
             form.base_fields["is_superuser"].disabled = True
+
+        # MONEY-INTEGRITY-FIX-02 — extends the O.4b-2 hardening above,
+        # same server-side discipline (disabled fields, never a template
+        # trick). Two additions, both keyed off is_owner_root() — never
+        # is_superuser, since a non-Owner superuser must not be treated
+        # as equivalent to Owner for either of these:
+        from .permission_levels import is_owner_root
+
+        actor_is_owner = is_owner_root(request.user)
+
+        if not actor_is_owner and "is_staff" in form.base_fields:
+            # is_staff can only be granted/revoked by Owner Root — no
+            # inferior (Ops, Support, or a bare superuser who isn't
+            # Owner) can toggle it on anyone, including themselves.
+            form.base_fields["is_staff"].disabled = True
+
+        if obj is not None and not actor_is_owner:
+            from .models import OwnerRoot
+
+            if OwnerRoot.objects.filter(user_id=obj.pk).exists():
+                # The target IS the Owner Root user. Nobody but Owner
+                # Root themselves may change ANY field on this account —
+                # full-form lock, not just is_staff/is_superuser/
+                # permissions. Same disabled-field mechanism, applied to
+                # every field Django put in this form.
+                for field in form.base_fields.values():
+                    field.disabled = True
         return form
 
     def formfield_for_manytomany(self, db_field, request, **kwargs):
@@ -5763,6 +5880,25 @@ class TreasuryHardenedUserAdmin(_DjangoUserAdmin):
                 field.queryset = field.queryset.exclude(
                     pk__in=_treasury_permission_queryset().values_list("pk", flat=True),
                 )
+
+            # MONEY-INTEGRITY-FIX-02 — permission-level hierarchy: only
+            # OWNER or OPS may grant/revoke "is_customer_support" — a
+            # below-OPS actor (or nobody, if they lack change_user
+            # entirely) never sees it as an option. This queryset
+            # exclusion is paired with the preservation logic in
+            # save_related() below (MONEY-INTEGRITY-FIX-02 hardening
+            # patch), which restores an existing grant a restricted actor
+            # would otherwise drop as a side effect of saving any other
+            # field.
+            from .permission_levels import is_ops_admin
+
+            if not is_ops_admin(request.user):
+                from django.contrib.auth.models import Permission
+
+                support_perm = Permission.objects.filter(
+                    content_type__app_label="simulator", codename="is_customer_support",
+                ).values_list("pk", flat=True)
+                field.queryset = field.queryset.exclude(pk__in=support_perm)
         return field
 
     def save_related(self, request, form, formsets, change):
@@ -5774,7 +5910,30 @@ class TreasuryHardenedUserAdmin(_DjangoUserAdmin):
             if change else set()
         )
 
+        # MONEY-INTEGRITY-FIX-02 hardening patch — same before/after
+        # preservation pattern as the Treasury permissions below, applied
+        # to "is_customer_support". formfield_for_manytomany() above
+        # already keeps this permission out of a restricted actor's
+        # submittable queryset, so it can only ever be DROPPED (never
+        # granted) as a side effect of super().save_related()'s .set()
+        # call — capture whether the target held it before, and restore
+        # it after if the actor isn't authorized to change it.
+        from .permission_levels import is_ops_admin
+        from django.contrib.auth.models import Permission
+
+        support_perm_id = Permission.objects.filter(
+            content_type__app_label="simulator", codename="is_customer_support",
+        ).values_list("pk", flat=True).first()
+        had_support_before = bool(
+            change and support_perm_id is not None
+            and target.user_permissions.filter(pk=support_perm_id).exists()
+        )
+
         super().save_related(request, form, formsets, change)
+
+        if had_support_before and not is_ops_admin(request.user):
+            if not target.user_permissions.filter(pk=support_perm_id).exists():
+                target.user_permissions.add(support_perm_id)
 
         is_self_edit = change and target.pk == request.user.pk
         restricted = (not request.user.is_superuser) or is_self_edit
