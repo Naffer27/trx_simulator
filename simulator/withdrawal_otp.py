@@ -76,6 +76,54 @@ def generate_code() -> str:
     return f"{secrets.randbelow(1_000_000):06d}"
 
 
+def expire_if_stale(target, *, now=None):
+    """
+    WITHDRAWAL-OTP-STALE-PENDING-FIX-02 — the single, central place that
+    decides whether a challenge is stale, and normalizes it.
+
+    Rule (identical for both call shapes below): status == PENDING AND
+    expires_at <= now  ->  status = EXPIRED. Idempotent (a no-op on a
+    challenge that's already EXPIRED or any other terminal status) and
+    monotonic (the only transition this ever performs is PENDING ->
+    EXPIRED — it never revives a terminal status and never touches a
+    still-active PENDING/VERIFIED row). No side effects beyond that one
+    column: attempts/code_hash/last_sent_at/purpose/created_at are all
+    left untouched.
+
+    Two calling shapes, reused identically by create_challenge()
+    (candidate-existence check, no single instance in hand yet),
+    resend_challenge() (must refuse to revive a stale row), and the
+    OTP-verify GET views (must not render a code form for a dead
+    challenge):
+
+      - expire_if_stale(challenge_instance) — normalizes that ONE
+        already-fetched instance in place (mutates .status so the
+        caller's in-memory object is immediately consistent with the
+        DB). Returns True if the challenge is (now, or already was)
+        EXPIRED by clock; False if it's genuinely still active or in
+        some other terminal status untouched by this helper.
+
+      - expire_if_stale(queryset) — bulk-normalizes every stale PENDING
+        row the queryset matches (e.g. all of one user's challenges,
+        across every purpose). Returns the number of rows flipped.
+    """
+    from django.db.models import QuerySet
+    from .models import WithdrawalEmailOTPChallenge as _M
+
+    now = now or timezone.now()
+
+    if isinstance(target, QuerySet):
+        return target.filter(
+            status=_M.STATUS_PENDING, expires_at__lte=now,
+        ).update(status=_M.STATUS_EXPIRED)
+
+    challenge = target
+    flipped = expire_if_stale(_M.objects.filter(pk=challenge.pk), now=now)
+    if flipped:
+        challenge.status = _M.STATUS_EXPIRED
+    return challenge.status == _M.STATUS_EXPIRED
+
+
 def _get_hash_key() -> bytes:
     """
     HMAC key for OTP code hashing. Prefers the dedicated
@@ -144,12 +192,15 @@ def create_challenge(
         # transition verify_challenge() would perform, just materialized
         # proactively instead of waiting for a verify attempt that may
         # never come. Preserves id/created_at/code_hash/attempts/purpose/
-        # last_sent_at — only `status` changes.
-        WithdrawalEmailOTPChallenge.objects.filter(
-            user=user,
-            status=WithdrawalEmailOTPChallenge.STATUS_PENDING,
-            expires_at__lte=now,
-        ).update(status=WithdrawalEmailOTPChallenge.STATUS_EXPIRED)
+        # last_sent_at — only `status` changes. WITHDRAWAL-OTP-STALE-
+        # PENDING-FIX-02: delegates the actual PENDING+expired->EXPIRED
+        # decision to expire_if_stale(), the single place that rule now
+        # lives (also reused by resend_challenge() and the OTP-verify
+        # views) — this call is functionally identical to the inline
+        # .update() it replaces.
+        expire_if_stale(
+            WithdrawalEmailOTPChallenge.objects.filter(user=user), now=now,
+        )
 
         if WithdrawalEmailOTPChallenge.objects.filter(
             user=user, status__in=WithdrawalEmailOTPChallenge.NON_TERMINAL_STATUSES,
@@ -212,12 +263,19 @@ def resend_challenge(challenge):
     reset lever) — a challenge that's already LOCKED cannot be resent.
 
     Raises ChallengeNotVerifiable if the challenge isn't PENDING,
-    ResendCooldownActive if called before the configured cooldown elapses.
+    ChallengeExpired if it's PENDING but stale by clock (WITHDRAWAL-OTP-
+    STALE-PENDING-FIX-02 — a challenge expired by clock must never be
+    revived: no new code, no extended expires_at, no status flip back to
+    PENDING, no email sent), ResendCooldownActive if called before the
+    configured cooldown elapses.
     """
     from .models import WithdrawalEmailOTPChallenge as _M
 
     if challenge.status != _M.STATUS_PENDING:
         raise ChallengeNotVerifiable(f"Challenge #{challenge.pk} is {challenge.status}, cannot resend.")
+
+    if expire_if_stale(challenge):
+        raise ChallengeExpired(f"Challenge #{challenge.pk} expired at {challenge.expires_at}.")
 
     ok, retry_after = can_resend(challenge)
     if not ok:

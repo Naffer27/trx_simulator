@@ -52,6 +52,7 @@ from .withdrawal_otp import (
     mark_challenge_used, resend_challenge, can_resend,
     ActiveChallengeExists, ChallengeNotFound, ChallengeNotVerifiable,
     ChallengeExpired, ChallengeLocked, InvalidCode, ResendCooldownActive,
+    expire_if_stale,
 )
 from .withdrawal_emails import send_withdrawal_otp_email
 from .audit import (
@@ -2520,6 +2521,15 @@ def withdraw_otp_verify_view(request):
             purpose=WithdrawalEmailOTPChallenge.PURPOSE_WITHDRAWAL,
         ).first()
 
+    # WITHDRAWAL-OTP-STALE-PENDING-FIX-02 — a challenge that's PENDING
+    # only by a stale DB row (expired by clock, never resubmitted since)
+    # must not be shown as if it were still awaiting a code. Normalize
+    # first; the existing status check right below already redirects
+    # cleanly back to /withdraw/ once this flips it out of PENDING — no
+    # new branch needed.
+    if challenge is not None:
+        expire_if_stale(challenge)
+
     if challenge is None or challenge.status not in (
         WithdrawalEmailOTPChallenge.STATUS_PENDING, WithdrawalEmailOTPChallenge.STATUS_VERIFIED,
     ):
@@ -2874,6 +2884,11 @@ def withdrawal_wallet_otp_verify_view(request):
             pk=challenge_id, user=request.user,
             purpose=WithdrawalEmailOTPChallenge.PURPOSE_ADDRESS_CHANGE,
         ).first()
+
+    # WITHDRAWAL-OTP-STALE-PENDING-FIX-02 — same normalization as the
+    # withdrawal OTP verify view above, for the address-change purpose.
+    if challenge is not None:
+        expire_if_stale(challenge)
 
     if challenge is None or challenge.status not in (
         WithdrawalEmailOTPChallenge.STATUS_PENDING, WithdrawalEmailOTPChallenge.STATUS_VERIFIED,
