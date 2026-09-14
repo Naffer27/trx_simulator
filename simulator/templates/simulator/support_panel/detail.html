@@ -1,0 +1,184 @@
+{% extends "simulator/base_app.html" %}
+{% block title %}Ticket #{{ ticket.id }} — Support Panel{% endblock %}
+{% block page_title %}Ticket #{{ ticket.id }}{% endblock %}
+
+{% block extra_styles %}
+.td-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 24px; max-width: 1200px; }
+@media (max-width: 900px) { .td-grid { grid-template-columns: 1fr; } }
+.td-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 22px;
+  margin-bottom: 20px;
+}
+.td-card-title {
+  font-family: 'Orbitron', sans-serif;
+  font-size: .7rem; font-weight: 700;
+  color: var(--muted-2); letter-spacing: .1em;
+  text-transform: uppercase;
+  margin-bottom: 14px;
+}
+.td-meta-row { display: flex; justify-content: space-between; font-size: .82rem; padding: 6px 0; border-bottom: 1px solid var(--border-dim); }
+.td-meta-row span.k { color: var(--muted); }
+.td-meta-row span.v { color: var(--text); font-weight: 600; }
+
+.td-msg { border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; font-size: .85rem; }
+.td-msg-customer { background: var(--bg-card-2); border: 1px solid var(--border-dim); }
+.td-msg-internal { background: rgba(231,76,60,.07); border: 1px dashed rgba(231,76,60,.35); }
+.td-msg-head { display: flex; justify-content: space-between; font-size: .72rem; color: var(--muted); margin-bottom: 6px; }
+.td-msg-internal .td-msg-head::before { content: "🔒 INTERNAL — "; color: #e74c3c; font-weight: 700; }
+.td-msg-body { white-space: pre-wrap; color: var(--text); }
+
+.td-form textarea {
+  width: 100%; min-height: 80px;
+  background: #05050a; border: 1px solid rgba(255,215,0,.18);
+  border-radius: 8px; color: #e0e0e0; padding: 10px; font-family: inherit;
+  box-sizing: border-box; margin-bottom: 8px;
+}
+.td-btn {
+  border: none; border-radius: 6px; padding: 8px 14px;
+  font-size: .78rem; font-weight: 700; cursor: pointer;
+  margin-right: 6px; margin-bottom: 6px;
+}
+.td-btn-gold { background: linear-gradient(135deg,#FFD700,#FFA500); color: #000; }
+.td-btn-dim { background: var(--bg-card-2); color: var(--text); border: 1px solid var(--border-dim); }
+.td-btn-danger { background: rgba(231,76,60,.15); color: #e74c3c; border: 1px solid rgba(231,76,60,.3); }
+
+.td-badge {
+  display: inline-block; font-size: .65rem; font-weight: 700;
+  padding: 3px 9px; border-radius: 4px; text-transform: uppercase; letter-spacing: .05em;
+}
+.td-badge-open             { background: rgba(121,134,203,.15); color: #7986cb; }
+.td-badge-pending          { background: rgba(241,196,15,.12);  color: #f1c40f; }
+.td-badge-pending_customer { background: rgba(241,196,15,.12);  color: #f1c40f; }
+.td-badge-pending_support  { background: rgba(255,167,38,.12);  color: #ffa726; }
+.td-badge-escalated        { background: rgba(231,76,60,.15);   color: #e74c3c; }
+.td-badge-resolved         { background: rgba(39,174,96,.12);   color: #27ae60; }
+.td-badge-closed           { background: rgba(120,123,134,.12); color: #787b86; }
+
+.td-alert { padding: 10px 14px; border-radius: 8px; font-size: .82rem; margin-bottom: 16px; }
+.td-alert-error { background: rgba(231,76,60,.1); border: 1px solid rgba(231,76,60,.3); color: #e74c3c; }
+{% endblock %}
+
+{% block content %}
+
+{% if messages %}
+{% for m in messages %}
+<div class="td-alert td-alert-error">{{ m }}</div>
+{% endfor %}
+{% endif %}
+
+<div class="td-grid">
+
+  <!-- ── LEFT: thread ── -->
+  <div>
+    <div class="td-card">
+      <div class="td-card-title">Thread</div>
+      {% for entry in thread %}
+      <div class="td-msg {% if entry.visibility == 'INTERNAL' %}td-msg-internal{% else %}td-msg-customer{% endif %}">
+        <div class="td-msg-head">
+          <span>{{ entry.author.username }} ({{ entry.author_role }})</span>
+          <span>{{ entry.created_at|date:"d M Y, H:i" }}</span>
+        </div>
+        <div class="td-msg-body">{{ entry.body }}</div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="td-card td-form">
+      <div class="td-card-title">Responder al cliente (visible)</div>
+      <form method="post" action="{% url 'simulator:support_panel_reply' ticket.pk %}">
+        {% csrf_token %}
+        <textarea name="body" placeholder="Escribe una respuesta visible para el cliente…" required></textarea>
+        <button type="submit" class="td-btn td-btn-gold">Enviar respuesta</button>
+      </form>
+    </div>
+
+    <div class="td-card td-form">
+      <div class="td-card-title">Nota interna (Support/Ops/Owner únicamente)</div>
+      <form method="post" action="{% url 'simulator:support_panel_note' ticket.pk %}">
+        {% csrf_token %}
+        <textarea name="body" placeholder="Nota interna — nunca visible para el cliente…" required></textarea>
+        <button type="submit" class="td-btn td-btn-dim">Guardar nota interna</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ── RIGHT: ticket info + actions ── -->
+  <div>
+    <div class="td-card">
+      <div class="td-card-title">Ticket</div>
+      <div class="td-meta-row"><span class="k">Cliente</span><span class="v">{{ ticket.user.username }}</span></div>
+      <div class="td-meta-row"><span class="k">Asunto</span><span class="v">{{ ticket.subject }}</span></div>
+      <div class="td-meta-row"><span class="k">Categoría</span><span class="v">{{ ticket.get_category_display }}</span></div>
+      <div class="td-meta-row"><span class="k">Prioridad</span><span class="v">{{ ticket.get_priority_display }}</span></div>
+      <div class="td-meta-row"><span class="k">Estado</span><span class="v"><span class="td-badge td-badge-{{ ticket.status }}">{{ ticket.get_status_display }}</span></span></div>
+      <div class="td-meta-row"><span class="k">Asignado a</span><span class="v">{% if ticket.assigned_to %}{{ ticket.assigned_to.username }}{% else %}—{% endif %}</span></div>
+      {% if ticket.escalated_to_ops %}
+      <div class="td-meta-row"><span class="k">Escalado</span><span class="v" style="color:#e74c3c;">⚠ Sí — {{ ticket.escalated_at|date:"d M Y, H:i" }} por {{ ticket.escalated_by.username|default:"—" }}</span></div>
+      <div class="td-meta-row"><span class="k">Razón</span><span class="v">{{ ticket.escalation_reason }}</span></div>
+      {% endif %}
+      <div class="td-meta-row"><span class="k">Creado</span><span class="v">{{ ticket.created_at|date:"d M Y, H:i" }}</span></div>
+      <div class="td-meta-row"><span class="k">Actualizado</span><span class="v">{{ ticket.updated_at|date:"d M Y, H:i" }}</span></div>
+      {% if ticket.first_response_at %}
+      <div class="td-meta-row"><span class="k">1ª respuesta</span><span class="v">{{ ticket.first_response_at|date:"d M Y, H:i" }}</span></div>
+      {% endif %}
+      {% if ticket.resolved_at %}
+      <div class="td-meta-row"><span class="k">Resuelto</span><span class="v">{{ ticket.resolved_at|date:"d M Y, H:i" }}</span></div>
+      {% endif %}
+      {% if ticket.closed_at %}
+      <div class="td-meta-row"><span class="k">Cerrado</span><span class="v">{{ ticket.closed_at|date:"d M Y, H:i" }}</span></div>
+      {% endif %}
+    </div>
+
+    <div class="td-card">
+      <div class="td-card-title">Asignación</div>
+      <form method="post" action="{% url 'simulator:support_panel_assign' ticket.pk %}">
+        {% csrf_token %}
+        {% if not ticket.assigned_to %}
+          <button type="submit" name="action" value="claim" class="td-btn td-btn-gold">Reclamar (claim)</button>
+        {% elif is_assigned_to_me %}
+          <button type="submit" name="action" value="unclaim" class="td-btn td-btn-dim">Liberar (unclaim)</button>
+        {% endif %}
+      </form>
+      {% if actor_is_ops %}
+      <form method="post" action="{% url 'simulator:support_panel_assign' ticket.pk %}" style="margin-top:8px;">
+        {% csrf_token %}
+        <select name="user_id">
+          {% for u in assignable_users %}
+          <option value="{{ u.pk }}">{{ u.username }}</option>
+          {% endfor %}
+        </select>
+        <button type="submit" name="action" value="reassign" class="td-btn td-btn-dim">Reasignar</button>
+        {% if ticket.assigned_to %}
+        <button type="submit" name="action" value="unassign" class="td-btn td-btn-danger">Quitar asignación</button>
+        {% endif %}
+      </form>
+      {% endif %}
+    </div>
+
+    <div class="td-card">
+      <div class="td-card-title">Cambiar estado</div>
+      <form method="post" action="{% url 'simulator:support_panel_status' ticket.pk %}">
+        {% csrf_token %}
+        {% for status, label in legal_next_statuses %}
+        <button type="submit" name="status" value="{{ status }}" class="td-btn td-btn-dim">
+          → {{ label }}
+        </button>
+        {% endfor %}
+      </form>
+    </div>
+
+    <div class="td-card">
+      <div class="td-card-title">Escalar a OPS</div>
+      <form method="post" action="{% url 'simulator:support_panel_escalate' ticket.pk %}">
+        {% csrf_token %}
+        <textarea name="reason" placeholder="Razón del escalamiento (obligatoria)…" required style="width:100%;min-height:60px;background:#05050a;border:1px solid rgba(255,215,0,.18);border-radius:8px;color:#e0e0e0;padding:10px;box-sizing:border-box;margin-bottom:8px;"></textarea>
+        <button type="submit" class="td-btn td-btn-danger">Escalar a OPS</button>
+      </form>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

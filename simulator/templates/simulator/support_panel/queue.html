@@ -1,0 +1,146 @@
+{% extends "simulator/base_app.html" %}
+{% block title %}Support Panel — Money Broker{% endblock %}
+{% block page_title %}Support Panel{% endblock %}
+
+{% block extra_styles %}
+.sq-toolbar {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin-bottom: 18px;
+}
+.sq-filter {
+  padding: 6px 14px;
+  border-radius: 20px;
+  border: 1px solid rgba(255,215,0,.2);
+  background: var(--bg-card-2);
+  color: var(--muted-2);
+  font-size: .78rem;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.sq-filter.active {
+  background: var(--gold);
+  color: #000;
+  font-weight: 700;
+  border-color: var(--gold);
+}
+.sq-subfilters {
+  display: flex; flex-wrap: wrap; gap: 10px;
+  margin-bottom: 18px;
+}
+.sq-subfilters select {
+  background: #05050a;
+  border: 1px solid rgba(255,215,0,.18);
+  border-radius: 6px;
+  color: #e0e0e0;
+  font-size: .8rem;
+  padding: 6px 10px;
+}
+table.sq-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .82rem;
+}
+table.sq-table th {
+  text-align: left;
+  padding: 8px 10px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border-dim);
+  text-transform: uppercase;
+  font-size: .68rem;
+  letter-spacing: .05em;
+}
+table.sq-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border-dim);
+  color: var(--text);
+}
+table.sq-table tr:hover td { background: rgba(255,215,0,.04); }
+table.sq-table a.ticket-link { color: var(--gold); text-decoration: none; font-weight: 600; }
+.sq-badge {
+  display: inline-block;
+  font-size: .65rem; font-weight: 700;
+  padding: 2px 8px; border-radius: 4px;
+  text-transform: uppercase; letter-spacing: .05em;
+  white-space: nowrap;
+}
+.sq-badge-open             { background: rgba(121,134,203,.15); color: #7986cb; }
+.sq-badge-pending          { background: rgba(241,196,15,.12);  color: #f1c40f; }
+.sq-badge-pending_customer { background: rgba(241,196,15,.12);  color: #f1c40f; }
+.sq-badge-pending_support  { background: rgba(255,167,38,.12);  color: #ffa726; }
+.sq-badge-escalated        { background: rgba(231,76,60,.15);   color: #e74c3c; }
+.sq-badge-resolved         { background: rgba(39,174,96,.12);   color: #27ae60; }
+.sq-badge-closed           { background: rgba(120,123,134,.12); color: #787b86; }
+.sq-esc { color: #e74c3c; font-weight: 700; }
+.sq-empty { text-align: center; padding: 40px 0; color: var(--muted); }
+{% endblock %}
+
+{% block content %}
+
+<div class="sq-toolbar">
+  {% for key, label in filters %}
+  <a class="sq-filter {% if active_filter == key %}active{% endif %}"
+     href="?filter={{ key }}">{{ label }}</a>
+  {% endfor %}
+</div>
+
+<form method="get" class="sq-subfilters">
+  <input type="hidden" name="filter" value="{{ active_filter }}">
+  <select name="category" onchange="this.form.submit()">
+    <option value="">Categoría (todas)</option>
+    {% for value, label in category_choices %}
+    <option value="{{ value }}" {% if selected_category == value %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <select name="priority" onchange="this.form.submit()">
+    <option value="">Prioridad (todas)</option>
+    {% for value, label in priority_choices %}
+    <option value="{{ value }}" {% if selected_priority == value %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <select name="status" onchange="this.form.submit()">
+    <option value="">Estado (todos)</option>
+    {% for value, label in status_choices %}
+    <option value="{{ value }}" {% if selected_status == value %}selected{% endif %}>{{ label }}</option>
+    {% endfor %}
+  </select>
+  <select name="assigned" onchange="this.form.submit()">
+    <option value="">Agente (todos)</option>
+    {% for u in assignable_users %}
+    <option value="{{ u.pk }}" {% if selected_assigned == u.pk|stringformat:"s" %}selected{% endif %}>{{ u.username }}</option>
+    {% endfor %}
+  </select>
+</form>
+
+{% if tickets %}
+<div style="overflow-x:auto;">
+<table class="sq-table">
+  <thead>
+    <tr>
+      <th>#</th><th>Cliente</th><th>Asunto</th><th>Categoría</th>
+      <th>Prioridad</th><th>Estado</th><th>Asignado</th><th>Escalado</th>
+      <th>Creado</th><th>Actualizado</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for t in tickets %}
+    <tr>
+      <td><a class="ticket-link" href="{% url 'simulator:support_panel_ticket_detail' t.pk %}">#{{ t.id }}</a></td>
+      <td>{{ t.user.username }}</td>
+      <td>{{ t.subject|truncatechars:40 }}</td>
+      <td>{{ t.get_category_display }}</td>
+      <td>{{ t.get_priority_display }}</td>
+      <td><span class="sq-badge sq-badge-{{ t.status }}">{{ t.get_status_display }}</span></td>
+      <td>{% if t.assigned_to %}{{ t.assigned_to.username }}{% else %}<span style="color:var(--muted)">—</span>{% endif %}</td>
+      <td>{% if t.escalated_to_ops %}<span class="sq-esc">⚠ OPS</span>{% else %}—{% endif %}</td>
+      <td>{{ t.created_at|date:"d M, H:i" }}</td>
+      <td>{{ t.updated_at|date:"d M, H:i" }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<div class="sq-empty">No hay tickets en esta vista.</div>
+{% endif %}
+
+{% endblock %}

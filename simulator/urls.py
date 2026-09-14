@@ -11,6 +11,15 @@ from .secure_media import (
     secure_kyc_media_view,
     secure_treasury_evidence_view,
 )
+from .support_panel_views import (
+    support_panel_queue_view,
+    support_panel_ticket_detail_view,
+    support_panel_reply_view,
+    support_panel_note_view,
+    support_panel_assign_view,
+    support_panel_status_view,
+    support_panel_escalate_view,
+)
 from .views import (
     login_view,
     logout_view,
@@ -145,6 +154,21 @@ urlpatterns = [
 
     # ── Staff Operational Panel ──────────────────────────────────────────────
     path("staff/ops/", ops_panel_view, name="ops_panel"),
+
+    # ── CUSTOMER-SUPPORT-01B — dedicated Support Panel, outside /admin/ ──────
+    path("staff/support/", support_panel_queue_view, name="support_panel_queue"),
+    path("staff/support/tickets/<int:pk>/", support_panel_ticket_detail_view,
+         name="support_panel_ticket_detail"),
+    path("staff/support/tickets/<int:pk>/reply/", support_panel_reply_view,
+         name="support_panel_reply"),
+    path("staff/support/tickets/<int:pk>/note/", support_panel_note_view,
+         name="support_panel_note"),
+    path("staff/support/tickets/<int:pk>/assign/", support_panel_assign_view,
+         name="support_panel_assign"),
+    path("staff/support/tickets/<int:pk>/status/", support_panel_status_view,
+         name="support_panel_status"),
+    path("staff/support/tickets/<int:pk>/escalate/", support_panel_escalate_view,
+         name="support_panel_escalate"),
 
     # ── 2FA ─────────────────────────────────────────────────────────────────
     path("account/2fa/setup/",   totp_setup_view,   name="totp_setup"),
