@@ -2228,17 +2228,38 @@ class SupportTicket(models.Model):
         (CATEGORY_OTHER,      "Otro"),
     ]
 
-    STATUS_OPEN     = "open"
-    STATUS_PENDING  = "pending"
-    STATUS_RESOLVED = "resolved"
-    STATUS_CLOSED   = "closed"
+    # CUSTOMER-SUPPORT-01A / Design Lock Correction 1 — STATUS_PENDING is
+    # LEGACY ONLY: no new ticket may ever be created with it, and no
+    # future transition may target it (only PENDING_CUSTOMER/
+    # PENDING_SUPPORT are live destinations going forward). It is kept as
+    # a real, valid choice — not silently dropped — because existing
+    # rows may still carry it and must keep displaying/filtering
+    # correctly. Existing rows are NOT rewritten by this block.
+    STATUS_OPEN             = "open"
+    STATUS_PENDING          = "pending"           # LEGACY ONLY — see above
+    STATUS_PENDING_CUSTOMER = "pending_customer"
+    STATUS_PENDING_SUPPORT  = "pending_support"
+    STATUS_ESCALATED        = "escalated"
+    STATUS_RESOLVED         = "resolved"
+    STATUS_CLOSED           = "closed"
 
     STATUS_CHOICES = [
-        (STATUS_OPEN,     "Abierto"),
-        (STATUS_PENDING,  "En revisión"),
-        (STATUS_RESOLVED, "Resuelto"),
-        (STATUS_CLOSED,   "Cerrado"),
+        (STATUS_OPEN,             "Abierto"),
+        (STATUS_PENDING,          "En revisión (legacy)"),
+        (STATUS_PENDING_CUSTOMER, "Esperando cliente"),
+        (STATUS_PENDING_SUPPORT,  "Esperando soporte"),
+        (STATUS_ESCALATED,        "Escalado a OPS"),
+        (STATUS_RESOLVED,         "Resuelto"),
+        (STATUS_CLOSED,           "Cerrado"),
     ]
+
+    # Design Lock Correction 1 — pure data, no behavior: statuses that
+    # must be treated as equivalent wherever transition-legality logic
+    # is EVENTUALLY implemented (not in 01A — no state-machine/view code
+    # exists yet). Legacy PENDING reads exactly like PENDING_SUPPORT;
+    # nothing ever writes PENDING again, and nothing may transition INTO
+    # PENDING from any state.
+    PENDING_EQUIVALENT_STATUSES = frozenset({STATUS_PENDING, STATUS_PENDING_SUPPORT})
 
     PRIORITY_LOW    = "low"
     PRIORITY_NORMAL = "normal"
@@ -2263,6 +2284,26 @@ class SupportTicket(models.Model):
     updated_at  = models.DateTimeField(auto_now=True)
     resolved_at = models.DateTimeField(null=True, blank=True)
 
+    # CUSTOMER-SUPPORT-01A — data foundation only. None of these fields
+    # are written or read by any view/admin action yet (assignment UI is
+    # 01B, escalation flow is 01D) — this block only prepares the
+    # schema, additively, with zero visible behavior change.
+    assigned_to = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="assigned_support_tickets",
+    )
+    assigned_at = models.DateTimeField(null=True, blank=True)
+
+    escalated_to_ops  = models.BooleanField(default=False)
+    escalated_at      = models.DateTimeField(null=True, blank=True)
+    escalated_by      = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name="+",
+    )
+    escalation_reason = models.TextField(blank=True)
+
+    first_response_at = models.DateTimeField(null=True, blank=True)
+    closed_at         = models.DateTimeField(null=True, blank=True)
+
     class Meta:
         verbose_name        = "Support Ticket"
         verbose_name_plural = "Support Tickets"
@@ -2279,6 +2320,115 @@ class SupportTicket(models.Model):
 
     def __str__(self):
         return f"Ticket #{self.pk} [{self.status}] {self.subject[:40]}"
+
+
+def _support_attachment_upload_path(instance, filename):
+    """
+    Deterministic, per-ticket storage path. Never derives the stored
+    name from the client-supplied filename beyond its extension — the
+    original name is kept only as the `filename` metadata column for
+    display, never trusted for storage (path traversal / collision
+    avoidance). Matches the storage layout the Design Lock's secure
+    download view (added in a later block, via secure_media.py) expects.
+    """
+    import os
+    import uuid
+
+    ext = os.path.splitext(filename)[1][:10]  # bounded, defensive
+    return f"support_attachments/{instance.ticket_id}/{uuid.uuid4().hex}{ext}"
+
+
+class SupportMessage(models.Model):
+    """
+    CUSTOMER-SUPPORT-01A — data foundation only. One row per message in
+    a ticket's conversation thread. No view/admin action reads or
+    writes this model yet — the customer/staff thread UI is 01C/01B.
+
+    author_role is a SNAPSHOT of the author's permission_levels.py
+    PermissionLevel (or CLIENT) at the moment the message was posted —
+    never re-derived later, so history reads correctly even after
+    someone's role changes afterward (same rationale
+    ManualBalanceAdjustment uses for freezing before/after state rather
+    than re-deriving it).
+
+    visibility=INTERNAL rows must never be readable by the ticket's
+    owning customer or emailed to them — that boundary is enforced by
+    the (not-yet-built) query/view layer in 01B/01C, not by this model.
+    """
+    ROLE_OWNER   = "OWNER"
+    ROLE_OPS     = "OPS"
+    ROLE_SUPPORT = "SUPPORT"
+    ROLE_CLIENT  = "CLIENT"
+    ROLE_CHOICES = [
+        (ROLE_OWNER,   "Owner"),
+        (ROLE_OPS,     "Ops"),
+        (ROLE_SUPPORT, "Support"),
+        (ROLE_CLIENT,  "Client"),
+    ]
+
+    VISIBILITY_CUSTOMER = "CUSTOMER_VISIBLE"
+    VISIBILITY_INTERNAL = "INTERNAL"
+    VISIBILITY_CHOICES = [
+        (VISIBILITY_CUSTOMER, "Customer visible"),
+        (VISIBILITY_INTERNAL, "Internal only"),
+    ]
+
+    ticket      = models.ForeignKey(SupportTicket, on_delete=models.CASCADE, related_name="messages")
+    author      = models.ForeignKey(User, on_delete=models.PROTECT, related_name="support_messages_authored")
+    author_role = models.CharField(max_length=10, choices=ROLE_CHOICES)
+    body        = models.TextField()
+    visibility  = models.CharField(max_length=20, choices=VISIBILITY_CHOICES)
+    created_at  = models.DateTimeField(auto_now_add=True)
+    edited_at   = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["created_at"]
+
+    def __str__(self):
+        return f"SupportMessage #{self.pk} ticket={self.ticket_id} [{self.visibility}]"
+
+
+class SupportAttachment(models.Model):
+    """
+    CUSTOMER-SUPPORT-01A — data foundation only. No upload/download view
+    exists yet (01E adds those, via a secure_media.py extension — Design
+    Lock §J) — this model may only be created directly (tests/shell)
+    until then.
+
+    Invariant (Design Lock Correction 1 §2): if `message` is set, it
+    MUST belong to the same `ticket` as this attachment. Enforced in
+    clean() — this is PYTHON/DOMAIN-LAYER validation ONLY, NOT a
+    database constraint: a SQL CHECK cannot span the join from
+    message_id to that message's own ticket_id, so this invariant holds
+    only for callers that run full_clean() before save(). Every future
+    creation path (01E's upload view) MUST call full_clean() first — a
+    bare .objects.create() would silently bypass this check.
+    """
+    ticket       = models.ForeignKey(SupportTicket, on_delete=models.CASCADE, related_name="attachments")
+    message      = models.ForeignKey(
+        SupportMessage, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="attachments",
+    )
+    uploaded_by  = models.ForeignKey(User, on_delete=models.PROTECT, related_name="support_attachments_uploaded")
+    file         = models.FileField(upload_to=_support_attachment_upload_path)
+    filename     = models.CharField(max_length=255)
+    content_type = models.CharField(max_length=100)
+    size_bytes   = models.PositiveIntegerField()
+    created_at   = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]
+
+    def clean(self):
+        super().clean()
+        if self.message_id is not None and self.message.ticket_id != self.ticket_id:
+            from django.core.exceptions import ValidationError
+            raise ValidationError(
+                "SupportAttachment.message must belong to the same ticket as the attachment."
+            )
+
+    def __str__(self):
+        return f"SupportAttachment #{self.pk} ticket={self.ticket_id} file={self.filename}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
