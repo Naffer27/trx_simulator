@@ -447,9 +447,14 @@ class StatusTransitionServiceTests(TestCase):
         self.assertEqual(t.resolved_at, old_resolved_at)
 
     def test_illegal_pair_raises_illegal_transition(self):
-        t = _make_ticket(status=SupportTicket.STATUS_OPEN)
+        # CUSTOMER-SUPPORT-01C added a client-only OPEN -> CLOSED row,
+        # so OPEN -> CLOSED is no longer illegal for every actor (it's
+        # legal for the ticket's own client). RESOLVED -> ESCALATED has
+        # no matching row for ANY actor in either block, so it remains
+        # a genuine structural illegality.
+        t = _make_ticket(status=SupportTicket.STATUS_RESOLVED, resolved_at=timezone.now())
         with self.assertRaises(IllegalTransition):
-            apply_transition(t, SupportTicket.STATUS_CLOSED, actor=self.owner)
+            apply_transition(t, SupportTicket.STATUS_ESCALATED, actor=self.owner)
 
 
 # ── Escalation ───────────────────────────────────────────────────────────

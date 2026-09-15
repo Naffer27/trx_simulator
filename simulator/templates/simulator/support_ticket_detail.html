@@ -1,0 +1,122 @@
+{% extends "simulator/base_app.html" %}
+{% block title %}Ticket #{{ ticket.id }} — Soporte{% endblock %}
+{% block page_title %}Ticket #{{ ticket.id }}{% endblock %}
+
+{% block extra_styles %}
+.ctd-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 24px;
+  margin-bottom: 20px;
+  max-width: 760px;
+}
+.ctd-header {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  flex-wrap: wrap; gap: 10px;
+  margin-bottom: 6px;
+}
+.ctd-subject { font-size: 1.05rem; font-weight: 700; color: var(--text); }
+.ctd-meta { font-size: .78rem; color: var(--muted); margin-bottom: 18px; }
+.ctd-badge {
+  display: inline-block; font-size: .65rem; font-weight: 700;
+  padding: 3px 10px; border-radius: 4px; text-transform: uppercase; letter-spacing: .05em;
+}
+.ctd-badge-open             { background: rgba(121,134,203,.15); color: #7986cb; }
+.ctd-badge-pending          { background: rgba(241,196,15,.12);  color: #f1c40f; }
+.ctd-badge-pending_customer { background: rgba(241,196,15,.12);  color: #f1c40f; }
+.ctd-badge-pending_support  { background: rgba(255,167,38,.12);  color: #ffa726; }
+.ctd-badge-escalated        { background: rgba(231,76,60,.15);   color: #e74c3c; }
+.ctd-badge-resolved         { background: rgba(39,174,96,.12);   color: #27ae60; }
+.ctd-badge-closed           { background: rgba(120,123,134,.12); color: #787b86; }
+
+.ctd-msg { border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; font-size: .88rem; }
+.ctd-msg-mine  { background: rgba(255,215,0,.06); border: 1px solid rgba(255,215,0,.15); }
+.ctd-msg-staff { background: var(--bg-card-2); border: 1px solid var(--border-dim); }
+.ctd-msg-head { display: flex; justify-content: space-between; font-size: .72rem; color: var(--muted); margin-bottom: 6px; }
+.ctd-msg-body { white-space: pre-wrap; color: var(--text); }
+
+.ctd-form textarea {
+  width: 100%; min-height: 90px;
+  background: #05050a; border: 1px solid rgba(255,215,0,.18);
+  border-radius: 8px; color: #e0e0e0; padding: 10px; font-family: inherit;
+  box-sizing: border-box; margin-bottom: 10px;
+}
+.ctd-btn {
+  border: none; border-radius: 6px; padding: 9px 16px;
+  font-size: .82rem; font-weight: 700; cursor: pointer; margin-right: 8px;
+}
+.ctd-btn-gold { background: linear-gradient(135deg,#FFD700,#FFA500); color: #000; }
+.ctd-btn-dim  { background: var(--bg-card-2); color: var(--text); border: 1px solid var(--border-dim); }
+
+.ctd-alert { padding: 10px 14px; border-radius: 8px; font-size: .84rem; margin-bottom: 16px; max-width: 760px; }
+.ctd-alert-error { background: rgba(231,76,60,.1); border: 1px solid rgba(231,76,60,.3); color: #e74c3c; }
+
+.ctd-closed-banner {
+  background: rgba(120,123,134,.08); border: 1px solid var(--border-dim);
+  border-radius: 8px; padding: 10px 14px; font-size: .82rem; color: var(--muted);
+  margin-bottom: 16px; max-width: 760px;
+}
+{% endblock %}
+
+{% block content %}
+
+{% if messages %}
+{% for m in messages %}
+<div class="ctd-alert ctd-alert-error">{{ m }}</div>
+{% endfor %}
+{% endif %}
+
+<div class="ctd-card">
+  <div class="ctd-header">
+    <span class="ctd-subject">{{ ticket.subject }}</span>
+    <span class="ctd-badge ctd-badge-{{ ticket.status }}">{{ ticket.get_status_display }}</span>
+  </div>
+  <div class="ctd-meta">
+    #{{ ticket.id }} · {{ ticket.get_category_display }} ·
+    Creado {{ ticket.created_at|date:"d M Y, H:i" }} ·
+    Actualizado {{ ticket.updated_at|date:"d M Y, H:i" }}
+  </div>
+
+  {% if ticket.status == 'resolved' %}
+  <div class="ctd-closed-banner">Este ticket fue marcado como resuelto. Si el problema persiste, responde abajo o reábrelo.</div>
+  {% elif ticket.status == 'closed' %}
+  <div class="ctd-closed-banner">Este ticket está cerrado. Puedes reabrirlo si necesitas continuar la conversación.</div>
+  {% elif ticket.status == 'escalated' %}
+  <div class="ctd-closed-banner">Tu caso está siendo revisado por nuestro equipo. Puedes seguir respondiendo mientras se resuelve.</div>
+  {% endif %}
+
+  {% for entry in thread %}
+  <div class="ctd-msg {% if entry.author_role == 'CLIENT' %}ctd-msg-mine{% else %}ctd-msg-staff{% endif %}">
+    <div class="ctd-msg-head">
+      <span>{% if entry.author_role == 'CLIENT' %}Tú{% else %}Soporte{% endif %}</span>
+      <span>{{ entry.created_at|date:"d M Y, H:i" }}</span>
+    </div>
+    <div class="ctd-msg-body">{{ entry.body }}</div>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="ctd-card ctd-form">
+  <form method="post" action="{% url 'simulator:support_ticket_reply' ticket.pk %}">
+    {% csrf_token %}
+    <textarea name="body" placeholder="Escribe tu respuesta…" required></textarea>
+    <button type="submit" class="ctd-btn ctd-btn-gold">Enviar respuesta</button>
+  </form>
+
+  {% if can_close %}
+  <form method="post" action="{% url 'simulator:support_ticket_close' ticket.pk %}" style="display:inline;">
+    {% csrf_token %}
+    <button type="submit" class="ctd-btn ctd-btn-dim">Cerrar ticket</button>
+  </form>
+  {% endif %}
+
+  {% if can_reopen %}
+  <form method="post" action="{% url 'simulator:support_ticket_reopen' ticket.pk %}" style="display:inline;">
+    {% csrf_token %}
+    <button type="submit" class="ctd-btn ctd-btn-dim">Reabrir ticket</button>
+  </form>
+  {% endif %}
+</div>
+
+{% endblock %}

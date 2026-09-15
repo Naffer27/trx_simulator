@@ -1,7 +1,9 @@
 # simulator/views.py
 from decimal import Decimal, InvalidOperation
 from django.utils import timezone
-from django.shortcuts import render, redirect
+from django.shortcuts import render, redirect, get_object_or_404
+from django.contrib import messages
+from django.views.decorators.http import require_POST
 from django.core.serializers.json import DjangoJSONEncoder
 from django.contrib.auth import authenticate, login as auth_login, logout
 from django.views.decorators.csrf import csrf_exempt
@@ -21,7 +23,7 @@ from .models import (
     TradingViolation, TraderScore, AccountEquitySnapshot,
     ChallengeEnrollment, ChallengeProduct, AccountProduct, Wallet,
     EmailVerification, TermsAcceptance, TERMS_VERSION, RISK_DISCLOSURE_VERSION,
-    KYCProfile, SupportTicket,
+    KYCProfile, SupportTicket, SupportMessage,
     FundedConfig, FundedPayoutRequest,
     WithdrawalEmailOTPChallenge, VerifiedWithdrawalWallet,
 )
@@ -4441,11 +4443,21 @@ def support_view(request):
                 logger.warning("[support] admin email failed ticket=%d: %s", ticket.id, mail_exc)
             success = True
 
-    recent_tickets = (
+    recent_tickets = list(
         SupportTicket.objects
         .filter(user=request.user)
         .order_by("-created_at")[:10]
     )
+    # CUSTOMER-SUPPORT-01C — "Respuesta disponible" now reflects a real,
+    # readable staff reply (a CUSTOMER_VISIBLE SupportMessage authored
+    # by someone other than the ticket's own owner), not the legacy
+    # admin_note field the 01B Support Panel never writes to. Small,
+    # bounded (<=10 tickets) per-ticket query — acceptable for this list
+    # size; not worth a more complex annotate()/Exists() for V1.
+    for t in recent_tickets:
+        t.has_staff_reply = t.messages.filter(
+            visibility=SupportMessage.VISIBILITY_CUSTOMER,
+        ).exclude(author_id=request.user.pk).exists()
 
     return render(request, "simulator/support.html", {
         "tickets":        recent_tickets,
@@ -4454,3 +4466,114 @@ def support_view(request):
         "error":          error,
         "active_section": "support",
     })
+
+
+# ── CUSTOMER-SUPPORT-01C — customer ticket detail / reply / close / reopen ──
+#
+# Every route here resolves the ticket via get_object_or_404(SupportTicket,
+# pk=pk, user=request.user) — own ticket -> 200, foreign ticket -> 404
+# (never 403; matches secure_media.py's own IDOR-hardening rationale: an
+# authenticated user probing ids cannot distinguish "exists but not
+# yours" from "does not exist"). No route trusts a ticket id from POST
+# body — only from the URL, resolved through this same ownership filter.
+#
+# All status mutation goes through support_status.apply_transition() —
+# no ad-hoc ticket.status assignment anywhere below.
+
+@login_required
+def support_ticket_detail_view(request, pk):
+    from .support_status import legal_next_statuses
+
+    ticket = get_object_or_404(SupportTicket, pk=pk, user=request.user)
+
+    thread = [{
+        "kind": "original",
+        "author_username": ticket.user.username,
+        "author_role": SupportMessage.ROLE_CLIENT,
+        "body": ticket.message,
+        "created_at": ticket.created_at,
+    }]
+    # Query-level exclusion of INTERNAL rows — never fetched, never
+    # placed in template context, never a "fetch all then hide" pattern.
+    for m in ticket.messages.filter(
+        visibility=SupportMessage.VISIBILITY_CUSTOMER,
+    ).select_related("author").order_by("created_at"):
+        thread.append({
+            "kind": "message",
+            "author_username": m.author.username,
+            "author_role": m.author_role,
+            "body": m.body,
+            "created_at": m.created_at,
+        })
+
+    next_statuses = legal_next_statuses(ticket, request.user)
+
+    return render(request, "simulator/support_ticket_detail.html", {
+        "ticket": ticket,
+        "thread": thread,
+        "can_close": SupportTicket.STATUS_CLOSED in next_statuses,
+        "can_reopen": SupportTicket.STATUS_OPEN in next_statuses,
+        "active_section": "support",
+    })
+
+
+@login_required
+@require_POST
+def support_ticket_reply_view(request, pk):
+    from .support_status import apply_transition
+
+    ticket = get_object_or_404(SupportTicket, pk=pk, user=request.user)
+    body = request.POST.get("body", "").strip()
+    if not body:
+        messages.error(request, "El mensaje no puede estar vacío.")
+        return redirect("simulator:support_ticket_detail", pk=ticket.pk)
+
+    # Status rule (Design Lock §5 / Correction discussion): a customer
+    # reply always lands the ticket somewhere sensible for its CURRENT
+    # status — never invents a legacy-PENDING destination, never
+    # silently drops the reply. ESCALATED is deliberately excluded: an
+    # Ops-owned ticket's status is untouched by any reply, staff or
+    # client (same rule 01B's staff reply path already follows).
+    current = ticket.status
+    if current in (SupportTicket.STATUS_RESOLVED, SupportTicket.STATUS_CLOSED):
+        apply_transition(ticket, SupportTicket.STATUS_OPEN, actor=request.user)
+    elif current in (SupportTicket.STATUS_OPEN, SupportTicket.STATUS_PENDING, SupportTicket.STATUS_PENDING_CUSTOMER):
+        apply_transition(ticket, SupportTicket.STATUS_PENDING_SUPPORT, actor=request.user)
+    # PENDING_SUPPORT: already exactly where a customer reply should
+    # leave it — no-op, no transition call needed.
+    # ESCALATED: status untouched, message still created below.
+
+    SupportMessage.objects.create(
+        ticket=ticket, author=request.user, author_role=SupportMessage.ROLE_CLIENT,
+        body=body, visibility=SupportMessage.VISIBILITY_CUSTOMER,
+    )
+    return redirect("simulator:support_ticket_detail", pk=ticket.pk)
+
+
+@login_required
+@require_POST
+def support_ticket_close_view(request, pk):
+    from .support_status import apply_transition, IllegalTransition
+
+    ticket = get_object_or_404(SupportTicket, pk=pk, user=request.user)
+    try:
+        apply_transition(ticket, SupportTicket.STATUS_CLOSED, actor=request.user)
+    except IllegalTransition:
+        # Structurally not closable right now (e.g. ESCALATED — no row
+        # takes an escalated ticket straight to CLOSED for any actor,
+        # staff included; it must be resolved by Ops first).
+        messages.error(request, "Este ticket no puede cerrarse desde su estado actual.")
+    return redirect("simulator:support_ticket_detail", pk=ticket.pk)
+
+
+@login_required
+@require_POST
+def support_ticket_reopen_view(request, pk):
+    from .support_status import apply_transition, IllegalTransition
+
+    ticket = get_object_or_404(SupportTicket, pk=pk, user=request.user)
+    try:
+        apply_transition(ticket, SupportTicket.STATUS_OPEN, actor=request.user)
+    except IllegalTransition:
+        messages.error(request, "Este ticket no puede reabrirse desde su estado actual.")
+    return redirect("simulator:support_ticket_detail", pk=ticket.pk)

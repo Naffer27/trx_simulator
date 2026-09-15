@@ -89,6 +89,10 @@ from .views import (
     profile_view,
     # Support
     support_view,
+    support_ticket_detail_view,
+    support_ticket_reply_view,
+    support_ticket_close_view,
+    support_ticket_reopen_view,
     # Funded payout (H.1)
     funded_payout_request_view,
 )
@@ -192,6 +196,10 @@ urlpatterns = [
     path("kyc/",                  kyc_view,            name="kyc"),
     path("profile/",              profile_view,        name="profile"),
     path("support/",              support_view,        name="support"),
+    path("support/tickets/<int:pk>/",         support_ticket_detail_view, name="support_ticket_detail"),
+    path("support/tickets/<int:pk>/reply/",   support_ticket_reply_view,  name="support_ticket_reply"),
+    path("support/tickets/<int:pk>/close/",   support_ticket_close_view,  name="support_ticket_close"),
+    path("support/tickets/<int:pk>/reopen/",  support_ticket_reopen_view, name="support_ticket_reopen"),
 
     # ── Secure media serving (O.5e-1) ────────────────────────────────────────
     # Authorized-only file streaming. No route under MEDIA_URL is registered

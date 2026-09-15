@@ -207,7 +207,7 @@
     {% if tickets %}
     <div class="sp-ticket-list">
       {% for ticket in tickets %}
-      <div class="sp-ticket">
+      <a href="{% url 'simulator:support_ticket_detail' ticket.pk %}" class="sp-ticket" style="display:block;text-decoration:none;color:inherit;">
         <div class="sp-ticket-top">
           <span class="sp-ticket-subject" title="{{ ticket.subject }}">{{ ticket.subject }}</span>
           <span class="sp-badge sp-badge-{{ ticket.status }}">{{ ticket.get_status_display }}</span>
@@ -215,11 +215,11 @@
         <div class="sp-ticket-meta">
           <span><i class="fa-solid fa-tag" style="opacity:.5"></i>&nbsp;{{ ticket.get_category_display }}</span>
           <span><i class="fa-regular fa-clock" style="opacity:.5"></i>&nbsp;{{ ticket.created_at|date:"d M Y, H:i" }}</span>
-          {% if ticket.admin_note %}
+          {% if ticket.has_staff_reply %}
           <span style="color:var(--gold);"><i class="fa-solid fa-comment-dots"></i>&nbsp;Respuesta disponible</span>
           {% endif %}
         </div>
-      </div>
+      </a>
       {% endfor %}
     </div>
     {% else %}
