@@ -93,6 +93,11 @@ from .views import (
     support_ticket_reply_view,
     support_ticket_close_view,
     support_ticket_reopen_view,
+    support_widget_view,
+    support_widget_ticket_view,
+    support_widget_reply_view,
+    support_widget_close_view,
+    support_widget_new_view,
     # Funded payout (H.1)
     funded_payout_request_view,
 )
@@ -200,6 +205,13 @@ urlpatterns = [
     path("support/tickets/<int:pk>/reply/",   support_ticket_reply_view,  name="support_ticket_reply"),
     path("support/tickets/<int:pk>/close/",   support_ticket_close_view,  name="support_ticket_close"),
     path("support/tickets/<int:pk>/reopen/",  support_ticket_reopen_view, name="support_ticket_reopen"),
+
+    # ── CUSTOMER-SUPPORT-01C.1 — floating chat widget fragments ──────────────
+    path("support/widget/",                        support_widget_view,        name="support_widget"),
+    path("support/widget/ticket/<int:pk>/",         support_widget_ticket_view, name="support_widget_ticket"),
+    path("support/widget/ticket/<int:pk>/reply/",   support_widget_reply_view,  name="support_widget_reply"),
+    path("support/widget/ticket/<int:pk>/close/",   support_widget_close_view,  name="support_widget_close"),
+    path("support/widget/new/",                     support_widget_new_view,    name="support_widget_new"),
 
     # ── Secure media serving (O.5e-1) ────────────────────────────────────────
     # Authorized-only file streaming. No route under MEDIA_URL is registered

@@ -1,0 +1,42 @@
+{% comment %}
+CUSTOMER-SUPPORT-01C.1 — widget thread fragment. NOT a full page —
+never extends base_app.html, injected directly into #sw-body via JS.
+`thread` is built by _build_customer_thread() (CUSTOMER_VISIBLE-only,
+query-level exclusion of INTERNAL rows) — this fragment renders
+exactly what it's given and nothing more.
+{% endcomment %}
+
+{% if error %}
+<div class="sw-error">{{ error }}</div>
+{% endif %}
+
+<div class="sw-status-row">
+  <span>Ticket #{{ ticket.id }} · {{ ticket.subject|truncatechars:28 }}</span>
+  <span class="sw-status-badge">{{ status_label }}</span>
+</div>
+
+{% for entry in thread %}
+<div class="sw-msg {% if entry.author_role == 'CLIENT' %}sw-msg-you{% elif entry.author_role == 'AI' %}sw-msg-ai{% else %}sw-msg-support{% endif %}">
+  <div class="sw-msg-role">{% if entry.author_role == 'CLIENT' %}You{% elif entry.author_role == 'AI' %}AI{% else %}Support{% endif %}</div>
+  <div>{{ entry.body }}</div>
+  <div class="sw-msg-time">{{ entry.created_at|date:"d M, H:i" }}</div>
+</div>
+{% endfor %}
+
+<div class="sw-footer">
+  <form data-sw-reply-form action="{% url 'simulator:support_widget_reply' ticket.pk %}">
+    {% csrf_token %}
+    <textarea name="body" placeholder="Escribe tu mensaje…" required></textarea>
+    <div class="sw-footer-row">
+      <button type="button" class="sw-btn-link" data-sw-new-trigger>+ Nueva conversación</button>
+      <button type="submit" class="sw-btn sw-btn-gold">Enviar</button>
+    </div>
+  </form>
+
+  {% if can_close %}
+  <form data-sw-close-form action="{% url 'simulator:support_widget_close' ticket.pk %}" style="margin-top:8px;text-align:right;">
+    {% csrf_token %}
+    <button type="submit" class="sw-btn sw-btn-dim">Cerrar ticket</button>
+  </form>
+  {% endif %}
+</div>

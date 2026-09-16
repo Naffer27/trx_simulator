@@ -373,6 +373,105 @@
       text-transform: uppercase; margin-bottom: 14px;
     }
 
+    /* ══════════ CUSTOMER-SUPPORT-01C.1 — floating chat widget ══════════ */
+    #sw-root { position: fixed; right: 20px; bottom: 20px; z-index: 300; }
+    #sw-toggle {
+      display: flex; align-items: center; gap: 8px;
+      background: linear-gradient(135deg, #FFD700, #FFA500);
+      color: #000; border: none; border-radius: 999px;
+      padding: 12px 18px; font-weight: 700; font-size: .82rem;
+      cursor: pointer; box-shadow: 0 4px 18px rgba(0,0,0,.4);
+      transition: transform .15s, box-shadow .15s;
+    }
+    #sw-toggle:hover { transform: translateY(-2px); box-shadow: 0 6px 22px rgba(0,0,0,.5); }
+    #sw-toggle:focus-visible { outline: 2px solid #FFD700; outline-offset: 2px; }
+
+    #sw-panel {
+      position: fixed; right: 20px; bottom: 88px;
+      width: 360px; max-width: calc(100vw - 24px);
+      height: 500px; max-height: calc(100vh - 120px);
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      box-shadow: 0 12px 40px rgba(0,0,0,.55);
+      display: flex; flex-direction: column;
+      overflow: hidden;
+    }
+    #sw-panel[hidden] { display: none; }
+
+    .sw-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 16px; background: var(--bg-sidebar);
+      border-bottom: 1px solid var(--border);
+      font-family: 'Orbitron', sans-serif; font-size: .78rem; font-weight: 700;
+      color: var(--gold); letter-spacing: .03em;
+    }
+    .sw-header-actions { display: flex; align-items: center; gap: 10px; }
+    .sw-header-actions a, .sw-header-actions button {
+      background: none; border: none; color: var(--muted-2);
+      cursor: pointer; font-size: .85rem; padding: 2px; line-height: 1;
+    }
+    .sw-header-actions a:hover, .sw-header-actions button:hover { color: var(--gold); }
+
+    .sw-body { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+    .sw-loading { color: var(--muted); font-size: .82rem; text-align: center; padding: 24px 8px; }
+    .sw-empty-header {
+      font-family: 'Orbitron', sans-serif; font-size: .88rem; font-weight: 700;
+      color: var(--text); text-align: center; padding: 10px 4px 4px;
+    }
+    .sw-quick-links { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 0 6px; }
+    .sw-quick-link {
+      background: var(--bg-card-2); border: 1px solid var(--border-dim); border-radius: 999px;
+      color: var(--muted-2); font-size: .72rem; padding: 5px 11px; cursor: pointer;
+    }
+    .sw-quick-link:hover { border-color: var(--gold); color: var(--gold); }
+
+    .sw-status-row {
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: .7rem; color: var(--muted); margin-bottom: 4px;
+    }
+    .sw-status-badge {
+      display: inline-block; padding: 2px 9px; border-radius: 4px;
+      font-weight: 700; text-transform: uppercase; letter-spacing: .04em; font-size: .62rem;
+      background: rgba(255,215,0,.12); color: var(--gold);
+    }
+
+    .sw-msg { max-width: 82%; padding: 9px 12px; border-radius: 12px; font-size: .82rem; line-height: 1.4; }
+    .sw-msg-you { align-self: flex-end; background: linear-gradient(135deg, rgba(255,215,0,.18), rgba(255,165,0,.14)); color: var(--text); border-bottom-right-radius: 3px; }
+    .sw-msg-support { align-self: flex-start; background: var(--bg-card-2); border: 1px solid var(--border-dim); color: var(--text); border-bottom-left-radius: 3px; }
+    .sw-msg-ai { align-self: flex-start; background: var(--bg-card-2); border: 1px dashed rgba(255,215,0,.3); color: var(--text); border-bottom-left-radius: 3px; }
+    .sw-msg-role { font-size: .62rem; color: var(--muted); margin-bottom: 3px; text-transform: uppercase; letter-spacing: .04em; }
+    .sw-msg-time { font-size: .6rem; color: var(--muted); margin-top: 3px; }
+
+    .sw-footer { border-top: 1px solid var(--border-dim); padding: 10px; }
+    .sw-footer textarea {
+      width: 100%; min-height: 44px; max-height: 100px; resize: vertical;
+      background: #05050a; border: 1px solid rgba(255,215,0,.18); border-radius: 8px;
+      color: #e0e0e0; padding: 8px 10px; font-family: inherit; font-size: .82rem;
+      box-sizing: border-box; margin-bottom: 8px;
+    }
+    .sw-footer-row { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+    .sw-btn {
+      border: none; border-radius: 6px; padding: 8px 14px;
+      font-size: .78rem; font-weight: 700; cursor: pointer;
+    }
+    .sw-btn-gold { background: linear-gradient(135deg,#FFD700,#FFA500); color: #000; }
+    .sw-btn-dim { background: var(--bg-card-2); color: var(--text); border: 1px solid var(--border-dim); }
+    .sw-btn-link { background: none; border: none; color: var(--muted-2); font-size: .72rem; text-decoration: underline; cursor: pointer; padding: 0; }
+
+    .sw-new-form .sw-field { margin-bottom: 10px; }
+    .sw-new-form label { display: block; font-size: .7rem; color: var(--muted); margin-bottom: 5px; text-transform: uppercase; letter-spacing: .04em; }
+    .sw-new-form select, .sw-new-form input[type="text"] {
+      width: 100%; background: #05050a; border: 1px solid rgba(255,215,0,.18); border-radius: 8px;
+      color: #e0e0e0; padding: 8px 10px; font-size: .82rem; box-sizing: border-box;
+    }
+    .sw-error { color: #ef5350; font-size: .76rem; margin-bottom: 8px; }
+
+    @media (max-width: 480px) {
+      #sw-panel { right: 12px; left: 12px; width: auto; bottom: 84px; }
+      #sw-root { right: 12px; bottom: 12px; }
+    }
+
     {% block extra_styles %}{% endblock %}
   </style>
   {% block extra_head %}{% endblock %}
@@ -680,6 +779,159 @@
   });
 })();
 </script>
+
+<!-- ══════════ CUSTOMER-SUPPORT-01C.1 — floating support widget ══════════
+     Customer-facing only: hidden on the staff-facing sections that also
+     extend this same base template (Support Panel / Ops Panel), since a
+     customer chat bubble floating over an agent's own panel would be
+     confusing and pointless — ownership rules apply everywhere
+     regardless, this is a UX choice, not a security boundary. -->
+{% if user.is_authenticated and active_section != 'support_panel' and active_section != 'ops_panel' %}
+<div id="sw-root">
+  <button id="sw-toggle" type="button" aria-expanded="false" aria-controls="sw-panel">
+    <i class="fa-solid fa-headset"></i>
+    <span>Soporte</span>
+  </button>
+  <div id="sw-panel" hidden role="dialog" aria-label="Chat de soporte">
+    <div class="sw-header">
+      <span>Money Broker Support</span>
+      <div class="sw-header-actions">
+        <a href="{% url 'simulator:support' %}" title="Abrir centro de soporte completo">
+          <i class="fa-solid fa-arrow-up-right-from-square"></i>
+        </a>
+        <button type="button" id="sw-close" aria-label="Cerrar chat">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+    </div>
+    <div id="sw-body" class="sw-body">
+      <div class="sw-loading">Cargando…</div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var root   = document.getElementById('sw-root');
+  var toggle = document.getElementById('sw-toggle');
+  var panel  = document.getElementById('sw-panel');
+  var closeBtn = document.getElementById('sw-close');
+  var body   = document.getElementById('sw-body');
+  var loaded = false;
+
+  function showError(msg) {
+    var box = document.createElement('div');
+    box.className = 'sw-error';
+    box.textContent = msg;
+    body.prepend(box);
+  }
+
+  function renderFragment(html) {
+    body.innerHTML = html;
+    wireFragmentEvents();
+    body.scrollTop = body.scrollHeight;
+  }
+
+  function fetchFragment(url, opts) {
+    body.innerHTML = '<div class="sw-loading">Cargando…</div>';
+    return fetch(url, opts || {})
+      .then(function (resp) {
+        if (!resp.ok) { throw new Error('http_' + resp.status); }
+        return resp.text();
+      })
+      .then(renderFragment)
+      .catch(function () {
+        body.innerHTML = '<div class="sw-loading">No se pudo cargar el chat. Intenta de nuevo.</div>';
+      });
+  }
+
+  function loadState() {
+    fetchFragment('/support/widget/');
+  }
+
+  function wireFragmentEvents() {
+    var replyForm = body.querySelector('[data-sw-reply-form]');
+    if (replyForm) {
+      replyForm.addEventListener('submit', function (e) {
+        e.preventDefault();
+        var textarea = replyForm.querySelector('textarea');
+        if (!textarea.value.trim()) { return; }
+        var fd = new FormData(replyForm);
+        fetch(replyForm.action, { method: 'POST', body: fd })
+          .then(function (r) { return r.text(); })
+          .then(renderFragment)
+          .catch(function () { showError('No se pudo enviar el mensaje.'); });
+      });
+    }
+
+    var closeForm = body.querySelector('[data-sw-close-form]');
+    if (closeForm) {
+      closeForm.addEventListener('submit', function (e) {
+        e.preventDefault();
+        var fd = new FormData(closeForm);
+        fetch(closeForm.action, { method: 'POST', body: fd })
+          .then(function (r) { return r.text(); })
+          .then(renderFragment)
+          .catch(function () { showError('No se pudo cerrar el ticket.'); });
+      });
+    }
+
+    var newForm = body.querySelector('[data-sw-new-form]');
+    if (newForm) {
+      newForm.addEventListener('submit', function (e) {
+        e.preventDefault();
+        var fd = new FormData(newForm);
+        fetch(newForm.action, { method: 'POST', body: fd })
+          .then(function (r) { return r.text(); })
+          .then(renderFragment)
+          .catch(function () { showError('No se pudo crear el ticket.'); });
+      });
+    }
+
+    var newBtn = body.querySelector('[data-sw-new-trigger]');
+    if (newBtn) {
+      newBtn.addEventListener('click', function () {
+        fetchFragment('/support/widget/new/');
+      });
+    }
+
+    // Quick-link buttons (empty state only) — pure client-side
+    // convenience: preselect the category already offered by the
+    // new-ticket form rendered in this same fragment, then focus the
+    // subject field. No new endpoint, no invented content, no
+    // automation beyond a form-field preselect.
+    body.querySelectorAll('[data-sw-quick-category]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var select = body.querySelector('#sw-new-category');
+        if (select) { select.value = btn.getAttribute('data-sw-quick-category'); }
+        var subject = body.querySelector('#sw-new-subject');
+        if (subject) { subject.focus(); }
+      });
+    });
+  }
+
+  function openPanel() {
+    panel.hidden = false;
+    toggle.setAttribute('aria-expanded', 'true');
+    if (!loaded) { loaded = true; loadState(); } else { loadState(); }
+    var ta = body.querySelector('textarea');
+    if (ta) { ta.focus(); }
+  }
+  function closePanel() {
+    panel.hidden = true;
+    toggle.setAttribute('aria-expanded', 'false');
+  }
+
+  toggle.addEventListener('click', function () {
+    panel.hidden ? openPanel() : closePanel();
+  });
+  closeBtn.addEventListener('click', closePanel);
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && !panel.hidden) { closePanel(); }
+  });
+})();
+</script>
+{% endif %}
 
 {% block extra_scripts %}{% endblock %}
 </body>

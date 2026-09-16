@@ -9,6 +9,7 @@ No new lifecycle emails, no attachments — out of scope for this block
 """
 from django.contrib.auth.models import Permission
 from django.test import TestCase
+from django.urls import reverse
 from django.utils import timezone
 
 from simulator.models import OpsAdminProfile, OwnerRoot, SupportMessage, SupportTicket
@@ -375,3 +376,33 @@ class GlobalSupportAccessTests(TestCase):
         resp = self.client.get("/support/")
         self.assertEqual(resp.status_code, 302)
         self.assertIn("/login", resp["Location"])
+
+
+class SupportListPageWithTicketRegressionTests(TestCase):
+    """
+    MANUAL-CERTIFICATION-FIX-01 — reproduces exactly the manually-reported
+    browser failure: a logged-in customer with at least one SupportTicket
+    hitting GET /support/. support.html's ticket-card loop calls
+    {% url 'simulator:support_ticket_detail' ticket.pk %}, which Django
+    evaluates (and can raise NoReverseMatch from) at render time — this
+    is the one thing SupportListPage rendering can fail on that an empty
+    ticket list would never exercise. Uses the real Client + reverse()
+    path throughout (never a hardcoded URL string) so a real URL-name
+    regression would be caught here the same way Django itself catches
+    it when rendering the template.
+    """
+
+    def test_support_list_renders_200_with_working_detail_link(self):
+        user = make_user()
+        ticket = _make_ticket(client_user=user, subject="Regression ticket")
+        self.client.force_login(user)
+
+        resp = self.client.get(reverse("simulator:support"))
+
+        self.assertEqual(resp.status_code, 200)
+        expected_href = reverse("simulator:support_ticket_detail", args=[ticket.pk])
+        self.assertContains(resp, f'href="{expected_href}"')
+
+        # The link must actually work, not just be present in the markup.
+        detail_resp = self.client.get(expected_href)
+        self.assertEqual(detail_resp.status_code, 200)

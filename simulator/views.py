@@ -4402,6 +4402,50 @@ def resend_verification_view(request):
 # Support Tickets
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _create_support_ticket(user, *, category, subject, message):
+    """
+    Shared validation + creation logic for a new SupportTicket.
+
+    CUSTOMER-SUPPORT-01C.1 — extracted from support_view() so the widget's
+    new-ticket endpoint (support_widget_new_view) reuses the EXACT same
+    validation/creation/email rules rather than a second implementation
+    ("No duplicar implementación si helper/service puede reutilizarse
+    safely"). Behavior is unchanged from the original inline version.
+
+    Returns (ticket, error) — exactly one of the two is not None.
+    """
+    valid_categories = {c for c, _ in SupportTicket.CATEGORY_CHOICES}
+    if not category or category not in valid_categories:
+        return None, "Selecciona una categoría válida."
+    if not subject:
+        return None, "El asunto es obligatorio."
+    if len(subject) > 200:
+        return None, "El asunto no puede superar los 200 caracteres."
+    if not message:
+        return None, "El mensaje es obligatorio."
+
+    ticket = SupportTicket.objects.create(
+        user     = user,
+        category = category,
+        subject  = subject,
+        message  = message,
+        status   = SupportTicket.STATUS_OPEN,
+        priority = SupportTicket.PRIORITY_NORMAL,
+    )
+    logger.info("[support] ticket created user=%s subject=%r", user.username, subject)
+    try:
+        from .support_emails import send_support_ticket_created_email
+        send_support_ticket_created_email(ticket)
+    except Exception as mail_exc:
+        logger.warning("[support] user email failed ticket=%d: %s", ticket.id, mail_exc)
+    try:
+        from .support_emails import send_support_ticket_admin_email
+        send_support_ticket_admin_email(ticket)
+    except Exception as mail_exc:
+        logger.warning("[support] admin email failed ticket=%d: %s", ticket.id, mail_exc)
+    return ticket, None
+
+
 @login_required
 def support_view(request):
     success = False
@@ -4411,37 +4455,8 @@ def support_view(request):
         category = request.POST.get("category", "").strip()
         subject  = request.POST.get("subject",  "").strip()
         message  = request.POST.get("message",  "").strip()
-
-        valid_categories = {c for c, _ in SupportTicket.CATEGORY_CHOICES}
-        if not category or category not in valid_categories:
-            error = "Selecciona una categoría válida."
-        elif not subject:
-            error = "El asunto es obligatorio."
-        elif len(subject) > 200:
-            error = "El asunto no puede superar los 200 caracteres."
-        elif not message:
-            error = "El mensaje es obligatorio."
-        else:
-            ticket = SupportTicket.objects.create(
-                user     = request.user,
-                category = category,
-                subject  = subject,
-                message  = message,
-                status   = SupportTicket.STATUS_OPEN,
-                priority = SupportTicket.PRIORITY_NORMAL,
-            )
-            logger.info("[support] ticket created user=%s subject=%r", request.user.username, subject)
-            try:
-                from .support_emails import send_support_ticket_created_email
-                send_support_ticket_created_email(ticket)
-            except Exception as mail_exc:
-                logger.warning("[support] user email failed ticket=%d: %s", ticket.id, mail_exc)
-            try:
-                from .support_emails import send_support_ticket_admin_email
-                send_support_ticket_admin_email(ticket)
-            except Exception as mail_exc:
-                logger.warning("[support] admin email failed ticket=%d: %s", ticket.id, mail_exc)
-            success = True
+        ticket, error = _create_support_ticket(request.user, category=category, subject=subject, message=message)
+        success = ticket is not None
 
     recent_tickets = list(
         SupportTicket.objects
@@ -4480,12 +4495,14 @@ def support_view(request):
 # All status mutation goes through support_status.apply_transition() —
 # no ad-hoc ticket.status assignment anywhere below.
 
-@login_required
-def support_ticket_detail_view(request, pk):
-    from .support_status import legal_next_statuses
-
-    ticket = get_object_or_404(SupportTicket, pk=pk, user=request.user)
-
+def _build_customer_thread(ticket):
+    """
+    Shared thread-building — used by both the full customer detail page
+    and the widget fragments (CUSTOMER-SUPPORT-01C.1), so the
+    CUSTOMER_VISIBLE-only query lives in exactly one place. Query-level
+    exclusion of INTERNAL rows — never fetched, never placed in any
+    context, never a "fetch all then hide" pattern.
+    """
     thread = [{
         "kind": "original",
         "author_username": ticket.user.username,
@@ -4493,8 +4510,6 @@ def support_ticket_detail_view(request, pk):
         "body": ticket.message,
         "created_at": ticket.created_at,
     }]
-    # Query-level exclusion of INTERNAL rows — never fetched, never
-    # placed in template context, never a "fetch all then hide" pattern.
     for m in ticket.messages.filter(
         visibility=SupportMessage.VISIBILITY_CUSTOMER,
     ).select_related("author").order_by("created_at"):
@@ -4505,7 +4520,42 @@ def support_ticket_detail_view(request, pk):
             "body": m.body,
             "created_at": m.created_at,
         })
+    return thread
 
+
+def _apply_customer_reply(ticket, user, body):
+    """
+    Shared reply logic — used by both support_ticket_reply_view() (full
+    page) and support_widget_reply_view() (CUSTOMER-SUPPORT-01C.1), so
+    there is exactly one implementation of "what a customer reply does
+    to a ticket's status." Behavior identical to the original inline
+    version in support_ticket_reply_view().
+    """
+    from .support_status import apply_transition
+
+    current = ticket.status
+    if current in (SupportTicket.STATUS_RESOLVED, SupportTicket.STATUS_CLOSED):
+        apply_transition(ticket, SupportTicket.STATUS_OPEN, actor=user)
+    elif current in (SupportTicket.STATUS_OPEN, SupportTicket.STATUS_PENDING, SupportTicket.STATUS_PENDING_CUSTOMER):
+        apply_transition(ticket, SupportTicket.STATUS_PENDING_SUPPORT, actor=user)
+    # PENDING_SUPPORT: already exactly where a customer reply should
+    # leave it — no-op, no transition call needed.
+    # ESCALATED: status untouched, message still created below — an
+    # Ops-owned ticket's status is untouched by any reply, staff or
+    # client (same rule 01B's staff reply path already follows).
+
+    return SupportMessage.objects.create(
+        ticket=ticket, author=user, author_role=SupportMessage.ROLE_CLIENT,
+        body=body, visibility=SupportMessage.VISIBILITY_CUSTOMER,
+    )
+
+
+@login_required
+def support_ticket_detail_view(request, pk):
+    from .support_status import legal_next_statuses
+
+    ticket = get_object_or_404(SupportTicket, pk=pk, user=request.user)
+    thread = _build_customer_thread(ticket)
     next_statuses = legal_next_statuses(ticket, request.user)
 
     return render(request, "simulator/support_ticket_detail.html", {
@@ -4520,33 +4570,13 @@ def support_ticket_detail_view(request, pk):
 @login_required
 @require_POST
 def support_ticket_reply_view(request, pk):
-    from .support_status import apply_transition
-
     ticket = get_object_or_404(SupportTicket, pk=pk, user=request.user)
     body = request.POST.get("body", "").strip()
     if not body:
         messages.error(request, "El mensaje no puede estar vacío.")
         return redirect("simulator:support_ticket_detail", pk=ticket.pk)
 
-    # Status rule (Design Lock §5 / Correction discussion): a customer
-    # reply always lands the ticket somewhere sensible for its CURRENT
-    # status — never invents a legacy-PENDING destination, never
-    # silently drops the reply. ESCALATED is deliberately excluded: an
-    # Ops-owned ticket's status is untouched by any reply, staff or
-    # client (same rule 01B's staff reply path already follows).
-    current = ticket.status
-    if current in (SupportTicket.STATUS_RESOLVED, SupportTicket.STATUS_CLOSED):
-        apply_transition(ticket, SupportTicket.STATUS_OPEN, actor=request.user)
-    elif current in (SupportTicket.STATUS_OPEN, SupportTicket.STATUS_PENDING, SupportTicket.STATUS_PENDING_CUSTOMER):
-        apply_transition(ticket, SupportTicket.STATUS_PENDING_SUPPORT, actor=request.user)
-    # PENDING_SUPPORT: already exactly where a customer reply should
-    # leave it — no-op, no transition call needed.
-    # ESCALATED: status untouched, message still created below.
-
-    SupportMessage.objects.create(
-        ticket=ticket, author=request.user, author_role=SupportMessage.ROLE_CLIENT,
-        body=body, visibility=SupportMessage.VISIBILITY_CUSTOMER,
-    )
+    _apply_customer_reply(ticket, request.user, body)
     return redirect("simulator:support_ticket_detail", pk=ticket.pk)
 
 
@@ -4577,3 +4607,164 @@ def support_ticket_reopen_view(request, pk):
     except IllegalTransition:
         messages.error(request, "Este ticket no puede reabrirse desde su estado actual.")
     return redirect("simulator:support_ticket_detail", pk=ticket.pk)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CUSTOMER-SUPPORT-01C.1 — floating chat widget
+#
+# Architectural principle: NOT a second support system. Every endpoint
+# here reuses SupportTicket/SupportMessage, the exact same ownership
+# filter (get_object_or_404(..., user=request.user)), the same
+# CUSTOMER_VISIBLE-only thread query (_build_customer_thread), and the
+# same reply/creation logic (_apply_customer_reply/_create_support_ticket)
+# as the full /support/ pages above — never a parallel implementation.
+# Every view here returns an HTML FRAGMENT (not a full base_app.html
+# page) that the widget's vanilla-JS shell (base_app.html) swaps
+# directly into the panel body — no JSON API, no client-side rendering
+# framework.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# CUSTOMER-SUPPORT-01C.1 §14 — friendly labels only for DISPLAY; the
+# underlying SupportTicket.status values are completely unchanged (no
+# new status values, legacy PENDING mapped the same as PENDING_SUPPORT
+# since it behaves identically per support_status.py).
+_WIDGET_STATUS_LABELS = {
+    SupportTicket.STATUS_OPEN:             "Abierto",
+    SupportTicket.STATUS_PENDING:          "Esperando soporte",
+    SupportTicket.STATUS_PENDING_SUPPORT:  "Esperando soporte",
+    SupportTicket.STATUS_PENDING_CUSTOMER: "Esperando tu respuesta",
+    SupportTicket.STATUS_ESCALATED:        "Revisión especializada",
+    SupportTicket.STATUS_RESOLVED:         "Resuelto",
+    SupportTicket.STATUS_CLOSED:           "Cerrado",
+}
+
+
+def _active_widget_ticket(user):
+    """
+    Deterministic V1 selection rule (Design Lock §6): the most recent
+    customer-owned ticket whose status is not CLOSED, tie-broken by
+    updated_at. None if no such ticket exists — never merges multiple
+    ticket histories together.
+    """
+    return (
+        SupportTicket.objects
+        .filter(user=user)
+        .exclude(status=SupportTicket.STATUS_CLOSED)
+        .order_by("-updated_at")
+        .first()
+    )
+
+
+def _widget_ticket_context(ticket, user, *, error=None):
+    from .support_status import legal_next_statuses
+
+    next_statuses = legal_next_statuses(ticket, user)
+    return {
+        "ticket": ticket,
+        "thread": _build_customer_thread(ticket),
+        "status_label": _WIDGET_STATUS_LABELS.get(ticket.status, ticket.get_status_display()),
+        "can_close": SupportTicket.STATUS_CLOSED in next_statuses,
+        "error": error,
+    }
+
+
+@login_required
+def support_widget_view(request):
+    """
+    GET /support/widget/ — auto-selects the active ticket per the
+    deterministic rule and returns the matching fragment: the thread
+    (if an eligible ticket exists) or the empty/new-ticket state.
+    """
+    ticket = _active_widget_ticket(request.user)
+    if ticket is None:
+        return render(request, "simulator/support_widget/_empty.html", {
+            "category_choices": SupportTicket.CATEGORY_CHOICES,
+        })
+    return render(
+        request, "simulator/support_widget/_thread.html",
+        _widget_ticket_context(ticket, request.user),
+    )
+
+
+@login_required
+def support_widget_ticket_view(request, pk):
+    """GET /support/widget/ticket/<pk>/ — a SPECIFIC ticket's thread
+    fragment (used right after creating a new ticket, so the widget
+    opens it directly). Same ownership filter as every other
+    ticket-specific customer route — foreign ticket -> 404."""
+    ticket = get_object_or_404(SupportTicket, pk=pk, user=request.user)
+    return render(
+        request, "simulator/support_widget/_thread.html",
+        _widget_ticket_context(ticket, request.user),
+    )
+
+
+@login_required
+@require_POST
+def support_widget_reply_view(request, pk):
+    """POST /support/widget/ticket/<pk>/reply/ — reuses
+    _apply_customer_reply() (the exact same logic the full page uses),
+    then returns the updated thread fragment directly (no redirect —
+    this is an XHR endpoint)."""
+    ticket = get_object_or_404(SupportTicket, pk=pk, user=request.user)
+    body = request.POST.get("body", "").strip()
+    error = None
+    if not body:
+        error = "El mensaje no puede estar vacío."
+    else:
+        _apply_customer_reply(ticket, request.user, body)
+    return render(
+        request, "simulator/support_widget/_thread.html",
+        _widget_ticket_context(ticket, request.user, error=error),
+    )
+
+
+@login_required
+@require_POST
+def support_widget_close_view(request, pk):
+    from .support_status import apply_transition, IllegalTransition
+
+    ticket = get_object_or_404(SupportTicket, pk=pk, user=request.user)
+    error = None
+    try:
+        apply_transition(ticket, SupportTicket.STATUS_CLOSED, actor=request.user)
+    except IllegalTransition:
+        error = "Este ticket no puede cerrarse desde su estado actual."
+    return render(
+        request, "simulator/support_widget/_thread.html",
+        _widget_ticket_context(ticket, request.user, error=error),
+    )
+
+
+@login_required
+def support_widget_new_view(request):
+    """
+    GET  — render the empty/new-ticket-form fragment (used by the
+           widget's "New conversation" control even when an active
+           ticket already exists — never merges histories, just lets
+           the customer start a fresh one).
+    POST — validate + create via _create_support_ticket() (the EXACT
+           same rules/email calls support_view() uses — no duplicate
+           creation logic), then return the new ticket's thread
+           fragment directly so the widget opens it immediately.
+    """
+    if request.method == "POST":
+        category = request.POST.get("category", "").strip()
+        subject  = request.POST.get("subject",  "").strip()
+        message  = request.POST.get("message",  "").strip()
+        ticket, error = _create_support_ticket(
+            request.user, category=category, subject=subject, message=message,
+        )
+        if error:
+            return render(request, "simulator/support_widget/_empty.html", {
+                "category_choices": SupportTicket.CATEGORY_CHOICES,
+                "error": error,
+            })
+        return render(
+            request, "simulator/support_widget/_thread.html",
+            _widget_ticket_context(ticket, request.user),
+        )
+
+    return render(request, "simulator/support_widget/_empty.html", {
+        "category_choices": SupportTicket.CATEGORY_CHOICES,
+    })
