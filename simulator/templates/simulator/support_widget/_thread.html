@@ -1,14 +1,22 @@
 {% comment %}
-CUSTOMER-SUPPORT-01C.1 — widget thread fragment. NOT a full page —
-never extends base_app.html, injected directly into #sw-body via JS.
-`thread` is built by _build_customer_thread() (CUSTOMER_VISIBLE-only,
-query-level exclusion of INTERNAL rows) — this fragment renders
-exactly what it's given and nothing more.
+CUSTOMER-SUPPORT-01C.1 / MANUAL-CERTIFICATION-FIX-03 — widget thread
+fragment. NOT a full page — never extends base_app.html, injected
+directly into #sw-body via JS. `thread` is built by
+_build_customer_thread() (CUSTOMER_VISIBLE-only, query-level exclusion
+of INTERNAL rows) — this fragment renders exactly what it's given and
+nothing more. Reached ONLY via explicit navigation now (from "Mis
+conversaciones", right after creating a ticket, or right after a
+reply/close) — the widget never auto-opens a thread on first open.
 {% endcomment %}
 
 {% if error %}
 <div class="sw-error">{{ error }}</div>
 {% endif %}
+
+<div class="sw-kb-header">
+  <button type="button" class="sw-btn-link" data-sw-fetch="{% url 'simulator:support_widget_conversations' %}">← Mis conversaciones</button>
+  <button type="button" class="sw-btn-link" data-sw-fetch="{% url 'simulator:support_widget' %}">Inicio de soporte</button>
+</div>
 
 <div class="sw-status-row">
   <span>Ticket #{{ ticket.id }} · {{ ticket.subject|truncatechars:28 }}</span>
@@ -28,7 +36,7 @@ exactly what it's given and nothing more.
     {% csrf_token %}
     <textarea name="body" placeholder="Escribe tu mensaje…" required></textarea>
     <div class="sw-footer-row">
-      <button type="button" class="sw-btn-link" data-sw-new-trigger>+ Nueva conversación</button>
+      <button type="button" class="sw-btn-link" data-sw-fetch="{% url 'simulator:support_widget_new' %}">+ Nueva conversación</button>
       <button type="submit" class="sw-btn sw-btn-gold">Enviar</button>
     </div>
   </form>

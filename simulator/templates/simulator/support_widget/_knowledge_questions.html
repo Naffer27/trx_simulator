@@ -1,0 +1,20 @@
+{% comment %}
+CUSTOMER-SUPPORT-01D — knowledge category question-list fragment.
+`items` comes from support_knowledge.service.list_questions(), which
+only ever returns enabled (non-POLICY_PENDING) items.
+{% endcomment %}
+
+<div class="sw-kb-header">
+  <button type="button" class="sw-btn-link" data-sw-fetch="{% url 'simulator:support_widget' %}">← Volver</button>
+  <span class="sw-kb-title">{{ category_label }}</span>
+</div>
+
+{% if items %}
+<div class="sw-kb-list">
+  {% for item in items %}
+  <button type="button" class="sw-kb-question" data-sw-fetch="{% url 'simulator:support_widget_knowledge_answer' item.intent %}">{{ item.question }}</button>
+  {% endfor %}
+</div>
+{% else %}
+<div class="sw-empty">No hay preguntas disponibles en esta categoría todavía.</div>
+{% endif %}

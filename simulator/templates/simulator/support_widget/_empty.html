@@ -1,56 +1,20 @@
 {% comment %}
-CUSTOMER-SUPPORT-01C.1 — widget empty-state / new-ticket fragment.
-Shown when there's no eligible active ticket, or explicitly requested
-via the "+ Nueva conversación" trigger even while one exists — never
-merges histories, this just starts a fresh SupportTicket.
+CUSTOMER-SUPPORT-01D / MANUAL-CERTIFICATION-FIX-03 — widget entry-point
+fragment. ALWAYS the first thing rendered on widget open — no
+auto-selected active ticket anymore (see support_widget_view). Offers
+the Knowledge Base categories, "Mis conversaciones" (the only place
+existing tickets are reached from), and "Hablar con soporte" — no
+new-ticket form is rendered here (moved to _new_ticket_form.html,
+reached only via an explicit "Hablar con soporte"/human-handoff
+action).
 {% endcomment %}
-
-{% if error %}
-<div class="sw-error">{{ error }}</div>
-{% endif %}
 
 <div class="sw-empty-header">Hola, ¿en qué podemos ayudarte?</div>
 
-{% comment %}
-CUSTOMER-SUPPORT-01C.1 fix — limited, authorized UX addition: quick
-links in the empty state ONLY. Not AI, not a knowledge base, no
-invented answers. Each link either preselects a category on the
-new-ticket form below or opens it plainly — no automation beyond that.
-FAQ has no real content yet (deferred to a future Support AI/knowledge
-base block) — its link just opens the new-ticket form, same as the
-others, per the explicit "acceso visual sin lógica compleja" allowance.
-{% endcomment %}
 <div class="sw-quick-links">
-  <button type="button" class="sw-quick-link" data-sw-quick-category="withdrawal_issue">Retiros</button>
-  <button type="button" class="sw-quick-link" data-sw-quick-category="deposit_issue">Depósitos</button>
-  <button type="button" class="sw-quick-link" data-sw-quick-category="trading_issue">Trading</button>
-  <button type="button" class="sw-quick-link" data-sw-quick-category="kyc_issue">Verificación KYC</button>
-  <button type="button" class="sw-quick-link" data-sw-quick-category="account_issue">Mi cuenta</button>
-  <button type="button" class="sw-quick-link" data-sw-quick-category="other">Preguntas frecuentes</button>
-  <button type="button" class="sw-quick-link" data-sw-quick-category="other">Hablar con soporte</button>
+  {% for slug, label in kb_categories %}
+  <button type="button" class="sw-quick-link" data-sw-fetch="{% url 'simulator:support_widget_knowledge' slug %}">{{ label }}</button>
+  {% endfor %}
+  <button type="button" class="sw-quick-link sw-quick-link-conversations" data-sw-fetch="{% url 'simulator:support_widget_conversations' %}">Mis conversaciones</button>
+  <button type="button" class="sw-quick-link sw-quick-link-support" data-sw-fetch="{% url 'simulator:support_widget_new' %}">Hablar con soporte</button>
 </div>
-
-<form data-sw-new-form action="{% url 'simulator:support_widget_new' %}" class="sw-new-form">
-  {% csrf_token %}
-  <div class="sw-field">
-    <label for="sw-new-category">Categoría</label>
-    <select id="sw-new-category" name="category" required>
-      <option value="">— Selecciona —</option>
-      {% for value, label in category_choices %}
-      <option value="{{ value }}">{{ label }}</option>
-      {% endfor %}
-    </select>
-  </div>
-  <div class="sw-field">
-    <label for="sw-new-subject">Asunto</label>
-    <input id="sw-new-subject" type="text" name="subject" maxlength="200" required>
-  </div>
-  <div class="sw-field">
-    <label for="sw-new-message">Mensaje</label>
-    <textarea name="message" placeholder="Cuéntanos qué pasó…" required></textarea>
-  </div>
-  <div class="sw-footer-row">
-    <span></span>
-    <button type="submit" class="sw-btn sw-btn-gold">Iniciar conversación</button>
-  </div>
-</form>

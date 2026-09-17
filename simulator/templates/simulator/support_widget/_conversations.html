@@ -1,0 +1,34 @@
+{% comment %}
+MANUAL-CERTIFICATION-FIX-03 — "Mis conversaciones" fragment. `conversations`
+is built in support_widget_conversations_view from
+SupportTicket.objects.filter(user=request.user) only — this fragment
+renders exactly what it's given and nothing more. Only customer-safe
+summary fields are present in that context (subject, category_label,
+status_label, updated_at, pk) — assigned_to/escalation_reason/internal
+notes are never fetched into this context in the first place, so there
+is nothing here to accidentally leak.
+{% endcomment %}
+
+<div class="sw-kb-header">
+  <button type="button" class="sw-btn-link" data-sw-fetch="{% url 'simulator:support_widget' %}">← Inicio de soporte</button>
+</div>
+
+<div class="sw-kb-title">Mis conversaciones</div>
+
+{% if conversations %}
+<div class="sw-kb-list">
+  {% for t in conversations %}
+  <button type="button" class="sw-kb-question sw-conv-item" data-sw-fetch="{% url 'simulator:support_widget_ticket' t.pk %}">
+    <div class="sw-conv-subject">#{{ t.pk }} · {{ t.subject|truncatechars:32 }}</div>
+    <div class="sw-conv-meta">{{ t.category_label }} · {{ t.status_label }} · {{ t.updated_at|date:"d M, H:i" }}</div>
+  </button>
+  {% endfor %}
+</div>
+{% else %}
+<div class="sw-loading">Aún no tienes conversaciones con soporte.</div>
+{% endif %}
+
+<div class="sw-kb-handoff">
+  <p>¿Necesitas iniciar una nueva conversación?</p>
+  <button type="button" class="sw-btn sw-btn-dim" data-sw-fetch="{% url 'simulator:support_widget_new' %}">Hablar con soporte</button>
+</div>

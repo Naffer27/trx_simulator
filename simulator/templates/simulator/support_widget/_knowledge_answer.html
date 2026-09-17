@@ -1,0 +1,32 @@
+{% comment %}
+CUSTOMER-SUPPORT-01D — knowledge answer fragment. GREEN items
+(item.action == ANSWER) show the approved static answer. YELLOW/RED
+items show the safe non-committal or security message instead — never
+a fabricated account/transaction status, never ordinary-FAQ styling
+for a RED item (distinct .sw-msg-security style + is_red flag from the
+view, never guessed in the template). The visible identity is always
+"Money Broker Support" — never claims to be a human agent, never
+claims AI capability, no typing indicator, no fake presence.
+{% endcomment %}
+
+<div class="sw-kb-header">
+  <button type="button" class="sw-btn-link" data-sw-fetch="{% url 'simulator:support_widget_knowledge' item.category.value %}">← Volver</button>
+</div>
+
+<div class="sw-msg sw-msg-you">
+  <div class="sw-msg-role">You</div>
+  <div>{{ item.question }}</div>
+</div>
+
+<div class="sw-msg {% if is_red %}sw-msg-security{% else %}sw-msg-support{% endif %}">
+  <div class="sw-msg-role">Money Broker Support</div>
+  <div>{{ item.answer }}</div>
+</div>
+
+<div class="sw-kb-handoff">
+  <p>¿Necesitas más ayuda?</p>
+  <button type="button" class="sw-btn sw-btn-dim"
+          data-sw-fetch="{% url 'simulator:support_widget_new' %}?category={{ ticket_category }}&amp;topic={{ item.question|urlencode }}">
+    Hablar con soporte
+  </button>
+</div>

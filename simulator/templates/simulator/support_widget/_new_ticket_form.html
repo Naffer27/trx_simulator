@@ -1,0 +1,43 @@
+{% comment %}
+CUSTOMER-SUPPORT-01D / 01C.1 — new-ticket form fragment (split out of
+the old _empty.html so the widget's entry point can show the Knowledge
+Base quick links by default instead). Reuses _create_support_ticket()
+via support_widget_new_view() — the exact same validation/creation/
+email rules the full /support/ page uses, no duplicate logic.
+preselect_category/preselect_subject are a UX prefill only (from a
+Knowledge Base "Hablar con soporte" handoff) — they never bypass or
+alter the real server-side validation in the view.
+{% endcomment %}
+
+{% if error %}
+<div class="sw-error">{{ error }}</div>
+{% endif %}
+
+<div class="sw-kb-header">
+  <button type="button" class="sw-btn-link" data-sw-fetch="{% url 'simulator:support_widget' %}">← Volver</button>
+</div>
+
+<form data-sw-new-form action="{% url 'simulator:support_widget_new' %}" class="sw-new-form">
+  {% csrf_token %}
+  <div class="sw-field">
+    <label for="sw-new-category">Categoría</label>
+    <select id="sw-new-category" name="category" required>
+      <option value="">— Selecciona —</option>
+      {% for value, label in category_choices %}
+      <option value="{{ value }}" {% if value == preselect_category %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="sw-field">
+    <label for="sw-new-subject">Asunto</label>
+    <input id="sw-new-subject" type="text" name="subject" maxlength="200" value="{{ preselect_subject }}" required>
+  </div>
+  <div class="sw-field">
+    <label for="sw-new-message">Mensaje</label>
+    <textarea name="message" placeholder="Cuéntanos qué pasó…" required></textarea>
+  </div>
+  <div class="sw-footer-row">
+    <span></span>
+    <button type="submit" class="sw-btn sw-btn-gold">Iniciar conversación</button>
+  </div>
+</form>

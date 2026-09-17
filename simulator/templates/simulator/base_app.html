@@ -467,6 +467,29 @@
     }
     .sw-error { color: #ef5350; font-size: .76rem; margin-bottom: 8px; }
 
+    /* ══════════ CUSTOMER-SUPPORT-01D — knowledge base fragments ══════════ */
+    .sw-kb-header {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+    }
+    .sw-kb-title { font-size: .82rem; font-weight: 700; color: var(--text); }
+    .sw-kb-list { display: flex; flex-direction: column; gap: 6px; }
+    .sw-kb-question {
+      text-align: left; background: var(--bg-card-2); border: 1px solid var(--border-dim);
+      border-radius: 8px; color: var(--text); font-size: .8rem; padding: 9px 12px; cursor: pointer;
+    }
+    .sw-kb-question:hover { border-color: var(--gold); }
+    .sw-msg-security {
+      align-self: flex-start; background: rgba(231,76,60,.09); border: 1px solid rgba(231,76,60,.35);
+      color: var(--text); border-bottom-left-radius: 3px; max-width: 82%;
+    }
+    .sw-kb-handoff { margin-top: 6px; padding-top: 10px; border-top: 1px solid var(--border-dim); }
+    .sw-kb-handoff p { font-size: .76rem; color: var(--muted); margin-bottom: 8px; }
+
+    /* MANUAL-CERTIFICATION-FIX-03 — "Mis conversaciones" fragment */
+    .sw-conv-item { display: flex; flex-direction: column; gap: 2px; width: 100%; box-sizing: border-box; }
+    .sw-conv-subject { font-weight: 700; }
+    .sw-conv-meta { font-size: .68rem; color: var(--muted); }
+
     @media (max-width: 480px) {
       #sw-panel { right: 12px; left: 12px; width: auto; bottom: 84px; }
       #sw-root { right: 12px; bottom: 12px; }
@@ -888,24 +911,16 @@
       });
     }
 
-    var newBtn = body.querySelector('[data-sw-new-trigger]');
-    if (newBtn) {
-      newBtn.addEventListener('click', function () {
-        fetchFragment('/support/widget/new/');
-      });
-    }
-
-    // Quick-link buttons (empty state only) — pure client-side
-    // convenience: preselect the category already offered by the
-    // new-ticket form rendered in this same fragment, then focus the
-    // subject field. No new endpoint, no invented content, no
-    // automation beyond a form-field preselect.
-    body.querySelectorAll('[data-sw-quick-category]').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        var select = body.querySelector('#sw-new-category');
-        if (select) { select.value = btn.getAttribute('data-sw-quick-category'); }
-        var subject = body.querySelector('#sw-new-subject');
-        if (subject) { subject.focus(); }
+    // CUSTOMER-SUPPORT-01D — single generic navigation handler. Any
+    // element with data-sw-fetch="<url>" loads that fragment into
+    // #sw-body on click: category quick-links, KB question buttons,
+    // "Hablar con soporte", "+ Nueva conversación", and "← Volver"
+    // back links all share this one code path — no per-purpose
+    // handler, no invented client-side answer content (every fragment
+    // it loads is server-rendered from the real view).
+    body.querySelectorAll('[data-sw-fetch]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        fetchFragment(el.getAttribute('data-sw-fetch'));
       });
     });
   }

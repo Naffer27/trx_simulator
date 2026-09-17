@@ -4,10 +4,11 @@ from django.utils import timezone
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
 from django.views.decorators.http import require_POST
+from django.views.decorators.cache import never_cache
 from django.core.serializers.json import DjangoJSONEncoder
 from django.contrib.auth import authenticate, login as auth_login, logout
 from django.views.decorators.csrf import csrf_exempt
-from django.http import JsonResponse, HttpResponse
+from django.http import JsonResponse, HttpResponse, Http404
 from django.contrib.auth.decorators import login_required
 from django.core.mail import send_mail
 from django.conf import settings
@@ -4639,22 +4640,6 @@ _WIDGET_STATUS_LABELS = {
 }
 
 
-def _active_widget_ticket(user):
-    """
-    Deterministic V1 selection rule (Design Lock §6): the most recent
-    customer-owned ticket whose status is not CLOSED, tie-broken by
-    updated_at. None if no such ticket exists — never merges multiple
-    ticket histories together.
-    """
-    return (
-        SupportTicket.objects
-        .filter(user=user)
-        .exclude(status=SupportTicket.STATUS_CLOSED)
-        .order_by("-updated_at")
-        .first()
-    )
-
-
 def _widget_ticket_context(ticket, user, *, error=None):
     from .support_status import legal_next_statuses
 
@@ -4668,24 +4653,42 @@ def _widget_ticket_context(ticket, user, *, error=None):
     }
 
 
+@never_cache
 @login_required
 def support_widget_view(request):
     """
-    GET /support/widget/ — auto-selects the active ticket per the
-    deterministic rule and returns the matching fragment: the thread
-    (if an eligible ticket exists) or the empty/new-ticket state.
+    MANUAL-CERTIFICATION-FIX (CUSTOMER-SUPPORT-01D) — @never_cache is
+    required on every /support/widget/* fragment view. These responses
+    carry no Cache-Control header by default, so a browser's fetch()
+    (default cache mode) can silently replay an earlier-cached response
+    body instead of re-hitting the server — e.g. a customer who had
+    this widget open before a deploy could keep seeing the previous
+    fragment on subsequent opens even though the server-side logic is
+    already correct. @never_cache forces
+    "Cache-Control: no-cache, no-store, must-revalidate" + Expires/
+    Pragma headers on every widget fragment response, guaranteeing the
+    live server-rendered state (ticket-based routing, KB entry point,
+    etc.) is what's shown.
+
+    GET /support/widget/ — MANUAL-CERTIFICATION-FIX-03 product decision:
+    the widget ALWAYS opens on the Knowledge Base home, regardless of
+    whether the customer has an existing open/pending/escalated ticket.
+    The prior 01C.1 "auto-select the most recent non-CLOSED ticket"
+    rule (_active_widget_ticket(), now removed — it had no other
+    caller) actively blocked the KB home from ever being reachable for
+    a customer with any non-CLOSED ticket, which defeats the whole
+    point of the 01D redesign. Existing conversations remain fully
+    reachable — explicitly, never automatically — via "Mis
+    conversaciones" (support_widget_conversations_view below).
     """
-    ticket = _active_widget_ticket(request.user)
-    if ticket is None:
-        return render(request, "simulator/support_widget/_empty.html", {
-            "category_choices": SupportTicket.CATEGORY_CHOICES,
-        })
-    return render(
-        request, "simulator/support_widget/_thread.html",
-        _widget_ticket_context(ticket, request.user),
-    )
+    from .support_knowledge import service as kb
+
+    return render(request, "simulator/support_widget/_empty.html", {
+        "kb_categories": kb.list_categories(),
+    })
 
 
+@never_cache
 @login_required
 def support_widget_ticket_view(request, pk):
     """GET /support/widget/ticket/<pk>/ — a SPECIFIC ticket's thread
@@ -4699,6 +4702,37 @@ def support_widget_ticket_view(request, pk):
     )
 
 
+@never_cache
+@login_required
+def support_widget_conversations_view(request):
+    """GET /support/widget/conversations/ — MANUAL-CERTIFICATION-FIX-03
+    "Mis conversaciones": the ONLY place existing tickets are reachable
+    from now that the widget no longer auto-opens one. Same ownership
+    filter (.filter(user=request.user)) as every other customer support
+    route — a foreign ticket is never listed here, and clicking through
+    still goes via support_widget_ticket_view's own
+    get_object_or_404(..., user=request.user), so this list can't be
+    used to bypass that boundary even if tampered with client-side.
+    Only customer-safe summary fields are exposed (subject, category
+    label, friendly status label, updated_at, ticket number) — never
+    assigned_to, escalation_reason, internal notes, or any other
+    staff/internal metadata."""
+    conversations = [
+        {
+            "pk": t.pk,
+            "subject": t.subject,
+            "category_label": t.get_category_display(),
+            "status_label": _WIDGET_STATUS_LABELS.get(t.status, t.get_status_display()),
+            "updated_at": t.updated_at,
+        }
+        for t in SupportTicket.objects.filter(user=request.user).order_by("-updated_at")
+    ]
+    return render(request, "simulator/support_widget/_conversations.html", {
+        "conversations": conversations,
+    })
+
+
+@never_cache
 @login_required
 @require_POST
 def support_widget_reply_view(request, pk):
@@ -4719,6 +4753,7 @@ def support_widget_reply_view(request, pk):
     )
 
 
+@never_cache
 @login_required
 @require_POST
 def support_widget_close_view(request, pk):
@@ -4736,13 +4771,19 @@ def support_widget_close_view(request, pk):
     )
 
 
+@never_cache
 @login_required
 def support_widget_new_view(request):
     """
-    GET  — render the empty/new-ticket-form fragment (used by the
-           widget's "New conversation" control even when an active
+    GET  — render the new-ticket-form fragment (used by "Hablar con
+           soporte" — from the widget entry point, from a Knowledge
+           Base answer's human-handoff option, or even while an active
            ticket already exists — never merges histories, just lets
-           the customer start a fresh one).
+           the customer start a fresh one). Accepts optional
+           ?category=&topic= to preselect the category dropdown and
+           prefill the subject field (CUSTOMER-SUPPORT-01D human
+           handoff — a UX prefill only, the actual validation/creation
+           rules below are completely unchanged).
     POST — validate + create via _create_support_ticket() (the EXACT
            same rules/email calls support_view() uses — no duplicate
            creation logic), then return the new ticket's thread
@@ -4756,15 +4797,60 @@ def support_widget_new_view(request):
             request.user, category=category, subject=subject, message=message,
         )
         if error:
-            return render(request, "simulator/support_widget/_empty.html", {
+            return render(request, "simulator/support_widget/_new_ticket_form.html", {
                 "category_choices": SupportTicket.CATEGORY_CHOICES,
                 "error": error,
+                "preselect_category": category,
+                "preselect_subject": subject,
             })
         return render(
             request, "simulator/support_widget/_thread.html",
             _widget_ticket_context(ticket, request.user),
         )
 
-    return render(request, "simulator/support_widget/_empty.html", {
+    return render(request, "simulator/support_widget/_new_ticket_form.html", {
         "category_choices": SupportTicket.CATEGORY_CHOICES,
+        "preselect_category": request.GET.get("category", ""),
+        "preselect_subject": request.GET.get("topic", ""),
+    })
+
+
+# ── CUSTOMER-SUPPORT-01D — deterministic Knowledge Base fragments ───────────
+#
+# Read-only over the static catalogue (simulator/support_knowledge/) —
+# no SupportTicket/SupportMessage touched, no per-user data, so no
+# ownership/IDOR filter applies (every authenticated customer sees the
+# exact same global catalogue). NOT generative AI: no LLM call, no
+# classifier — a plain dict/list lookup by category slug or intent id.
+# A disabled (POLICY_PENDING) item's intent id 404s here exactly like a
+# nonexistent one — get_item() cannot return it, by construction.
+
+@never_cache
+@login_required
+def support_widget_knowledge_view(request, category):
+    from .support_knowledge import service as kb
+
+    items = kb.list_questions(category)
+    label = dict(kb.list_categories()).get(category, category)
+    return render(request, "simulator/support_widget/_knowledge_questions.html", {
+        "category": category,
+        "category_label": label,
+        "items": items,
+    })
+
+
+@never_cache
+@login_required
+def support_widget_knowledge_answer_view(request, intent):
+    from .support_knowledge import service as kb
+    from .support_knowledge.catalogue import RiskLevel
+
+    item = kb.get_item(intent)
+    if item is None:
+        raise Http404("Unknown or disabled knowledge item.")
+
+    return render(request, "simulator/support_widget/_knowledge_answer.html", {
+        "item": item,
+        "is_red": item.risk_level == RiskLevel.RED,
+        "ticket_category": kb.ticket_category_for(item.category.value),
     })

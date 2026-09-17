@@ -161,36 +161,51 @@ class EmptyStateQuickLinksTests(TestCase):
         self.user = make_user()
         self.client.force_login(self.user)
 
+    # CUSTOMER-SUPPORT-01D note: quick links now live at the entry
+    # point (WIDGET_URL) and route into the Knowledge Base, not at
+    # WIDGET_NEW_URL (now the plain new-ticket form only) — updated
+    # per the authorized 01D UX redesign. See test_customer_support_01d
+    # for the full Knowledge Base test suite.
+
     def test_empty_state_shows_clean_header(self):
-        resp = self.client.get(WIDGET_NEW_URL)
+        resp = self.client.get(WIDGET_URL)
         self.assertContains(resp, "Hola, ¿en qué podemos ayudarte?")
 
     def test_quick_links_present_in_empty_state(self):
-        resp = self.client.get(WIDGET_NEW_URL)
-        for label in ("Retiros", "Depósitos", "Trading", "Verificación KYC", "Mi cuenta",
-                      "Preguntas frecuentes", "Hablar con soporte"):
+        resp = self.client.get(WIDGET_URL)
+        for label in ("Retiros", "Depósitos", "KYC", "Trading", "Cuenta",
+                      "Seguridad", "Soporte técnico", "Mis conversaciones",
+                      "Hablar con soporte"):
             self.assertContains(resp, label)
 
-    def test_quick_links_use_existing_categories_only(self):
-        resp = self.client.get(WIDGET_NEW_URL)
+    def test_quick_links_route_to_knowledge_base(self):
+        resp = self.client.get(WIDGET_URL)
         content = resp.content.decode()
         import re
-        used = set(re.findall(r'data-sw-quick-category="([^"]+)"', content))
-        valid = {c for c, _ in SupportTicket.CATEGORY_CHOICES}
+        used = set(re.findall(r'data-sw-fetch="/support/widget/knowledge/([a-z]+)/"', content))
+        from simulator.support_knowledge.catalogue import KnowledgeCategory
+        valid = {c.value for c in KnowledgeCategory}
         self.assertTrue(used.issubset(valid))
         self.assertTrue(used)  # at least one quick link actually present
 
     def test_quick_links_absent_from_active_thread_state(self):
-        # Quick links belong to the empty state ONLY — not shown
+        # Quick links belong to the entry-point state ONLY — not shown
         # alongside an active ticket's thread.
         t = _make_ticket(client_user=self.user)
         resp = self.client.get(_widget_ticket_url(t))
         self.assertNotContains(resp, "sw-quick-link")
 
+    def test_new_ticket_form_no_longer_shown_by_default(self):
+        # The form moved to _new_ticket_form.html, reached only via an
+        # explicit "Hablar con soporte" action.
+        resp = self.client.get(WIDGET_URL)
+        self.assertNotContains(resp, "sw-new-form")
+
     def test_quick_links_do_not_invent_faq_content(self):
-        # "Preguntas frecuentes" is a visual entry point only — no FAQ
-        # body/answer text is rendered anywhere in this fragment.
-        resp = self.client.get(WIDGET_NEW_URL)
+        # No FAQ answer body text is rendered on the entry-point
+        # fragment itself — actual answers only appear after a
+        # specific question is selected (Knowledge Base flow).
+        resp = self.client.get(WIDGET_URL)
         content = resp.content.decode()
         self.assertNotIn("Respuesta:", content)
         self.assertNotIn("FAQ-", content)
@@ -227,9 +242,12 @@ class WidgetOwnershipTests(TestCase):
         self.ticket.refresh_from_db()
         self.assertEqual(self.ticket.status, SupportTicket.STATUS_OPEN)
 
-    def test_widget_auto_select_never_shows_foreign_ticket(self):
-        # The attacker has no ticket of their own — auto-select must
-        # fall back to the empty state, never leak the owner's ticket.
+    def test_widget_root_never_shows_foreign_ticket(self):
+        # MANUAL-CERTIFICATION-FIX-03: /support/widget/ never shows ANY
+        # ticket content anymore (it's always the KB home) — this
+        # confirms that holds even when the requester isn't the ticket
+        # owner, i.e. there's no residual auto-select code path left
+        # that could leak someone else's ticket.
         self.client.force_login(self.attacker)
         resp = self.client.get(WIDGET_URL)
         self.assertEqual(resp.status_code, 200)
@@ -277,7 +295,10 @@ class WidgetThreadContentTests(TestCase):
         self.assertNotIn("WIDGET INTERNAL SECRET", bodies)
         self.assertEqual(len(bodies), 2)  # original + 1 CUSTOMER_VISIBLE reply only
 
-    def test_internal_not_in_auto_select_fragment(self):
+    def test_internal_not_in_widget_root_fragment(self):
+        # MANUAL-CERTIFICATION-FIX-03: widget root is always KB home
+        # now (never a ticket thread), so this is a trivial-but-real
+        # guard that no INTERNAL content leaks there either.
         resp = self.client.get(WIDGET_URL)
         self.assertNotContains(resp, "WIDGET INTERNAL SECRET")
 

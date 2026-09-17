@@ -95,9 +95,12 @@ from .views import (
     support_ticket_reopen_view,
     support_widget_view,
     support_widget_ticket_view,
+    support_widget_conversations_view,
     support_widget_reply_view,
     support_widget_close_view,
     support_widget_new_view,
+    support_widget_knowledge_view,
+    support_widget_knowledge_answer_view,
     # Funded payout (H.1)
     funded_payout_request_view,
 )
@@ -208,10 +211,17 @@ urlpatterns = [
 
     # ── CUSTOMER-SUPPORT-01C.1 — floating chat widget fragments ──────────────
     path("support/widget/",                        support_widget_view,        name="support_widget"),
+    path("support/widget/conversations/",           support_widget_conversations_view, name="support_widget_conversations"),
     path("support/widget/ticket/<int:pk>/",         support_widget_ticket_view, name="support_widget_ticket"),
     path("support/widget/ticket/<int:pk>/reply/",   support_widget_reply_view,  name="support_widget_reply"),
     path("support/widget/ticket/<int:pk>/close/",   support_widget_close_view,  name="support_widget_close"),
     path("support/widget/new/",                     support_widget_new_view,    name="support_widget_new"),
+
+    # ── CUSTOMER-SUPPORT-01D — deterministic Knowledge Base fragments ────────
+    path("support/widget/knowledge/<str:category>/",
+         support_widget_knowledge_view, name="support_widget_knowledge"),
+    path("support/widget/knowledge/answer/<str:intent>/",
+         support_widget_knowledge_answer_view, name="support_widget_knowledge_answer"),
 
     # ── Secure media serving (O.5e-1) ────────────────────────────────────────
     # Authorized-only file streaming. No route under MEDIA_URL is registered
