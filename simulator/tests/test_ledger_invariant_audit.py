@@ -410,7 +410,34 @@ class TestPendingBalanceInvariant(TestCase):
     pending_balance debe ser ≥ 0 en todo momento.
     Se drena exactamente cuando confirming → finished.
     Si el IPN llega directo a finished (sin confirming previo), no se toca.
+
+    FIX-DEPOSIT-CALLBACK-RATELIMIT-TEST-ISOLATION-01 — this class posts
+    twice per test to the REAL deposit callback view
+    (@rate_limit("deposit_callback", limit=30, window=60), by="ip" —
+    default), which increments a real, Redis-backed, TTL'd (60s) counter
+    keyed only by IP (trx:rl:deposit_callback:<ip>). Redis is NOT reset
+    between tests the way the DB is, so this counter accumulates across
+    every test in the suite that hits this endpoint — same confirmed
+    root cause as DepositConfirmedEmailTests in test_deposit_emails.py.
+    Same pattern as AUDIT04B-ORDER-FLAKE-01 (admin_login_fail).
+    _cleanup_deposit_callback_rate_limit() clears only this endpoint's
+    own keys, before AND after every test, so this class can never leak
+    into (or be leaked into by) any other run.
     """
+
+    def _cleanup_deposit_callback_rate_limit(self):
+        from simulator.ratelimit import _get_rl_redis, _RL_PREFIX
+        r = _get_rl_redis()
+        keys = r.keys(f"{_RL_PREFIX}deposit_callback:*")
+        if keys:
+            r.delete(*keys)
+
+    def setUp(self):
+        self._cleanup_deposit_callback_rate_limit()
+
+    def tearDown(self):
+        self._cleanup_deposit_callback_rate_limit()
+        super().tearDown()
 
     @_PATCH_SIG_OK
     def test_pending_balance_exactly_zero_after_confirming_then_finished(self, _sig):

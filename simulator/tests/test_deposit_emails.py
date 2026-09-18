@@ -49,7 +49,33 @@ def _ipn(payment_id: str, status: str, order_id: str = "",
 # ── Callback integration tests ────────────────────────────────────────────────
 
 class DepositConfirmedEmailTests(TestCase):
+    """
+    FIX-DEPOSIT-CALLBACK-RATELIMIT-TEST-ISOLATION-01 — this class drives
+    the REAL deposit callback view (@rate_limit("deposit_callback",
+    limit=30, window=60), by="ip" — default), which increments a real,
+    Redis-backed, TTL'd (60s) counter keyed only by IP
+    (trx:rl:deposit_callback:<ip>). The Django test Client always uses
+    the same default IP (127.0.0.1) and Redis is NOT reset between tests
+    the way the DB is, so this counter accumulates across every test in
+    the suite that posts to this endpoint — a full-suite run can cross
+    the real 30/60s threshold well before this class's own tests run,
+    causing HTTP 429 instead of 200 (confirmed root cause, not app
+    behavior — the rate limiter is doing exactly what it should).
+    Same pattern as AUDIT04B-ORDER-FLAKE-01 (admin_login_fail).
+    _cleanup_deposit_callback_rate_limit() clears only this endpoint's
+    own keys, before AND after every test, so this class can never leak
+    into (or be leaked into by) any other run.
+    """
+
+    def _cleanup_deposit_callback_rate_limit(self):
+        from simulator.ratelimit import _get_rl_redis, _RL_PREFIX
+        r = _get_rl_redis()
+        keys = r.keys(f"{_RL_PREFIX}deposit_callback:*")
+        if keys:
+            r.delete(*keys)
+
     def setUp(self):
+        self._cleanup_deposit_callback_rate_limit()
         self.user    = make_user(email="depositor@test.com")
         self.wallet  = make_wallet(user=self.user)
         self.deposit = make_deposit(
@@ -58,6 +84,10 @@ class DepositConfirmedEmailTests(TestCase):
             crypto_currency="btc",
             payment_id="pay_email_001",
         )
+
+    def tearDown(self):
+        self._cleanup_deposit_callback_rate_limit()
+        super().tearDown()
 
     def _post(self, status, payment_id=None, amount="150.00"):
         pid = payment_id or "pay_email_001"
