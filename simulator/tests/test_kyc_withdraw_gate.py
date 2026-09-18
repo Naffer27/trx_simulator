@@ -177,12 +177,41 @@ class KYCGateApprovedTests(TestCase):
 
 
 class KYCBannerTests(TestCase):
-    """KYC banner is shown when KYC is not approved; hidden when approved."""
+    """KYC banner is shown when KYC is not approved; hidden when approved.
+
+    FIX-WITHDRAW-RATELIMIT-TEST-ISOLATION-01 — this class GETs the REAL
+    withdraw view (@rate_limit("withdraw", limit=5, window=60,
+    by="user")), which increments a real, Redis-backed, TTL'd (60s)
+    counter keyed by user pk (trx:rl:withdraw:u<pk>). Redis is NOT reset
+    between tests the way the DB is, and SQLite reuses small integer pks
+    across tests once each test's transaction rolls back — so a large
+    combined run (many other withdrawal test files creating users ahead
+    of this class) can leave this class's own low-numbered pks already
+    sitting near/over the 5-per-60s threshold, causing HTTP 429 instead
+    of 200 (confirmed root cause, reproduced in the broader withdrawal
+    regression bundle — 16/16 clean in isolation). Same pattern as
+    AUDIT04B-ORDER-FLAKE-01 and FIX-DEPOSIT-CALLBACK-RATELIMIT-TEST-
+    ISOLATION-01. _cleanup_withdraw_rate_limit() clears only this
+    endpoint's own keys, before AND after every test, so this class can
+    never leak into (or be leaked into by) any other run.
+    """
+
+    def _cleanup_withdraw_rate_limit(self):
+        from simulator.ratelimit import _get_rl_redis, _RL_PREFIX
+        r = _get_rl_redis()
+        keys = r.keys(f"{_RL_PREFIX}withdraw:*")
+        if keys:
+            r.delete(*keys)
 
     def setUp(self):
+        self._cleanup_withdraw_rate_limit()
         self.user = make_user()
         make_wallet(self.user, initial_balance=Decimal("100"))
         self.client.force_login(self.user)
+
+    def tearDown(self):
+        self._cleanup_withdraw_rate_limit()
+        super().tearDown()
 
     def test_banner_shown_on_get_when_no_kyc(self):
         resp = self.client.get(WITHDRAW_URL)
