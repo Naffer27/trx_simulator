@@ -122,17 +122,30 @@ class WithdrawForm(forms.Form):
     wallet_address is a choice of the user's own ACTIVE VerifiedWithdrawalWallet
     rows — Design Lock rule 4 ("no se ofrece texto libre"): the destination
     must already be a verified/authorized wallet, never typed at withdrawal time.
+
+    WITHDRAWAL-POLICY-CORRECTION-02 — min_value=Decimal("20") is the
+    confirmed Money Broker policy floor (Owner-locked: USD 20 minimum,
+    no daily cap, no maximum cap). This form-layer check is a UX
+    convenience only, for manual amount entry — it is NOT the security
+    boundary. The authoritative, unbypassable gate (covering this path
+    AND Withdraw All) is the final_amount < Decimal("20") check inside
+    withdraw_otp_verify_view's _finalize() in views.py.
     """
 
     amount_usd = forms.DecimalField(
         label="Monto (USD)",
         required=False,
-        min_value=Decimal("0.01"),
+        min_value=Decimal("20"),
         max_digits=12,
         decimal_places=2,
+        error_messages={
+            "min_value": "El monto mínimo de retiro es $20.00 USD.",
+        },
         widget=forms.NumberInput(attrs={
             "class": "deposit-input",
+            "min": "20",
             "step": "1",
+            "placeholder": "Mínimo $20",
             "id": "id_wd_amount",
         }),
     )
@@ -184,7 +197,14 @@ class WithdrawForm(forms.Form):
         withdraw_all = cleaned.get("withdraw_all")
         amount_usd = cleaned.get("amount_usd")
 
-        if not withdraw_all and amount_usd is None:
+        # MANUAL-CERTIFICATION-FIX-01 — only the genuine "nothing was
+        # submitted" case gets this error. If amount_usd already failed
+        # field-level validation (e.g. min_value), "amount_usd" is
+        # already in self.errors and amount_usd is None here simply
+        # because Django drops invalid fields from cleaned_data — adding
+        # a second, misleading "required" error on top of the real
+        # min_value message would be redundant, not additional signal.
+        if not withdraw_all and amount_usd is None and "amount_usd" not in self.errors:
             self.add_error("amount_usd", "Monto requerido (o marca 'Retirar todo').")
 
         crypto_currency = cleaned.get("crypto_currency")

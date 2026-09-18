@@ -2144,6 +2144,15 @@ class _PendingWithdrawalExists(Exception):
     """Raised inside the atomic block when a PENDING withdrawal already exists."""
 
 
+class _BelowMinimumWithdrawal(Exception):
+    """WITHDRAWAL-POLICY-CORRECTION-02 — raised inside the atomic block when
+    final_amount < Decimal("20"), the Owner-locked policy floor. Distinct
+    from InsufficientFunds: a user with $19.99 available is not short of
+    funds, they're below the minimum. Authoritative for BOTH manual amount
+    entry and Withdraw All — both converge on final_amount in _finalize()
+    before this check runs."""
+
+
 class _PendingFundedPayoutExists(Exception):
     """Raised inside the atomic block when a pending/approved funded payout already exists."""
 
@@ -2416,14 +2425,27 @@ def withdraw_view(request):
                 if verified_wallet is None:
                     error = "Selecciona una wallet verificada de destino."
 
-            # WITHDRAWAL-POLICY-CORRECTION-01 — no fixed minimum withdrawal
-            # amount as Money Broker policy. The only floor is
-            # WithdrawForm.amount_usd's own min_value=Decimal("0.01").
+            # WITHDRAWAL-POLICY-CORRECTION-02 — Owner-locked minimum
+            # withdrawal floor: USD 20, no daily cap, no maximum cap.
+            # WithdrawForm.amount_usd's own min_value=Decimal("20")
+            # already covers manual entry here. The only path that
+            # doesn't submit an amount_usd validated by that field is
+            # Withdraw All (below) — checked explicitly against the
+            # same floor for early UX/advisory purposes only. The
+            # authoritative, unbypassable gate for BOTH paths is the
+            # final_amount < Decimal("20") check inside _finalize()
+            # (withdraw_otp_verify_view) — this early check cannot
+            # catch balance dropping below $20 between challenge
+            # creation and OTP verification; that race is exactly
+            # what the authoritative gate exists for.
             if not error and not withdraw_all and wallet.available_balance < amount_usd:
                 error = f"Balance insuficiente. Disponible: ${wallet.available_balance:,.2f}"
 
             if not error and withdraw_all and wallet.available_balance <= 0:
                 error = "No tienes balance disponible para retirar."
+
+            if not error and withdraw_all and wallet.available_balance < Decimal("20"):
+                error = "El monto mínimo de retiro es $20.00 USD."
 
             # ── Early advisory guard — the authoritative check happens again,
             # under lock, at OTP-verify time (withdraw_otp_verify_view) ──────────
@@ -2559,6 +2581,16 @@ def withdraw_otp_verify_view(request):
                 if final_amount is None or final_amount <= 0:
                     raise InsufficientFunds(f"Wallet #{wallet_locked.id}: nothing available to withdraw.")
 
+                # WITHDRAWAL-POLICY-CORRECTION-02 — authoritative policy
+                # floor. Runs for BOTH manual amount entry and Withdraw
+                # All (both already converge on final_amount above), under
+                # the same select_for_update() lock as the balance read —
+                # catches the case where available_balance dropped below
+                # $20 between challenge creation and OTP verification,
+                # which the early advisory check in withdraw_view cannot.
+                if final_amount < Decimal("20"):
+                    raise _BelowMinimumWithdrawal()
+
                 crypto_currency = CURRENCY_BY_ASSET_NETWORK[(verified_challenge.asset, verified_challenge.network)]
                 required_approvals = 2 if final_amount > Decimal("1000") else 1
 
@@ -2590,6 +2622,8 @@ def withdraw_otp_verify_view(request):
             )
         except InsufficientFunds:
             return None, "Balance insuficiente."
+        except _BelowMinimumWithdrawal:
+            return None, "El monto mínimo de retiro es $20.00 USD."
         except Exception as exc:
             logger.error(
                 "[withdraw_otp] failed to create WithdrawalRequest user=%s challenge=%d: %s",

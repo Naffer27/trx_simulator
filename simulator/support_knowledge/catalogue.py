@@ -27,14 +27,20 @@ only:
              item as security-sensitive for correct widget styling and
              for a future block to route more deliberately.
 
-enabled=False marks a POLICY_PENDING item (or, specifically,
-withdrawal_minimum per the WITHDRAWAL-POLICY-CORRECTION-02 safeguard
-in the 01D authorization — the policy itself is confirmed at USD 20,
-but current code enforcement has not been reconciled yet, so this item
-must not produce an automatic customer-facing answer until that
-separate code-fix block runs). Disabled items are never returned by
+enabled=False marks a POLICY_PENDING item — its business policy and/or
+code enforcement has not been reconciled yet, so it must not produce an
+automatic customer-facing answer. Disabled items are never returned by
 service.py's query functions — not filtered out at the view layer, but
 structurally absent from every query result.
+
+WITHDRAWAL-POLICY-CORRECTION-02 (resolved): withdrawal_minimum was
+disabled from 01D's original authorization until code enforcement (the
+$20 floor in WithdrawForm + the authoritative backend gate in
+withdraw_otp_verify_view._finalize()) was reconciled with the confirmed
+USD 20 policy. That correction has landed — this item is now enabled
+below, stating only the confirmed policy figures (minimum, the $20-
+$1,000 normal-flow band, and the >$1,000 review band), with no invented
+processing times, fees, or provider guarantees.
 """
 from dataclasses import dataclass
 from enum import Enum
@@ -155,12 +161,15 @@ CATALOGUE: tuple = (
         "y luego verifica el código que te enviamos por email. Los fondos se mueven solo después "
         "de completar ambos pasos.",
     ),
-    # WITHDRAWAL-POLICY-CORRECTION-02 must reconcile code enforcement
-    # (currently USD 0.01) with the confirmed USD 20 policy before this
-    # item can be enabled — see catalogue module docstring and the
-    # dedicated test asserting this stays disabled.
-    _pending_item(
+    # WITHDRAWAL-POLICY-CORRECTION-02 — enabled after code enforcement
+    # (WithdrawForm min_value + the authoritative _finalize() gate) was
+    # reconciled with the confirmed USD 20 policy. States only confirmed
+    # figures — no processing times, fees, or provider guarantees.
+    _answer_item(
         "withdrawal_minimum", KnowledgeCategory.WITHDRAWALS, "¿Cuál es el monto mínimo de retiro?",
+        "El monto mínimo de retiro es USD 20. Montos entre USD 20 y USD 1,000 siguen el flujo "
+        "de seguridad automatizado normal. Montos mayores a USD 1,000 requieren una revisión "
+        "interna adicional antes de procesarse.",
     ),
     _answer_item(
         "withdrawal_kyc_required", KnowledgeCategory.WITHDRAWALS, "¿Necesito KYC para retirar?",

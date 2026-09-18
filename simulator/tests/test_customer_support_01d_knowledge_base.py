@@ -83,11 +83,22 @@ class CatalogueIntegrityTests(TestCase):
             }
             self.assertEqual(returned_intents & disabled_in_category, set())
 
-    def test_withdrawal_minimum_not_exposed(self):
-        """The explicit WITHDRAWAL-POLICY-CORRECTION-02 safeguard."""
-        self.assertIsNone(kb.get_item("withdrawal_minimum"))
+    def test_withdrawal_minimum_enabled_states_only_confirmed_policy(self):
+        """WITHDRAWAL-POLICY-CORRECTION-02 resolved — code enforcement
+        (WithdrawForm min_value + the authoritative _finalize() gate) is
+        now reconciled with the confirmed USD 20 policy, so this item is
+        enabled and states only the confirmed figures: no processing
+        times, fees, or provider guarantees."""
+        item = kb.get_item("withdrawal_minimum")
+        self.assertIsNotNone(item)
+        self.assertTrue(item.enabled)
+        self.assertIn("USD 20", item.answer)
+        self.assertIn("1,000", item.answer)
+        for forbidden in ("hora", "horas", "día", "días", "fee", "comisión de retiro",
+                          "blockchain", "confirmaciones", "NOWPayments"):
+            self.assertNotIn(forbidden, item.answer)
         withdrawal_questions = kb.list_questions("withdrawals")
-        self.assertNotIn("withdrawal_minimum", [q.intent for q in withdrawal_questions])
+        self.assertIn("withdrawal_minimum", [q.intent for q in withdrawal_questions])
 
     def test_all_security_intents_are_red(self):
         for item in CATALOGUE:
@@ -145,7 +156,11 @@ class WidgetKnowledgeAccessTests(TestCase):
         self.assertContains(resp, "Hablar con soporte")
 
     def test_disabled_intent_404s(self):
-        resp = self.client.get(_answer_url("withdrawal_minimum"))
+        # withdrawal_minimum was the disabled example pre-WITHDRAWAL-
+        # POLICY-CORRECTION-02 — now enabled (see
+        # test_withdrawal_minimum_enabled_states_only_confirmed_policy).
+        # deposit_minimum remains a real disabled POLICY_PENDING item.
+        resp = self.client.get(_answer_url("deposit_minimum"))
         self.assertEqual(resp.status_code, 404)
 
     def test_nonexistent_intent_404s(self):
