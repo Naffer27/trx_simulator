@@ -346,6 +346,40 @@ CELERY_TASK_SOFT_TIME_LIMIT    = 5 * 60             # 5 min SoftTimeLimitExceede
 CELERY_WORKER_MAX_TASKS_PER_CHILD = 500             # restart worker after N tasks (memory safety)
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True    # don't crash if Redis momentarily down on start
 
+# FIX-TEST-CELERY-EMAIL-QUEUE-ISOLATION-01 — authoritative, centralized
+# override so `manage.py test` never enqueues a real message into the
+# shared local Redis broker (confirmed empirically: unmocked .delay()
+# calls during tests were landing in the same `celery` queue key a real
+# dev worker reads from — e.g. simulator.send_email to unverified@test.com
+# via test_email_verification.py, and to refund@test.com via
+# test_withdrawals.py::PayoutCallbackRefundTests). Every @shared_task
+# .delay()/.apply_async() call executes synchronously in-process instead
+# — combined with FIX-TEST-EMAIL-BACKEND-ISOLATION-01's locmem override
+# (same _IN_TEST_RUN flag), send_email_async's body lands in locmem, not
+# a real broker or real SMTP. Mocked calls (patch("...delay")) are
+# entirely unaffected either way — the mock replaces the method before
+# Celery's eager-mode branch is ever reached. Production/non-test
+# behavior (_IN_TEST_RUN=False) is completely untouched — the real
+# broker continues to receive real async dispatches exactly as today.
+#
+# FIX-TEST-CELERY-EMAIL-QUEUE-ISOLATION-01 — FINAL CORRECTION:
+# CELERY_TASK_EAGER_PROPAGATES is deliberately NOT set here (Celery's own
+# default, False, applies). ALWAYS_EAGER alone is sufficient to keep
+# .delay()/.apply_async() off the real broker — that guarantee comes
+# from eager execution itself, not from exception propagation. Setting
+# EAGER_PROPAGATES=True was tried and reverted: Task.apply()'s own
+# `throw` parameter defaults to task_eager_propagates (celery/app/
+# task.py) for EVERY .apply() call, not just email tasks — this broke 2
+# genuine, pre-existing Treasury-monitoring tests
+# (test_o3d3_treasury_stuck_execution_celery_monitor.py,
+# test_o3d6_treasury_operational_hardening_end_to_end.py) that
+# deliberately rely on .apply()'s default non-propagating contract
+# (result.failed() / result.get() raises, not .apply() itself raising).
+# Leaving EAGER_PROPAGATES unset preserves that contract exactly while
+# still fully closing the queue-pollution vector.
+if _IN_TEST_RUN:
+    CELERY_TASK_ALWAYS_EAGER      = True
+
 # ── Beat scheduler (redbeat — state in Redis, distributed-safe) ──
 CELERY_BEAT_SCHEDULER            = "redbeat.RedBeatScheduler"
 REDBEAT_REDIS_URL                = _CELERY_BROKER
@@ -891,6 +925,20 @@ _default_email_backend = (
     else "django.core.mail.backends.smtp.EmailBackend"
 )
 EMAIL_BACKEND       = os.getenv("EMAIL_BACKEND", _default_email_backend)
+
+# FIX-TEST-EMAIL-BACKEND-ISOLATION-01 — authoritative override so the
+# resolved value itself (not just Django's own test-runner overlay,
+# django.test.utils.setup_test_environment(), which only covers the
+# `manage.py test` process's own send_mail() calls) is never smtp while
+# _IN_TEST_RUN. Explicit, self-documenting defense-in-depth — never
+# trust an implicit upstream behavior silently. Production (.env, no
+# sys.argv override) is untouched. Does NOT close the separate Celery
+# queue-pollution vector (a .delay() call enqueued during a test can
+# still be consumed later by a real worker process using that worker's
+# own live settings) — see FIX-TEST-CELERY-EMAIL-QUEUE-ISOLATION-01.
+if _IN_TEST_RUN:
+    EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
+
 EMAIL_FILE_PATH     = os.getenv("EMAIL_FILE_PATH", str(BASE_DIR / "dev_emails"))
 EMAIL_HOST          = os.getenv("EMAIL_HOST", "")
 EMAIL_PORT          = int(os.getenv("EMAIL_PORT", "587"))
