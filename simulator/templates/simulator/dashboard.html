@@ -2077,7 +2077,7 @@ class TradingPanel {
     this.ws=null; this.hb=null; this.reconnTimer=null; this.reconnDelay=800; this.connecting=false;
     this.chart=null; this.candleSeries=null; this.volumeSeries=null; this.priceLine=null;
     this.stayLive=true; this.agg={sizeSec:900,curStart:null,o:null,h:null,l:null,c:null,vol:0};
-    this.lastClose=null; this.prevClose=null; this.prevCandleClose=null; this.bid=null; this.ask=null; this.spread=0;
+    this.lastClose=null; this.prevClose=null; this.prevCandleClose=null; this.bid=null; this.ask=null;
     // FIX-05C — REAL LIVE QUOTE STATE, distinct from lastClose (candle/
     // history state, see the write sites below). Only a real tick
     // (source!=null && source!=="sim") ever sets these. liveSource is kept
@@ -2462,8 +2462,6 @@ class TradingPanel {
   }
 
   _resetAgg(){this.agg={sizeSec:tfToSec(this.currentTF),curStart:null,o:null,h:null,l:null,c:null,vol:0};}
-
-  _recomputeSpread(){const pf=priceFormatFor(this.currentSymbol);this.spread=(this.currentSymbol.includes('BTC')||this.currentSymbol.includes('ETH'))?(pf.minMove*30):(this.currentSymbol.endsWith('/JPY')?pf.minMove*4:pf.minMove*2);}
 
   _updateBidAsk(){
     // FIX-05C — this.bid/this.ask are now written ONLY by a real tick
@@ -2863,7 +2861,7 @@ class TradingPanel {
       this.candleSeries.setData(bars);this.volumeSeries.setData(bars.map(volPointForBar));
       this.chart.timeScale().fitContent();if(this.stayLive)this.chart.timeScale().scrollToRealTime();
       if(bars.length){this.prevClose=bars.at(-2)?.close??bars.at(-1).open;this.lastClose=bars.at(-1).close;this.setPrice(this.lastClose,this.prevClose);}
-      this._resetAgg();this._recomputeSpread();this._updateBidAsk();
+      this._resetAgg();this._updateBidAsk();
       this._applyIndicators();  // full recalculation from new bar set
       return;
     }
