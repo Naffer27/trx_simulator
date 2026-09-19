@@ -71,12 +71,16 @@ class DashboardPnLContractSizeTests(TestCase):
         self.assertIn('"AUD/USD": 100000', block)
 
     def test_btcusd_contract_size_1(self):
+        # INTERNAL-BROKER-TRADING-CERTIFICATION-01B: value now comes from
+        # json.dumps(SymbolSpec.contract_size), which renders as 1.0 (the
+        # backend field is typed float) rather than the old hand-typed
+        # bare "1" — numerically identical in JS, formatting only.
         block = self._contract_size_block(self._html())
-        self.assertIn('"BTCUSD":  1', block)
+        self.assertIn('"BTCUSD": 1.0', block)
 
     def test_ethusd_contract_size_1(self):
         block = self._contract_size_block(self._html())
-        self.assertIn('"ETHUSD":  1', block)
+        self.assertIn('"ETHUSD": 1.0', block)
 
     def test_get_contract_size_helper_present(self):
         self.assertIn("function getContractSize(sym)", self._html())

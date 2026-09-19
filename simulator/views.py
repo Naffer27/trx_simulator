@@ -134,7 +134,9 @@ def _get_daily_withdrawal_used(user):
     return agg["total"] or Decimal("0")
 
 
-from market_data.symbol_specs import get_spec as _get_sym_spec, allowed_symbols as _allowed_symbols
+from market_data.symbol_specs import (
+    get_spec as _get_sym_spec, allowed_symbols as _allowed_symbols, get_all_specs as _get_all_specs,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -362,6 +364,16 @@ def trading_dashboard(request, account_id=None):
         [{"e": float(p["equity"]), "b": float(p["balance"])} for p in equity_curve]
     )
 
+    # INTERNAL-BROKER-TRADING-CERTIFICATION-01B — single source of truth
+    # for the dashboard's contract-size lookup. Covers every registered
+    # SymbolSpec (not just allowed_symbols()) so a disabled/metadata-only
+    # symbol (e.g. XAU/USD) keeps the same entry the old hardcoded
+    # frontend table carried, and no future symbol addition needs this
+    # file touched again.
+    contract_size_json = json.dumps(
+        {sp.symbol: sp.contract_size for sp in _get_all_specs()}
+    )
+
     try:
         trader_score = account.trader_score
     except Exception:
@@ -563,6 +575,7 @@ def trading_dashboard(request, account_id=None):
         'intel_max_daily_pct':   intel_max_daily_pct,
         'equity_curve':          equity_curve,
         'equity_curve_json':     equity_curve_json,
+        'contract_size_json':    contract_size_json,
         'trader_score':          trader_score,
         'recent_violations':     recent_violations,
         'win_rate_pct':          win_rate_pct,

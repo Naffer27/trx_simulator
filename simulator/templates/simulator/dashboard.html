@@ -1824,20 +1824,15 @@ function getQtyLabel(sym){
   return 'Volume (Lots)';
 }
 
-/* ── Contract size per symbol (mirrors SymbolSpec.contract_size) ──
-   Per-position PnL must multiply by this; account-level PnL already
-   comes pre-computed (with contract_size) from the backend via msg.upnl.
-   XAU/USD is listed as metadata only — gold stays disabled, not selectable
-   anywhere in the UI (see SYMS / ALL_SYMBOLS / mhdrSymSel / rcWatchlist). */
-const CONTRACT_SIZE = {
-  "EUR/USD": 100000,
-  "GBP/USD": 100000,
-  "USD/JPY": 100000,
-  "AUD/USD": 100000,
-  "BTCUSD":  1,
-  "ETHUSD":  1,
-  "XAU/USD": 100,
-};
+/* ── Contract size per symbol — INTERNAL-BROKER-TRADING-CERTIFICATION-01B ──
+   Backend-authoritative: injected from market_data.symbol_specs (every
+   registered SymbolSpec, via views.py::trading_dashboard()'s
+   contract_size_json), never a second hand-maintained copy. Per-position
+   PnL must multiply by this; account-level PnL already comes pre-computed
+   (with contract_size) from the backend via msg.upnl. XAU/USD is listed
+   as metadata only — gold stays disabled, not selectable anywhere in the
+   UI (see SYMS / ALL_SYMBOLS / mhdrSymSel / rcWatchlist). */
+const CONTRACT_SIZE = {{ contract_size_json|safe }};
 function getContractSize(sym){ return CONTRACT_SIZE[sym] ?? 1; }
 
 /* ── MARGIN-02 — per-position PnL ──────────────────────────────────
