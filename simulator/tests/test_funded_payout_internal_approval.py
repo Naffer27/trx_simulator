@@ -50,10 +50,17 @@ User = get_user_model()
 # NP mock constants
 # ─────────────────────────────────────────────────────────────────────────────
 
+# FIX-FUNDED-INTERNAL-PAYOUT-AMBIGUOUS-FAILURE-01 — approve_internal_payout()
+# now calls _np._get_jwt_token() and _np.create_payout_with_token() as two
+# separately-classifiable steps instead of the single _np.create_payout()
+# wrapper, so failures can be attributed to auth (pre-send-safe) vs. the
+# POST itself (ambiguous) — mirrors payout_providers.py's retail pattern.
 _NP_ESTIMATE = "simulator.funded_payouts._np.estimate_price"
-_NP_PAYOUT   = "simulator.funded_payouts._np.create_payout"
+_NP_JWT      = "simulator.funded_payouts._np._get_jwt_token"
+_NP_POST     = "simulator.funded_payouts._np.create_payout_with_token"
 
 _NP_ESTIMATE_RET = Decimal("0.000125")
+_NP_JWT_RET      = "fake-jwt-token"
 _NP_PAYOUT_RET   = {
     "id": "batch-h3test",
     "status": "CREATED",
@@ -244,9 +251,10 @@ class TestApproveInternalPayoutDB(TestCase):
 
     # ── Funded account debited, wallet unchanged ──────────────────────────────
 
-    @patch(_NP_PAYOUT,   return_value=_NP_PAYOUT_RET)
+    @patch(_NP_POST, return_value=_NP_PAYOUT_RET)
+    @patch(_NP_JWT,  return_value=_NP_JWT_RET)
     @patch(_NP_ESTIMATE, return_value=_NP_ESTIMATE_RET)
-    def test_debits_funded_account_not_wallet(self, _est, _pay):
+    def test_debits_funded_account_not_wallet(self, _est, _jwt, _post):
         wallet, _ = get_or_create_wallet(self.user)
         wallet_balance_before = Decimal(str(wallet.available_balance))
         account_balance_before = Decimal(str(self.funded_account.balance))
@@ -267,9 +275,10 @@ class TestApproveInternalPayoutDB(TestCase):
     # fail-open coverage lives in test_audit02_payments_trail.py; this is
     # the "no regression on the happy path" check alongside the pre-existing
     # assertions in this class.
-    @patch(_NP_PAYOUT,   return_value=_NP_PAYOUT_RET)
+    @patch(_NP_POST, return_value=_NP_PAYOUT_RET)
+    @patch(_NP_JWT,  return_value=_NP_JWT_RET)
     @patch(_NP_ESTIMATE, return_value=_NP_ESTIMATE_RET)
-    def test_approval_creates_broker_audit_events(self, _est, _pay):
+    def test_approval_creates_broker_audit_events(self, _est, _jwt, _post):
         from simulator.models import BrokerAuditEvent
         approve_internal_payout(self.fpr, self.admin)
         self.assertTrue(
@@ -278,9 +287,10 @@ class TestApproveInternalPayoutDB(TestCase):
 
     # ── LedgerEntry EV_FUNDED_PAYOUT created ─────────────────────────────────
 
-    @patch(_NP_PAYOUT,   return_value=_NP_PAYOUT_RET)
+    @patch(_NP_POST, return_value=_NP_PAYOUT_RET)
+    @patch(_NP_JWT,  return_value=_NP_JWT_RET)
     @patch(_NP_ESTIMATE, return_value=_NP_ESTIMATE_RET)
-    def test_creates_ev_funded_payout_ledger(self, _est, _pay):
+    def test_creates_ev_funded_payout_ledger(self, _est, _jwt, _post):
         account_balance_before = Decimal(str(self.funded_account.balance))
         trader_cut = Decimal(str(self.fpr.trader_cut))
 
@@ -295,27 +305,30 @@ class TestApproveInternalPayoutDB(TestCase):
 
     # ── WithdrawalRequest created and linked ──────────────────────────────────
 
-    @patch(_NP_PAYOUT,   return_value=_NP_PAYOUT_RET)
+    @patch(_NP_POST, return_value=_NP_PAYOUT_RET)
+    @patch(_NP_JWT,  return_value=_NP_JWT_RET)
     @patch(_NP_ESTIMATE, return_value=_NP_ESTIMATE_RET)
-    def test_creates_withdrawal_request_linked(self, _est, _pay):
+    def test_creates_withdrawal_request_linked(self, _est, _jwt, _post):
         approve_internal_payout(self.fpr, self.admin)
         self.fpr.refresh_from_db()
         self.assertIsNotNone(self.fpr.withdrawal_request_id)
 
     # ── WR debit_tx is None (no wallet debit) ────────────────────────────────
 
-    @patch(_NP_PAYOUT,   return_value=_NP_PAYOUT_RET)
+    @patch(_NP_POST, return_value=_NP_PAYOUT_RET)
+    @patch(_NP_JWT,  return_value=_NP_JWT_RET)
     @patch(_NP_ESTIMATE, return_value=_NP_ESTIMATE_RET)
-    def test_wr_debit_tx_is_none(self, _est, _pay):
+    def test_wr_debit_tx_is_none(self, _est, _jwt, _post):
         approve_internal_payout(self.fpr, self.admin)
         self.fpr.refresh_from_db()
         self.assertIsNone(self.fpr.withdrawal_request.debit_tx)
 
     # ── No cycle reset on approval ────────────────────────────────────────────
 
-    @patch(_NP_PAYOUT,   return_value=_NP_PAYOUT_RET)
+    @patch(_NP_POST, return_value=_NP_PAYOUT_RET)
+    @patch(_NP_JWT,  return_value=_NP_JWT_RET)
     @patch(_NP_ESTIMATE, return_value=_NP_ESTIMATE_RET)
-    def test_no_cycle_reset_on_approval(self, _est, _pay):
+    def test_no_cycle_reset_on_approval(self, _est, _jwt, _post):
         original_initial = Decimal(str(self.funded_account.initial_balance))
 
         approve_internal_payout(self.fpr, self.admin)
@@ -328,9 +341,10 @@ class TestApproveInternalPayoutDB(TestCase):
 
     # ── reviewed_by / reviewed_at set on FPR ─────────────────────────────────
 
-    @patch(_NP_PAYOUT,   return_value=_NP_PAYOUT_RET)
+    @patch(_NP_POST, return_value=_NP_PAYOUT_RET)
+    @patch(_NP_JWT,  return_value=_NP_JWT_RET)
     @patch(_NP_ESTIMATE, return_value=_NP_ESTIMATE_RET)
-    def test_sets_review_fields(self, _est, _pay):
+    def test_sets_review_fields(self, _est, _jwt, _post):
         before = now()
         approve_internal_payout(self.fpr, self.admin)
         self.fpr.refresh_from_db()
@@ -384,9 +398,10 @@ class TestApproveInternalPayoutNPSuccess(TestCase):
             self.user, self.enrollment, self.funded_account, self.funded_config
         )
 
-    @patch(_NP_PAYOUT,   return_value=_NP_PAYOUT_RET)
+    @patch(_NP_POST, return_value=_NP_PAYOUT_RET)
+    @patch(_NP_JWT,  return_value=_NP_JWT_RET)
     @patch(_NP_ESTIMATE, return_value=_NP_ESTIMATE_RET)
-    def test_np_success_moves_wr_to_processing(self, _est, _pay):
+    def test_np_success_moves_wr_to_processing(self, _est, _jwt, _post):
         approve_internal_payout(self.fpr, self.admin)
         self.fpr.refresh_from_db()
         wr = self.fpr.withdrawal_request
@@ -394,19 +409,33 @@ class TestApproveInternalPayoutNPSuccess(TestCase):
         self.assertEqual(wr.np_batch_id,  "batch-h3test")
         self.assertEqual(wr.np_payout_id, "wd-h3test")
 
-    @patch(_NP_PAYOUT,   return_value=_NP_PAYOUT_RET)
+    @patch(_NP_POST, return_value=_NP_PAYOUT_RET)
+    @patch(_NP_JWT,  return_value=_NP_JWT_RET)
     @patch(_NP_ESTIMATE, return_value=_NP_ESTIMATE_RET)
-    def test_np_success_moves_fpr_to_processing(self, _est, _pay):
+    def test_np_success_moves_fpr_to_processing(self, _est, _jwt, _post):
         approve_internal_payout(self.fpr, self.admin)
         self.fpr.refresh_from_db()
         self.assertEqual(self.fpr.status, FundedPayoutRequest.ST_PROCESSING)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Phase 2: NP failure — compensating transaction
+# FIX-FUNDED-INTERNAL-PAYOUT-AMBIGUOUS-FAILURE-01
+#
+# Phase 2 pre-send-safe failures (estimate_price / auth before the POST) —
+# compensating reversal is UNCHANGED. Ambiguous post-send failures (POST
+# itself, unparseable body, or a post-success local write) NEVER reverse —
+# this is the entire point of the block. The old TestApproveInternalPayoutNPFailure
+# class mocked _np.create_payout (the combined auth+POST wrapper) with a
+# bare RuntimeError, which is exactly the now-ambiguous case — its 5 tests
+# asserted the OLD (bug) behavior (reverse + FAILED) and are replaced below
+# by TestApproveInternalPayoutAmbiguousPostFailure asserting the NEW,
+# correct behavior for that same failure shape.
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestApproveInternalPayoutNPFailure(TestCase):
+class TestApproveInternalPayoutPreSendSafeFailure(TestCase):
+    """Item A: estimate_price() fails. Item B: auth (_get_jwt_token) fails
+    before the /v1/payout POST. Both provably pre-send-safe — reverse +
+    FAILED, byte-identical to the pre-existing behavior."""
 
     def setUp(self):
         self.admin          = _make_admin()
@@ -418,59 +447,265 @@ class TestApproveInternalPayoutNPFailure(TestCase):
             self.user, self.enrollment, self.funded_account, self.funded_config
         )
 
-    @patch(_NP_PAYOUT,   side_effect=RuntimeError("NP down"))
-    @patch(_NP_ESTIMATE, return_value=_NP_ESTIMATE_RET)
-    def test_np_failure_reverses_funded_account(self, _est, _pay):
-        balance_before = Decimal(str(self.funded_account.balance))
-
-        with self.assertRaises(RuntimeError):
-            approve_internal_payout(self.fpr, self.admin)
-
+    def _assert_reversed_and_failed(self, balance_before):
         self.funded_account.refresh_from_db()
         self.assertEqual(self.funded_account.balance, balance_before)
         self.assertEqual(self.funded_account.equity,  balance_before)
-
-    @patch(_NP_PAYOUT,   side_effect=RuntimeError("NP down"))
-    @patch(_NP_ESTIMATE, return_value=_NP_ESTIMATE_RET)
-    def test_np_failure_creates_ev_adjust(self, _est, _pay):
-        with self.assertRaises(RuntimeError):
-            approve_internal_payout(self.fpr, self.admin)
-
         self.assertTrue(
             LedgerEntry.objects.filter(
-                account=self.funded_account,
-                event_type=LedgerEntry.EV_ADJUST,
+                account=self.funded_account, event_type=LedgerEntry.EV_ADJUST,
+            ).exists()
+        )
+        self.fpr.refresh_from_db()
+        self.assertEqual(self.fpr.status, FundedPayoutRequest.ST_FAILED)
+        self.assertEqual(self.fpr.withdrawal_request.status, WithdrawalRequest.STATUS_FAILED)
+        self.assertIsNone(self.fpr.cycle_reset_at)
+
+    # ── A: estimate_price() fails ────────────────────────────────────────
+
+    @patch(_NP_ESTIMATE, side_effect=RuntimeError("estimate down"))
+    def test_estimate_failure_reverses_and_fails(self, _est):
+        balance_before = Decimal(str(self.funded_account.balance))
+        with self.assertRaises(RuntimeError):
+            approve_internal_payout(self.fpr, self.admin)
+        self._assert_reversed_and_failed(balance_before)
+
+    @patch(_NP_ESTIMATE, side_effect=RuntimeError("estimate down"))
+    def test_estimate_failure_never_calls_jwt_or_post(self, _est):
+        with patch(_NP_JWT) as jwt_mock, patch(_NP_POST) as post_mock:
+            with self.assertRaises(RuntimeError):
+                approve_internal_payout(self.fpr, self.admin)
+            jwt_mock.assert_not_called()
+            post_mock.assert_not_called()
+
+    # ── B: auth (_get_jwt_token) fails before the POST ───────────────────
+
+    @patch(_NP_JWT,      side_effect=RuntimeError("auth down"))
+    @patch(_NP_ESTIMATE, return_value=_NP_ESTIMATE_RET)
+    def test_auth_failure_reverses_and_fails(self, _est, _jwt):
+        balance_before = Decimal(str(self.funded_account.balance))
+        with self.assertRaises(RuntimeError):
+            approve_internal_payout(self.fpr, self.admin)
+        self._assert_reversed_and_failed(balance_before)
+
+    @patch(_NP_JWT,      side_effect=RuntimeError("auth down"))
+    @patch(_NP_ESTIMATE, return_value=_NP_ESTIMATE_RET)
+    def test_auth_failure_never_calls_post(self, _est, _jwt):
+        with patch(_NP_POST) as post_mock:
+            with self.assertRaises(RuntimeError):
+                approve_internal_payout(self.fpr, self.admin)
+            post_mock.assert_not_called()
+
+
+class TestApproveInternalPayoutAmbiguousPostFailure(TestCase):
+    """Items C/D/E: timeout, connection error, 5xx (and a generic/
+    unclassified exception, the same shape the old buggy behavior was
+    tested with) on the /v1/payout POST itself, with a valid auth token
+    already obtained — NowPayments may have already accepted the payout.
+    NEVER reversed, NEVER marked FAILED."""
+
+    def setUp(self):
+        self.admin          = _make_admin()
+        self.user           = _make_user()
+        self.enrollment     = _make_funded_enrollment(self.user)
+        self.funded_account = self.enrollment.funded_account
+        self.funded_config  = FundedConfig.objects.get(enrollment=self.enrollment)
+        self.fpr = _make_internal_pending_fpr(
+            self.user, self.enrollment, self.funded_account, self.funded_config
+        )
+
+    def _assert_left_ambiguous(self, expected_balance):
+        """expected_balance is the balance AFTER Phase 1's debit (trader_cut
+        already deducted) — the ambiguous failure must leave it exactly
+        there, never restoring the pre-approval balance."""
+        self.funded_account.refresh_from_db()
+        self.assertEqual(self.funded_account.balance, expected_balance,
+                          "ambiguous failure must NEVER reverse the funded-account debit")
+        self.assertEqual(self.funded_account.equity, expected_balance)
+        self.assertFalse(
+            LedgerEntry.objects.filter(
+                account=self.funded_account, event_type=LedgerEntry.EV_ADJUST,
+            ).exists(),
+            "no compensating EV_ADJUST for an ambiguous failure",
+        )
+        self.fpr.refresh_from_db()
+        self.assertEqual(self.fpr.status, FundedPayoutRequest.ST_APPROVED)
+        self.assertEqual(self.fpr.withdrawal_request.status, WithdrawalRequest.STATUS_APPROVED)
+        self.assertIn("AMBIGUOUS_SUBMIT_FAILURE", self.fpr.admin_note)
+
+    def _run(self, exc):
+        # Captured BEFORE approve_internal_payout runs Phase 1 — the
+        # in-memory objects are still fresh/unmutated at this point.
+        balance_before_approval = Decimal(str(self.funded_account.balance))
+        trader_cut = Decimal(str(self.fpr.trader_cut))
+        with patch(_NP_POST, side_effect=exc), \
+             patch(_NP_JWT, return_value=_NP_JWT_RET), \
+             patch(_NP_ESTIMATE, return_value=_NP_ESTIMATE_RET):
+            with self.assertRaises(type(exc)):
+                approve_internal_payout(self.fpr, self.admin)
+        self._assert_left_ambiguous(balance_before_approval - trader_cut)
+
+    # ── C: timeout ─────────────────────────────────────────────────────
+
+    def test_timeout_leaves_ambiguous(self):
+        import requests
+        self._run(requests.exceptions.Timeout("payout POST timed out"))
+
+    # ── D: connection error ───────────────────────────────────────────
+
+    def test_connection_error_leaves_ambiguous(self):
+        import requests
+        self._run(requests.exceptions.ConnectionError("connection reset"))
+
+    # ── E: 5xx ─────────────────────────────────────────────────────────
+
+    def test_5xx_leaves_ambiguous(self):
+        import requests
+        resp = requests.Response()
+        resp.status_code = 502
+        self._run(requests.exceptions.HTTPError("502 Server Error", response=resp))
+
+    # ── Generic/unclassified exception — same shape the pre-fix test
+    #    suite exercised (RuntimeError), now correctly ambiguous ────────
+
+    def test_generic_exception_leaves_ambiguous(self):
+        self._run(RuntimeError("NP down"))
+
+    def test_ambiguous_failure_fires_audit_event(self):
+        from simulator.models import BrokerAuditEvent
+        from simulator import broker_audit as _audit
+        with patch(_NP_POST, side_effect=RuntimeError("NP down")), \
+             patch(_NP_JWT, return_value=_NP_JWT_RET), \
+             patch(_NP_ESTIMATE, return_value=_NP_ESTIMATE_RET):
+            with self.assertRaises(RuntimeError):
+                approve_internal_payout(self.fpr, self.admin)
+        self.assertTrue(
+            BrokerAuditEvent.objects.filter(
+                funded_payout_request=self.fpr,
+                event_type=_audit.EV_FUNDED_PAYOUT_INTERNAL_SUBMIT_AMBIGUOUS,
             ).exists()
         )
 
-    @patch(_NP_PAYOUT,   side_effect=RuntimeError("NP down"))
-    @patch(_NP_ESTIMATE, return_value=_NP_ESTIMATE_RET)
-    def test_np_failure_no_cycle_reset(self, _est, _pay):
-        original_initial = Decimal(str(self.funded_account.initial_balance))
+    def test_unparseable_response_body_leaves_ambiguous(self):
+        """Response received (POST itself succeeded) but .get()-style
+        access on it fails — still ambiguous, the POST may have landed."""
+        balance_before_approval = Decimal(str(self.funded_account.balance))
+        trader_cut = Decimal(str(self.fpr.trader_cut))
+        with patch(_NP_POST, return_value="not-a-dict"), \
+             patch(_NP_JWT, return_value=_NP_JWT_RET), \
+             patch(_NP_ESTIMATE, return_value=_NP_ESTIMATE_RET):
+            with self.assertRaises(AttributeError):
+                approve_internal_payout(self.fpr, self.admin)
+        self._assert_left_ambiguous(balance_before_approval - trader_cut)
 
-        with self.assertRaises(RuntimeError):
-            approve_internal_payout(self.fpr, self.admin)
 
-        self.fpr.refresh_from_db()
-        self.assertIsNone(self.fpr.cycle_reset_at)
+class TestApproveInternalPayoutPersistenceFailureAfterSuccess(TestCase):
+    """Item F: the POST succeeds (real batch_id/payout_id obtained) but the
+    local WithdrawalRequest/FundedPayoutRequest write itself fails. The
+    provider DEFINITELY accepted this payout — must never reverse, and
+    the ids already known must be preserved for manual reconciliation."""
+
+    def setUp(self):
+        self.admin          = _make_admin()
+        self.user           = _make_user()
+        self.enrollment     = _make_funded_enrollment(self.user)
+        self.funded_account = self.enrollment.funded_account
+        self.funded_config  = FundedConfig.objects.get(enrollment=self.enrollment)
+        self.fpr = _make_internal_pending_fpr(
+            self.user, self.enrollment, self.funded_account, self.funded_config
+        )
+
+    def test_post_success_then_db_write_failure_never_reverses_and_preserves_ids(self):
+        balance_before_approval = Decimal(str(self.funded_account.balance))
+        trader_cut = Decimal(str(self.fpr.trader_cut))
+        with patch(_NP_POST, return_value=_NP_PAYOUT_RET), \
+             patch(_NP_JWT, return_value=_NP_JWT_RET), \
+             patch(_NP_ESTIMATE, return_value=_NP_ESTIMATE_RET), \
+             patch(
+                 "simulator.funded_payouts.WithdrawalRequest.objects.filter",
+                 side_effect=RuntimeError("db write failed"),
+             ):
+            with self.assertRaises(RuntimeError):
+                approve_internal_payout(self.fpr, self.admin)
+
         self.funded_account.refresh_from_db()
-        self.assertEqual(self.funded_account.initial_balance, original_initial)
+        self.assertEqual(self.funded_account.balance, balance_before_approval - trader_cut,
+                          "a confirmed-accepted payout must never be reversed")
+        self.fpr.refresh_from_db()
+        self.assertEqual(self.fpr.status, FundedPayoutRequest.ST_APPROVED)
+        self.assertIn("AMBIGUOUS_SUBMIT_FAILURE", self.fpr.admin_note)
+        self.assertIn("batch-h3test", self.fpr.admin_note)
+        self.assertIn("wd-h3test", self.fpr.admin_note)
 
-    @patch(_NP_PAYOUT,   side_effect=RuntimeError("NP down"))
-    @patch(_NP_ESTIMATE, return_value=_NP_ESTIMATE_RET)
-    def test_np_failure_marks_fpr_failed(self, _est, _pay):
-        with self.assertRaises(RuntimeError):
-            approve_internal_payout(self.fpr, self.admin)
+
+class TestManualReconciliationOfAmbiguousPayout(TestCase):
+    """Items G/H: once an ambiguous payout is manually confirmed (owner
+    checks the NowPayments dashboard directly, same procedure already
+    used for WithdrawalRequest #4/#9), resolving it reuses
+    handle_internal_payout_webhook() UNCHANGED — no new reconciliation
+    code was written, and it must apply exactly once."""
+
+    def setUp(self):
+        self.admin          = _make_admin()
+        self.user           = _make_user()
+        self.enrollment     = _make_funded_enrollment(self.user)
+        self.funded_account = self.enrollment.funded_account
+        self.funded_config  = FundedConfig.objects.get(enrollment=self.enrollment)
+        self.fpr = _make_internal_pending_fpr(
+            self.user, self.enrollment, self.funded_account, self.funded_config
+        )
+        with patch(_NP_POST, side_effect=RuntimeError("NP down")), \
+             patch(_NP_JWT, return_value=_NP_JWT_RET), \
+             patch(_NP_ESTIMATE, return_value=_NP_ESTIMATE_RET):
+            with self.assertRaises(RuntimeError):
+                approve_internal_payout(self.fpr, self.admin)
+        self.fpr.refresh_from_db()
+        self.funded_account.refresh_from_db()
+        self.wr = self.fpr.withdrawal_request
+        assert self.fpr.status == FundedPayoutRequest.ST_APPROVED
+        assert self.wr.status == WithdrawalRequest.STATUS_APPROVED
+
+    def test_manual_resolve_to_completed_exactly_once(self):
+        handle_internal_payout_webhook(
+            self.fpr, self.wr, WithdrawalRequest.STATUS_COMPLETED, "manual-confirm-1",
+        )
+        self.fpr.refresh_from_db()
+        self.assertEqual(self.fpr.status, FundedPayoutRequest.ST_COMPLETED)
+        self.assertIsNotNone(self.fpr.cycle_reset_at)
+        first_reset = self.fpr.cycle_reset_at
+
+        # Idempotent — a second call (duplicate webhook/manual replay) is a no-op.
+        handle_internal_payout_webhook(
+            self.fpr, self.wr, WithdrawalRequest.STATUS_COMPLETED, "manual-confirm-1",
+        )
+        self.fpr.refresh_from_db()
+        self.assertEqual(self.fpr.cycle_reset_at, first_reset)
+
+    def test_manual_resolve_to_failed_refunds_exactly_once(self):
+        balance_before = Decimal(str(self.funded_account.balance))
+        trader_cut = Decimal(str(self.fpr.trader_cut))
+
+        handle_internal_payout_webhook(
+            self.fpr, self.wr, WithdrawalRequest.STATUS_FAILED, "",
+        )
+        self.funded_account.refresh_from_db()
+        self.assertEqual(self.funded_account.balance, balance_before + trader_cut)
         self.fpr.refresh_from_db()
         self.assertEqual(self.fpr.status, FundedPayoutRequest.ST_FAILED)
 
-    @patch(_NP_PAYOUT,   side_effect=RuntimeError("NP down"))
-    @patch(_NP_ESTIMATE, return_value=_NP_ESTIMATE_RET)
-    def test_np_failure_marks_wr_failed(self, _est, _pay):
-        with self.assertRaises(RuntimeError):
-            approve_internal_payout(self.fpr, self.admin)
-        self.fpr.refresh_from_db()
-        self.assertEqual(self.fpr.withdrawal_request.status, WithdrawalRequest.STATUS_FAILED)
+        # Idempotent — a second call must NOT refund a second time.
+        handle_internal_payout_webhook(
+            self.fpr, self.wr, WithdrawalRequest.STATUS_FAILED, "",
+        )
+        self.funded_account.refresh_from_db()
+        self.assertEqual(self.funded_account.balance, balance_before + trader_cut)
+        self.assertEqual(
+            LedgerEntry.objects.filter(
+                account=self.funded_account, event_type=LedgerEntry.EV_ADJUST,
+            ).count(),
+            1,
+            "duplicate manual/webhook resolution must not double-refund",
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -33,6 +33,7 @@ from simulator.broker_audit import (
     EV_FUNDED_PAYOUT_INTERNAL_APPROVED,
     EV_FUNDED_PAYOUT_INTERNAL_COMPLETED,
     EV_FUNDED_PAYOUT_INTERNAL_FAILED,
+    EV_FUNDED_PAYOUT_INTERNAL_SUBMIT_AMBIGUOUS,
     EV_FUNDED_PAYOUT_INTERNAL_SUBMIT_FAILED,
     EV_FUNDED_PAYOUT_INTERNAL_SUBMITTED,
     EV_FUNDED_PAYOUT_SIM_APPROVED,
@@ -80,10 +81,17 @@ def _ipn_body(payment_id: str, payment_status: str, order_id: str = "",
         "price_amount":         float(actually_paid_amount),
     })
 
+# FIX-FUNDED-INTERNAL-PAYOUT-AMBIGUOUS-FAILURE-01 — approve_internal_payout()
+# now calls _np._get_jwt_token() and _np.create_payout_with_token() as two
+# separately-classifiable steps instead of the single _np.create_payout()
+# wrapper (see simulator/tests/test_funded_payout_internal_approval.py for
+# the primary coverage of the new classification behavior itself).
 _NP_ESTIMATE = "simulator.funded_payouts._np.estimate_price"
-_NP_PAYOUT   = "simulator.funded_payouts._np.create_payout"
+_NP_JWT      = "simulator.funded_payouts._np._get_jwt_token"
+_NP_POST     = "simulator.funded_payouts._np.create_payout_with_token"
 
 _NP_ESTIMATE_RET = Decimal("0.000125")
+_NP_JWT_RET      = "fake-jwt-token"
 _NP_PAYOUT_RET   = {
     "id": "batch-audit02",
     "status": "CREATED",
@@ -311,9 +319,10 @@ class InternalPayoutApprovalAuditTests(_FundedFixtureMixin, TestCase):
             funded_type=FundedConfig.FUNDED_INTERNAL,
         )
 
-    @patch(_NP_PAYOUT,   return_value=_NP_PAYOUT_RET)
+    @patch(_NP_POST, return_value=_NP_PAYOUT_RET)
+    @patch(_NP_JWT,  return_value=_NP_JWT_RET)
     @patch(_NP_ESTIMATE, return_value=_NP_ESTIMATE_RET)
-    def test_full_success_creates_two_events(self, _est, _pay):
+    def test_full_success_creates_two_events(self, _est, _jwt, _post):
         approve_internal_payout(self.fpr, self.admin, callback_url="https://example.test/cb")
         events = list(
             BrokerAuditEvent.objects.filter(funded_payout_request=self.fpr).order_by("id")
@@ -322,9 +331,10 @@ class InternalPayoutApprovalAuditTests(_FundedFixtureMixin, TestCase):
         self.assertEqual(events[0].event_type, EV_FUNDED_PAYOUT_INTERNAL_APPROVED)
         self.assertEqual(events[1].event_type, EV_FUNDED_PAYOUT_INTERNAL_SUBMITTED)
 
-    @patch(_NP_PAYOUT,   return_value=_NP_PAYOUT_RET)
+    @patch(_NP_POST, return_value=_NP_PAYOUT_RET)
+    @patch(_NP_JWT,  return_value=_NP_JWT_RET)
     @patch(_NP_ESTIMATE, return_value=_NP_ESTIMATE_RET)
-    def test_same_correlation_id_across_both_events(self, _est, _pay):
+    def test_same_correlation_id_across_both_events(self, _est, _jwt, _post):
         approve_internal_payout(self.fpr, self.admin, callback_url="https://example.test/cb")
         self.fpr.refresh_from_db()
         events = list(BrokerAuditEvent.objects.filter(funded_payout_request=self.fpr))
@@ -332,24 +342,51 @@ class InternalPayoutApprovalAuditTests(_FundedFixtureMixin, TestCase):
         self.assertEqual(events[0].correlation_id, self.fpr.correlation_id)
         self.assertEqual(events[1].correlation_id, self.fpr.correlation_id)
 
-    @patch(_NP_PAYOUT,   side_effect=RuntimeError("NP down"))
+    @patch(_NP_POST, side_effect=RuntimeError("NP down"))
+    @patch(_NP_JWT,  return_value=_NP_JWT_RET)
     @patch(_NP_ESTIMATE, return_value=_NP_ESTIMATE_RET)
-    def test_np_failure_creates_high_severity_event(self, _est, _pay):
+    def test_np_post_failure_creates_high_severity_ambiguous_event(self, _est, _jwt, _post):
+        """
+        FIX-FUNDED-INTERNAL-PAYOUT-AMBIGUOUS-FAILURE-01 — a generic
+        exception from the POST itself (auth already succeeded) is
+        AMBIGUOUS, not a definite failure: NowPayments may have already
+        accepted the payout. This replaces the old assertion (which
+        expected a reversal + EV_FUNDED_PAYOUT_INTERNAL_SUBMIT_FAILED for
+        this exact failure shape) with the corrected one.
+        """
         with self.assertRaises(RuntimeError):
             approve_internal_payout(self.fpr, self.admin, callback_url="https://example.test/cb")
         events = list(
             BrokerAuditEvent.objects.filter(funded_payout_request=self.fpr).order_by("id")
         )
-        # APPROVED (phase 1) + SUBMIT_FAILED (compensating reversal)
+        # APPROVED (phase 1) + SUBMIT_AMBIGUOUS (never reversed)
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[0].event_type, EV_FUNDED_PAYOUT_INTERNAL_APPROVED)
+        self.assertEqual(events[1].event_type, EV_FUNDED_PAYOUT_INTERNAL_SUBMIT_AMBIGUOUS)
+        self.assertEqual(events[1].severity, Severity.HIGH)
+        self.assertEqual(events[1].actor_type, ActorType.SYSTEM)
+
+    @patch(_NP_JWT,      side_effect=RuntimeError("auth down"))
+    @patch(_NP_ESTIMATE, return_value=_NP_ESTIMATE_RET)
+    def test_pre_send_auth_failure_still_creates_submit_failed_event(self, _est, _jwt):
+        """The provably pre-send-safe case (auth fails before the POST is
+        even attempted) is UNCHANGED — still reverses and fires
+        EV_FUNDED_PAYOUT_INTERNAL_SUBMIT_FAILED."""
+        with self.assertRaises(RuntimeError):
+            approve_internal_payout(self.fpr, self.admin, callback_url="https://example.test/cb")
+        events = list(
+            BrokerAuditEvent.objects.filter(funded_payout_request=self.fpr).order_by("id")
+        )
         self.assertEqual(len(events), 2)
         self.assertEqual(events[0].event_type, EV_FUNDED_PAYOUT_INTERNAL_APPROVED)
         self.assertEqual(events[1].event_type, EV_FUNDED_PAYOUT_INTERNAL_SUBMIT_FAILED)
         self.assertEqual(events[1].severity, Severity.HIGH)
         self.assertEqual(events[1].actor_type, ActorType.SYSTEM)
 
-    @patch(_NP_PAYOUT,   return_value=_NP_PAYOUT_RET)
+    @patch(_NP_POST, return_value=_NP_PAYOUT_RET)
+    @patch(_NP_JWT,  return_value=_NP_JWT_RET)
     @patch(_NP_ESTIMATE, return_value=_NP_ESTIMATE_RET)
-    def test_double_approval_does_not_duplicate_event(self, _est, _pay):
+    def test_double_approval_does_not_duplicate_event(self, _est, _jwt, _post):
         """
         Same guarantee as SimPayoutAuditTests.test_double_approval_does_not_
         duplicate_event, for the FUNDED_INTERNAL flow: a second
@@ -367,9 +404,12 @@ class InternalPayoutApprovalAuditTests(_FundedFixtureMixin, TestCase):
             BrokerAuditEvent.objects.filter(funded_payout_request=self.fpr).count(), before_count,
         )
 
-    @patch(_NP_PAYOUT,   side_effect=RuntimeError("NP down"))
+    @patch(_NP_JWT,      side_effect=RuntimeError("auth down"))
     @patch(_NP_ESTIMATE, return_value=_NP_ESTIMATE_RET)
-    def test_fail_open_does_not_block_reversal(self, _est, _pay):
+    def test_fail_open_does_not_block_reversal(self, _est, _jwt):
+        """Pre-send-safe case (unchanged): an audit-write failure must
+        never mask or replace the real error, and the compensating
+        reversal must still have run."""
         with patch(
             "simulator.models.BrokerAuditEvent.objects.create",
             side_effect=RuntimeError("audit boom"),
@@ -377,10 +417,25 @@ class InternalPayoutApprovalAuditTests(_FundedFixtureMixin, TestCase):
             with self.assertRaises(RuntimeError):
                 approve_internal_payout(self.fpr, self.admin, callback_url="https://example.test/cb")
         self.fpr.refresh_from_db()
-        # The NP RuntimeError must still be the one that propagates, and the
-        # compensating reversal (tested elsewhere) must still have run —
-        # an audit-write failure must never mask or replace the real error.
         self.assertEqual(self.fpr.status, FundedPayoutRequest.ST_FAILED)
+
+    @patch(_NP_POST, side_effect=RuntimeError("NP down"))
+    @patch(_NP_JWT,  return_value=_NP_JWT_RET)
+    @patch(_NP_ESTIMATE, return_value=_NP_ESTIMATE_RET)
+    def test_fail_open_does_not_block_ambiguous_marking(self, _est, _jwt, _post):
+        """Ambiguous case: _mark_ambiguous()'s own audit-write attempt is
+        best-effort (wrapped in its own try/except) — a failure there must
+        never mask the original NowPayments exception, and must never
+        cause a reversal to happen instead."""
+        with patch(
+            "simulator.models.BrokerAuditEvent.objects.create",
+            side_effect=RuntimeError("audit boom"),
+        ):
+            with self.assertRaises(RuntimeError) as ctx:
+                approve_internal_payout(self.fpr, self.admin, callback_url="https://example.test/cb")
+        self.assertEqual(str(ctx.exception), "NP down")
+        self.fpr.refresh_from_db()
+        self.assertEqual(self.fpr.status, FundedPayoutRequest.ST_APPROVED)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -453,9 +508,10 @@ class InternalPayoutWebhookAuditTests(_FundedFixtureMixin, TestCase):
 
 class CorrelationAcrossLifecycleTests(_FundedFixtureMixin, TestCase):
 
-    @patch(_NP_PAYOUT,   return_value=_NP_PAYOUT_RET)
+    @patch(_NP_POST, return_value=_NP_PAYOUT_RET)
+    @patch(_NP_JWT,  return_value=_NP_JWT_RET)
     @patch(_NP_ESTIMATE, return_value=_NP_ESTIMATE_RET)
-    def test_correlation_id_unifies_approval_and_webhook(self, _est, _pay):
+    def test_correlation_id_unifies_approval_and_webhook(self, _est, _jwt, _post):
         fpr = _make_pending_fpr(
             self.user, self.enrollment, self.funded_account, self.funded_config,
             funded_type=FundedConfig.FUNDED_INTERNAL,

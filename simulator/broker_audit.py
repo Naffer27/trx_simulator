@@ -232,7 +232,16 @@ _CLOSE_REASON_EVENT_TYPE = {
 EV_FUNDED_PAYOUT_SIM_APPROVED           = "payment.funded_payout_sim_approved"
 EV_FUNDED_PAYOUT_INTERNAL_APPROVED      = "payment.funded_payout_internal_approved"
 EV_FUNDED_PAYOUT_INTERNAL_SUBMITTED     = "payment.funded_payout_internal_submitted"
-EV_FUNDED_PAYOUT_INTERNAL_SUBMIT_FAILED = "payment.funded_payout_internal_submit_failed"
+EV_FUNDED_PAYOUT_INTERNAL_SUBMIT_FAILED    = "payment.funded_payout_internal_submit_failed"
+# FIX-FUNDED-INTERNAL-PAYOUT-AMBIGUOUS-FAILURE-01 — fired when Phase 2's
+# NowPayments call fails in a way that does NOT prove the provider never
+# received/accepted the payout (timeout/connection/5xx/unparseable body,
+# or a definite-success response whose local persistence itself failed).
+# Deliberately distinct from EV_FUNDED_PAYOUT_INTERNAL_SUBMIT_FAILED above,
+# which is reserved for provably pre-send-safe failures (estimate/auth) —
+# never reversed automatically, mirrors PayoutAttempt.STATUS_UNKNOWN's
+# "requires deliberate human reconciliation" contract for retail withdrawals.
+EV_FUNDED_PAYOUT_INTERNAL_SUBMIT_AMBIGUOUS = "payment.funded_payout_internal_submit_ambiguous"
 EV_FUNDED_PAYOUT_INTERNAL_COMPLETED     = "payment.funded_payout_internal_completed"
 EV_FUNDED_PAYOUT_INTERNAL_FAILED        = "payment.funded_payout_internal_failed"
 
