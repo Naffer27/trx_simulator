@@ -393,6 +393,42 @@ def recalc_trader_scores(modeladmin, request, queryset):
 # TradingAccount
 # ─────────────────────────────────────────────
 
+def _retail_total_margin(account, positions):
+    """
+    INTERNAL-BROKER-TRADING-CERTIFICATION-01A — authoritative margin
+    aggregate for admin display. Reuses pnl_engine.calculate_required_margin()
+    per open position — the same formula/effective-leverage clamp as the
+    live order-open and pretrade-risk-guard path (consumers.py) — instead
+    of the ad-hoc `avg_price * qty / leverage` shortcut this replaces,
+    which omitted contract_size entirely and understated forex margin by
+    ~100,000x (see INTERNAL-BROKER-TRADING-CERTIFICATION-01 audit, K.1).
+
+    effective_leverage mirrors the real order-open derivation exactly:
+    min(account.leverage, symbol.max_leverage). A position whose margin
+    can't be converted to account currency (Case C — no explicit rate;
+    unreachable for any currently-enabled symbol) contributes 0.0, never
+    a fabricated number — same fail-closed contract calculate_required_margin()
+    itself documents.
+    """
+    from . import pnl_engine
+    from market_data.symbol_specs import get_spec
+
+    account_lev = max(1, account.leverage or 50)
+    total = 0.0
+    for p in positions:
+        try:
+            spec = get_spec(p.symbol)
+        except Exception:
+            continue
+        effective_lev = max(1, min(account_lev, spec.max_leverage))
+        margin, _err = pnl_engine.calculate_required_margin(
+            p.symbol, p.avg_price, p.qty, effective_lev, account.currency,
+        )
+        if margin is not None:
+            total += margin
+    return total
+
+
 @admin.register(TradingAccount)
 class TradingAccountAdmin(admin.ModelAdmin):
 
@@ -430,7 +466,7 @@ class TradingAccountAdmin(admin.ModelAdmin):
 
         lev = max(1, obj.leverage or 50)
         positions = list(Position.objects.filter(account=obj))
-        total_margin = sum(float(p.avg_price) * float(p.qty) / lev for p in positions)
+        total_margin = _retail_total_margin(obj, positions)
         equity = float(obj.equity or obj.balance or 0)
         balance = float(obj.balance or 0)
         mcl = float(obj.margin_call_level_snapshot or 100)
@@ -1043,8 +1079,7 @@ class TradingAccountAdmin(admin.ModelAdmin):
         retail_margin = None
         if account.account_type == "RETAIL":
             from .risk_engine import compute_margin_state, _MARGIN_THRESHOLDS
-            lev = max(1, account.leverage or 50)
-            total_mg = sum(float(p.avg_price) * float(p.qty) / lev for p in open_positions)
+            total_mg = _retail_total_margin(account, open_positions)
             eq_f = float(account.equity or account.balance or 0)
             mcl = float(account.margin_call_level_snapshot or 100)
             sol = float(account.stopout_level_snapshot or 50)

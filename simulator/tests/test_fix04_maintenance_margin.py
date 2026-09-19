@@ -193,8 +193,13 @@ class AdminMarginPanelTests(TestCase):
         )
         TradingAccount.objects.filter(pk=account.pk).update(equity=Decimal("70.00"), leverage=1)
         account.refresh_from_db()
+        # INTERNAL-BROKER-TRADING-CERTIFICATION-01A: qty=0.00001 (not 1.0)
+        # so margin_used == 100 under the authoritative contract_size-aware
+        # formula (100 * 0.00001 * 100,000 / leverage=1 == 100), matching
+        # this test's original intended target under the old buggy
+        # (contract_size-less) formula.
         make_position(account, symbol="EUR/USD", side="BUY",
-                      qty=Decimal("1.0"), avg_price=Decimal("100.00"))
+                      qty=Decimal("0.00001"), avg_price=Decimal("100.00"))
         html = self._panel_html(account)
         # margin_level = equity/margin_after*100 = 70/100*100 = 70.00 == SOL exactly
         self.assertIn('color:#e67e22;">70%</span></div>', html.replace(" ", "").replace("\n", ""),
@@ -208,8 +213,13 @@ class AdminMarginPanelTests(TestCase):
         )
         TradingAccount.objects.filter(pk=account.pk).update(equity=Decimal("100.00"), leverage=1)
         account.refresh_from_db()
+        # INTERNAL-BROKER-TRADING-CERTIFICATION-01A: qty=0.00001 (not 1.0)
+        # so margin_used == 100 under the authoritative contract_size-aware
+        # formula (100 * 0.00001 * 100,000 / leverage=1 == 100), matching
+        # this test's original intended target under the old buggy
+        # (contract_size-less) formula.
         make_position(account, symbol="EUR/USD", side="BUY",
-                      qty=Decimal("1.0"), avg_price=Decimal("100.00"))
+                      qty=Decimal("0.00001"), avg_price=Decimal("100.00"))
         html = self._panel_html(account)
         # margin_level = 100/100*100 = 100.00 == MCL exactly
         self.assertIn('color:#e67e22;">100%</span></div>', html.replace(" ", "").replace("\n", ""),
@@ -223,8 +233,13 @@ class AdminMarginPanelTests(TestCase):
         )
         TradingAccount.objects.filter(pk=account.pk).update(equity=Decimal("69.99"), leverage=1)
         account.refresh_from_db()
+        # INTERNAL-BROKER-TRADING-CERTIFICATION-01A: qty=0.00001 (not 1.0)
+        # so margin_used == 100 under the authoritative contract_size-aware
+        # formula (100 * 0.00001 * 100,000 / leverage=1 == 100), matching
+        # this test's original intended target under the old buggy
+        # (contract_size-less) formula.
         make_position(account, symbol="EUR/USD", side="BUY",
-                      qty=Decimal("1.0"), avg_price=Decimal("100.00"))
+                      qty=Decimal("0.00001"), avg_price=Decimal("100.00"))
         html = self._panel_html(account)
         self.assertIn('color:#e74c3c;">70%</span></div>', html.replace(" ", "").replace("\n", ""),
                       "just below SOL must be CRITICAL (#e74c3c)")
@@ -237,8 +252,13 @@ class AdminMarginPanelTests(TestCase):
         )
         TradingAccount.objects.filter(pk=account.pk).update(equity=Decimal("150.00"), leverage=1)
         account.refresh_from_db()
+        # INTERNAL-BROKER-TRADING-CERTIFICATION-01A: qty=0.00001 (not 1.0)
+        # so margin_used == 100 under the authoritative contract_size-aware
+        # formula (100 * 0.00001 * 100,000 / leverage=1 == 100), matching
+        # this test's original intended target under the old buggy
+        # (contract_size-less) formula.
         make_position(account, symbol="EUR/USD", side="BUY",
-                      qty=Decimal("1.0"), avg_price=Decimal("100.00"))
+                      qty=Decimal("0.00001"), avg_price=Decimal("100.00"))
         html = self._panel_html(account)
         self.assertIn('color:#27ae60;">150%</span></div>', html.replace(" ", "").replace("\n", ""),
                       "above MCL must be NORMAL (#27ae60)")
