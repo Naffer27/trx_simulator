@@ -883,12 +883,19 @@ def _trigger_pending_order_core(pending_order_id: int, execution_price: float) -
                 meta={"symbol": symbol, "side": side, "db_pos_id": position_id,
                       "source": "pending_order_trigger", "pending_order_id": po.id},
             )
+            # IB-TRADING-REVENUE-SAVEPOINT-FIX-01 — wrapped in its own
+            # nested transaction.atomic() savepoint, same pattern as the
+            # manual-open-path REV_COMMISSION write and the existing
+            # REV_SPREAD write in _db_open_position_atomic: confines any
+            # DB-level insert failure to this savepoint instead of
+            # poisoning the outer transaction.
             try:
-                BrokerLedger.objects.create(
-                    revenue_type=BrokerLedger.REV_COMMISSION, amount=_commission_d,
-                    source_account_id=po.account_id, source_ledger=trader_ledger,
-                    symbol=symbol, meta={"side": side, "db_pos_id": position_id, "pending_order_id": po.id},
-                )
+                with transaction.atomic():
+                    BrokerLedger.objects.create(
+                        revenue_type=BrokerLedger.REV_COMMISSION, amount=_commission_d,
+                        source_account_id=po.account_id, source_ledger=trader_ledger,
+                        symbol=symbol, meta={"side": side, "db_pos_id": position_id, "pending_order_id": po.id},
+                    )
             except Exception as _bl_exc:
                 log.warning("[pending_trigger] broker_ledger commission insert failed pos=%s: %s", position_id, _bl_exc)
             account.balance = _auth_balance
@@ -5253,15 +5260,26 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 # pre-existing isolation: a DB error here must never
                 # block the trade, since the trader's own charge above
                 # already committed to this transaction's write-set).
+                # IB-TRADING-REVENUE-SAVEPOINT-FIX-01 — wrapped in its own
+                # nested transaction.atomic() savepoint, same pattern as
+                # REV_SPREAD below: a DB-level failure inside this block
+                # (e.g. PostgreSQL constraint/insert error) would otherwise
+                # leave the outer transaction aborted even though the
+                # Python except below catches it — the next statement in
+                # the same outer transaction would then raise
+                # TransactionManagementError. The nested atomic() confines
+                # any such failure to its own savepoint, which is rolled
+                # back on exit, leaving the outer transaction usable.
                 try:
-                    BrokerLedger.objects.create(
-                        revenue_type=BrokerLedger.REV_COMMISSION,
-                        amount=_commission_ledger_d,
-                        source_account_id=self._db_account_id,
-                        source_ledger=trader_ledger,
-                        symbol=symbol,
-                        meta={"side": side, "db_pos_id": position_id},
-                    )
+                    with transaction.atomic():
+                        BrokerLedger.objects.create(
+                            revenue_type=BrokerLedger.REV_COMMISSION,
+                            amount=_commission_ledger_d,
+                            source_account_id=self._db_account_id,
+                            source_ledger=trader_ledger,
+                            symbol=symbol,
+                            meta={"side": side, "db_pos_id": position_id},
+                        )
                 except Exception as _bl_exc:
                     log.warning("[broker_ledger] commission insert failed pos=%s: %s", position_id, _bl_exc)
 
