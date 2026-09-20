@@ -1,0 +1,59 @@
+{% extends "admin/change_form.html" %}
+{% block object-tools-items %}
+  {% if show_ib_approve_button %}
+  <li>
+    <a href="{{ ib_approve_url }}" class="historylink"
+       style="background:rgba(39,174,96,.15);color:#27ae60;border:1px solid rgba(39,174,96,.3);
+              border-radius:4px;padding:5px 14px;font-size:.75rem;font-weight:700;
+              text-decoration:none;letter-spacing:.04em;">
+      Approve →
+    </a>
+  </li>
+  {% endif %}
+  {% if show_ib_link_button %}
+  <li>
+    <a href="{{ ib_link_url }}" class="historylink"
+       style="background:rgba(52,152,219,.15);color:#3498db;border:1px solid rgba(52,152,219,.3);
+              border-radius:4px;padding:5px 14px;font-size:.75rem;font-weight:700;
+              text-decoration:none;letter-spacing:.04em;">
+      Link to Treasury →
+    </a>
+  </li>
+  {% endif %}
+  {{ block.super }}
+{% endblock %}
+
+{% block object-tools %}
+{{ block.super }}
+{% if change %}
+  {% if ib_needs_attention %}
+  <div style="background:#0f0f1c;border:1px solid rgba(231,76,60,.35);border-radius:8px;
+              padding:14px 18px;margin:0 0 14px 0;">
+    <div style="font-size:.85rem;font-weight:800;color:#e74c3c;letter-spacing:.04em;margin-bottom:6px;">
+      ⚠ Needs Attention
+    </div>
+    <div style="font-size:.78rem;color:#c8ccd8;">
+      The linked Treasury request reached a terminal non-success state (rejected/cancelled/failed).
+      This obligation remains APPROVED — no money moved, and no automatic replacement/reversal is
+      performed here. See IB-REVERSALS-FRAUD-05 for future resolution policy.
+    </div>
+  </div>
+  {% endif %}
+  {% if show_ib_sync_button %}
+  <div style="background:#0f0f1c;border:1px solid #1e1e30;border-radius:8px;padding:14px 18px;margin:0 0 14px 0;">
+    <div style="font-size:.78rem;color:#c8ccd8;margin-bottom:8px;">
+      Sync this obligation's status against its linked Treasury request's own current state
+      (moves no money — pure observation).
+    </div>
+    <form method="post" action="{{ ib_sync_url }}" style="margin:0;">
+      {% csrf_token %}
+      <button type="submit"
+        style="background:rgba(232,200,74,.15);color:#e8c84a;border:1px solid rgba(232,200,74,.4);
+               border-radius:4px;padding:6px 16px;font-size:.75rem;font-weight:700;cursor:pointer;">
+        Sync from Treasury
+      </button>
+    </form>
+  </div>
+  {% endif %}
+{% endif %}
+{% endblock %}

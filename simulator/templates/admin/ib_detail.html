@@ -1,0 +1,147 @@
+{% extends "admin/base_site.html" %}
+{% block title %}IB Detail — {{ referral.code }}{% endblock %}
+{% block content %}
+<style>
+:root{
+  --bg:#0d0d0d;--panel:#141414;--border:#222;--gold:#e8c84a;
+  --bull:#27ae60;--bear:#ef5350;--warn:#e67e22;--info:#3498db;--muted:#666;--text:#e8e8e8;--r:5px;
+}
+*{box-sizing:border-box;}
+body,#content{background:var(--bg)!important;}
+#content{padding:14px 18px!important;}
+.ib-title{font-size:1rem;font-weight:800;color:var(--gold);letter-spacing:.06em;text-transform:uppercase;margin-bottom:14px;}
+.ib-crumb{font-size:.65rem;color:var(--muted);margin-bottom:14px;text-transform:uppercase;letter-spacing:.05em;}
+.ib-section{font-size:.62rem;font-weight:700;color:var(--muted);text-transform:uppercase;
+            letter-spacing:.08em;margin:18px 0 6px;}
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;margin-bottom:8px;}
+.kpi{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);padding:10px 12px;}
+.kpi-lbl{font-size:.55rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px;}
+.kpi-val{font-size:1.05rem;font-weight:800;color:var(--text);}
+.kpi-val.gold{color:var(--gold);} .kpi-val.warn{color:var(--warn);}
+.kpi-val.info{color:var(--info);} .kpi-val.bull{color:var(--bull);}
+.ib-table{width:100%;border-collapse:collapse;font-size:.72rem;}
+.ib-table th{color:var(--muted);font-size:.58rem;text-transform:uppercase;letter-spacing:.05em;
+             padding:5px 8px;border-bottom:1px solid var(--border);text-align:left;white-space:nowrap;}
+.ib-table td{padding:6px 8px;border-bottom:1px solid rgba(255,255,255,.04);color:var(--text);white-space:nowrap;}
+.ib-panel{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+          padding:10px 12px;overflow-x:auto;margin-bottom:10px;}
+.ib-a{color:var(--gold);text-decoration:none;font-weight:700;}
+.ib-a:hover{text-decoration:underline;}
+.ib-muted{color:var(--muted);}
+.ib-attn{color:var(--bear);font-weight:700;}
+.status-PENDING{color:var(--warn);} .status-APPROVED{color:var(--info);}
+.status-CREDITED{color:var(--bull);} .status-CANCELLED,.status-REVERSED{color:var(--muted);}
+</style>
+
+<div class="ib-crumb">IB OPS &rsaquo; IB Directory &rsaquo; {{ referral.user.username }}</div>
+<div class="ib-title">IB Detail — {{ referral.user.username }} ({{ referral.code }})</div>
+
+<div class="ib-section">Overview</div>
+<div class="kpi-grid">
+  <div class="kpi"><div class="kpi-lbl">Referral Code</div><div class="kpi-val">{{ referral.code }}</div></div>
+  <div class="kpi"><div class="kpi-lbl">Joined</div><div class="kpi-val">{{ referral.created_at|date:"Y-m-d" }}</div></div>
+  <div class="kpi"><div class="kpi-lbl">Wallet Balance</div><div class="kpi-val gold">${{ wallet.available_balance }}</div></div>
+  <div class="kpi"><div class="kpi-lbl">Referred Clients</div><div class="kpi-val">{{ client_count }}</div></div>
+</div>
+
+<div class="ib-section">Commission Configuration</div>
+<div class="ib-panel">
+  <table class="ib-table">
+    <thead><tr><th>Rule Type</th><th>Rate</th><th>Source</th></tr></thead>
+    <tbody>
+      {% for r in rate_rows %}
+      <tr>
+        <td>{{ r.label }}</td>
+        <td>
+          {% if r.rule %}
+            {% if r.rule.fixed_amount is not None %}${{ r.rule.fixed_amount }}{% endif %}
+            {% if r.rule.percentage is not None %}{{ r.rule.percentage }}%{% endif %}
+          {% else %}<span class="ib-muted">— none —</span>{% endif %}
+        </td>
+        <td>{% if r.rule %}{{ r.source }}{% else %}—{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="ib-section">Performance (Lots — LotExecutionEvent.qty, summed)</div>
+<div class="kpi-grid">
+  <div class="kpi"><div class="kpi-lbl">Today</div><div class="kpi-val">{{ lot_totals.today }}</div></div>
+  <div class="kpi"><div class="kpi-lbl">This Week</div><div class="kpi-val">{{ lot_totals.week }}</div></div>
+  <div class="kpi"><div class="kpi-lbl">This Month</div><div class="kpi-val">{{ lot_totals.month }}</div></div>
+  <div class="kpi"><div class="kpi-lbl">Lifetime</div><div class="kpi-val">{{ lot_totals.lifetime }}</div></div>
+  <div class="kpi"><div class="kpi-lbl">Active Clients (Month)</div><div class="kpi-val">{{ active_clients_month }}</div></div>
+</div>
+
+<div class="ib-section">Commissions</div>
+<div class="kpi-grid">
+  <div class="kpi"><div class="kpi-lbl">Pending</div><div class="kpi-val warn">${{ obligation_totals.PENDING.amount }} ({{ obligation_totals.PENDING.count }})</div></div>
+  <div class="kpi"><div class="kpi-lbl">Approved</div><div class="kpi-val info">${{ obligation_totals.APPROVED.amount }} ({{ obligation_totals.APPROVED.count }})</div></div>
+  <div class="kpi"><div class="kpi-lbl">Credited</div><div class="kpi-val bull">${{ obligation_totals.CREDITED.amount }} ({{ obligation_totals.CREDITED.count }})</div></div>
+</div>
+
+<div class="ib-section">Recent Referred Clients</div>
+<div class="ib-panel">
+  <table class="ib-table">
+    <thead><tr><th>User</th><th>Attributed At</th><th>Source</th></tr></thead>
+    <tbody>
+      {% for a in recent_clients %}
+      <tr><td>{{ a.referred_user.username }}</td><td>{{ a.attributed_at }}</td><td>{{ a.source }}</td></tr>
+      {% empty %}<tr><td colspan="3" class="ib-muted">No referred clients yet.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="ib-section">Recent Lot Executions</div>
+<div class="ib-panel">
+  <table class="ib-table">
+    <thead><tr><th>Account</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Price</th><th>Entry Path</th><th>At</th></tr></thead>
+    <tbody>
+      {% for ev in recent_lots %}
+      <tr>
+        <td>#{{ ev.account_id }}</td><td>{{ ev.symbol }}</td><td>{{ ev.side }}</td>
+        <td>{{ ev.qty }}</td><td>{{ ev.execution_price }}</td><td>{{ ev.entry_path }}</td><td>{{ ev.created_at }}</td>
+      </tr>
+      {% empty %}<tr><td colspan="7" class="ib-muted">No lot executions yet.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="ib-section">Recent Commission Obligations</div>
+<div class="ib-panel">
+  <table class="ib-table">
+    <thead><tr><th>ID</th><th>Rule Type</th><th>Amount</th><th>Status</th><th>Created</th><th>Treasury</th><th></th></tr></thead>
+    <tbody>
+      {% for row in recent_obligations %}
+      <tr>
+        <td><a class="ib-a" href="{% url 'admin:simulator_ibcommissionobligation_change' row.obligation.pk %}">#{{ row.obligation.pk }}</a></td>
+        <td>{{ row.obligation.rule_type }}</td>
+        <td>${{ row.obligation.calculated_amount }}</td>
+        <td class="status-{{ row.obligation.status }}">{{ row.obligation.status }}</td>
+        <td>{{ row.obligation.created_at }}</td>
+        <td>
+          {% if row.obligation.treasury_operation_id %}
+            <a class="ib-a" href="{% url 'admin:simulator_treasuryoperationrequest_change' row.obligation.treasury_operation_id %}">#{{ row.obligation.treasury_operation_id }}</a>
+          {% else %}<span class="ib-muted">— not linked —</span>{% endif %}
+        </td>
+        <td>{% if row.needs_attention %}<span class="ib-attn">⚠ needs attention</span>{% endif %}</td>
+      </tr>
+      {% empty %}<tr><td colspan="7" class="ib-muted">No obligations yet.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="ib-section">Wallet — Read Only</div>
+<div class="ib-panel">
+  <table class="ib-table">
+    <thead><tr><th>Type</th><th>Amount</th><th>Balance After</th><th>At</th></tr></thead>
+    <tbody>
+      {% for tx in recent_wallet_tx %}
+      <tr><td>{{ tx.tx_type }}</td><td>${{ tx.amount }}</td><td>${{ tx.balance_after }}</td><td>{{ tx.created_at }}</td></tr>
+      {% empty %}<tr><td colspan="4" class="ib-muted">No commission credits yet.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}

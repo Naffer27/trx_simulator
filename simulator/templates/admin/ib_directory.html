@@ -1,0 +1,93 @@
+{% extends "admin/base_site.html" %}
+{% block title %}IB Directory{% endblock %}
+{% block content %}
+<style>
+:root{
+  --bg:#0d0d0d;--panel:#141414;--border:#222;--gold:#e8c84a;
+  --bull:#27ae60;--bear:#ef5350;--warn:#e67e22;--muted:#666;--text:#e8e8e8;--r:5px;
+}
+*{box-sizing:border-box;}
+body,#content{background:var(--bg)!important;}
+#content{padding:14px 18px!important;}
+.ib-nav{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap;}
+.ib-title{font-size:1rem;font-weight:800;color:var(--gold);letter-spacing:.06em;text-transform:uppercase;flex:1;}
+.ib-btn{font-size:.7rem;padding:6px 14px;border-radius:3px;text-decoration:none;font-weight:700;
+        letter-spacing:.03em;color:#0a1a0a;background:var(--bull);border:none;cursor:pointer;}
+.ib-btn:hover{opacity:.85;}
+.ib-table{width:100%;border-collapse:collapse;font-size:.75rem;}
+.ib-table th{color:var(--muted);font-size:.6rem;text-transform:uppercase;letter-spacing:.05em;
+             padding:6px 8px;border-bottom:1px solid var(--border);text-align:left;font-weight:600;white-space:nowrap;}
+.ib-table td{padding:7px 8px;border-bottom:1px solid rgba(255,255,255,.04);color:var(--text);white-space:nowrap;}
+.ib-panel{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+          padding:10px 12px;overflow-x:auto;margin-bottom:10px;}
+.ib-a{color:var(--gold);text-decoration:none;font-weight:700;}
+.ib-a:hover{text-decoration:underline;}
+.ib-gold{color:var(--gold);font-weight:700;}
+.ib-muted{color:var(--muted);}
+.ib-pending{color:var(--warn);}
+.ib-approved{color:#3498db;}
+.ib-credited{color:var(--bull);}
+.ib-pagination{display:flex;gap:8px;margin-top:10px;font-size:.72rem;}
+.ib-pagination a, .ib-pagination span{color:var(--muted);text-decoration:none;padding:4px 8px;
+        border:1px solid var(--border);border-radius:3px;}
+.ib-pagination a:hover{color:var(--gold);}
+</style>
+
+{% if messages %}{% for m in messages %}
+<div class="messagelist"><li class="{{ m.tags }}">{{ m }}</li></div>
+{% endfor %}{% endif %}
+
+<div class="ib-nav">
+  <div class="ib-title">IB Directory</div>
+  {% if can_reconcile %}
+  <form method="post" action="{{ reconcile_url }}" style="margin:0;">
+    {% csrf_token %}
+    <button type="submit" class="ib-btn" title="Sync APPROVED obligations whose linked Treasury request already executed — moves no money, only observes Treasury state.">
+      Reconcile Approved Obligations
+    </button>
+  </form>
+  {% endif %}
+</div>
+
+<div class="ib-panel">
+  <table class="ib-table">
+    <thead>
+      <tr>
+        <th>IB</th><th>Referral Code</th><th>Clients</th><th>Month Lots</th>
+        <th>PER_LOT Rate</th><th>Pending $</th><th>Approved $</th><th>Credited $</th>
+        <th>Wallet Balance</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td><a class="ib-a" href="{% url 'admin:ib_detail' row.referral.pk %}">{{ row.referral.user.username }}</a></td>
+        <td>{{ row.referral.code }}</td>
+        <td>{{ row.client_count }}</td>
+        <td>{{ row.month_lots }}</td>
+        <td>
+          {% if row.per_lot_rate is not None %}
+            ${{ row.per_lot_rate }} <span class="ib-muted">({{ row.per_lot_source }})</span>
+          {% else %}
+            <span class="ib-muted">— none —</span>
+          {% endif %}
+        </td>
+        <td class="ib-pending">${{ row.pending_amount }}</td>
+        <td class="ib-approved">${{ row.approved_amount }}</td>
+        <td class="ib-credited">${{ row.credited_amount }}</td>
+        <td class="ib-gold">${{ row.wallet_balance }}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="9" class="ib-muted">No IBs (Referrals) found.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="ib-pagination">
+  {% if page.has_previous %}<a href="?page={{ page.previous_page_number }}">&laquo; Prev</a>{% endif %}
+  <span>Page {{ page.number }} of {{ page.paginator.num_pages }}</span>
+  {% if page.has_next %}<a href="?page={{ page.next_page_number }}">Next &raquo;</a>{% endif %}
+</div>
+
+{% endblock %}

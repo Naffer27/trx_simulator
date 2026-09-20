@@ -6475,3 +6475,13 @@ from django.contrib.auth.models import User as _AuthUser
 
 admin.site.unregister(_AuthUser)
 admin.site.register(_AuthUser, TreasuryHardenedUserAdmin)
+
+
+# IB-ADMIN-OPS-04B — registrations live in a separate module (this file
+# is already 6400+ lines); this import is the only wiring admin.py needs
+# — it triggers ib_admin_ops.py's own @admin.register()/admin.site.
+# register() calls at import time, same "split registration module,
+# import once" pattern Django itself documents for large admin.py files.
+# No ModelAdmin/view/query logic lives in this file for IB Ops — see
+# simulator/ib_admin_ops.py.
+from . import ib_admin_ops  # noqa: F401
