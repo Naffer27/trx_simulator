@@ -1,0 +1,52 @@
+{% extends "admin/base_site.html" %}
+{% block title %}Approve Adjustment #{{ instance.pk }}{% endblock %}
+{% block content %}
+<style>
+:root{--bg:#07070f;--panel:#0f0f1c;--border:#1e1e30;--gold:#e8c84a;--bull:#27ae60;--muted:#55556a;--text:#c8ccd8;--r:8px;}
+#content{background:var(--bg)!important;color:var(--text);}
+.tr-header{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);padding:14px 18px;margin-bottom:14px;}
+.tr-title{font-size:.95rem;font-weight:800;color:var(--bull);letter-spacing:.04em;}
+.tr-summary{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);padding:16px 18px;margin-bottom:16px;}
+.tr-summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px 20px;}
+.sm-label{font-size:.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;}
+.sm-val{font-size:.85rem;color:var(--text);font-weight:700;margin-top:2px;}
+.tr-bignotice{background:rgba(39,174,96,.08);border:2px solid var(--bull);border-radius:var(--r);padding:18px 20px;margin-bottom:16px;text-align:center;}
+.tr-bignotice .line1{font-size:1.05rem;font-weight:800;color:var(--bull);}
+.tr-bignotice .line2{font-size:.85rem;color:var(--text);margin-top:6px;}
+.tr-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:6px;}
+.tr-btn{display:inline-block;padding:8px 20px;border-radius:6px;font-size:.78rem;font-weight:700;cursor:pointer;border:none;text-decoration:none;}
+.tr-btn-bull{background:var(--bull);color:#0a1a0a;}
+.tr-btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--border);}
+</style>
+
+{% if messages %}{% for m in messages %}<div class="messagelist"><li class="{{ m.tags }}">{{ m }}</li></div>{% endfor %}{% endif %}
+
+<div class="tr-header">
+  <div class="tr-title">Approve Adjustment #{{ instance.pk }}</div>
+</div>
+
+<div class="tr-summary">
+  <div class="tr-summary-grid">
+    <div><div class="sm-label">Adjustment ID</div><div class="sm-val">#{{ instance.pk }}</div></div>
+    <div><div class="sm-label">Obligation</div><div class="sm-val">#{{ instance.obligation_id }}</div></div>
+    <div><div class="sm-label">Type</div><div class="sm-val">{{ instance.adjustment_type }}</div></div>
+    <div><div class="sm-label">Amount</div><div class="sm-val">${{ instance.amount }}</div></div>
+    <div><div class="sm-label">Reason</div><div class="sm-val">{{ instance.reason }}</div></div>
+    <div><div class="sm-label">Status</div><div class="sm-val">{{ instance.status }}</div></div>
+  </div>
+</div>
+
+<div class="tr-bignotice">
+  <div class="line1">Approving DOES NOT move funds.</div>
+  <div class="line2">Linking to Treasury, and Treasury's own approve/execute, are still required.</div>
+</div>
+
+<form method="post">
+  {% csrf_token %}
+  <div class="tr-actions">
+    <a href="{{ cancel_url }}" class="tr-btn tr-btn-ghost">Cancel</a>
+    <button type="submit" class="tr-btn tr-btn-bull">Approve Adjustment</button>
+  </div>
+</form>
+
+{% endblock %}

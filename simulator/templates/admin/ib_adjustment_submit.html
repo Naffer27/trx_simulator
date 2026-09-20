@@ -1,0 +1,75 @@
+{% extends "admin/base_site.html" %}
+{% block title %}Submit Adjustment — Obligation #{{ obligation.pk }}{% endblock %}
+{% block content %}
+<style>
+:root{--bg:#07070f;--panel:#0f0f1c;--panel2:#13131f;--border:#1e1e30;--gold:#e8c84a;--bull:#27ae60;--warn:#e67e22;--text:#c8ccd8;--muted:#55556a;--r:8px;}
+#content{background:var(--bg)!important;color:var(--text);}
+.tr-header{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);padding:14px 18px;margin-bottom:14px;}
+.tr-title{font-size:.95rem;font-weight:800;color:var(--warn);letter-spacing:.04em;}
+.tr-summary{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);padding:16px 18px;margin-bottom:16px;}
+.tr-summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px 20px;}
+.sm-label{font-size:.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;}
+.sm-val{font-size:.85rem;color:var(--text);font-weight:700;margin-top:2px;}
+.tr-bignotice{background:rgba(230,126,34,.08);border:2px solid var(--warn);border-radius:var(--r);padding:18px 20px;margin-bottom:16px;text-align:center;}
+.tr-bignotice .line1{font-size:1.05rem;font-weight:800;color:var(--warn);}
+.tr-bignotice .line2{font-size:.85rem;color:var(--text);margin-top:6px;}
+.tr-section{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);padding:16px 18px;margin-bottom:14px;}
+.tr-field{margin-bottom:12px;}
+.tr-field label{display:block;font-size:.72rem;font-weight:700;color:var(--text);margin-bottom:4px;}
+.tr-field input,.tr-field textarea,.tr-field select{width:100%;max-width:420px;background:var(--panel2);border:1px solid var(--border);
+  color:var(--text);border-radius:5px;padding:7px 10px;font-size:.8rem;}
+.tr-field textarea{min-height:64px;resize:vertical;}
+.tr-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:6px;}
+.tr-btn{display:inline-block;padding:8px 20px;border-radius:6px;font-size:.78rem;font-weight:700;cursor:pointer;border:none;text-decoration:none;}
+.tr-btn-warn{background:var(--warn);color:#1a0f05;}
+.tr-btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--border);}
+</style>
+
+{% if messages %}{% for m in messages %}<div class="messagelist"><li class="{{ m.tags }}">{{ m }}</li></div>{% endfor %}{% endif %}
+
+<div class="tr-header">
+  <div class="tr-title">Submit Adjustment — Obligation #{{ obligation.pk }}</div>
+</div>
+
+<div class="tr-summary">
+  <div class="tr-summary-grid">
+    <div><div class="sm-label">Obligation ID</div><div class="sm-val">#{{ obligation.pk }}</div></div>
+    <div><div class="sm-label">IB / Referral</div><div class="sm-val">{{ obligation.referral }}</div></div>
+    <div><div class="sm-label">Original Amount</div><div class="sm-val">${{ obligation.calculated_amount }}</div></div>
+    <div><div class="sm-label">Status</div><div class="sm-val">{{ obligation.status }}</div></div>
+  </div>
+</div>
+
+<div class="tr-bignotice">
+  <div class="line1">Remaining reversible: ${{ remaining_reversible }}</div>
+  <div class="line2">Submitting DOES NOT move funds. Approval, Treasury linking, and Treasury's own approve/execute are still required.</div>
+</div>
+
+<form method="post">
+  {% csrf_token %}
+  <div class="tr-section">
+    <div class="tr-field">
+      <label for="id_amount">Amount</label>
+      <input type="text" name="amount" id="id_amount" placeholder="0.00">
+    </div>
+    <div class="tr-field">
+      <label for="id_adjustment_type">Type</label>
+      <select name="adjustment_type" id="id_adjustment_type">
+        {% for value, label in adjustment_types %}
+        <option value="{{ value }}">{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="tr-field">
+      <label for="id_reason">Reason</label>
+      <textarea name="reason" id="id_reason"></textarea>
+    </div>
+  </div>
+
+  <div class="tr-actions">
+    <a href="{{ cancel_url }}" class="tr-btn tr-btn-ghost">Cancel</a>
+    <button type="submit" class="tr-btn tr-btn-warn">Submit Adjustment</button>
+  </div>
+</form>
+
+{% endblock %}

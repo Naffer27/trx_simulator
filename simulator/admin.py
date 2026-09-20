@@ -6485,3 +6485,11 @@ admin.site.register(_AuthUser, TreasuryHardenedUserAdmin)
 # No ModelAdmin/view/query logic lives in this file for IB Ops — see
 # simulator/ib_admin_ops.py.
 from . import ib_admin_ops  # noqa: F401
+
+# IB-REVERSALS-FRAUD-05C — same reasoning as the ib_admin_ops import
+# above: registrations for IBCommissionAdjustment (the reversal/
+# adjustment accounting model from IB-REVERSALS-FRAUD-05B) live in
+# their own module, kept separate from both this file and
+# ib_admin_ops.py. No ModelAdmin/view/query logic for IB reversals
+# lives in this file — see simulator/ib_reversal_admin.py.
+from . import ib_reversal_admin  # noqa: F401

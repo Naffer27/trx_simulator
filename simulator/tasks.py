@@ -1980,3 +1980,43 @@ def reconcile_ib_treasury_settlement_task(self) -> dict:
 
     logger.info("[reconcile_ib_treasury_settlement] %s", result)
     return result
+
+
+# ──────────────────────────────────────────────────────
+# IB-REVERSALS-FRAUD-05C — reversal/adjustment reconciliation.
+# Same shape and same UNSCHEDULED posture as
+# reconcile_ib_treasury_settlement_task above: read-only against
+# Treasury's own execution engine — this task never approves, rejects,
+# or executes a TreasuryOperationRequest and never calls
+# credit_wallet()/debit_wallet() itself; it only observes already-
+# authoritative Treasury state (via
+# ib_commission_reversal.sync_adjustment_from_treasury()) and mirrors
+# APPROVED -> EXECUTED onto the linked IBCommissionAdjustment once
+# Treasury's own execution has already completed.
+#
+# UNSCHEDULED — per IB-REVERSALS-FRAUD-05C's authorized scope, no Beat
+# entry is added here (that would require a trx_simulator/settings.py
+# change, out of this block's authorized file list). The task is fully
+# defined and callable (.delay() / .apply()) for manual/ops invocation
+# or a future block's Beat wiring, but does not run on any schedule
+# today. Report this explicitly — do not assume it is scheduled.
+# ──────────────────────────────────────────────────────
+@shared_task(
+    name="simulator.reconcile_ib_commission_adjustments",
+    bind=True,
+    max_retries=0,
+    acks_late=True,
+    soft_time_limit=25,
+    time_limit=29,
+)
+def reconcile_ib_commission_adjustments_task(self) -> dict:
+    import time as _t
+
+    from .ib_commission_reversal import reconcile_pending_adjustments
+
+    t0 = _t.monotonic()
+    result = reconcile_pending_adjustments()
+    result["elapsed_ms"] = round((_t.monotonic() - t0) * 1000)
+
+    logger.info("[reconcile_ib_commission_adjustments] %s", result)
+    return result

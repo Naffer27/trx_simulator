@@ -412,6 +412,22 @@ class IBCommissionObligationAdmin(admin.ModelAdmin):
                     "admin:ib_obligation_sync", args=[instance.pk],
                 )
             extra_context["ib_needs_attention"] = ib_needs_attention(instance)
+
+            # IB-REVERSALS-FRAUD-05C — Submit Adjustment button, only for
+            # already-CREDITED obligations (the only status
+            # submit_adjustment() itself accepts — see
+            # ib_commission_reversal.py::AdjustmentNotEligible). Read-only
+            # remaining_reversible() display always shown for a CREDITED
+            # obligation; the button itself only when capacity remains.
+            if instance.status == IBCommissionObligation.ST_CREDITED:
+                from .ib_commission_reversal import remaining_reversible as _remaining_reversible_display
+                remaining = _remaining_reversible_display(instance)
+                extra_context["ib_remaining_reversible"] = remaining
+                if remaining > 0 and request.user.has_perm(TREASURY_SUBMIT_PERMISSION):
+                    extra_context["show_ib_adjustment_submit_button"] = True
+                    extra_context["ib_adjustment_submit_url"] = reverse(
+                        "admin:ib_adjustment_submit", args=[instance.pk],
+                    )
         return super().change_view(request, object_id, form_url, extra_context)
 
     def get_urls(self):
@@ -512,6 +528,17 @@ class IBCommissionObligationAdmin(admin.ModelAdmin):
             .order_by("-created_at")[:_RECENT_LIMIT]
         )
 
+        # IB-REVERSALS-FRAUD-05C — Recent Adjustments + remaining_reversible
+        # per CREDITED obligation. Read-only display; computed via the
+        # unmodified ib_commission_reversal.remaining_reversible(), never
+        # a re-derivation of the over-reversal math.
+        from .ib_commission_reversal import remaining_reversible as _remaining_reversible_display
+        from .models import IBCommissionAdjustment
+        recent_adjustments = list(
+            IBCommissionAdjustment.objects.filter(referral=referral)
+            .select_related("obligation", "treasury_operation").order_by("-created_at")[:_RECENT_LIMIT]
+        )
+
         context = dict(
             self.admin_site.each_context(request),
             title=f"IB Detail — {referral.code}",
@@ -525,10 +552,17 @@ class IBCommissionObligationAdmin(admin.ModelAdmin):
             recent_clients=recent_clients,
             recent_lots=recent_lots,
             recent_obligations=[
-                {"obligation": ob, "needs_attention": ib_needs_attention(ob)}
+                {
+                    "obligation": ob, "needs_attention": ib_needs_attention(ob),
+                    "remaining_reversible": (
+                        _remaining_reversible_display(ob)
+                        if ob.status == IBCommissionObligation.ST_CREDITED else None
+                    ),
+                }
                 for ob in recent_obligations
             ],
             recent_wallet_tx=recent_wallet_tx,
+            recent_adjustments=recent_adjustments,
         )
         return render(request, "admin/ib_detail.html", context)
 

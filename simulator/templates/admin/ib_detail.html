@@ -111,7 +111,7 @@ body,#content{background:var(--bg)!important;}
 <div class="ib-section">Recent Commission Obligations</div>
 <div class="ib-panel">
   <table class="ib-table">
-    <thead><tr><th>ID</th><th>Rule Type</th><th>Amount</th><th>Status</th><th>Created</th><th>Treasury</th><th></th></tr></thead>
+    <thead><tr><th>ID</th><th>Rule Type</th><th>Amount</th><th>Status</th><th>Created</th><th>Treasury</th><th>Remaining Reversible</th><th></th></tr></thead>
     <tbody>
       {% for row in recent_obligations %}
       <tr>
@@ -125,9 +125,34 @@ body,#content{background:var(--bg)!important;}
             <a class="ib-a" href="{% url 'admin:simulator_treasuryoperationrequest_change' row.obligation.treasury_operation_id %}">#{{ row.obligation.treasury_operation_id }}</a>
           {% else %}<span class="ib-muted">— not linked —</span>{% endif %}
         </td>
+        <td>{% if row.remaining_reversible is not None %}${{ row.remaining_reversible }}{% else %}<span class="ib-muted">—</span>{% endif %}</td>
         <td>{% if row.needs_attention %}<span class="ib-attn">⚠ needs attention</span>{% endif %}</td>
       </tr>
-      {% empty %}<tr><td colspan="7" class="ib-muted">No obligations yet.</td></tr>{% endfor %}
+      {% empty %}<tr><td colspan="8" class="ib-muted">No obligations yet.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="ib-section">Recent Adjustments (IB-REVERSALS-FRAUD-05C)</div>
+<div class="ib-panel">
+  <table class="ib-table">
+    <thead><tr><th>ID</th><th>Obligation</th><th>Type</th><th>Amount</th><th>Status</th><th>Created</th><th>Treasury</th></tr></thead>
+    <tbody>
+      {% for adj in recent_adjustments %}
+      <tr>
+        <td><a class="ib-a" href="{% url 'admin:simulator_ibcommissionadjustment_change' adj.pk %}">#{{ adj.pk }}</a></td>
+        <td><a class="ib-a" href="{% url 'admin:simulator_ibcommissionobligation_change' adj.obligation_id %}">#{{ adj.obligation_id }}</a></td>
+        <td>{{ adj.adjustment_type }}</td>
+        <td>${{ adj.amount }}</td>
+        <td class="status-{{ adj.status }}">{{ adj.status }}</td>
+        <td>{{ adj.created_at }}</td>
+        <td>
+          {% if adj.treasury_operation_id %}
+            <a class="ib-a" href="{% url 'admin:simulator_treasuryoperationrequest_change' adj.treasury_operation_id %}">#{{ adj.treasury_operation_id }}</a>
+          {% else %}<span class="ib-muted">— not linked —</span>{% endif %}
+        </td>
+      </tr>
+      {% empty %}<tr><td colspan="7" class="ib-muted">No adjustments yet.</td></tr>{% endfor %}
     </tbody>
   </table>
 </div>
