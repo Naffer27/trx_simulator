@@ -2414,6 +2414,133 @@ class IBCommissionObligation(models.Model):
         )
 
 
+class IBCommissionAdjustment(models.Model):
+    """
+    IB-REVERSALS-FRAUD-05B — reversal/adjustment accounting foundation.
+
+    A compensating record against a single, already-CREDITED
+    IBCommissionObligation — never an edit of that obligation's own
+    snapshot fields (basis_amount/applied_fixed_rate/
+    applied_percentage_rate/calculated_amount/status/credited_at all
+    remain exactly as generated/credited, permanently). "IB received X
+    for event Y, and Z of it was later reversed/adjusted for reason R"
+    is reconstructed by reading the original obligation plus its
+    related adjustments — never by mutating the original.
+
+    Multiple partial adjustments against the same obligation are
+    explicitly supported (FK, not OneToOneField) — the sum of every
+    PENDING/APPROVED/EXECUTED adjustment against one obligation can
+    never exceed that obligation's own calculated_amount (enforced in
+    simulator/ib_commission_reversal.py under a row lock on the
+    obligation, re-validated again at approval time — see that
+    module's _remaining_reversible()). A REJECTED adjustment releases
+    its reserved amount back.
+
+    Money never moves directly from this model or its service layer:
+    the only path to an actual wallet debit is the same, unmodified
+    Treasury pipeline every other IB block already uses —
+    treasury_operation links to a TreasuryOperationRequest
+    (operation_type=OP_MANUAL_DEBIT, the existing debit-capable type;
+    no new operation type was created for this), and only Treasury's
+    own existing execution service ever calls wallet_ledger.debit_wallet().
+
+    status intentionally does NOT include CANCELLED: unlike
+    TreasuryOperationRequest (which supports self-withdrawal of a
+    request the submitter themselves created), an adjustment here is
+    always staff-initiated review of someone else's historical
+    obligation — REJECTED (a reviewer's decision) is the only terminal
+    non-execution outcome needed; adding a separate self-cancel path
+    would be inventing a state this block's own design lock
+    (IB-REVERSALS-FRAUD-05A section O: "do not invent unnecessary
+    states") explicitly cautioned against.
+    """
+    TYPE_REVERSAL   = "REVERSAL"
+    TYPE_ADJUSTMENT = "ADJUSTMENT"
+    ADJUSTMENT_TYPE_CHOICES = [
+        (TYPE_REVERSAL,   "Reversal"),
+        (TYPE_ADJUSTMENT, "Adjustment"),
+    ]
+
+    ST_PENDING  = "PENDING"
+    ST_APPROVED = "APPROVED"
+    ST_EXECUTED = "EXECUTED"
+    ST_REJECTED = "REJECTED"
+    STATUS_CHOICES = [
+        (ST_PENDING,  "Pending"),
+        (ST_APPROVED, "Approved"),
+        (ST_EXECUTED, "Executed"),
+        (ST_REJECTED, "Rejected"),
+    ]
+
+    obligation = models.ForeignKey(
+        IBCommissionObligation, on_delete=models.PROTECT, related_name="adjustments",
+    )
+    # Denormalized from obligation.referral, same discipline
+    # IBCommissionObligation.referral itself already uses relative to
+    # attribution.referral — set once, at creation, from the locked
+    # obligation; never independently settable.
+    referral = models.ForeignKey(
+        Referral, on_delete=models.PROTECT, related_name="commission_adjustments",
+    )
+
+    adjustment_type = models.CharField(
+        max_length=16, choices=ADJUSTMENT_TYPE_CHOICES, default=TYPE_REVERSAL,
+    )
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    reason = models.TextField()
+
+    status = models.CharField(
+        max_length=10, choices=STATUS_CHOICES, default=ST_PENDING, db_index=True,
+    )
+
+    created_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="ib_commission_adjustments_created",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    approved_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="ib_commission_adjustments_approved",
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+
+    rejected_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="ib_commission_adjustments_rejected",
+    )
+    rejected_at       = models.DateTimeField(null=True, blank=True)
+    rejection_reason  = models.TextField(blank=True, default="")
+
+    treasury_operation = models.OneToOneField(
+        "TreasuryOperationRequest", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="ib_commission_adjustment",
+    )
+    executed_at = models.DateTimeField(null=True, blank=True)
+
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        verbose_name        = "IB Commission Adjustment"
+        verbose_name_plural  = "IB Commission Adjustments"
+        indexes = [
+            models.Index(fields=["obligation", "status"]),
+            models.Index(fields=["referral", "status"]),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(amount__gt=0),
+                name="ib_adjustment_amount_positive",
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"IBCommissionAdjustment(#{self.pk}, obligation=#{self.obligation_id}, "
+            f"{self.adjustment_type}, ${self.amount}, status={self.status})"
+        )
+
+
 class Bonus(models.Model):
     BONUS_TYPES = [
         ('CREDIT',     'Bono de crédito'),
