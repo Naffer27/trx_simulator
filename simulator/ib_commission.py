@@ -16,6 +16,11 @@ Scope of this module:
   - generate_deposit_percent_obligation() — DEPOSIT_PERCENT commission
     from a single credited, non-challenge Deposit
     (IB-COMMISSION-TRIGGERS-02A).
+  - generate_trading_commission_revenue_share_obligation() —
+    TRADING_COMMISSION_REVENUE_SHARE commission from a single
+    BrokerLedger REV_COMMISSION row (IB-COMMISSION-TRIGGERS-02C).
+    Consumes the already-calculated broker revenue amount directly —
+    never recomputes qty/price/contract-size/commission-rate.
 
 Every generate_*_obligation() function is idempotent (DB-constraint-
 backed, never merely an in-process check) and creates an
@@ -27,9 +32,9 @@ None of these functions is called automatically by any engine
 (simulator/consumers.py, simulator/views.py, simulator/population_engine.py)
 — they are invoked only by the additive sweep functions in
 simulator/ib_commission_triggers.py, which read already-durable rows
-those engines produce, unmodified. SPREAD_REVENUE_SHARE/
-TRADING_COMMISSION_REVENUE_SHARE/CPA_BONUS remain on HOLD /
-POLICY_PENDING — no generator functions exist yet for them.
+those engines produce, unmodified. SPREAD_REVENUE_SHARE/CPA_BONUS
+remain on HOLD / POLICY_PENDING — no generator functions exist yet for
+them.
 """
 import logging
 from decimal import ROUND_HALF_EVEN, Decimal
@@ -39,8 +44,8 @@ from django.db.models import Q
 from django.utils import timezone
 
 from .models import (
-    ChallengeEnrollment, Deposit, IBCommissionObligation, IBCommissionRule,
-    LotExecutionEvent, ReferralAttribution,
+    BrokerLedger, ChallengeEnrollment, Deposit, IBCommissionObligation,
+    IBCommissionRule, LotExecutionEvent, ReferralAttribution,
 )
 
 logger = logging.getLogger("simulator.ib_commission")
@@ -386,6 +391,113 @@ def generate_deposit_percent_obligation(deposit: Deposit):
             rule_type=IBCommissionRule.RULE_DEPOSIT_PERCENT,
             source_event_type="deposit",
             source_event_id=deposit.pk,
+        )
+
+    return obligation
+
+
+def generate_trading_commission_revenue_share_obligation(broker_ledger: BrokerLedger):
+    """
+    IB-COMMISSION-TRIGGERS-02C. Calculate (never credit) the
+    TRADING_COMMISSION_REVENUE_SHARE IB commission owed for a single
+    BrokerLedger REV_COMMISSION row. Creates exactly one PENDING
+    IBCommissionObligation, or returns None (no error) when:
+      - the row's revenue_type is not REV_COMMISSION (e.g. REV_SPREAD —
+        that is a separate, on-HOLD rule type, not this one)
+      - amount is not positive (defensive — real REV_COMMISSION rows are
+        always created with amount > 0 by consumers.py, but BrokerLedger
+        itself has no DB-level CheckConstraint enforcing that, unlike
+        IBCommissionRule; this generator does not trust the absence of a
+        schema guarantee it does not itself own)
+      - source_account_id is None (defensive — schema-legal via SET_NULL
+        on TradingAccount delete, never hit by a live REV_COMMISSION row
+        in practice)
+      - the executing account has no user, or that user has no
+        ReferralAttribution
+      - no TRADING_COMMISSION_REVENUE_SHARE rule resolves for this
+        referral at this row's created_at
+      - the rule tier is ambiguous (fail-closed, logged)
+
+    basis_amount is broker_ledger.amount — the broker's own,
+    already-calculated commission revenue for this execution. This
+    function NEVER recomputes qty/price/contract_size/commission-rate;
+    IB-COMMISSION-TRIGGERS-02C's authorized architecture is to consume
+    the durable broker revenue record, not re-derive it. Idempotent —
+    same DB-constraint-backed guarantee as the other three generators in
+    this module. Never moves money.
+    """
+    if broker_ledger.revenue_type != BrokerLedger.REV_COMMISSION:
+        return None
+
+    if broker_ledger.amount is None or broker_ledger.amount <= 0:
+        return None
+
+    if broker_ledger.source_account_id is None:
+        return None
+
+    user = broker_ledger.source_account.user
+    if user is None:
+        return None
+
+    try:
+        attribution = ReferralAttribution.objects.select_related("referral").get(
+            referred_user=user,
+        )
+    except ReferralAttribution.DoesNotExist:
+        return None
+
+    referral = attribution.referral
+
+    try:
+        rule = resolve_applicable_rule(
+            referral, IBCommissionRule.RULE_TRADING_COMMISSION_REVENUE_SHARE,
+            at_time=broker_ledger.created_at,
+        )
+    except AmbiguousCommissionRuleError as exc:
+        logger.error(
+            "[ib_commission] TRADING_COMMISSION_REVENUE_SHARE rule resolution "
+            "ambiguous for broker_ledger=%d referral=%d — refusing to generate "
+            "an obligation: %s",
+            broker_ledger.pk, referral.pk, exc,
+        )
+        return None
+
+    if rule is None:
+        return None
+
+    basis_amount = broker_ledger.amount
+    applied_percentage_rate = rule.percentage
+    calculated_amount = _money_round(basis_amount * applied_percentage_rate / Decimal("100"))
+
+    source_reference = (
+        f"BrokerLedger #{broker_ledger.pk} REV_COMMISSION "
+        f"account={broker_ledger.source_account_id} amount={broker_ledger.amount}"
+    )
+
+    try:
+        with transaction.atomic():
+            obligation, created = IBCommissionObligation.objects.get_or_create(
+                referral=referral,
+                rule_type=IBCommissionRule.RULE_TRADING_COMMISSION_REVENUE_SHARE,
+                source_event_type="broker_ledger_commission",
+                source_event_id=broker_ledger.pk,
+                defaults={
+                    "attribution": attribution,
+                    "rule": rule,
+                    "source_reference": source_reference,
+                    "basis_amount": basis_amount,
+                    "applied_percentage_rate": applied_percentage_rate,
+                    "calculated_amount": calculated_amount,
+                    "currency": "USD",
+                    "status": IBCommissionObligation.ST_PENDING,
+                },
+            )
+    except IntegrityError:
+        obligation = IBCommissionObligation.objects.get(
+            referral=referral,
+            rule_type=IBCommissionRule.RULE_TRADING_COMMISSION_REVENUE_SHARE,
+            source_event_type="broker_ledger_commission",
+            source_event_id=broker_ledger.pk,
         )
 
     return obligation

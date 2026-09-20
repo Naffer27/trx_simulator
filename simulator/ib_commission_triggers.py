@@ -15,10 +15,11 @@ idempotent (DB-constraint-backed) — running any sweep here twice, or
 concurrently, or over overlapping time windows, converges on the same
 set of IBCommissionObligation rows, never duplicates.
 
-Scope: PER_LOT, CHALLENGE_PERCENT, DEPOSIT_PERCENT only.
-SPREAD_REVENUE_SHARE / TRADING_COMMISSION_REVENUE_SHARE / CPA_BONUS are
-explicitly on HOLD / POLICY_PENDING — no sweep functions for them exist
-here (see IB-COMMISSION-TRIGGERS-02 Design Lock V1, sections F/G/H/Q).
+Scope: PER_LOT, CHALLENGE_PERCENT, DEPOSIT_PERCENT,
+TRADING_COMMISSION_REVENUE_SHARE. SPREAD_REVENUE_SHARE / CPA_BONUS
+remain explicitly on HOLD / POLICY_PENDING — no sweep functions for
+them exist here (see IB-COMMISSION-TRIGGERS-02 Design Lock V1, sections
+F/G/H/Q).
 
 Every sweep function below returns a summary dict
 {"scanned": int, "generated": int, "skipped": int} — "generated" counts
@@ -32,8 +33,12 @@ import logging
 from .ib_commission import (
     generate_challenge_percent_obligation, generate_deposit_percent_obligation,
     generate_per_lot_obligation,
+    generate_trading_commission_revenue_share_obligation,
 )
-from .models import ChallengeEnrollment, Deposit, IBCommissionObligation, LotExecutionEvent
+from .models import (
+    BrokerLedger, ChallengeEnrollment, Deposit, IBCommissionObligation,
+    LotExecutionEvent,
+)
 
 logger = logging.getLogger("simulator.ib_commission_triggers")
 
@@ -167,4 +172,46 @@ def sweep_deposit_percent(cutoff, batch_size=500):
             generated += 1
     result = {"scanned": len(deposits), "generated": generated, "skipped": skipped}
     logger.info("[ib_commission_triggers] sweep_deposit_percent %s", result)
+    return result
+
+
+def sweep_trading_commission_revenue_share(cutoff, batch_size=500):
+    """
+    IB-COMMISSION-TRIGGERS-02C. Scan BrokerLedger REV_COMMISSION rows
+    created at or after `cutoff` and generate any missing
+    TRADING_COMMISSION_REVENUE_SHARE IBCommissionObligation for each, via
+    the unmodified generate_trading_commission_revenue_share_obligation().
+    Reads BrokerLedger directly — the already-durable broker revenue
+    record — and never scans/recomputes from Trade, Position,
+    LotExecutionEvent, or LedgerEntry. Never touches BrokerLedger or the
+    engine that writes it. Never consumes REV_SPREAD (excluded by the
+    revenue_type filter below) — SPREAD_REVENUE_SHARE remains on HOLD.
+    """
+    rows = list(
+        BrokerLedger.objects.filter(
+            revenue_type=BrokerLedger.REV_COMMISSION, created_at__gte=cutoff,
+        ).order_by("id")[:batch_size]
+    )
+    generated = 0
+    skipped = 0
+    for row in rows:
+        if _already_obligated("broker_ledger_commission", row.pk):
+            skipped += 1
+            continue
+        try:
+            obligation = generate_trading_commission_revenue_share_obligation(row)
+        except Exception:
+            logger.exception(
+                "[ib_commission_triggers] sweep_trading_commission_revenue_share "
+                "failed for broker_ledger=%d — skipping, next sweep will retry",
+                row.pk,
+            )
+            skipped += 1
+            continue
+        if obligation is None:
+            skipped += 1
+        else:
+            generated += 1
+    result = {"scanned": len(rows), "generated": generated, "skipped": skipped}
+    logger.info("[ib_commission_triggers] sweep_trading_commission_revenue_share %s", result)
     return result
