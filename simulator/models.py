@@ -2170,6 +2170,250 @@ class ReferralAttribution(models.Model):
         return f"ReferralAttribution(user={self.referred_user_id} -> referral={self.referral_id})"
 
 
+class IBCommissionRule(models.Model):
+    """
+    IB-COMMISSION-ENGINE-01 — configurable IB/Associates commission rule.
+    Approved design: IB-COMMISSION-RULES-DESIGN-01.
+
+    Scope model: `referral` NULL = global default rule; non-null = a
+    per-IB override for that specific Referral. One nullable FK is the
+    entire scope model — no separate boolean needed.
+
+    Rate history is preserved by NEVER mutating an old row's economic
+    fields once obligations may have been generated against it — a rate
+    change is a NEW row (effective_from = now, closing the old row's
+    effective_until). Enforced by convention here (this block implements
+    the engine only, not the future admin workflow) and structurally by
+    IBCommissionObligation snapshotting applied_fixed_rate/
+    applied_percentage_rate at generation time — never re-read from this
+    table after the fact.
+    """
+    RULE_PER_LOT                        = "PER_LOT"
+    RULE_CHALLENGE_PERCENT              = "CHALLENGE_PERCENT"
+    RULE_DEPOSIT_PERCENT                = "DEPOSIT_PERCENT"
+    RULE_SPREAD_REVENUE_SHARE           = "SPREAD_REVENUE_SHARE"
+    RULE_TRADING_COMMISSION_REVENUE_SHARE = "TRADING_COMMISSION_REVENUE_SHARE"
+    RULE_CPA_BONUS                      = "CPA_BONUS"
+
+    RULE_TYPE_CHOICES = [
+        (RULE_PER_LOT,                          "Per Lot"),
+        (RULE_CHALLENGE_PERCENT,                "Challenge Percent"),
+        (RULE_DEPOSIT_PERCENT,                  "Deposit Percent"),
+        (RULE_SPREAD_REVENUE_SHARE,             "Spread Revenue Share"),
+        (RULE_TRADING_COMMISSION_REVENUE_SHARE, "Trading Commission Revenue Share"),
+        (RULE_CPA_BONUS,                        "CPA Bonus"),
+    ]
+
+    # rule_types priced as a percentage of some real revenue/purchase figure.
+    PERCENTAGE_RULE_TYPES = (
+        RULE_CHALLENGE_PERCENT, RULE_DEPOSIT_PERCENT,
+        RULE_SPREAD_REVENUE_SHARE, RULE_TRADING_COMMISSION_REVENUE_SHARE,
+    )
+    # rule_types priced as a flat dollar amount.
+    FIXED_AMOUNT_RULE_TYPES = (RULE_PER_LOT, RULE_CPA_BONUS)
+
+    rule_type = models.CharField(max_length=40, choices=RULE_TYPE_CHOICES, db_index=True)
+    referral  = models.ForeignKey(
+        Referral, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="commission_rules",
+    )
+    enabled = models.BooleanField(default=True)
+
+    fixed_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    percentage   = models.DecimalField(max_digits=6, decimal_places=3, null=True, blank=True)
+
+    cpa_trigger_event = models.CharField(max_length=64, blank=True, default="")
+
+    effective_from  = models.DateTimeField()
+    effective_until = models.DateTimeField(null=True, blank=True)
+
+    created_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="ib_commission_rules_created",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    notes      = models.TextField(blank=True, default="")
+
+    class Meta:
+        verbose_name        = "IB Commission Rule"
+        verbose_name_plural  = "IB Commission Rules"
+        indexes = [
+            models.Index(fields=["rule_type", "referral"]),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(fixed_amount__isnull=True) | models.Q(fixed_amount__gte=0),
+                name="ibrule_fixed_amount_gte_0",
+            ),
+            models.CheckConstraint(
+                check=models.Q(percentage__isnull=True) | models.Q(percentage__gte=0),
+                name="ibrule_percentage_gte_0",
+            ),
+            models.CheckConstraint(
+                check=models.Q(effective_until__isnull=True) | models.Q(effective_until__gt=models.F("effective_from")),
+                name="ibrule_effective_until_after_from",
+            ),
+            models.CheckConstraint(
+                check=~models.Q(rule_type="PER_LOT") | models.Q(fixed_amount__isnull=False),
+                name="ibrule_per_lot_requires_fixed_amount",
+            ),
+            models.CheckConstraint(
+                check=~models.Q(rule_type="CPA_BONUS") | models.Q(fixed_amount__isnull=False),
+                name="ibrule_cpa_bonus_requires_fixed_amount",
+            ),
+            models.CheckConstraint(
+                check=(
+                    ~models.Q(rule_type__in=[
+                        "CHALLENGE_PERCENT", "DEPOSIT_PERCENT",
+                        "SPREAD_REVENUE_SHARE", "TRADING_COMMISSION_REVENUE_SHARE",
+                    ])
+                    | models.Q(percentage__isnull=False)
+                ),
+                name="ibrule_percentage_types_require_percentage",
+            ),
+            # DESIGN-01's overlap guard — at most one currently-open-ended
+            # rule per (rule_type, scope). SQLite has no range-exclusion
+            # constraint; this is the strongest guard it can express.
+            models.UniqueConstraint(
+                fields=["rule_type", "referral"],
+                condition=models.Q(effective_until__isnull=True),
+                name="ibrule_one_open_ended_per_type_scope",
+            ),
+        ]
+
+    def clean(self):
+        """Friendlier validation than the raw DB constraints above (which
+        still apply unconditionally regardless of whether this is ever
+        called — see the class docstring). Not invoked automatically by
+        .save(); callers (a future admin workflow / management command)
+        should call full_clean() explicitly before saving."""
+        from django.core.exceptions import ValidationError
+        errors = {}
+        if self.fixed_amount is not None and self.fixed_amount < 0:
+            errors["fixed_amount"] = "fixed_amount must be >= 0."
+        if self.percentage is not None and self.percentage < 0:
+            errors["percentage"] = "percentage must be >= 0."
+        if self.rule_type in self.FIXED_AMOUNT_RULE_TYPES and self.fixed_amount is None:
+            errors["fixed_amount"] = f"{self.rule_type} requires fixed_amount."
+        if self.rule_type in self.PERCENTAGE_RULE_TYPES and self.percentage is None:
+            errors["percentage"] = f"{self.rule_type} requires percentage."
+        if (
+            self.effective_until is not None
+            and self.effective_from is not None
+            and self.effective_until <= self.effective_from
+        ):
+            errors["effective_until"] = "effective_until must be after effective_from."
+        if errors:
+            raise ValidationError(errors)
+
+    def __str__(self):
+        scope = f"referral={self.referral_id}" if self.referral_id else "GLOBAL"
+        return f"IBCommissionRule({self.rule_type}, {scope}, enabled={self.enabled})"
+
+
+class IBCommissionObligation(models.Model):
+    """
+    IB-COMMISSION-ENGINE-01 — a single, permanent, calculated IB
+    commission liability generated from one real economic event.
+    Approved design: IB-COMMISSION-RULES-DESIGN-01.
+
+    Creating a row here NEVER moves money — see PENDING in STATUS_CHOICES
+    below. Only a future block's Treasury integration
+    (TreasuryOperationRequest / OP_IB_COMMISSION / credit_wallet()) can
+    ever credit a wallet; this model only calculates and records the
+    liability, with a durable, unique-constrained snapshot of the exact
+    rate applied at generation time (applied_fixed_rate/
+    applied_percentage_rate/calculated_amount) — never recomputed later,
+    even if the originating IBCommissionRule subsequently changes.
+    """
+    ST_PENDING   = "PENDING"
+    ST_APPROVED  = "APPROVED"
+    ST_CREDITED  = "CREDITED"
+    ST_CANCELLED = "CANCELLED"
+    ST_REVERSED  = "REVERSED"
+
+    STATUS_CHOICES = [
+        (ST_PENDING,   "Pending"),
+        (ST_APPROVED,  "Approved"),
+        (ST_CREDITED,  "Credited"),
+        (ST_CANCELLED, "Cancelled"),
+        (ST_REVERSED,  "Reversed"),
+    ]
+
+    attribution = models.ForeignKey(
+        ReferralAttribution, on_delete=models.PROTECT,
+        related_name="commission_obligations",
+    )
+    referral = models.ForeignKey(
+        Referral, on_delete=models.PROTECT, db_index=True,
+        related_name="commission_obligations",
+    )
+    rule = models.ForeignKey(
+        IBCommissionRule, on_delete=models.PROTECT,
+        related_name="obligations",
+    )
+    rule_type = models.CharField(max_length=40, choices=IBCommissionRule.RULE_TYPE_CHOICES)
+
+    source_event_type = models.CharField(max_length=40)
+    source_event_id   = models.BigIntegerField()
+    source_reference  = models.CharField(max_length=120, blank=True, default="")
+
+    basis_amount   = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    basis_quantity = models.DecimalField(max_digits=18, decimal_places=6, null=True, blank=True)
+
+    applied_fixed_rate      = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    applied_percentage_rate = models.DecimalField(max_digits=6, decimal_places=3, null=True, blank=True)
+    calculated_amount       = models.DecimalField(max_digits=12, decimal_places=2)
+    currency                = models.CharField(max_length=6, default="USD")
+
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=ST_PENDING, db_index=True)
+
+    created_at   = models.DateTimeField(auto_now_add=True)
+    approved_at  = models.DateTimeField(null=True, blank=True)
+    credited_at  = models.DateTimeField(null=True, blank=True)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    reversed_at  = models.DateTimeField(null=True, blank=True)
+
+    approved_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="ib_commission_obligations_approved",
+    )
+    treasury_operation = models.OneToOneField(
+        "TreasuryOperationRequest", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="ib_commission_obligation",
+    )
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        verbose_name        = "IB Commission Obligation"
+        verbose_name_plural  = "IB Commission Obligations"
+        indexes = [
+            models.Index(fields=["referral", "status"]),
+            models.Index(fields=["source_event_type", "source_event_id"]),
+            models.Index(fields=["status", "created_at"]),
+        ]
+        constraints = [
+            # IB-COMMISSION-RULES-DESIGN-01A — keyed on rule_type, NEVER
+            # on the specific `rule` row: a retry/replay of the same
+            # underlying event after the active rule has since rolled
+            # over must still resolve to the SAME obligation, not create
+            # a second one under the new rule. `rule` itself is still
+            # stored (below) for full traceability, just not part of
+            # this guarantee.
+            models.UniqueConstraint(
+                fields=["referral", "rule_type", "source_event_type", "source_event_id"],
+                name="ib_commission_one_obligation_per_event",
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"IBCommissionObligation(referral={self.referral_id}, {self.rule_type}, "
+            f"${self.calculated_amount}, status={self.status})"
+        )
+
+
 class Bonus(models.Model):
     BONUS_TYPES = [
         ('CREDIT',     'Bono de crédito'),
