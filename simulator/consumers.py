@@ -837,6 +837,28 @@ def _trigger_pending_order_core(pending_order_id: int, execution_price: float) -
             position_id = pos.id
             merged = False
 
+        # IB-PER-LOT-EXECUTION-EVENT-01 — durable, unconditional execution
+        # anchor, same discipline as the manual-WS insertion point in
+        # _db_open_position_atomic: NOT wrapped in try/except, NOT a
+        # nested transaction.atomic() savepoint — a failure here must
+        # roll back this entire trigger execution (Position write,
+        # commission — everything in this function's outer atomic()
+        # block), not silently proceed without it. qty is THIS
+        # execution's incremental amount (the local `qty` var), never
+        # existing.qty/new_qty/pos.qty (cumulative).
+        from .models import LotExecutionEvent
+        LotExecutionEvent.objects.create(
+            account_id=po.account_id,
+            position_id=position_id,
+            symbol=symbol,
+            side=side.upper(),
+            qty=Decimal(str(qty)),
+            execution_price=Decimal(str(execution_price)),
+            merged=merged,
+            entry_path=LotExecutionEvent.ENTRY_PENDING_TRIGGER,
+            source_order_id=po.id,
+        )
+
         # 9 — commission (see "deliberately excluded" note above for why
         # the spread markup fee is skipped but commission is not).
         _cp_fields = _cp.resolve_commercial_pricing_fields(account)
@@ -4988,6 +5010,28 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 )
                 position_id = pos.id
                 merged = False
+
+            # IB-PER-LOT-EXECUTION-EVENT-01 — durable, unconditional
+            # execution anchor. Deliberately NOT wrapped in try/except and
+            # NOT a nested transaction.atomic() savepoint (contrast with
+            # the best-effort BrokerLedger/BrokerAuditEvent writes further
+            # below) — this row is the future PER_LOT commission anchor,
+            # so a failure here must roll back this entire execution
+            # (Position write, balance, commission, spread — everything
+            # in this outer atomic() block), not silently proceed without
+            # it. qty is THIS execution's incremental amount (the local
+            # `qty` var), never existing.qty/new_qty/pos.qty (cumulative).
+            from .models import LotExecutionEvent
+            LotExecutionEvent.objects.create(
+                account_id=self._db_account_id,
+                position_id=position_id,
+                symbol=symbol,
+                side=side.upper(),
+                qty=Decimal(str(qty)),
+                execution_price=Decimal(str(price)),
+                merged=merged,
+                entry_path=LotExecutionEvent.ENTRY_MANUAL_WS,
+            )
 
             # BOOK-04b — Routing Engine Shadow Mode. Gated by
             # _should_activate_routing_decision() (BOOK-04f — master flag

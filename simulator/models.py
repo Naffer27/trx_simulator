@@ -328,6 +328,85 @@ class Position(models.Model):
         return f"{self.account_id} {self.symbol} {self.side} qty={self.qty} @ {self.avg_price}"
 
 
+class LotExecutionEvent(models.Model):
+    """
+    IB-PER-LOT-EXECUTION-EVENT-DESIGN-01 — durable, unconditional marker
+    for exactly one position-open-or-merge execution. The reliable anchor
+    IB PER_LOT commission needs (future block, not implemented here):
+    Position.id is insufficient (a netting merge reuses it — no new row),
+    and BrokerLedger REV_SPREAD is conditional (only when the spread fee
+    is nonzero) and best-effort (nested savepoint, never blocks a trade
+    on its own failure) — see IB-COMMISSION-RULES-DESIGN-01A. This model
+    exists specifically to give every eligible execution its own
+    permanent, uniquely-identified row.
+
+    Created inside the SAME transaction.atomic() as the Position write —
+    never a nested savepoint, never best-effort. Unlike BrokerLedger/
+    BrokerAuditEvent (deliberately fail-open — a write failure there must
+    never block a trade), THIS row is the anchor future commission math
+    depends on: a failure to write it must abort the whole execution
+    (Position create/merge, balance, commission, spread — everything),
+    not silently proceed without it.
+
+    on_delete=SET_NULL (never PROTECT) on `position`: every Position ever
+    opened will have at least one of these rows once this is wired in, so
+    PROTECT would make every future Position close raise ProtectedError.
+    SET_NULL preserves this row (and all its own snapshot fields —
+    symbol/side/qty/execution_price/merged/entry_path — untouched)
+    permanently, exactly the historical durability this model exists for,
+    while leaving `position` nulled out once the Position is gone. No
+    change to any existing close/delete path is required.
+
+    No idempotency key of its own: neither insertion point that creates
+    these rows is ever retried for the same logical execution
+    (_db_open_position_atomic runs once per WS-processed order;
+    _trigger_pending_order_core's own PendingOrder row lock already
+    guarantees only one of its two callers — the live WS tick and the
+    offline Celery daemon — ever reaches the Position write for a given
+    PendingOrder). Duplicate-*payment* protection belongs one layer up,
+    at a future IBCommissionObligation's own uniqueness constraint —
+    not built here.
+    """
+    ENTRY_MANUAL_WS       = "manual_ws"
+    ENTRY_PENDING_TRIGGER = "pending_trigger"
+    ENTRY_PATH_CHOICES = [
+        (ENTRY_MANUAL_WS,       "Manual WS order"),
+        (ENTRY_PENDING_TRIGGER, "Pending/stop/limit trigger"),
+    ]
+
+    account = models.ForeignKey(
+        TradingAccount, on_delete=models.PROTECT, related_name="lot_execution_events",
+    )
+    position = models.ForeignKey(
+        Position, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="lot_execution_events",
+    )
+    symbol          = models.CharField(max_length=12)
+    side            = models.CharField(max_length=4)
+    qty             = models.DecimalField(max_digits=18, decimal_places=6)
+    execution_price = models.DecimalField(max_digits=18, decimal_places=6)
+    merged          = models.BooleanField()
+    entry_path      = models.CharField(max_length=20, choices=ENTRY_PATH_CHOICES)
+    # PendingOrder.id, entry_path=ENTRY_PENDING_TRIGGER only — plain
+    # integer, not a FK (mirrors the same "plain id, not FK" choice
+    # already used for IBCommissionObligation.source_event_id in
+    # IB-COMMISSION-RULES-DESIGN-01, avoiding coupling to PendingOrder's
+    # own lifecycle/on_delete semantics).
+    source_order_id = models.BigIntegerField(null=True, blank=True)
+    created_at      = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["account", "created_at"]),
+        ]
+
+    def __str__(self):
+        return (
+            f"LotExecutionEvent(account={self.account_id} {self.symbol} "
+            f"{self.side} qty={self.qty} merged={self.merged} path={self.entry_path})"
+        )
+
+
 class PendingOrder(models.Model):
     """ORDER-MANAGEMENT-V2A — Pending (limit/stop) orders. Never executes
     directly: only records intent + trigger condition. Execution always
