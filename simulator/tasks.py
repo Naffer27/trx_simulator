@@ -1884,3 +1884,54 @@ def sweep_verified_wallets_task(self) -> dict:
     elapsed_ms = round((_t.monotonic() - t0) * 1000)
     logger.info("[sweep_verified_wallets] activated=%d elapsed_ms=%d", activated, elapsed_ms)
     return {"activated": activated, "elapsed_ms": elapsed_ms}
+
+
+# ──────────────────────────────────────────────────────
+# IB-COMMISSION-TRIGGERS-02A — durable-event commission sweep
+# Read-only against the engines that produce LotExecutionEvent/
+# ChallengeEnrollment/Deposit (simulator/consumers.py, simulator/views.py)
+# — this task and simulator/ib_commission_triggers.py never write to any
+# of those tables, only read already-durable rows and idempotently
+# generate PENDING IBCommissionObligation rows via the existing
+# generate_*_obligation() functions in simulator/ib_commission.py.
+# PER_LOT / CHALLENGE_PERCENT / DEPOSIT_PERCENT only — SPREAD_REVENUE_
+# SHARE / TRADING_COMMISSION_REVENUE_SHARE / CPA_BONUS are explicitly on
+# HOLD / POLICY_PENDING (IB-COMMISSION-TRIGGERS-02 Design Lock V1) and
+# have no sweep here. Same lightweight periodic-sweep shape as
+# sweep_verified_wallets_task/scan_pending_orders_task above — a pure
+# service-layer call, no financial write of its own.
+# ──────────────────────────────────────────────────────
+@shared_task(
+    name="simulator.sweep_ib_commission_triggers",
+    bind=True,
+    max_retries=0,
+    acks_late=True,
+    soft_time_limit=25,
+    time_limit=29,
+)
+def sweep_ib_commission_triggers_task(self, minutes_back: int = 30) -> dict:
+    import time as _t
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from .ib_commission_triggers import (
+        sweep_challenge_percent, sweep_deposit_percent, sweep_per_lot,
+    )
+
+    t0 = _t.monotonic()
+    cutoff = timezone.now() - timedelta(minutes=minutes_back)
+
+    per_lot = sweep_per_lot(cutoff)
+    challenge_percent = sweep_challenge_percent(cutoff)
+    deposit_percent = sweep_deposit_percent(cutoff)
+
+    elapsed_ms = round((_t.monotonic() - t0) * 1000)
+    result = {
+        "per_lot": per_lot,
+        "challenge_percent": challenge_percent,
+        "deposit_percent": deposit_percent,
+        "elapsed_ms": elapsed_ms,
+    }
+    logger.info("[sweep_ib_commission_triggers] %s", result)
+    return result

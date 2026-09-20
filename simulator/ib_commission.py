@@ -5,20 +5,31 @@ IB-COMMISSION-ENGINE-01 — rule resolution + PER_LOT commission calculation.
 Approved design: IB-COMMISSION-RULES-DESIGN-01 /
 IB-COMMISSION-RULES-DESIGN-01A / IB-PER-LOT-EXECUTION-EVENT-DESIGN-01.
 
-Scope of this module, deliberately narrow:
+Scope of this module:
   - resolve_applicable_rule() — the 3-tier precedence resolver
     (per-IB override -> global -> None), fail-closed on ambiguity.
   - generate_per_lot_obligation() — PER_LOT commission calculation from a
-    single LotExecutionEvent, idempotent, creating exactly one
-    IBCommissionObligation in PENDING status.
+    single LotExecutionEvent (IB-COMMISSION-ENGINE-01).
+  - generate_challenge_percent_obligation() — CHALLENGE_PERCENT
+    commission from a single, deposit-backed ChallengeEnrollment
+    (IB-COMMISSION-TRIGGERS-02A).
+  - generate_deposit_percent_obligation() — DEPOSIT_PERCENT commission
+    from a single credited, non-challenge Deposit
+    (IB-COMMISSION-TRIGGERS-02A).
 
-Creating an IBCommissionObligation here NEVER moves money: no
-credit_wallet(), no WalletTransaction, no LedgerEntry, no
-TreasuryOperationRequest. It is purely a calculated PENDING liability
-record. Wiring this into consumers.py's live execution paths, and the
-other 5 rule types (CHALLENGE_PERCENT/DEPOSIT_PERCENT/
-SPREAD_REVENUE_SHARE/TRADING_COMMISSION_REVENUE_SHARE/CPA_BONUS), belong
-to future, separate blocks (IB-COMMISSION-TRIGGERS-02 and beyond).
+Every generate_*_obligation() function is idempotent (DB-constraint-
+backed, never merely an in-process check) and creates an
+IBCommissionObligation here NEVER moves money: no credit_wallet(), no
+WalletTransaction, no LedgerEntry, no TreasuryOperationRequest. It is
+purely a calculated PENDING liability record.
+
+None of these functions is called automatically by any engine
+(simulator/consumers.py, simulator/views.py, simulator/population_engine.py)
+— they are invoked only by the additive sweep functions in
+simulator/ib_commission_triggers.py, which read already-durable rows
+those engines produce, unmodified. SPREAD_REVENUE_SHARE/
+TRADING_COMMISSION_REVENUE_SHARE/CPA_BONUS remain on HOLD /
+POLICY_PENDING — no generator functions exist yet for them.
 """
 import logging
 from decimal import ROUND_HALF_EVEN, Decimal
@@ -28,7 +39,8 @@ from django.db.models import Q
 from django.utils import timezone
 
 from .models import (
-    IBCommissionObligation, IBCommissionRule, LotExecutionEvent, ReferralAttribution,
+    ChallengeEnrollment, Deposit, IBCommissionObligation, IBCommissionRule,
+    LotExecutionEvent, ReferralAttribution,
 )
 
 logger = logging.getLogger("simulator.ib_commission")
@@ -197,6 +209,183 @@ def generate_per_lot_obligation(lot_execution_event: LotExecutionEvent):
             rule_type=IBCommissionRule.RULE_PER_LOT,
             source_event_type="per_lot_execution",
             source_event_id=lot_execution_event.pk,
+        )
+
+    return obligation
+
+
+def generate_challenge_percent_obligation(enrollment: ChallengeEnrollment):
+    """
+    IB-COMMISSION-TRIGGERS-02A. Calculate (never credit) the
+    CHALLENGE_PERCENT IB commission owed for a single ChallengeEnrollment.
+    Creates exactly one PENDING IBCommissionObligation, or returns None
+    (no error) when there's nothing to generate:
+      - the enrollment has no linked Deposit (deposit_id is None —
+        OWNER POLICY locked for this block: admin/manual enrollments
+        never generate a commission, only real deposit-backed purchases)
+      - the enrolling user has no ReferralAttribution
+      - no CHALLENGE_PERCENT rule resolves for this referral at this
+        enrollment's time (enrolled_at)
+      - the rule tier is ambiguous (fail-closed, logged)
+
+    basis_amount is enrollment.product.price_usd (the catalog price of
+    the challenge purchased). Idempotent — same DB-constraint-backed
+    guarantee as generate_per_lot_obligation(). Never moves money.
+    """
+    if enrollment.deposit_id is None:
+        return None
+
+    user = enrollment.user
+    if user is None:
+        return None
+
+    try:
+        attribution = ReferralAttribution.objects.select_related("referral").get(
+            referred_user=user,
+        )
+    except ReferralAttribution.DoesNotExist:
+        return None
+
+    referral = attribution.referral
+
+    try:
+        rule = resolve_applicable_rule(
+            referral, IBCommissionRule.RULE_CHALLENGE_PERCENT,
+            at_time=enrollment.enrolled_at,
+        )
+    except AmbiguousCommissionRuleError as exc:
+        logger.error(
+            "[ib_commission] CHALLENGE_PERCENT rule resolution ambiguous for "
+            "enrollment=%d referral=%d — refusing to generate an obligation: %s",
+            enrollment.pk, referral.pk, exc,
+        )
+        return None
+
+    if rule is None:
+        return None
+
+    basis_amount = enrollment.product.price_usd
+    applied_percentage_rate = rule.percentage
+    calculated_amount = _money_round(basis_amount * applied_percentage_rate / Decimal("100"))
+
+    source_reference = (
+        f"ChallengeEnrollment #{enrollment.pk} product={enrollment.product_id} "
+        f"deposit={enrollment.deposit_id}"
+    )
+
+    try:
+        with transaction.atomic():
+            obligation, created = IBCommissionObligation.objects.get_or_create(
+                referral=referral,
+                rule_type=IBCommissionRule.RULE_CHALLENGE_PERCENT,
+                source_event_type="challenge_enrollment",
+                source_event_id=enrollment.pk,
+                defaults={
+                    "attribution": attribution,
+                    "rule": rule,
+                    "source_reference": source_reference,
+                    "basis_amount": basis_amount,
+                    "applied_percentage_rate": applied_percentage_rate,
+                    "calculated_amount": calculated_amount,
+                    "currency": "USD",
+                    "status": IBCommissionObligation.ST_PENDING,
+                },
+            )
+    except IntegrityError:
+        obligation = IBCommissionObligation.objects.get(
+            referral=referral,
+            rule_type=IBCommissionRule.RULE_CHALLENGE_PERCENT,
+            source_event_type="challenge_enrollment",
+            source_event_id=enrollment.pk,
+        )
+
+    return obligation
+
+
+def generate_deposit_percent_obligation(deposit: Deposit):
+    """
+    IB-COMMISSION-TRIGGERS-02A. Calculate (never credit) the
+    DEPOSIT_PERCENT IB commission owed for a single credited, non-
+    challenge Deposit. Creates exactly one PENDING IBCommissionObligation,
+    or returns None (no error) when:
+      - the deposit is not yet credited, or is a challenge-purchase
+        deposit (challenge_product_id is not None — that's
+        generate_challenge_percent_obligation()'s domain, not this one)
+      - the depositing user has no ReferralAttribution
+      - no DEPOSIT_PERCENT rule resolves for this referral at this
+        deposit's credited time
+      - the rule tier is ambiguous (fail-closed, logged)
+
+    basis_amount is deposit.amount_usd — NEVER confirmed_amount_usd,
+    which IB-COMMISSION-TRIGGERS-02 Phase A confirmed is an unused/dead
+    field never written by the current deposit_callback implementation.
+
+    Idempotent — same DB-constraint-backed guarantee as
+    generate_per_lot_obligation(). Never moves money.
+    """
+    if not deposit.credited or deposit.challenge_product_id is not None:
+        return None
+
+    user = deposit.user
+    if user is None:
+        return None
+
+    try:
+        attribution = ReferralAttribution.objects.select_related("referral").get(
+            referred_user=user,
+        )
+    except ReferralAttribution.DoesNotExist:
+        return None
+
+    referral = attribution.referral
+    at_time = deposit.credited_at or deposit.created_at
+
+    try:
+        rule = resolve_applicable_rule(
+            referral, IBCommissionRule.RULE_DEPOSIT_PERCENT,
+            at_time=at_time,
+        )
+    except AmbiguousCommissionRuleError as exc:
+        logger.error(
+            "[ib_commission] DEPOSIT_PERCENT rule resolution ambiguous for "
+            "deposit=%d referral=%d — refusing to generate an obligation: %s",
+            deposit.pk, referral.pk, exc,
+        )
+        return None
+
+    if rule is None:
+        return None
+
+    basis_amount = deposit.amount_usd
+    applied_percentage_rate = rule.percentage
+    calculated_amount = _money_round(basis_amount * applied_percentage_rate / Decimal("100"))
+
+    source_reference = f"Deposit #{deposit.pk} amount_usd={deposit.amount_usd}"
+
+    try:
+        with transaction.atomic():
+            obligation, created = IBCommissionObligation.objects.get_or_create(
+                referral=referral,
+                rule_type=IBCommissionRule.RULE_DEPOSIT_PERCENT,
+                source_event_type="deposit",
+                source_event_id=deposit.pk,
+                defaults={
+                    "attribution": attribution,
+                    "rule": rule,
+                    "source_reference": source_reference,
+                    "basis_amount": basis_amount,
+                    "applied_percentage_rate": applied_percentage_rate,
+                    "calculated_amount": calculated_amount,
+                    "currency": "USD",
+                    "status": IBCommissionObligation.ST_PENDING,
+                },
+            )
+    except IntegrityError:
+        obligation = IBCommissionObligation.objects.get(
+            referral=referral,
+            rule_type=IBCommissionRule.RULE_DEPOSIT_PERCENT,
+            source_event_type="deposit",
+            source_event_id=deposit.pk,
         )
 
     return obligation

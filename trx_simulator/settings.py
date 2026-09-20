@@ -424,6 +424,22 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(minute="*/5"),
         "options":  {"expires": 4 * 60},
     },
+    # IB-COMMISSION-TRIGGERS-02A — durable-event commission sweep
+    # (PER_LOT/CHALLENGE_PERCENT/DEPOSIT_PERCENT only). Same 5-min
+    # cadence + expires convention as replay-payout-webhook-events-5m
+    # above (the closest existing precedent: a cheap, local-data-only,
+    # idempotent sweep). minutes_back=30 (6x the cadence) is a generous
+    # overlap tolerant of a worker/beat outage of up to ~25 minutes
+    # before the next successful run still catches every row — safe to
+    # overlap because every generate_*_obligation() call is idempotent
+    # via IBCommissionObligation's own DB uniqueness constraint, not
+    # merely this window's tuning.
+    "sweep-ib-commission-triggers-5m": {
+        "task":     "simulator.sweep_ib_commission_triggers",
+        "schedule": crontab(minute="*/5"),
+        "args":     (30,),   # minutes_back=30
+        "options":  {"expires": 4 * 60},
+    },
     # Heartbeat ping every 5 min — confirms beat + worker are alive
     "beat-heartbeat-5m": {
         "task":     "simulator.ping",
