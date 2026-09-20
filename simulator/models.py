@@ -2033,6 +2033,11 @@ class Referral(models.Model):
     user                 = models.OneToOneField(User, on_delete=models.CASCADE, related_name='referral')
     code                 = models.CharField(max_length=20, unique=True)
     clicks               = models.PositiveIntegerField(default=0)
+    # IB-ATTRIBUTION-FOUNDATION-01 — this stored counter is no longer the
+    # source of truth for registrations (see ReferralAttribution below);
+    # it is kept, frozen/unused, to avoid a RemoveField migration in this
+    # block — real counts come from referral.attributions.count(). Never
+    # written by any code path (already true before this block too).
     registrations        = models.PositiveIntegerField(default=0)
     estimated_commission = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
     created_at           = models.DateTimeField(auto_now_add=True)
@@ -2042,6 +2047,48 @@ class Referral(models.Model):
 
     def __str__(self):
         return f"Referral({self.user_id}) code={self.code}"
+
+
+class ReferralAttribution(models.Model):
+    """
+    IB-ATTRIBUTION-FOUNDATION-01 — durable, append-only, tamper-evident
+    record binding a newly registered User to the Referral whose link
+    they first arrived through.
+
+    Created exactly once, at registration (simulator/views.py::
+    register_view) — never updated, never deleted by application code.
+    referred_user is a OneToOneField so a second attribution attempt for
+    the same user is an IntegrityError at the DB level, not merely an
+    unenforced convention (see referral_attribution.py::attribute_user()).
+
+    referral uses PROTECT: a Referral can never be deleted once it has
+    attributed users, preserving this audit trail permanently.
+
+    No commission calculation, no wallet credit, and no multi-level/
+    sub-IB concept exist here or anywhere yet — this model is attribution
+    only. registrations counts should read referral.attributions.count(),
+    never Referral.registrations (see that field's own comment above).
+    """
+    SOURCE_COOKIE  = "cookie"
+    SOURCE_SESSION = "session"
+    SOURCE_CHOICES = [(SOURCE_COOKIE, "Cookie"), (SOURCE_SESSION, "Session")]
+
+    referred_user = models.OneToOneField(
+        User, on_delete=models.CASCADE, related_name="referral_attribution",
+    )
+    referral      = models.ForeignKey(
+        Referral, on_delete=models.PROTECT, related_name="attributions",
+    )
+    attributed_at = models.DateTimeField(auto_now_add=True)
+    source        = models.CharField(max_length=10, choices=SOURCE_CHOICES)
+
+    class Meta:
+        verbose_name        = "Referral Attribution"
+        verbose_name_plural = "Referral Attributions"
+        indexes = [models.Index(fields=["referral"])]
+
+    def __str__(self):
+        return f"ReferralAttribution(user={self.referred_user_id} -> referral={self.referral_id})"
 
 
 class Bonus(models.Model):

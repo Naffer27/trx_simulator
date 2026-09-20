@@ -18,7 +18,7 @@ from .models import (
     RiskRule, DrawdownSnapshot, TradingViolation, TraderScore,
     BrokerSnapshot, SymbolExposure, TraderClassExposure,
     AuditLog,
-    CalendarEvent, Referral, Bonus, BrokerDocument, ExpertAdvisor,
+    CalendarEvent, Referral, ReferralAttribution, Bonus, BrokerDocument, ExpertAdvisor,
     BrokerLedger, BrokerSpreadConfig, Instrument,
     BrokerEquitySnapshot, BrokerRevenueSnapshot,
     AccountProduct, ChallengeProduct, ChallengeEnrollment, FundedConfig,
@@ -4027,12 +4027,47 @@ class CalendarEventAdmin(admin.ModelAdmin):
 
 @admin.register(Referral)
 class ReferralAdmin(admin.ModelAdmin):
-    list_display  = ('user', 'code', 'clicks', 'registrations', 'estimated_commission', 'created_at')
+    # IB-ATTRIBUTION-FOUNDATION-01 — 'registrations' (the stored field) is
+    # no longer written/read anywhere; real_registrations below reads the
+    # live ReferralAttribution count instead. The field itself is kept
+    # unused rather than dropped (see Referral.registrations' own comment
+    # in models.py) — not shown here to avoid displaying a frozen/stale
+    # number next to the real one.
+    list_display  = ('user', 'code', 'clicks', 'real_registrations', 'estimated_commission', 'created_at')
     search_fields = ('user__username', 'code')
-    readonly_fields = ('code', 'clicks', 'registrations', 'created_at')
+    readonly_fields = ('code', 'clicks', 'created_at')
     ordering      = ('-created_at',)
 
+    @admin.display(description='Registros (real)')
+    def real_registrations(self, obj):
+        return obj.attributions.count()
+
     def has_add_permission(self, request):
+        return False
+
+
+@admin.register(ReferralAttribution)
+class ReferralAttributionAdmin(admin.ModelAdmin):
+    """
+    IB-ATTRIBUTION-FOUNDATION-01 — read-only audit log. Attribution rows
+    are created exactly once, programmatically, by
+    referral_attribution.py::attribute_user() at registration — never
+    editable, addable, or deletable via admin, so this trail can never be
+    silently mutated (Design Lock requirement 5).
+    """
+    list_display    = ('referred_user', 'referral', 'source', 'attributed_at')
+    list_filter     = ('source',)
+    search_fields   = ('referred_user__username', 'referral__code')
+    readonly_fields = ('referred_user', 'referral', 'source', 'attributed_at')
+    ordering        = ('-attributed_at',)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
         return False
 
 

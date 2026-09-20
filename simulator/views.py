@@ -166,6 +166,14 @@ def register_view(request):
         if form.is_valid():
             user = form.save()
 
+            # IB-ATTRIBUTION-FOUNDATION-01 — permanent, exactly-once
+            # attribution to the referring Referral, if any valid
+            # session/cookie signal is present. attribute_user() is
+            # fully fail-open (its own try/except) — never blocks or
+            # fails registration on any error, expected or not.
+            from .referral_attribution import attribute_user
+            attribute_user(user, request)
+
             # Wallet con saldo cero
             Wallet.objects.get_or_create(user=user)
 
@@ -4016,11 +4024,20 @@ def associates_view(request):
 
 def referral_click_view(request, code):
     from django.db.models import F
+
+    from .referral_attribution import record_referral_click
+
+    response = redirect('simulator:register')
     try:
-        Referral.objects.filter(code=code).update(clicks=F('clicks') + 1)
+        updated = Referral.objects.filter(code=code).update(clicks=F('clicks') + 1)
+        if updated:
+            # IB-ATTRIBUTION-FOUNDATION-01 — only write an attribution
+            # signal for a code that genuinely exists; first-valid-
+            # referral-wins is enforced inside record_referral_click().
+            record_referral_click(request, response, code)
     except Exception:
-        pass
-    return redirect('simulator:register')
+        logger.exception("[referral_click_view] unexpected error for code=%s", code)
+    return response
 
 
 @login_required
