@@ -283,20 +283,72 @@ class SimulatedTrader(threading.Thread):
         return True
 
     def _close_position(self, account, pos) -> None:
-        """Close a position, record Trade, update balance, run risk + intelligence."""
+        """Close a position, record Trade, update balance, run risk + intelligence.
+
+        FIX-ORPHAN-POSITION-CLOSE-SYNC-01 — mirrors TradingConsumer.
+        _db_close_position_atomic() / tasks._close_position_sync(): locks
+        TradingAccount FIRST, then re-fetches and locks the TARGET
+        Position row (select_for_update, filtered by id AND account_id)
+        strictly after that account lock — never trusts `pos` (the
+        caller's pre-lock _tick() snapshot) for anything financial.
+        If the fresh, locked lookup finds nothing, this is a no-op:
+        already closed by a concurrent call, or the row is otherwise
+        gone — no duplicate Trade is created and the (already-absent)
+        Position is not touched again.
+
+        Root cause this replaces (BOOK-06j.1, reproduced in
+        test_book06j1_population_engine_close_race.py, left unfixed
+        there by design): the previous version read entry/side/qty/
+        symbol/opened_at from the stale `pos` object and unconditionally
+        created a Trade + `Position.objects.filter(id=pos.id).delete()`
+        — a delete that is silently a no-op when the row is already
+        gone, while the Trade had already been created either way. Under
+        two concurrent calls targeting the same Position (the only
+        realistic trigger: two scheduler threads ever pointed at the
+        same account_id), this could create more than one Trade for one
+        real economic close. This fix also closes the mirror-image
+        symptom seen in production data (Position 361/account 51): nothing
+        in the old code ever verified, under lock, that the Position it
+        was about to delete was still the live, current one — any write
+        ordering that left a second, distinct Position row for the same
+        account/symbol/side unclosed could not be told apart from the one
+        actually being closed and now uses a real reference to a real
+        Position, not id-matching around a stale snapshot.
+        """
         from .models import Position, Trade, LedgerEntry, TradingAccount
 
-        entry  = float(pos.avg_price)
-        side   = pos.side
-        qty    = float(pos.qty)
-        symbol = pos.symbol
-
-        close_px, pnl = self._simulate_pnl(
-            entry, side, symbol, qty, account_currency=getattr(account, "currency", "USD") or "USD",
-        )
-
         with transaction.atomic():
+            # 1. Lock the TradingAccount row FIRST — same global lock
+            # order (TradingAccount -> Position) as every other close
+            # path in this codebase.
             acc = TradingAccount.objects.select_for_update().get(id=account.id)
+
+            # 2. NOW find and lock the target Position row — issued
+            # strictly AFTER the Account lock, so "already closed"
+            # reflects the true, currently-committed state.
+            fresh_pos = (
+                Position.objects
+                .select_for_update()
+                .filter(id=pos.id, account_id=account.id)
+                .first()
+            )
+            if fresh_pos is None:
+                log.info(
+                    "[sim:%s #%d] pos %r already closed — skipping duplicate",
+                    self.profile_name, self.account_id, pos.id,
+                )
+                return
+
+            entry  = float(fresh_pos.avg_price)
+            side   = fresh_pos.side
+            qty    = float(fresh_pos.qty)
+            symbol = fresh_pos.symbol
+
+            close_px, pnl = self._simulate_pnl(
+                entry, side, symbol, qty,
+                account_currency=getattr(account, "currency", "USD") or "USD",
+            )
+
             new_bal = float(acc.balance) + pnl
             new_peak = max(float(acc.peak_balance), new_bal)
 
@@ -304,11 +356,11 @@ class SimulatedTrader(threading.Thread):
                 account=acc,
                 symbol=symbol,
                 trade_type=side,
-                lot_size=pos.qty,
-                entry_price=pos.avg_price,
+                lot_size=fresh_pos.qty,
+                entry_price=fresh_pos.avg_price,
                 exit_price=Decimal(str(close_px)),
                 profit_loss=Decimal(str(pnl)),
-                opened_at=pos.opened_at,
+                opened_at=fresh_pos.opened_at,
                 closed_at=timezone.now(),
             )
 
@@ -328,7 +380,7 @@ class SimulatedTrader(threading.Thread):
             from .broker_ledger import create_broker_counterparty_entry
             create_broker_counterparty_entry(sim_trade, acc, pnl, "population_sim")
 
-            Position.objects.filter(id=pos.id).delete()
+            fresh_pos.delete()
 
             TradingAccount.objects.filter(id=acc.id).update(
                 balance=Decimal(str(new_bal)),
