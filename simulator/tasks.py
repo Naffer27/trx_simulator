@@ -1939,3 +1939,44 @@ def sweep_ib_commission_triggers_task(self, minutes_back: int = 30) -> dict:
     }
     logger.info("[sweep_ib_commission_triggers] %s", result)
     return result
+
+
+# ──────────────────────────────────────────────────────
+# IB-TREASURY-CREDIT-03 — settlement reconciliation.
+# Read-only against Treasury's own execution engine (simulator/
+# treasury_requests.py, simulator/wallet_ledger.py) — this task never
+# approves or executes a TreasuryOperationRequest and never calls
+# credit_wallet()/debit_wallet() itself; it only observes already-
+# authoritative Treasury state (via
+# ib_treasury_settlement.sync_obligation_from_treasury()) and mirrors
+# APPROVED -> CREDITED onto the linked IBCommissionObligation once
+# Treasury's own execution has already completed. Same lightweight
+# periodic-sweep shape as sweep_ib_commission_triggers_task above — a
+# pure service-layer call, no financial write of its own.
+#
+# UNSCHEDULED — per IB-TREASURY-CREDIT-03B's authorized scope, no Beat
+# entry is added here (that would require a trx_simulator/settings.py
+# change, out of this block's authorized file list). The task is fully
+# defined and callable (.delay() / .apply()) for manual/ops invocation
+# or a future block's Beat wiring, but does not run on any schedule
+# today. Report this explicitly — do not assume it is scheduled.
+# ──────────────────────────────────────────────────────
+@shared_task(
+    name="simulator.reconcile_ib_treasury_settlement",
+    bind=True,
+    max_retries=0,
+    acks_late=True,
+    soft_time_limit=25,
+    time_limit=29,
+)
+def reconcile_ib_treasury_settlement_task(self) -> dict:
+    import time as _t
+
+    from .ib_treasury_settlement import reconcile_approved_obligations
+
+    t0 = _t.monotonic()
+    result = reconcile_approved_obligations()
+    result["elapsed_ms"] = round((_t.monotonic() - t0) * 1000)
+
+    logger.info("[reconcile_ib_treasury_settlement] %s", result)
+    return result
