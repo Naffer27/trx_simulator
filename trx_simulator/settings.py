@@ -440,6 +440,32 @@ CELERY_BEAT_SCHEDULE = {
         "args":     (30,),   # minutes_back=30
         "options":  {"expires": 4 * 60},
     },
+    # IB-TREASURY-RECONCILIATION-06B — the two reconciliation tasks
+    # already shipped (IB-TREASURY-CREDIT-03B / IB-REVERSALS-FRAUD-05C)
+    # but left deliberately UNSCHEDULED. Both tasks are pure observation
+    # — they only mirror an already-EXECUTED TreasuryOperationRequest
+    # onto its linked IBCommissionObligation/IBCommissionAdjustment
+    # (APPROVED -> CREDITED / APPROVED -> EXECUTED). Neither task
+    # approves anything, creates or executes a TreasuryOperationRequest,
+    # or calls credit_wallet()/debit_wallet() — see
+    # simulator/ib_treasury_settlement.py::reconcile_approved_obligations()
+    # and simulator/ib_commission_reversal.py::reconcile_pending_adjustments()
+    # (both unmodified by this block). Same 5-min cadence + expires
+    # convention as sweep-ib-commission-triggers-5m above; no args —
+    # unlike that sweep, both take zero parameters. Idempotent by
+    # construction (select_for_update() + an early-return no-op once the
+    # target row already reflects the terminal state), so overlapping
+    # runs across workers converge safely, never double-writing.
+    "reconcile-ib-treasury-settlement-5m": {
+        "task":     "simulator.reconcile_ib_treasury_settlement",
+        "schedule": crontab(minute="*/5"),
+        "options":  {"expires": 4 * 60},
+    },
+    "reconcile-ib-commission-adjustments-5m": {
+        "task":     "simulator.reconcile_ib_commission_adjustments",
+        "schedule": crontab(minute="*/5"),
+        "options":  {"expires": 4 * 60},
+    },
     # Heartbeat ping every 5 min — confirms beat + worker are alive
     "beat-heartbeat-5m": {
         "task":     "simulator.ping",

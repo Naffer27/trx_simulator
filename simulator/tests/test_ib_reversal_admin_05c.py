@@ -473,13 +473,42 @@ class CeleryTaskTests(TestCase):
         adj.refresh_from_db()
         self.assertEqual(adj.status, IBCommissionAdjustment.ST_EXECUTED)
 
-    def test_reconciliation_task_unscheduled(self):
-        # Structural proof: no Beat schedule references this task name —
-        # settings.py was not modified by this block.
+    def test_reconciliation_task_scheduled_by_06b(self):
+        """
+        IB-TREASURY-RECONCILIATION-06B.1 — alignment update.
+
+        05C (this file's own original scope) deliberately left
+        reconcile_ib_commission_adjustments UNSCHEDULED — the task
+        existed and was fully callable, but no Beat entry referenced it
+        (settings.py was explicitly out of scope for 05C). This test
+        originally asserted exactly that absence.
+
+        IB-TREASURY-RECONCILIATION-06B subsequently audited both
+        reconciliation tasks (06A) and, once proven safe, authorized
+        connecting them to Celery Beat (06B) — including this one. The
+        original "must NOT be scheduled" assertion is now permanently
+        obsolete, not a regression: 06B's settings.py change was itself
+        an authorized, reviewed change, not an accident this test should
+        keep guarding against.
+
+        This test now protects the OPPOSITE, currently-correct
+        invariant: the "reconcile-ib-commission-adjustments-5m" Beat
+        entry exists and points at exactly the right task, schedule, and
+        options — i.e. it guards the 06B integration going forward,
+        rather than the pre-06B absence.
+        """
+        from celery.schedules import crontab
         from django.conf import settings
+
         beat_schedule = getattr(settings, "CELERY_BEAT_SCHEDULE", {})
-        task_names = {entry.get("task") for entry in beat_schedule.values()}
-        self.assertNotIn("simulator.reconcile_ib_commission_adjustments", task_names)
+        self.assertIn("reconcile-ib-commission-adjustments-5m", beat_schedule)
+
+        entry = beat_schedule["reconcile-ib-commission-adjustments-5m"]
+        self.assertEqual(entry["task"], "simulator.reconcile_ib_commission_adjustments")
+        self.assertEqual(str(entry["schedule"]), str(crontab(minute="*/5")))
+        self.assertEqual(entry["options"], {"expires": 4 * 60})
+        self.assertNotIn("args", entry)
+        self.assertNotIn("kwargs", entry)
 
 
 # ─────────────────────────────────────────────────────────────────────────
