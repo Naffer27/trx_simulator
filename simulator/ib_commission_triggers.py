@@ -16,10 +16,11 @@ concurrently, or over overlapping time windows, converges on the same
 set of IBCommissionObligation rows, never duplicates.
 
 Scope: PER_LOT, CHALLENGE_PERCENT, DEPOSIT_PERCENT,
-TRADING_COMMISSION_REVENUE_SHARE. SPREAD_REVENUE_SHARE / CPA_BONUS
-remain explicitly on HOLD / POLICY_PENDING — no sweep functions for
-them exist here (see IB-COMMISSION-TRIGGERS-02 Design Lock V1, sections
-F/G/H/Q).
+TRADING_COMMISSION_REVENUE_SHARE, SPREAD_REVENUE_SHARE
+(IB-COMMISSION-PARITY-09C.1 — sweep_spread_revenue_share() below).
+CPA_BONUS remains explicitly on HOLD / POLICY_PENDING — no sweep
+function for it exists here (see IB-COMMISSION-TRIGGERS-02 Design Lock
+V1, sections F/G/H/Q).
 
 Every sweep function below returns a summary dict
 {"scanned": int, "generated": int, "skipped": int} — "generated" counts
@@ -32,7 +33,7 @@ import logging
 
 from .ib_commission import (
     generate_challenge_percent_obligation, generate_deposit_percent_obligation,
-    generate_per_lot_obligation,
+    generate_per_lot_obligation, generate_spread_revenue_share_obligation,
     generate_trading_commission_revenue_share_obligation,
 )
 from .models import (
@@ -185,7 +186,8 @@ def sweep_trading_commission_revenue_share(cutoff, batch_size=500):
     record — and never scans/recomputes from Trade, Position,
     LotExecutionEvent, or LedgerEntry. Never touches BrokerLedger or the
     engine that writes it. Never consumes REV_SPREAD (excluded by the
-    revenue_type filter below) — SPREAD_REVENUE_SHARE remains on HOLD.
+    revenue_type filter below) — that is sweep_spread_revenue_share()'s
+    own, separate domain (IB-COMMISSION-PARITY-09C.1).
     """
     rows = list(
         BrokerLedger.objects.filter(
@@ -214,4 +216,54 @@ def sweep_trading_commission_revenue_share(cutoff, batch_size=500):
             generated += 1
     result = {"scanned": len(rows), "generated": generated, "skipped": skipped}
     logger.info("[ib_commission_triggers] sweep_trading_commission_revenue_share %s", result)
+    return result
+
+
+def sweep_spread_revenue_share(cutoff, batch_size=500):
+    """
+    IB-COMMISSION-PARITY-09C.1. Scan BrokerLedger REV_SPREAD rows
+    created at or after `cutoff` and generate any missing
+    SPREAD_REVENUE_SHARE IBCommissionObligation for each, via the
+    unmodified generate_spread_revenue_share_obligation(). Reads
+    BrokerLedger directly — the already-durable broker revenue record —
+    and never scans/recomputes from Trade, Position, LotExecutionEvent,
+    or LedgerEntry, never re-queries market data. Never touches
+    BrokerLedger or the engine that writes it. Never consumes
+    REV_COMMISSION (excluded by the revenue_type filter below) — that
+    is sweep_trading_commission_revenue_share()'s own, separate domain.
+
+    IB-COMMISSION-PARITY-09C's certified fact, unchanged by this
+    function: REV_SPREAD rows simply do not exist for the pending/stop/
+    limit-trigger execution path — this sweep only ever finds rows for
+    executions where one was actually written, exactly mirroring the
+    (already-shipped, already-certified) commission sweep's own
+    "scan what's durable, never synthesize" discipline.
+    """
+    rows = list(
+        BrokerLedger.objects.filter(
+            revenue_type=BrokerLedger.REV_SPREAD, created_at__gte=cutoff,
+        ).order_by("id")[:batch_size]
+    )
+    generated = 0
+    skipped = 0
+    for row in rows:
+        if _already_obligated("broker_ledger_spread", row.pk):
+            skipped += 1
+            continue
+        try:
+            obligation = generate_spread_revenue_share_obligation(row)
+        except Exception:
+            logger.exception(
+                "[ib_commission_triggers] sweep_spread_revenue_share "
+                "failed for broker_ledger=%d — skipping, next sweep will retry",
+                row.pk,
+            )
+            skipped += 1
+            continue
+        if obligation is None:
+            skipped += 1
+        else:
+            generated += 1
+    result = {"scanned": len(rows), "generated": generated, "skipped": skipped}
+    logger.info("[ib_commission_triggers] sweep_spread_revenue_share %s", result)
     return result

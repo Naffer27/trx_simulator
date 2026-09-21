@@ -21,6 +21,14 @@ Scope of this module:
     BrokerLedger REV_COMMISSION row (IB-COMMISSION-TRIGGERS-02C).
     Consumes the already-calculated broker revenue amount directly —
     never recomputes qty/price/contract-size/commission-rate.
+  - generate_spread_revenue_share_obligation() — SPREAD_REVENUE_SHARE
+    commission from a single BrokerLedger REV_SPREAD row
+    (IB-COMMISSION-PARITY-09C.1). Mirrors the TRADING_COMMISSION_
+    REVENUE_SHARE generator's shape exactly — consumes
+    broker_ledger.amount directly, never recomputes pips/bid/ask/
+    contract-size. REV_SPREAD does not exist for every execution (see
+    that function's own docstring) — no obligation is generated when it
+    doesn't, never a fabricated/zero-basis one.
 
 Every generate_*_obligation() function is idempotent (DB-constraint-
 backed, never merely an in-process check) and creates an
@@ -32,9 +40,8 @@ None of these functions is called automatically by any engine
 (simulator/consumers.py, simulator/views.py, simulator/population_engine.py)
 — they are invoked only by the additive sweep functions in
 simulator/ib_commission_triggers.py, which read already-durable rows
-those engines produce, unmodified. SPREAD_REVENUE_SHARE/CPA_BONUS
-remain on HOLD / POLICY_PENDING — no generator functions exist yet for
-them.
+those engines produce, unmodified. CPA_BONUS remains on HOLD /
+POLICY_PENDING — no generator function exists yet for it.
 """
 import logging
 from decimal import ROUND_HALF_EVEN, Decimal
@@ -522,6 +529,129 @@ def generate_trading_commission_revenue_share_obligation(broker_ledger: BrokerLe
             referral=referral,
             rule_type=IBCommissionRule.RULE_TRADING_COMMISSION_REVENUE_SHARE,
             source_event_type="broker_ledger_commission",
+            source_event_id=broker_ledger.pk,
+        )
+
+    return obligation
+
+
+def generate_spread_revenue_share_obligation(broker_ledger: BrokerLedger):
+    """
+    IB-COMMISSION-PARITY-09C.1. Calculate (never credit) the
+    SPREAD_REVENUE_SHARE IB commission owed for a single BrokerLedger
+    REV_SPREAD row. Creates exactly one PENDING IBCommissionObligation,
+    or returns None (no error) when:
+      - the row's revenue_type is not REV_SPREAD (e.g. REV_COMMISSION —
+        that is generate_trading_commission_revenue_share_obligation()'s
+        domain, not this one)
+      - amount is not positive (defensive — real REV_SPREAD rows are
+        always created with amount > 0 by consumers.py, but BrokerLedger
+        itself has no DB-level CheckConstraint enforcing that, unlike
+        IBCommissionRule; this generator does not trust the absence of a
+        schema guarantee it does not itself own)
+      - source_account_id is None (defensive — schema-legal via SET_NULL
+        on TradingAccount delete, never hit by a live REV_SPREAD row in
+        practice)
+      - the executing account has no user, or that user has no
+        ReferralAttribution
+      - no SPREAD_REVENUE_SHARE rule resolves for this referral at this
+        row's created_at
+      - the rule tier is ambiguous (fail-closed, logged)
+
+    basis_amount is broker_ledger.amount — the broker's own,
+    already-captured spread revenue for this execution (IB-COMMISSION-
+    PARITY-09C's certified SSOT: REV_SPREAD.amount is written verbatim
+    from the same Decimal the trader was charged via LedgerEntry(EV_FEE)
+    in the same statement, in simulator/consumers.py — see that
+    module's own O.6c-1aa comment). This function NEVER recomputes
+    qty/price/contract_size/pips/bid/ask; it consumes the durable
+    broker revenue record exactly as generate_trading_commission_
+    revenue_share_obligation() already does for REV_COMMISSION —
+    mirrors that function's shape line-for-line, not a second
+    architecture. Idempotent — same DB-constraint-backed guarantee as
+    the other generators in this module. Never moves money.
+
+    IB-COMMISSION-PARITY-09C's certified, deliberate consequence: the
+    pending/stop/limit-trigger execution path never writes REV_SPREAD
+    at all (no live pricing data to compute a markup from at trigger
+    time — see simulator/consumers.py::_trigger_pending_order_core's
+    own docstring) — this generator is never even called for that path,
+    since no REV_SPREAD row exists to sweep. This is correct, existing,
+    unmodified engine behavior, not a gap this block closes.
+    """
+    if broker_ledger.revenue_type != BrokerLedger.REV_SPREAD:
+        return None
+
+    if broker_ledger.amount is None or broker_ledger.amount <= 0:
+        return None
+
+    if broker_ledger.source_account_id is None:
+        return None
+
+    user = broker_ledger.source_account.user
+    if user is None:
+        return None
+
+    try:
+        attribution = ReferralAttribution.objects.select_related("referral").get(
+            referred_user=user,
+        )
+    except ReferralAttribution.DoesNotExist:
+        return None
+
+    referral = attribution.referral
+    if not _referral_is_active(referral):
+        return None
+
+    try:
+        rule = resolve_applicable_rule(
+            referral, IBCommissionRule.RULE_SPREAD_REVENUE_SHARE,
+            at_time=broker_ledger.created_at,
+        )
+    except AmbiguousCommissionRuleError as exc:
+        logger.error(
+            "[ib_commission] SPREAD_REVENUE_SHARE rule resolution "
+            "ambiguous for broker_ledger=%d referral=%d — refusing to generate "
+            "an obligation: %s",
+            broker_ledger.pk, referral.pk, exc,
+        )
+        return None
+
+    if rule is None:
+        return None
+
+    basis_amount = broker_ledger.amount
+    applied_percentage_rate = rule.percentage
+    calculated_amount = _money_round(basis_amount * applied_percentage_rate / Decimal("100"))
+
+    source_reference = (
+        f"BrokerLedger #{broker_ledger.pk} REV_SPREAD "
+        f"account={broker_ledger.source_account_id} amount={broker_ledger.amount}"
+    )
+
+    try:
+        with transaction.atomic():
+            obligation, created = IBCommissionObligation.objects.get_or_create(
+                referral=referral,
+                rule_type=IBCommissionRule.RULE_SPREAD_REVENUE_SHARE,
+                source_event_type="broker_ledger_spread",
+                source_event_id=broker_ledger.pk,
+                defaults={
+                    "attribution": attribution,
+                    "rule": rule,
+                    "source_reference": source_reference,
+                    "basis_amount": basis_amount,
+                    "applied_percentage_rate": applied_percentage_rate,
+                    "calculated_amount": calculated_amount,
+                    "currency": "USD",
+                    "status": IBCommissionObligation.ST_PENDING,
+                },
+            )
+    except IntegrityError:
+        obligation = IBCommissionObligation.objects.get(
+            referral=referral,
+            rule_type=IBCommissionRule.RULE_SPREAD_REVENUE_SHARE,
+            source_event_type="broker_ledger_spread",
             source_event_id=broker_ledger.pk,
         )
 
