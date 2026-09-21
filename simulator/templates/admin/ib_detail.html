@@ -38,6 +38,8 @@ body,#content{background:var(--bg)!important;}
              text-decoration:none;letter-spacing:.04em;margin-bottom:12px;}
 .ib-risk-btn-freeze{background:rgba(231,76,60,.12);color:var(--bear);border:1px solid rgba(231,76,60,.35);}
 .ib-risk-btn-unfreeze{background:rgba(39,174,96,.15);color:var(--bull);border:1px solid rgba(39,174,96,.3);}
+.ib-risk-btn-rate{background:rgba(232,200,74,.15);color:var(--gold);border:1px solid rgba(232,200,74,.4);}
+.kpi-sub{font-size:.6rem;color:var(--muted);margin-top:3px;}
 </style>
 
 <div class="ib-crumb">IB OPS &rsaquo; IB Directory &rsaquo; {{ referral.user.username }}</div>
@@ -64,7 +66,28 @@ body,#content{background:var(--bg)!important;}
   <div class="kpi"><div class="kpi-lbl">Risk Status</div><div class="kpi-val {% if is_frozen %}warn{% endif %}">{{ referral.risk_status }}</div></div>
 </div>
 
-<div class="ib-section">Commission Configuration</div>
+<div class="ib-section">Current Commission Contract (IB-PORTAL-08B)</div>
+<div class="kpi-grid">
+  <div class="kpi">
+    <div class="kpi-lbl">Rate ($/lot)</div>
+    <div class="kpi-val gold">{% if per_lot_rule %}${{ per_lot_rule.fixed_amount }}{% else %}No configurada{% endif %}</div>
+    {% if per_lot_rule %}<div class="kpi-sub">{{ per_lot_rate_source }} — effective from {{ per_lot_rule.effective_from|date:"Y-m-d H:i" }}{% if per_lot_rule.effective_until %} to {{ per_lot_rule.effective_until|date:"Y-m-d H:i" }}{% endif %}</div>{% endif %}
+  </div>
+</div>
+{% if show_ib_change_rate_button %}
+<a href="{{ ib_change_rate_url }}" class="ib-risk-btn ib-risk-btn-rate">Change Commission Rate →</a>
+{% endif %}
+
+<div class="ib-section">Commission Summary (IB-PORTAL-08B — held is a breakdown of pending, not additive)</div>
+<div class="kpi-grid">
+  <div class="kpi"><div class="kpi-lbl">Generated</div><div class="kpi-val gold">${{ commission_summary.generated }}</div></div>
+  <div class="kpi"><div class="kpi-lbl">Pending</div><div class="kpi-val warn">${{ commission_summary.pending }}</div></div>
+  <div class="kpi"><div class="kpi-lbl">— of which Held</div><div class="kpi-val">${{ commission_summary.held }}</div></div>
+  <div class="kpi"><div class="kpi-lbl">Credited</div><div class="kpi-val bull">${{ commission_summary.credited }}</div></div>
+  <div class="kpi"><div class="kpi-lbl">Reversed/Adjusted</div><div class="kpi-val">${{ commission_summary.reversed }}</div></div>
+</div>
+
+<div class="ib-section">Commission Configuration — All Rule Types</div>
 <div class="ib-panel">
   <table class="ib-table">
     <thead><tr><th>Rule Type</th><th>Rate</th><th>Source</th></tr></thead>

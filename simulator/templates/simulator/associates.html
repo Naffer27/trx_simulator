@@ -97,6 +97,40 @@
 }
 .ref-step-text { font-size: .82rem; color: var(--text); line-height: 1.5; }
 .ref-step-text strong { color: var(--gold); }
+
+.ref-frozen-banner {
+  background: rgba(239,83,80,.08); border: 1px solid rgba(239,83,80,.35);
+  border-radius: 12px; padding: 16px 20px; margin-bottom: 20px;
+  font-size: .84rem; color: var(--text); display: flex; align-items: center; gap: 12px;
+}
+.ref-frozen-banner i { color: #ef5350; font-size: 1.1rem; }
+.ref-frozen-banner strong { color: #ef5350; }
+
+.ref-stat-sub { font-size: .68rem; color: var(--muted-2); margin-top: 2px; }
+
+.ref-history {
+  background: var(--bg-card-2); border: 1px solid var(--border);
+  border-radius: 12px; padding: 20px 22px; margin-top: 24px;
+}
+.ref-history h6 {
+  font-family: 'Orbitron', sans-serif; font-size: .65rem; font-weight: 700;
+  letter-spacing: .1em; text-transform: uppercase;
+  color: var(--muted-2); margin-bottom: 14px;
+}
+.ref-history-table { width: 100%; border-collapse: collapse; font-size: .78rem; }
+.ref-history-table th {
+  color: var(--muted-2); font-size: .62rem; text-transform: uppercase; letter-spacing: .05em;
+  padding: 8px 10px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap;
+}
+.ref-history-table td {
+  padding: 9px 10px; border-bottom: 1px solid rgba(255,255,255,.04);
+  color: var(--text); white-space: nowrap;
+}
+.ref-history-empty { color: var(--muted-2); text-align: center; padding: 18px; font-size: .82rem; }
+.ref-history-pager { display: flex; justify-content: center; gap: 10px; margin-top: 14px; font-size: .78rem; }
+.ref-history-pager a { color: var(--gold); text-decoration: none; }
+.ref-history-pager a:hover { text-decoration: underline; }
+.ref-history-pager span { color: var(--muted-2); }
 {% endblock %}
 
 {% block content %}
@@ -112,6 +146,15 @@
       </div>
     </div>
   </div>
+
+  {% if is_frozen %}
+  <div class="ref-frozen-banner">
+    <i class="fa-solid fa-triangle-exclamation"></i>
+    <div><strong>Programa IB temporalmente congelado.</strong> Tu historial y comisiones anteriores siguen
+    disponibles abajo. No se generan nuevas comisiones mientras el programa esté congelado. Contacta a
+    soporte para más información.</div>
+  </div>
+  {% endif %}
 
   <!-- Stats -->
   <div class="ref-stats-grid">
@@ -134,12 +177,65 @@
       </div>
     </div>
     <div class="ref-stat">
+      <div class="ref-stat-icon" style="background:rgba(52,152,219,.08);color:#3498db">
+        <i class="fa-solid fa-chart-simple"></i>
+      </div>
+      <div>
+        <div class="ref-stat-label">Lotes generados</div>
+        <div class="ref-stat-value">{{ lot_totals.lifetime }}</div>
+      </div>
+    </div>
+    <div class="ref-stat">
       <div class="ref-stat-icon" style="background:rgba(255,152,0,.08);color:#ff9800">
         <i class="fa-solid fa-coins"></i>
       </div>
       <div>
-        <div class="ref-stat-label">Comisión estimada</div>
-        <div class="ref-stat-value">${{ referral.estimated_commission|floatformat:2 }}</div>
+        <div class="ref-stat-label">Tarifa actual</div>
+        {% if current_rate is not None %}
+          <div class="ref-stat-value">${{ current_rate }}<span class="ref-stat-sub">/lot</span></div>
+        {% else %}
+          <div class="ref-stat-value" style="font-size:.95rem;">No configurada</div>
+        {% endif %}
+      </div>
+    </div>
+    <div class="ref-stat">
+      <div class="ref-stat-icon" style="background:rgba(255,215,0,.08);color:var(--gold)">
+        <i class="fa-solid fa-sack-dollar"></i>
+      </div>
+      <div>
+        <div class="ref-stat-label">Comisión generada</div>
+        <div class="ref-stat-value">${{ commission_summary.generated|floatformat:2 }}</div>
+      </div>
+    </div>
+    <div class="ref-stat">
+      <div class="ref-stat-icon" style="background:rgba(255,193,7,.08);color:#ffc107">
+        <i class="fa-solid fa-hourglass-half"></i>
+      </div>
+      <div>
+        <div class="ref-stat-label">Pendiente</div>
+        <div class="ref-stat-value">${{ commission_summary.pending|floatformat:2 }}</div>
+      </div>
+    </div>
+    <div class="ref-stat">
+      <div class="ref-stat-icon" style="background:rgba(239,83,80,.08);color:#ef5350">
+        <i class="fa-solid fa-lock"></i>
+      </div>
+      <div>
+        <div class="ref-stat-label">En hold</div>
+        <div class="ref-stat-value">${{ commission_summary.held|floatformat:2 }}</div>
+        <div class="ref-stat-sub">Subconjunto de pendiente</div>
+      </div>
+    </div>
+    <div class="ref-stat">
+      <div class="ref-stat-icon" style="background:rgba(38,166,154,.08);color:#26a69a">
+        <i class="fa-solid fa-circle-check"></i>
+      </div>
+      <div>
+        <div class="ref-stat-label">Acreditada</div>
+        <div class="ref-stat-value">${{ commission_summary.credited|floatformat:2 }}</div>
+        {% if commission_summary.reversed and commission_summary.reversed > 0 %}
+          <div class="ref-stat-sub">Reversado/ajustado: ${{ commission_summary.reversed|floatformat:2 }}</div>
+        {% endif %}
       </div>
     </div>
   </div>
@@ -159,6 +255,41 @@
     </div>
   </div>
 
+  <!-- Actividad / Historial de comisiones -->
+  <div class="ref-history">
+    <h6>Actividad / Historial de comisiones</h6>
+    {% if history_rows %}
+    <div style="overflow-x:auto;">
+      <table class="ref-history-table">
+        <thead>
+          <tr><th>Fecha</th><th>Trader</th><th>Lotes</th><th>Tarifa aplicada</th><th>Comisión</th><th>Estado</th></tr>
+        </thead>
+        <tbody>
+          {% for row in history_rows %}
+          <tr>
+            <td>{{ row.obligation.created_at|date:"d M Y" }}</td>
+            <td>{% if row.trader_label %}{{ row.trader_label }}{% else %}<span style="color:var(--muted-2)">—</span>{% endif %}</td>
+            <td>{% if row.lots is not None %}{{ row.lots }}{% else %}<span style="color:var(--muted-2)">—</span>{% endif %}</td>
+            <td>{% if row.rate_label %}{{ row.rate_label }}{% else %}<span style="color:var(--muted-2)">—</span>{% endif %}</td>
+            <td>${{ row.obligation.calculated_amount }}</td>
+            <td>{{ row.status_label }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if history_page.paginator.num_pages > 1 %}
+    <div class="ref-history-pager">
+      {% if history_page.has_previous %}<a href="?page={{ history_page.previous_page_number }}">&laquo; Anterior</a>{% endif %}
+      <span>Página {{ history_page.number }} de {{ history_page.paginator.num_pages }}</span>
+      {% if history_page.has_next %}<a href="?page={{ history_page.next_page_number }}">Siguiente &raquo;</a>{% endif %}
+    </div>
+    {% endif %}
+    {% else %}
+    <div class="ref-history-empty">Aún no hay comisiones generadas.</div>
+    {% endif %}
+  </div>
+
   <!-- Cómo funciona -->
   <div class="ref-info">
     <h6>Cómo funciona</h6>
@@ -172,7 +303,7 @@
     </div>
     <div class="ref-step">
       <div class="ref-step-num">3</div>
-      <div class="ref-step-text">Al realizar depósitos y operar, <strong>recibes comisiones estimadas</strong> que el equipo revisa y acredita periódicamente.</div>
+      <div class="ref-step-text">Al realizar depósitos y operar, <strong>generas comisiones</strong> según tu contrato vigente, que el equipo revisa y acredita periódicamente.</div>
     </div>
     <div class="ref-step">
       <div class="ref-step-num">4</div>

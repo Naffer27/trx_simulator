@@ -11,6 +11,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse, HttpResponse, Http404
 from django.contrib.auth.decorators import login_required
 from django.core.mail import send_mail
+from django.core.paginator import Paginator
 from django.conf import settings
 from django.db.models import Sum, Count, Max, Min, Q
 from django.db import transaction
@@ -27,6 +28,7 @@ from .models import (
     KYCProfile, SupportTicket, SupportMessage,
     FundedConfig, FundedPayoutRequest,
     WithdrawalEmailOTPChallenge, VerifiedWithdrawalWallet,
+    IBCommissionObligation, IBCommissionRule,
 )
 from .challenge_engine import (
     evaluate_phase as _ce_evaluate_phase,
@@ -4006,8 +4008,21 @@ def calendar_view(request):
     })
 
 
+_IB_PORTAL_HISTORY_PAGE_SIZE = 20
+
+
 @login_required
 def associates_view(request):
+    """
+    IB-PORTAL-08B. Reads exclusively from the real IB commission SSOT
+    (IBCommissionObligation / LotExecutionEvent / IBCommissionRule, via
+    the same, unmodified helpers simulator/ib_admin_ops.py already uses
+    for the Risk Desk) — never a second calculation, never
+    Referral.estimated_commission (dead field, confirmed unused by the
+    real settlement pipeline by IB-PORTAL-08A). Strictly scoped to
+    request.user's own Referral throughout — no ID is ever accepted
+    from GET/POST to change scope (IDOR-safe by construction).
+    """
     ref, _ = Referral.objects.get_or_create(
         user=request.user,
         defaults={'code': _secrets.token_urlsafe(8)},
@@ -4015,10 +4030,53 @@ def associates_view(request):
     referral_url = request.build_absolute_uri(
         reverse('simulator:referral_click', args=[ref.code])
     )
+
+    from .ib_admin_ops import (
+        ib_commission_summary, ib_effective_rate, ib_lot_totals, ib_obligation_status_label,
+    )
+
+    lot_totals = ib_lot_totals(ref)
+    current_rule, _rate_source = ib_effective_rate(ref, IBCommissionRule.RULE_PER_LOT)
+    commission_summary = ib_commission_summary(ref)
+
+    history_qs = (
+        IBCommissionObligation.objects.filter(referral=ref)
+        .select_related("attribution__referred_user", "treasury_operation")
+        .order_by("-created_at")
+    )
+    paginator = Paginator(history_qs, _IB_PORTAL_HISTORY_PAGE_SIZE)
+    history_page = paginator.get_page(request.GET.get("page", 1))
+
+    history_rows = [
+        {
+            "obligation": ob,
+            # PII discipline (IB-PORTAL-08B section 7): username only —
+            # never email/KYC/wallet/balance.
+            "trader_label": ob.attribution.referred_user.username if ob.attribution_id else None,
+            # Lots: read directly from the already-certified snapshot
+            # (basis_quantity is set only by generate_per_lot_obligation()
+            # from the source LotExecutionEvent.qty — never divided/
+            # derived here). None for non-PER_LOT rows -> template shows "—".
+            "lots": ob.basis_quantity,
+            "rate_label": (
+                f"${ob.applied_fixed_rate}/lot" if ob.applied_fixed_rate is not None
+                else (f"{ob.applied_percentage_rate}%" if ob.applied_percentage_rate is not None else None)
+            ),
+            "status_label": ib_obligation_status_label(ob),
+        }
+        for ob in history_page.object_list
+    ]
+
     return render(request, 'simulator/associates.html', {
         'referral':     ref,
         'referral_url': referral_url,
         'active_section': 'associates',
+        'is_frozen': ref.risk_status == Referral.RISK_FROZEN,
+        'lot_totals': lot_totals,
+        'current_rate': current_rule.fixed_amount if current_rule else None,
+        'commission_summary': commission_summary,
+        'history_page': history_page,
+        'history_rows': history_rows,
     })
 
 

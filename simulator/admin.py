@@ -4035,7 +4035,23 @@ class ReferralAdmin(admin.ModelAdmin):
     # number next to the real one.
     list_display  = ('user', 'code', 'clicks', 'real_registrations', 'estimated_commission', 'created_at')
     search_fields = ('user__username', 'code')
-    readonly_fields = ('code', 'clicks', 'created_at')
+    # IB-PORTAL-08B — risk_status/frozen_*/estimated_commission were
+    # previously editable here, letting staff bypass freeze_referral()/
+    # unfreeze_referral() (simulator/ib_risk_holds.py) entirely: no
+    # TREASURY_REVIEW_PERMISSION check, no required reason, no
+    # IBRiskEvent, no AuditLog/BrokerAuditEvent entry — silently
+    # defeating IB-RISK-HOLDS-07B's append-only audit guarantee.
+    # risk_status/frozen_at/frozen_by/frozen_reason must only ever
+    # change via Risk Desk's Freeze/Unfreeze actions (simulator/
+    # ib_admin_ops.py). estimated_commission is separately locked here
+    # because IB-PORTAL-08A found it dead/unused by the real commission
+    # engine — the portal no longer reads it (see associates_view); a
+    # freely staff-editable field never wired to real settlement is
+    # exactly the kind of number that must not be hand-typed.
+    readonly_fields = (
+        'code', 'clicks', 'created_at',
+        'risk_status', 'frozen_at', 'frozen_by', 'frozen_reason', 'estimated_commission',
+    )
     ordering      = ('-created_at',)
 
     @admin.display(description='Registros (real)')

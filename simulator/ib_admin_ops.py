@@ -84,11 +84,13 @@ on beyond that display.
 CPA_BONUS and SPREAD_REVENUE_SHARE remain HOLD — neither is
 implemented, referenced, or branched on anywhere in this module.
 """
+import logging
 from decimal import Decimal
 
 from django.contrib import admin, messages
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
+from django.db import transaction
 from django.db.models import (
     Count, DecimalField, IntegerField, OuterRef, Q, Subquery, Sum,
 )
@@ -110,11 +112,13 @@ from .ib_treasury_settlement import (
     reconcile_approved_obligations, sync_obligation_from_treasury,
 )
 from .models import (
-    IBCommissionObligation, IBCommissionRule, IBRiskEvent, LotExecutionEvent, Referral,
-    ReferralAttribution, TradingAccount, TreasuryOperationRequest, Wallet,
-    WalletTransaction,
+    IBCommissionAdjustment, IBCommissionObligation, IBCommissionRule, IBRiskEvent,
+    LotExecutionEvent, Referral, ReferralAttribution, TradingAccount,
+    TreasuryOperationRequest, Wallet, WalletTransaction,
 )
 from .treasury_requests import TREASURY_REVIEW_PERMISSION, TREASURY_SUBMIT_PERMISSION
+
+logger = logging.getLogger("simulator.ib_admin_ops")
 
 IB_DIRECTORY_PAGE_SIZE = 25
 _RECENT_LIMIT = 10
@@ -281,6 +285,231 @@ def ib_effective_rate(referral, rule_type, at_time=None):
     if rule is None:
         return None, "none"
     return rule, ("per-IB" if rule.referral_id == referral.pk else "global")
+
+
+# ─────────────────────────────────────────────
+# IB-PORTAL-08B — single shared commission-summary aggregate, reused by
+# BOTH the IB-facing portal (/associates/) and the Risk Desk (ib_detail_
+# view) — one query shape, never duplicated. All four IBCommissionObl-
+# igation figures computed in ONE aggregate() call via filtered Sum()s
+# (Django conditional aggregates), so a 100k+-obligation IB never loads
+# more than one DB-side aggregated row into Python — no per-obligation
+# Python loop anywhere in this function.
+#
+# Semantics (locked, IB-PORTAL-08A section H / this block's section 5):
+#   generated = SUM(calculated_amount) over ALL obligations for this
+#               referral (CANCELLED/REVERSED are never written by any
+#               code path today — see IBCommissionObligation.STATUS_
+#               CHOICES' own docstring history — so this is currently
+#               exactly PENDING+APPROVED+CREDITED, i.e.
+#               generated == pending + credited, no double counting).
+#   pending   = SUM(calculated_amount) where status IN (PENDING, APPROVED)
+#   held      = SUM(calculated_amount) where is_held=True — a SUBSET of
+#               pending (is_held is orthogonal to status, per IB-RISK-
+#               HOLDS-07A section G), an informational OVERLAY/breakdown
+#               of pending, never summed alongside it as a fifth bucket.
+#   credited  = SUM(calculated_amount) where status=CREDITED
+#   reversed  = SUM(amount) over EXECUTED IBCommissionAdjustment rows —
+#               the only adjustment status where money has actually
+#               moved (see ib_commission_reversal.py's own status
+#               docstring) — displayed SEPARATELY, never netted against
+#               credited (a CREDITED obligation's own calculated_amount/
+#               credited_at never mutate, per IB-TREASURY-CREDIT-03's
+#               locked immutability guarantee).
+# ─────────────────────────────────────────────
+
+def ib_commission_summary(referral):
+    obligation_totals = IBCommissionObligation.objects.filter(referral=referral).aggregate(
+        generated=Coalesce(Sum("calculated_amount"), Decimal("0.00"), output_field=_MONEY_FIELD),
+        pending=Coalesce(
+            Sum(
+                "calculated_amount",
+                filter=Q(status__in=[IBCommissionObligation.ST_PENDING, IBCommissionObligation.ST_APPROVED]),
+            ),
+            Decimal("0.00"), output_field=_MONEY_FIELD,
+        ),
+        held=Coalesce(
+            Sum("calculated_amount", filter=Q(is_held=True)),
+            Decimal("0.00"), output_field=_MONEY_FIELD,
+        ),
+        credited=Coalesce(
+            Sum("calculated_amount", filter=Q(status=IBCommissionObligation.ST_CREDITED)),
+            Decimal("0.00"), output_field=_MONEY_FIELD,
+        ),
+    )
+    reversed_total = IBCommissionAdjustment.objects.filter(
+        referral=referral, status=IBCommissionAdjustment.ST_EXECUTED,
+    ).aggregate(
+        total=Coalesce(Sum("amount"), Decimal("0.00"), output_field=_MONEY_FIELD),
+    )["total"]
+    obligation_totals["reversed"] = reversed_total
+    return obligation_totals
+
+
+# IB-PORTAL-08B section 8 — safe, non-misleading status wording. Never
+# says "Pagada"/"Paid" for anything short of CREDITED — that is the
+# only status where IB-TREASURY-CREDIT-03's own pipeline has already
+# observed a real, completed wallet credit (sync_obligation_from_
+# treasury() only ever sets CREDITED after Treasury's own execution
+# reached EXECUTED). A Treasury terminal failure while APPROVED is
+# reported as "En revisión" — the existing ib_needs_attention() flag
+# already surfaces this internally for staff; the IB never sees a raw
+# Treasury status string.
+def ib_obligation_status_label(obligation):
+    if obligation.status == IBCommissionObligation.ST_CREDITED:
+        return "Acreditada"
+    if obligation.status == IBCommissionObligation.ST_PENDING:
+        return "Pendiente de revisión"
+    if obligation.status == IBCommissionObligation.ST_APPROVED:
+        if obligation.treasury_operation_id is None:
+            return "Aprobada"
+        if ib_needs_attention(obligation):
+            return "En revisión"
+        return "En proceso"
+    # CANCELLED / REVERSED — never written by any code path today, kept
+    # only for STATUS_CHOICES completeness; labeled honestly if it ever
+    # occurs rather than silently falling through.
+    return obligation.get_status_display()
+
+
+# ─────────────────────────────────────────────
+# IB-PORTAL-08B section 11/12/13 — Change Commission Rate.
+#
+# Reuses IBCommissionRule's OWN existing invariants (IB-COMMISSION-
+# RULES-DESIGN-01, unmodified) rather than inventing a new scheme:
+#   - a rate CHANGE is a NEW row (effective_from=now), never an edit of
+#     an existing row's economic fields (IBCommissionRuleAdmin already
+#     enforces this at the UI layer via get_readonly_fields(); this
+#     service enforces it structurally — it only ever .create()s a new
+#     row and .save(update_fields=["effective_until"])s an old one,
+#     never touches fixed_amount/percentage/rule_type/referral on an
+#     existing row).
+#   - the DB UniqueConstraint "ibrule_one_open_ended_per_type_scope"
+#     (at most one open-ended rule per (rule_type, referral)) is
+#     satisfied by always closing the currently-open row (setting its
+#     effective_until=now) in the SAME transaction, BEFORE creating the
+#     new open-ended row — never the other way around, so the
+#     constraint is never even transiently violated.
+#   - "ibrule_effective_until_after_from" is satisfied because the
+#     closed row's own effective_from was necessarily set earlier than
+#     `now` (it already existed).
+#
+# Section 12 (CRITICAL): only ever queries/closes a rule scoped to
+# `referral=referral` (never referral=None). If the IB was previously
+# falling back to the GLOBAL rule (no per-IB override existed yet),
+# `open_rule` below is simply None — the global row is never touched,
+# and a brand-new per-IB override row is created. The global rule (and
+# every other IB relying on it) is structurally unreachable from this
+# function.
+#
+# Section 13 (concurrency): serializes concurrent rate-change calls for
+# the SAME referral by locking the Referral row first (select_for_
+# update()) — the same lock-then-act discipline IB-RISK-HOLDS-07B
+# already established in ib_treasury_settlement.py's approve_
+# obligation()/link_treasury_request() (lock order: Referral, then any
+# IBCommissionRule row for that referral). Two different referrals never
+# block each other. A second POST for the same referral blocks until
+# the first transaction commits (its close+create pair), then sees the
+# already-closed row and no open one to re-close — never creates two
+# ambiguous open rows.
+# ─────────────────────────────────────────────
+
+class InvalidCommissionRate(Exception):
+    """Raised by change_commission_rate() when the requested new rate is
+    not a positive Decimal."""
+
+
+class CommissionRateUnchanged(Exception):
+    """Raised by change_commission_rate() when the requested new rate
+    equals the currently open rate for this referral — a no-op guard
+    against pointless rate-history churn from a duplicate submit."""
+
+
+def change_commission_rate(referral, new_fixed_amount, *, request,
+                            rule_type=IBCommissionRule.RULE_PER_LOT):
+    """
+    Close the IB-specific open-ended IBCommissionRule for `rule_type`
+    (if any) and open a new one at the new rate, effective now. Never
+    touches the global (referral=None) rule. Never touches any
+    IBCommissionObligation — historical calculated_amount/
+    applied_fixed_rate/applied_percentage_rate remain exactly as
+    generated, permanently (IB-TREASURY-CREDIT-03's snapshot guarantee,
+    reused unmodified, not re-implemented here).
+
+    Args:
+        referral:         a Referral — only its .pk is used; re-read
+                           under select_for_update().
+        new_fixed_amount: the new $/lot rate — must be a positive
+                           Decimal (or something Decimal()-constructible).
+        request:          the current HttpRequest — request.user must
+                           be authenticated and hold
+                           TREASURY_REVIEW_PERMISSION (same permission
+                           freeze_referral()/hold_obligation() already
+                           gate on — no new permission invented).
+        rule_type:        defaults to RULE_PER_LOT — this action is
+                           scoped to the "$/lot" contract this whole
+                           block is about; CPA_BONUS/SPREAD_REVENUE_
+                           SHARE are never passed here by any caller in
+                           this codebase (both remain HOLD).
+
+    Returns:
+        The newly created, open-ended IBCommissionRule.
+
+    Raises:
+        PermissionDenied:        request.user not authenticated, or
+                                  lacks TREASURY_REVIEW_PERMISSION.
+        InvalidCommissionRate:   new_fixed_amount is not a positive
+                                  Decimal.
+        CommissionRateUnchanged: new_fixed_amount equals the currently
+                                  open per-IB rate.
+    """
+    if not request.user.is_authenticated:
+        raise PermissionDenied("Authentication required to change an IB commission rate.")
+    if not request.user.has_perm(TREASURY_REVIEW_PERMISSION):
+        raise PermissionDenied(f"Missing permission: {TREASURY_REVIEW_PERMISSION}")
+
+    try:
+        new_fixed_amount = Decimal(new_fixed_amount)
+    except Exception as exc:
+        raise InvalidCommissionRate(f"'{new_fixed_amount}' is not a valid decimal amount.") from exc
+    if new_fixed_amount <= 0:
+        raise InvalidCommissionRate("The new rate must be greater than 0.")
+
+    with transaction.atomic():
+        referral_locked = Referral.objects.select_for_update().get(pk=referral.pk)
+
+        open_rule = (
+            IBCommissionRule.objects.select_for_update()
+            .filter(rule_type=rule_type, referral=referral_locked, effective_until__isnull=True)
+            .first()
+        )
+
+        if open_rule is not None and open_rule.fixed_amount == new_fixed_amount:
+            raise CommissionRateUnchanged(
+                f"Referral #{referral_locked.pk} already has an open {rule_type} rule "
+                f"at {new_fixed_amount} — nothing to change."
+            )
+
+        now = timezone.now()
+
+        if open_rule is not None:
+            open_rule.effective_until = now
+            open_rule.save(update_fields=["effective_until"])
+
+        new_rule = IBCommissionRule.objects.create(
+            rule_type=rule_type, referral=referral_locked, enabled=True,
+            fixed_amount=new_fixed_amount, percentage=None,
+            effective_from=now, effective_until=None,
+            created_by=request.user,
+        )
+    # ── transaction closed — old row closed + new row opened, committed together ──
+
+    logger.info(
+        "[ib_admin_ops] referral=%d %s rate changed to %s by user=%d (previous open rule=%s)",
+        referral_locked.pk, rule_type, new_fixed_amount, request.user.pk,
+        open_rule.pk if open_rule is not None else None,
+    )
+    return new_rule
 
 
 def ib_needs_attention(obligation):
@@ -501,6 +730,7 @@ class IBCommissionObligationAdmin(admin.ModelAdmin):
             path("<int:pk>/ib-release/", self.admin_site.admin_view(self.ib_obligation_release_view), name="ib_obligation_release"),
             path("ib-directory/<int:referral_id>/ib-freeze/", self.admin_site.admin_view(self.ib_referral_freeze_view), name="ib_referral_freeze"),
             path("ib-directory/<int:referral_id>/ib-unfreeze/", self.admin_site.admin_view(self.ib_referral_unfreeze_view), name="ib_referral_unfreeze"),
+            path("ib-directory/<int:referral_id>/ib-change-rate/", self.admin_site.admin_view(self.ib_referral_change_rate_view), name="ib_referral_change_rate"),
         ]
         return custom + urls
 
@@ -611,6 +841,14 @@ class IBCommissionObligationAdmin(admin.ModelAdmin):
             .select_related("obligation", "actor").order_by("-created_at")[:_RECENT_LIMIT]
         )
 
+        # IB-PORTAL-08B — CONTRATO ACTUAL card (dedicated PER_LOT lookup,
+        # not relied-upon-ordering from rate_rows above) + shared
+        # commission summary (generated/pending/held/credited/reversed,
+        # section 5's semantics — held is a breakdown of pending, never
+        # additive) + Change Commission Rate control.
+        per_lot_rule, per_lot_rate_source = ib_effective_rate(referral, IBCommissionRule.RULE_PER_LOT)
+        commission_summary = ib_commission_summary(referral)
+
         context = dict(
             self.admin_site.each_context(request),
             title=f"IB Detail — {referral.code}",
@@ -621,6 +859,11 @@ class IBCommissionObligationAdmin(admin.ModelAdmin):
             ib_freeze_url=reverse("admin:ib_referral_freeze", args=[referral.pk]),
             ib_unfreeze_url=reverse("admin:ib_referral_unfreeze", args=[referral.pk]),
             recent_risk_events=recent_risk_events,
+            per_lot_rule=per_lot_rule,
+            per_lot_rate_source=per_lot_rate_source,
+            commission_summary=commission_summary,
+            show_ib_change_rate_button=can_review,
+            ib_change_rate_url=reverse("admin:ib_referral_change_rate", args=[referral.pk]),
             wallet=wallet,
             lot_totals=lot_totals,
             active_clients_month=ib_active_trading_client_count(referral, month_start),
@@ -1019,6 +1262,61 @@ class IBCommissionObligationAdmin(admin.ModelAdmin):
             cancel_url=detail_url,
         )
         return render(request, "admin/ib_referral_unfreeze.html", context)
+
+    # ── IB-PORTAL-08B — Change Commission Rate ──────────────────────
+
+    def ib_referral_change_rate_view(self, request, referral_id):
+        if not request.user.has_perm(TREASURY_REVIEW_PERMISSION):
+            raise PermissionDenied(f"Missing permission: {TREASURY_REVIEW_PERMISSION}")
+
+        instance = Referral.objects.filter(pk=referral_id).first()
+        if instance is None:
+            raise Http404("Referral (IB) not found.")
+
+        detail_url = reverse("admin:ib_detail", args=[instance.pk])
+        current_rule, current_source = ib_effective_rate(instance, IBCommissionRule.RULE_PER_LOT)
+
+        if request.method == "POST":
+            new_rate = request.POST.get("new_fixed_amount", "")
+            try:
+                new_rule = change_commission_rate(instance, new_rate, request=request)
+            except InvalidCommissionRate as exc:
+                messages.error(request, f"⚠ {exc}")
+                return render(request, "admin/ib_referral_change_rate.html", dict(
+                    self.admin_site.each_context(request),
+                    title=f"Change Commission Rate — {instance.code}",
+                    instance=instance, current_rule=current_rule, current_source=current_source,
+                    cancel_url=detail_url,
+                ))
+            except CommissionRateUnchanged as exc:
+                messages.info(request, f"{exc}")
+                return redirect(detail_url)
+            except PermissionDenied:
+                raise
+
+            _record_ib_risk_event(
+                request, "ib_admin.rate_changed",
+                f"IB {instance.code} (#{instance.pk}) PER_LOT rate changed to ${new_rule.fixed_amount}/lot "
+                f"(new IBCommissionRule #{new_rule.pk}, effective_from={new_rule.effective_from.isoformat()})",
+                referral=instance,
+                reason=(
+                    f"Rate changed to ${new_rule.fixed_amount}/lot. "
+                    f"Previous: {'$' + str(current_rule.fixed_amount) + '/lot (' + current_source + ')' if current_rule else 'no configurada'}."
+                ),
+                extra={"new_rule_id": new_rule.pk, "new_fixed_amount": str(new_rule.fixed_amount)},
+            )
+            messages.success(request, f"✓ New rate ${new_rule.fixed_amount}/lot is now effective for {instance.code}.")
+            return redirect(detail_url)
+
+        context = dict(
+            self.admin_site.each_context(request),
+            title=f"Change Commission Rate — {instance.code}",
+            instance=instance,
+            current_rule=current_rule,
+            current_source=current_source,
+            cancel_url=detail_url,
+        )
+        return render(request, "admin/ib_referral_change_rate.html", context)
 
 
 # ─────────────────────────────────────────────

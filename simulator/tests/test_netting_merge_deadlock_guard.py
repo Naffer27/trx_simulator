@@ -23,6 +23,25 @@ from .factories import make_account
 _db_open_sync = TradingConsumer._db_open_position_atomic.__wrapped__
 
 
+def _seed_fresh_price(symbol, bid, ask):
+    """IB-PORTAL-08B.2 — same pattern already established and proven in
+    test_atomic_guard_lock_order.py/test_book04d_routing_audit_trail.py.
+    Writes directly into the process-global FeedManager singleton's own
+    in-memory price/timestamp dicts (the exact state has_price() reads —
+    see market_data/feeds.py's FeedManager.has_price(), which never
+    consults Redis at check time) so a test exercising the PANEL-02
+    fresh-price guard never depends on some OTHER, unrelated test having
+    ticked this symbol within the last 60s (_PRICE_CACHE_TTL) — no
+    reliance on suite ordering, a prior tick, the TTL window, Redis, or
+    any other residual state."""
+    feed = get_feed_manager()
+    with feed._lock:
+        feed._bids[symbol] = bid
+        feed._asks[symbol] = ask
+        feed._prices[symbol] = round((bid + ask) / 2, 6)
+        feed._price_ts[symbol] = time.time()
+
+
 class _FakeConsumer:
     """Minimal consumer stub: only the attributes accessed by _db_open_position_atomic.
     BOOK-04f — the call site now calls self._should_activate_routing_decision();
@@ -92,7 +111,15 @@ class TestNettingMergeDeadlockGuard(TestCase):
         caps (merge does not increase position count, but margin is still
         checked) — the merge-consolidation behavior under test is
         unchanged.
+
+        IB-PORTAL-08B.2 — explicitly seeds a fresh EUR/USD price before
+        opening: the account below already holds an EUR/USD Position, so
+        the PANEL-02 guard (consumers.py's fresh-price-for-every-open-
+        position check) requires has_price("EUR/USD") to be true before
+        it will compute fresh_equity. Self-sufficient — never relies on
+        another test's tick, suite order, or the 60s TTL window.
         """
+        _seed_fresh_price("EUR/USD", 1.0899, 1.0901)
         account = make_account(balance=Decimal("50000"))
         existing = Position.objects.create(
             account=account, symbol="EUR/USD", side="BUY",
