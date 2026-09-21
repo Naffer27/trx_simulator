@@ -680,6 +680,43 @@ def _resolve_account(request):
     return account
 
 
+def _home_total_margin(account, positions):
+    """
+    DASHBOARD-UX-01A.2 — authoritative margin aggregate for home_view.
+    Reuses pnl_engine.calculate_required_margin() per open position —
+    same formula/effective-leverage clamp as the live order-open,
+    pretrade-guard, and admin-display paths (see admin.py's identically
+    shaped _retail_total_margin(), which this mirrors) — instead of the
+    ad-hoc `avg_price * qty / leverage` shortcut this replaces, which
+    omitted contract_size entirely and understated margin for every
+    contract_size != 1 instrument, plus omitted the per-instrument
+    leverage cap and FX conversion (see DASHBOARD-UX-01A.1 audit).
+
+    effective_leverage mirrors the real order-open derivation exactly:
+    min(account.leverage, symbol.max_leverage). A position whose margin
+    can't be converted to account currency (Case C — no explicit rate;
+    unreachable for any currently-enabled symbol) contributes 0.0, never
+    a fabricated number — same fail-closed contract calculate_required_margin()
+    itself documents.
+    """
+    from . import pnl_engine
+
+    account_lev = max(1, int(getattr(account, 'leverage', 50) or 50))
+    total = 0.0
+    for p in positions:
+        try:
+            spec = _get_sym_spec(p.symbol)
+        except Exception:
+            continue
+        effective_lev = max(1, min(account_lev, spec.max_leverage))
+        margin, _err = pnl_engine.calculate_required_margin(
+            p.symbol, p.avg_price, p.qty, effective_lev, account.currency,
+        )
+        if margin is not None:
+            total += margin
+    return total
+
+
 @login_required
 def home_view(request):
     account = _resolve_account(request)
@@ -701,11 +738,7 @@ def home_view(request):
     ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
 
     open_positions = Position.objects.filter(account=account)
-    leverage = int(getattr(account, 'leverage', 50) or 50)
-    margin_used = sum(
-        float(p.qty) * float(p.avg_price) / leverage
-        for p in open_positions
-    )
+    margin_used = _home_total_margin(account, open_positions)
 
     initial_balance = float(account.initial_balance or account.balance or 1)
     daily_loss = float(pnl_today) if float(pnl_today) < 0 else 0.0
