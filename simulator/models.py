@@ -2273,6 +2273,17 @@ class IBCommissionRule(models.Model):
                 check=models.Q(percentage__isnull=True) | models.Q(percentage__gte=0),
                 name="ibrule_percentage_gte_0",
             ),
+            # IB-COMMISSION-PARITY-09B.1 — 0% is a valid, real contract
+            # (zero payout, not "unconfigured" — NULL already means
+            # "no rule"); >100% must be structurally impossible (an IB
+            # can never be owed more than 100% of a revenue amount the
+            # broker itself captured). Additive, separate from the
+            # gte_0 constraint above so the lower-bound guarantee is
+            # never touched by this change.
+            models.CheckConstraint(
+                check=models.Q(percentage__isnull=True) | models.Q(percentage__lte=100),
+                name="ibrule_percentage_lte_100",
+            ),
             models.CheckConstraint(
                 check=models.Q(effective_until__isnull=True) | models.Q(effective_until__gt=models.F("effective_from")),
                 name="ibrule_effective_until_after_from",
@@ -2317,6 +2328,8 @@ class IBCommissionRule(models.Model):
             errors["fixed_amount"] = "fixed_amount must be >= 0."
         if self.percentage is not None and self.percentage < 0:
             errors["percentage"] = "percentage must be >= 0."
+        if self.percentage is not None and self.percentage > 100:
+            errors["percentage"] = "percentage must be <= 100."
         if self.rule_type in self.FIXED_AMOUNT_RULE_TYPES and self.fixed_amount is None:
             errors["fixed_amount"] = f"{self.rule_type} requires fixed_amount."
         if self.rule_type in self.PERCENTAGE_RULE_TYPES and self.percentage is None:

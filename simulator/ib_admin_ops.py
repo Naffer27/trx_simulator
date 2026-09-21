@@ -415,42 +415,61 @@ def ib_obligation_status_label(obligation):
 # ─────────────────────────────────────────────
 
 class InvalidCommissionRate(Exception):
-    """Raised by change_commission_rate() when the requested new rate is
-    not a positive Decimal."""
+    """Raised by change_commission_rate() when the requested new value is
+    out of range for its rule_type's field (fixed_amount must be > 0;
+    percentage must be within [0, 100]), or rule_type is not one of
+    IBCommissionRule.FIXED_AMOUNT_RULE_TYPES/PERCENTAGE_RULE_TYPES."""
 
 
 class CommissionRateUnchanged(Exception):
-    """Raised by change_commission_rate() when the requested new rate
+    """Raised by change_commission_rate() when the requested new value
     equals the currently open rate for this referral — a no-op guard
     against pointless rate-history churn from a duplicate submit."""
 
 
-def change_commission_rate(referral, new_fixed_amount, *, request,
+def change_commission_rate(referral, new_value, *, request,
                             rule_type=IBCommissionRule.RULE_PER_LOT):
     """
     Close the IB-specific open-ended IBCommissionRule for `rule_type`
-    (if any) and open a new one at the new rate, effective now. Never
+    (if any) and open a new one at the new value, effective now. Never
     touches the global (referral=None) rule. Never touches any
     IBCommissionObligation — historical calculated_amount/
     applied_fixed_rate/applied_percentage_rate remain exactly as
     generated, permanently (IB-TREASURY-CREDIT-03's snapshot guarantee,
     reused unmodified, not re-implemented here).
 
+    IB-COMMISSION-PARITY-09B.1 — generalized (same function, no second
+    service) to dispatch on IBCommissionRule's OWN existing
+    FIXED_AMOUNT_RULE_TYPES / PERCENTAGE_RULE_TYPES classification
+    (reused, not reinvented) so this now correctly supports every
+    already-defined rule_type, not just RULE_PER_LOT:
+      - FIXED_AMOUNT_RULE_TYPES (PER_LOT, CPA_BONUS): new_value
+        populates fixed_amount (percentage=None); must be > 0.
+      - PERCENTAGE_RULE_TYPES (CHALLENGE_PERCENT, DEPOSIT_PERCENT,
+        SPREAD_REVENUE_SHARE, TRADING_COMMISSION_REVENUE_SHARE):
+        new_value populates percentage (fixed_amount=None); must be in
+        [0, 100] inclusive — 0 is a valid, real contract (zero payout,
+        distinct from NULL/"no rule"); >100 is structurally impossible
+        (mirrors the DB-level "ibrule_percentage_lte_100" CheckConstraint,
+        IB-COMMISSION-PARITY-09B.1 — this is defense-in-depth on top of
+        that constraint, not a substitute for it).
+    CPA_BONUS/SPREAD_REVENUE_SHARE remain HOLD unchanged by this
+    generalization — no caller in this codebase passes either rule_type
+    here today; this function's genericity mirrors resolve_applicable_
+    rule()'s own pre-existing genericity, not a new activation.
+
     Args:
-        referral:         a Referral — only its .pk is used; re-read
-                           under select_for_update().
-        new_fixed_amount: the new $/lot rate — must be a positive
-                           Decimal (or something Decimal()-constructible).
-        request:          the current HttpRequest — request.user must
-                           be authenticated and hold
-                           TREASURY_REVIEW_PERMISSION (same permission
-                           freeze_referral()/hold_obligation() already
-                           gate on — no new permission invented).
-        rule_type:        defaults to RULE_PER_LOT — this action is
-                           scoped to the "$/lot" contract this whole
-                           block is about; CPA_BONUS/SPREAD_REVENUE_
-                           SHARE are never passed here by any caller in
-                           this codebase (both remain HOLD).
+        referral:  a Referral — only its .pk is used; re-read under
+                   select_for_update().
+        new_value: the new fixed_amount or percentage value, depending
+                   on rule_type — a positive Decimal (fixed_amount) or a
+                   Decimal in [0, 100] (percentage), or anything
+                   Decimal()-constructible.
+        request:   the current HttpRequest — request.user must be
+                   authenticated and hold TREASURY_REVIEW_PERMISSION
+                   (same permission freeze_referral()/hold_obligation()
+                   already gate on — no new permission invented).
+        rule_type: defaults to RULE_PER_LOT.
 
     Returns:
         The newly created, open-ended IBCommissionRule.
@@ -458,22 +477,35 @@ def change_commission_rate(referral, new_fixed_amount, *, request,
     Raises:
         PermissionDenied:        request.user not authenticated, or
                                   lacks TREASURY_REVIEW_PERMISSION.
-        InvalidCommissionRate:   new_fixed_amount is not a positive
-                                  Decimal.
-        CommissionRateUnchanged: new_fixed_amount equals the currently
-                                  open per-IB rate.
+        InvalidCommissionRate:   new_value is out of range for its
+                                  rule_type's field, or rule_type is
+                                  unsupported.
+        CommissionRateUnchanged: new_value equals the currently open
+                                  per-IB rate.
     """
     if not request.user.is_authenticated:
         raise PermissionDenied("Authentication required to change an IB commission rate.")
     if not request.user.has_perm(TREASURY_REVIEW_PERMISSION):
         raise PermissionDenied(f"Missing permission: {TREASURY_REVIEW_PERMISSION}")
 
+    if rule_type in IBCommissionRule.FIXED_AMOUNT_RULE_TYPES:
+        field_name = "fixed_amount"
+    elif rule_type in IBCommissionRule.PERCENTAGE_RULE_TYPES:
+        field_name = "percentage"
+    else:
+        raise InvalidCommissionRate(f"Unsupported rule_type for rate change: {rule_type!r}")
+
     try:
-        new_fixed_amount = Decimal(new_fixed_amount)
+        new_value = Decimal(new_value)
     except Exception as exc:
-        raise InvalidCommissionRate(f"'{new_fixed_amount}' is not a valid decimal amount.") from exc
-    if new_fixed_amount <= 0:
-        raise InvalidCommissionRate("The new rate must be greater than 0.")
+        raise InvalidCommissionRate(f"'{new_value}' is not a valid decimal amount.") from exc
+
+    if field_name == "fixed_amount":
+        if new_value <= 0:
+            raise InvalidCommissionRate("The new rate must be greater than 0.")
+    else:
+        if new_value < 0 or new_value > 100:
+            raise InvalidCommissionRate("The new percentage must be between 0 and 100.")
 
     with transaction.atomic():
         referral_locked = Referral.objects.select_for_update().get(pk=referral.pk)
@@ -484,10 +516,10 @@ def change_commission_rate(referral, new_fixed_amount, *, request,
             .first()
         )
 
-        if open_rule is not None and open_rule.fixed_amount == new_fixed_amount:
+        if open_rule is not None and getattr(open_rule, field_name) == new_value:
             raise CommissionRateUnchanged(
                 f"Referral #{referral_locked.pk} already has an open {rule_type} rule "
-                f"at {new_fixed_amount} — nothing to change."
+                f"at {new_value} — nothing to change."
             )
 
         now = timezone.now()
@@ -496,17 +528,19 @@ def change_commission_rate(referral, new_fixed_amount, *, request,
             open_rule.effective_until = now
             open_rule.save(update_fields=["effective_until"])
 
-        new_rule = IBCommissionRule.objects.create(
+        create_kwargs = dict(
             rule_type=rule_type, referral=referral_locked, enabled=True,
-            fixed_amount=new_fixed_amount, percentage=None,
-            effective_from=now, effective_until=None,
-            created_by=request.user,
+            effective_from=now, effective_until=None, created_by=request.user,
         )
+        create_kwargs["fixed_amount"] = new_value if field_name == "fixed_amount" else None
+        create_kwargs["percentage"] = new_value if field_name == "percentage" else None
+
+        new_rule = IBCommissionRule.objects.create(**create_kwargs)
     # ── transaction closed — old row closed + new row opened, committed together ──
 
     logger.info(
-        "[ib_admin_ops] referral=%d %s rate changed to %s by user=%d (previous open rule=%s)",
-        referral_locked.pk, rule_type, new_fixed_amount, request.user.pk,
+        "[ib_admin_ops] referral=%d %s %s changed to %s by user=%d (previous open rule=%s)",
+        referral_locked.pk, rule_type, field_name, new_value, request.user.pk,
         open_rule.pk if open_rule is not None else None,
     )
     return new_rule
