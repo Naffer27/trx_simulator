@@ -100,13 +100,17 @@ from django.utils import timezone
 
 from . import audit, broker_audit
 from .ib_commission import AmbiguousCommissionRuleError, resolve_applicable_rule
+from .ib_risk_holds import (
+    ObligationAlreadyHeld, ObligationNotHeld, ReferralAlreadyFrozen, ReferralNotFrozen,
+    freeze_referral, hold_obligation, release_obligation, unfreeze_referral,
+)
 from .ib_treasury_settlement import (
-    ObligationInvalidAmount, ObligationNotApproved, ObligationNotPending,
-    approve_obligation, link_treasury_request, reconcile_approved_obligations,
-    sync_obligation_from_treasury,
+    ObligationHeld, ObligationInvalidAmount, ObligationNotApproved, ObligationNotPending,
+    ReferralNotActive, approve_obligation, link_treasury_request,
+    reconcile_approved_obligations, sync_obligation_from_treasury,
 )
 from .models import (
-    IBCommissionObligation, IBCommissionRule, LotExecutionEvent, Referral,
+    IBCommissionObligation, IBCommissionRule, IBRiskEvent, LotExecutionEvent, Referral,
     ReferralAttribution, TradingAccount, TreasuryOperationRequest, Wallet,
     WalletTransaction,
 )
@@ -330,6 +334,43 @@ def _record_ib_admin_event(request, event_type, description, *, obligation, extr
     )
 
 
+def _record_ib_risk_event(request, event_type, description, *, referral, obligation=None, reason, extra=None):
+    """
+    IB-RISK-HOLDS-07B — same dual-write convention as
+    _record_ib_admin_event() above (closes the same auditability gap,
+    at the same orchestration layer, for freeze/unfreeze/hold/release).
+    Called AFTER simulator/ib_risk_holds.py's own service function has
+    already committed the transition (and its own IBRiskEvent row) —
+    this only adds the two general-purpose, queryable audit trails
+    (AuditLog / BrokerAuditEvent) on top, exactly like every other
+    admin-triggered IB transition in this module already does.
+    """
+    metadata = {
+        "referral_id": referral.pk,
+        "risk_status": referral.risk_status,
+        "reason": reason,
+    }
+    if obligation is not None:
+        metadata["obligation_id"] = obligation.pk
+        metadata["is_held"] = obligation.is_held
+    if extra:
+        metadata.update(extra)
+
+    audit.log_audit(
+        request, event_type, description,
+        detail=metadata,
+    )
+    broker_audit.record_payment_event(
+        event_type=event_type,
+        severity=broker_audit.Severity.INFO,
+        actor_type=broker_audit.ActorType.STAFF,
+        actor_id=request.user.pk,
+        description=description,
+        source_module="simulator.ib_admin_ops",
+        metadata=metadata,
+    )
+
+
 # ─────────────────────────────────────────────
 # IBCommissionObligationAdmin — hub of IB Ops: directory, detail,
 # approve, link-to-Treasury, sync, reconcile.
@@ -338,10 +379,10 @@ def _record_ib_admin_event(request, event_type, description, *, obligation, extr
 @admin.register(IBCommissionObligation)
 class IBCommissionObligationAdmin(admin.ModelAdmin):
     list_display = (
-        "id", "referral", "rule_type", "calculated_amount", "status",
+        "id", "referral", "rule_type", "calculated_amount", "status", "is_held",
         "source_event_type", "source_event_id", "created_at", "approved_by",
     )
-    list_filter = ("rule_type", "status", "created_at")
+    list_filter = ("rule_type", "status", "is_held", "created_at")
     search_fields = ("referral__code", "referral__user__username", "source_reference")
     readonly_fields = [f.name for f in IBCommissionObligation._meta.fields]
     ordering = ("-created_at", "-id")
@@ -413,6 +454,23 @@ class IBCommissionObligationAdmin(admin.ModelAdmin):
                 )
             extra_context["ib_needs_attention"] = ib_needs_attention(instance)
 
+            # IB-RISK-HOLDS-07B — Hold / Release buttons. Orthogonal to
+            # status (a hold can be placed/lifted regardless of the
+            # obligation's lifecycle stage — see ib_risk_holds.py's own
+            # docstring), so shown unconditionally rather than gated on
+            # instance.status like the buttons above.
+            if request.user.has_perm(TREASURY_REVIEW_PERMISSION):
+                if not instance.is_held:
+                    extra_context["show_ib_hold_button"] = True
+                    extra_context["ib_hold_url"] = reverse(
+                        "admin:ib_obligation_hold", args=[instance.pk],
+                    )
+                else:
+                    extra_context["show_ib_release_button"] = True
+                    extra_context["ib_release_url"] = reverse(
+                        "admin:ib_obligation_release", args=[instance.pk],
+                    )
+
             # IB-REVERSALS-FRAUD-05C — Submit Adjustment button, only for
             # already-CREDITED obligations (the only status
             # submit_adjustment() itself accepts — see
@@ -439,6 +497,10 @@ class IBCommissionObligationAdmin(admin.ModelAdmin):
             path("<int:pk>/ib-link-treasury/", self.admin_site.admin_view(self.ib_obligation_link_treasury_view), name="ib_obligation_link_treasury"),
             path("<int:pk>/ib-sync/", self.admin_site.admin_view(self.ib_obligation_sync_view), name="ib_obligation_sync"),
             path("ib-reconcile/", self.admin_site.admin_view(self.ib_reconcile_view), name="ib_reconcile"),
+            path("<int:pk>/ib-hold/", self.admin_site.admin_view(self.ib_obligation_hold_view), name="ib_obligation_hold"),
+            path("<int:pk>/ib-release/", self.admin_site.admin_view(self.ib_obligation_release_view), name="ib_obligation_release"),
+            path("ib-directory/<int:referral_id>/ib-freeze/", self.admin_site.admin_view(self.ib_referral_freeze_view), name="ib_referral_freeze"),
+            path("ib-directory/<int:referral_id>/ib-unfreeze/", self.admin_site.admin_view(self.ib_referral_unfreeze_view), name="ib_referral_unfreeze"),
         ]
         return custom + urls
 
@@ -539,10 +601,26 @@ class IBCommissionObligationAdmin(admin.ModelAdmin):
             .select_related("obligation", "treasury_operation").order_by("-created_at")[:_RECENT_LIMIT]
         )
 
+        # IB-RISK-HOLDS-07B — Freeze / Unfreeze button + recent risk
+        # event history. Same permission as every other IB Ops
+        # transition (TREASURY_REVIEW_PERMISSION); reused, not new.
+        can_review = request.user.has_perm(TREASURY_REVIEW_PERMISSION)
+        is_frozen = referral.risk_status == Referral.RISK_FROZEN
+        recent_risk_events = list(
+            IBRiskEvent.objects.filter(referral=referral)
+            .select_related("obligation", "actor").order_by("-created_at")[:_RECENT_LIMIT]
+        )
+
         context = dict(
             self.admin_site.each_context(request),
             title=f"IB Detail — {referral.code}",
             referral=referral,
+            is_frozen=is_frozen,
+            show_ib_freeze_button=(can_review and not is_frozen),
+            show_ib_unfreeze_button=(can_review and is_frozen),
+            ib_freeze_url=reverse("admin:ib_referral_freeze", args=[referral.pk]),
+            ib_unfreeze_url=reverse("admin:ib_referral_unfreeze", args=[referral.pk]),
+            recent_risk_events=recent_risk_events,
             wallet=wallet,
             lot_totals=lot_totals,
             active_clients_month=ib_active_trading_client_count(referral, month_start),
@@ -754,6 +832,194 @@ class IBCommissionObligationAdmin(admin.ModelAdmin):
         )
         return redirect(reverse("admin:ib_directory"))
 
+    # ── IB-RISK-HOLDS-07B — Hold / Release (obligation-level) ───────
+
+    def ib_obligation_hold_view(self, request, pk):
+        if not request.user.has_perm(TREASURY_REVIEW_PERMISSION):
+            raise PermissionDenied(f"Missing permission: {TREASURY_REVIEW_PERMISSION}")
+
+        instance = IBCommissionObligation.objects.filter(pk=pk).first()
+        if instance is None:
+            raise Http404("IB commission obligation not found.")
+
+        detail_url = reverse("admin:simulator_ibcommissionobligation_change", args=[instance.pk])
+
+        if instance.is_held:
+            messages.info(request, f"Obligation #{instance.pk} is already held.")
+            return redirect(detail_url)
+
+        if request.method == "POST":
+            reason = request.POST.get("reason", "")
+            try:
+                held = hold_obligation(instance, reason, request=request)
+            except ObligationAlreadyHeld:
+                messages.info(request, f"Obligation #{instance.pk} is already held.")
+                return redirect(detail_url)
+            except ValueError as exc:
+                messages.error(request, f"⚠ {exc}")
+                return render(request, "admin/ib_obligation_hold.html", dict(
+                    self.admin_site.each_context(request),
+                    title=f"Hold Obligation #{instance.pk}", instance=instance, cancel_url=detail_url,
+                ))
+            except PermissionDenied:
+                raise
+
+            _record_ib_risk_event(
+                request, "ib_admin.obligation_held",
+                f"IB commission obligation #{held.pk} held via IB Ops",
+                referral=held.referral, obligation=held, reason=reason,
+            )
+            messages.success(request, f"✓ Obligation #{held.pk} is now held.")
+            return redirect(detail_url)
+
+        context = dict(
+            self.admin_site.each_context(request),
+            title=f"Hold Obligation #{instance.pk}",
+            instance=instance,
+            cancel_url=detail_url,
+        )
+        return render(request, "admin/ib_obligation_hold.html", context)
+
+    def ib_obligation_release_view(self, request, pk):
+        if not request.user.has_perm(TREASURY_REVIEW_PERMISSION):
+            raise PermissionDenied(f"Missing permission: {TREASURY_REVIEW_PERMISSION}")
+
+        instance = IBCommissionObligation.objects.filter(pk=pk).first()
+        if instance is None:
+            raise Http404("IB commission obligation not found.")
+
+        detail_url = reverse("admin:simulator_ibcommissionobligation_change", args=[instance.pk])
+
+        if not instance.is_held:
+            messages.info(request, f"Obligation #{instance.pk} is not held.")
+            return redirect(detail_url)
+
+        if request.method == "POST":
+            reason = request.POST.get("reason", "")
+            try:
+                released = release_obligation(instance, reason, request=request)
+            except ObligationNotHeld:
+                messages.info(request, f"Obligation #{instance.pk} is not held.")
+                return redirect(detail_url)
+            except ValueError as exc:
+                messages.error(request, f"⚠ {exc}")
+                return render(request, "admin/ib_obligation_release.html", dict(
+                    self.admin_site.each_context(request),
+                    title=f"Release Obligation #{instance.pk}", instance=instance, cancel_url=detail_url,
+                ))
+            except PermissionDenied:
+                raise
+
+            _record_ib_risk_event(
+                request, "ib_admin.obligation_released",
+                f"IB commission obligation #{released.pk} released via IB Ops",
+                referral=released.referral, obligation=released, reason=reason,
+            )
+            messages.success(request, f"✓ Obligation #{released.pk} released — no longer held.")
+            return redirect(detail_url)
+
+        context = dict(
+            self.admin_site.each_context(request),
+            title=f"Release Obligation #{instance.pk}",
+            instance=instance,
+            cancel_url=detail_url,
+        )
+        return render(request, "admin/ib_obligation_release.html", context)
+
+    # ── IB-RISK-HOLDS-07B — Freeze / Unfreeze (IB-level) ────────────
+
+    def ib_referral_freeze_view(self, request, referral_id):
+        if not request.user.has_perm(TREASURY_REVIEW_PERMISSION):
+            raise PermissionDenied(f"Missing permission: {TREASURY_REVIEW_PERMISSION}")
+
+        instance = Referral.objects.filter(pk=referral_id).first()
+        if instance is None:
+            raise Http404("Referral (IB) not found.")
+
+        detail_url = reverse("admin:ib_detail", args=[instance.pk])
+
+        if instance.risk_status == Referral.RISK_FROZEN:
+            messages.info(request, f"IB #{instance.pk} is already frozen.")
+            return redirect(detail_url)
+
+        if request.method == "POST":
+            reason = request.POST.get("reason", "")
+            try:
+                frozen = freeze_referral(instance, reason, request=request)
+            except ReferralAlreadyFrozen:
+                messages.info(request, f"IB #{instance.pk} is already frozen.")
+                return redirect(detail_url)
+            except ValueError as exc:
+                messages.error(request, f"⚠ {exc}")
+                return render(request, "admin/ib_referral_freeze.html", dict(
+                    self.admin_site.each_context(request),
+                    title=f"Freeze IB — {instance.code}", instance=instance, cancel_url=detail_url,
+                ))
+            except PermissionDenied:
+                raise
+
+            _record_ib_risk_event(
+                request, "ib_admin.referral_frozen",
+                f"IB {frozen.code} (#{frozen.pk}) frozen via IB Ops",
+                referral=frozen, reason=reason,
+            )
+            messages.success(request, f"✓ IB {frozen.code} is now frozen.")
+            return redirect(detail_url)
+
+        context = dict(
+            self.admin_site.each_context(request),
+            title=f"Freeze IB — {instance.code}",
+            instance=instance,
+            cancel_url=detail_url,
+        )
+        return render(request, "admin/ib_referral_freeze.html", context)
+
+    def ib_referral_unfreeze_view(self, request, referral_id):
+        if not request.user.has_perm(TREASURY_REVIEW_PERMISSION):
+            raise PermissionDenied(f"Missing permission: {TREASURY_REVIEW_PERMISSION}")
+
+        instance = Referral.objects.filter(pk=referral_id).first()
+        if instance is None:
+            raise Http404("Referral (IB) not found.")
+
+        detail_url = reverse("admin:ib_detail", args=[instance.pk])
+
+        if instance.risk_status != Referral.RISK_FROZEN:
+            messages.info(request, f"IB #{instance.pk} is not frozen.")
+            return redirect(detail_url)
+
+        if request.method == "POST":
+            reason = request.POST.get("reason", "")
+            try:
+                unfrozen = unfreeze_referral(instance, reason, request=request)
+            except ReferralNotFrozen:
+                messages.info(request, f"IB #{instance.pk} is not frozen.")
+                return redirect(detail_url)
+            except ValueError as exc:
+                messages.error(request, f"⚠ {exc}")
+                return render(request, "admin/ib_referral_unfreeze.html", dict(
+                    self.admin_site.each_context(request),
+                    title=f"Unfreeze IB — {instance.code}", instance=instance, cancel_url=detail_url,
+                ))
+            except PermissionDenied:
+                raise
+
+            _record_ib_risk_event(
+                request, "ib_admin.referral_unfrozen",
+                f"IB {unfrozen.code} (#{unfrozen.pk}) unfrozen via IB Ops",
+                referral=unfrozen, reason=reason,
+            )
+            messages.success(request, f"✓ IB {unfrozen.code} is now active.")
+            return redirect(detail_url)
+
+        context = dict(
+            self.admin_site.each_context(request),
+            title=f"Unfreeze IB — {instance.code}",
+            instance=instance,
+            cancel_url=detail_url,
+        )
+        return render(request, "admin/ib_referral_unfreeze.html", context)
+
 
 # ─────────────────────────────────────────────
 # IBCommissionRuleAdmin — GLOBAL rules + per-IB overrides, configurable
@@ -842,3 +1108,31 @@ class LotExecutionEventAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+# ─────────────────────────────────────────────
+# IBRiskEventAdmin — fully read-only, append-only history browser.
+# IB-RISK-HOLDS-07B. Same discipline as AuditLogAdmin/
+# BrokerAuditEventAdmin: rows are written exclusively by
+# simulator/ib_risk_holds.py; nothing may add, change, or delete a row
+# through this admin. Not the primary surface for this data either
+# (that's the "Recent Risk Events" table on the IB detail page) —
+# provided for direct drill-down/search across all IBs.
+# ─────────────────────────────────────────────
+
+@admin.register(IBRiskEvent)
+class IBRiskEventAdmin(admin.ModelAdmin):
+    list_display = ("id", "created_at", "event_type", "referral", "obligation", "actor")
+    list_filter = ("event_type", "created_at")
+    search_fields = ("referral__code", "referral__user__username", "reason")
+    readonly_fields = [f.name for f in IBRiskEvent._meta.fields]
+    ordering = ("-created_at", "-id")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.is_superuser  # superuser can purge stale rows if needed

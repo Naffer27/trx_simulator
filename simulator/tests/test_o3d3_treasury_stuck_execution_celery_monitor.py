@@ -348,6 +348,38 @@ class BeatScheduleTests(SimpleTestCase):
             schedule["observe-broker-risk-alerts-5m"]["schedule"], crontab(minute="*/5"),
         )
 
+        # IB-RISK-HOLDS-07B.2 — this baseline was stale by 3 entries
+        # (16 -> 19), only 2 of which trace to IB-TREASURY-RECONCILIATION
+        # -06B; the third (sweep-ib-commission-triggers-5m) was added
+        # earlier, legitimately, by the IB commission-triggers block
+        # (commit 778632f, "add safe IB commission triggers") without
+        # this test ever being updated for it. Explicitly asserted below
+        # (not folded into the running count alone) so a future reader
+        # can verify each entry's own task/schedule, not just a number.
+        self.assertEqual(
+            schedule["sweep-ib-commission-triggers-5m"]["task"],
+            "simulator.sweep_ib_commission_triggers",
+        )
+        self.assertEqual(
+            schedule["sweep-ib-commission-triggers-5m"]["schedule"], crontab(minute="*/5"),
+        )
+
+        # IB-TREASURY-RECONCILIATION-06B's 2 new entries (17 -> 19).
+        self.assertEqual(
+            schedule["reconcile-ib-treasury-settlement-5m"]["task"],
+            "simulator.reconcile_ib_treasury_settlement",
+        )
+        self.assertEqual(
+            schedule["reconcile-ib-treasury-settlement-5m"]["schedule"], crontab(minute="*/5"),
+        )
+        self.assertEqual(
+            schedule["reconcile-ib-commission-adjustments-5m"]["task"],
+            "simulator.reconcile_ib_commission_adjustments",
+        )
+        self.assertEqual(
+            schedule["reconcile-ib-commission-adjustments-5m"]["schedule"], crontab(minute="*/5"),
+        )
+
         # 10 pre-existing + this block's 1 new entry + O.4e-2's
         # "record-celery-beat-heartbeat-5m" (added later, not a defect
         # here — see test_o4e2_..._celery_beat_heartbeat_foundation.py's
@@ -360,8 +392,13 @@ class BeatScheduleTests(SimpleTestCase):
         # lock section 8, not folded into "scan-positions-30s") +
         # WITHDRAWAL-SECURITY-EXTENSION-01's 1 new entry
         # ("sweep-verified-wallets-15m" — VerifiedWithdrawalWallet cooldown
-        # activation sweep, defensive backup to the lazy on-read activation).
-        self.assertEqual(len(schedule), 16)
+        # activation sweep, defensive backup to the lazy on-read activation) +
+        # IB-COMMISSION-ENGINE's 1 new entry ("sweep-ib-commission-triggers-5m",
+        # commit 778632f — never previously accounted for here) +
+        # IB-TREASURY-RECONCILIATION-06B's 2 new entries
+        # ("reconcile-ib-treasury-settlement-5m",
+        # "reconcile-ib-commission-adjustments-5m") = 19.
+        self.assertEqual(len(schedule), 19)
 
     def test_no_other_task_names_were_renamed_or_removed(self):
         from django.conf import settings

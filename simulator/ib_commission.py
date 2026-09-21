@@ -45,7 +45,7 @@ from django.utils import timezone
 
 from .models import (
     BrokerLedger, ChallengeEnrollment, Deposit, IBCommissionObligation,
-    IBCommissionRule, LotExecutionEvent, ReferralAttribution,
+    IBCommissionRule, LotExecutionEvent, Referral, ReferralAttribution,
 )
 
 logger = logging.getLogger("simulator.ib_commission")
@@ -123,6 +123,23 @@ def resolve_applicable_rule(referral, rule_type, at_time=None):
     return None
 
 
+def _referral_is_active(referral: Referral) -> bool:
+    """
+    IB-RISK-HOLDS-07B — shared gate, called by all four generate_*_
+    obligation() functions below (never from inside
+    resolve_applicable_rule() itself — that function has a second,
+    display-only caller, simulator/ib_admin_ops.py::ib_effective_rate(),
+    that must keep showing an IB's configured rate even while frozen;
+    injecting a freeze check there would silently break that display).
+
+    Fail-closed per IB-RISK-HOLDS-07A section Q: only an EXACT match on
+    Referral.RISK_ACTIVE passes. Any other value — including a future,
+    not-yet-defined risk_status this function doesn't know about — is
+    treated as inactive, never guessed past.
+    """
+    return referral.risk_status == Referral.RISK_ACTIVE
+
+
 def generate_per_lot_obligation(lot_execution_event: LotExecutionEvent):
     """
     Calculate (never credit) the PER_LOT IB commission owed for a single
@@ -155,6 +172,8 @@ def generate_per_lot_obligation(lot_execution_event: LotExecutionEvent):
         return None
 
     referral = attribution.referral
+    if not _referral_is_active(referral):
+        return None
 
     try:
         rule = resolve_applicable_rule(
@@ -252,6 +271,8 @@ def generate_challenge_percent_obligation(enrollment: ChallengeEnrollment):
         return None
 
     referral = attribution.referral
+    if not _referral_is_active(referral):
+        return None
 
     try:
         rule = resolve_applicable_rule(
@@ -343,6 +364,8 @@ def generate_deposit_percent_obligation(deposit: Deposit):
         return None
 
     referral = attribution.referral
+    if not _referral_is_active(referral):
+        return None
     at_time = deposit.credited_at or deposit.created_at
 
     try:
@@ -447,6 +470,8 @@ def generate_trading_commission_revenue_share_obligation(broker_ledger: BrokerLe
         return None
 
     referral = attribution.referral
+    if not _referral_is_active(referral):
+        return None
 
     try:
         rule = resolve_applicable_rule(

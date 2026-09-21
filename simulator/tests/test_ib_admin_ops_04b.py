@@ -259,10 +259,22 @@ class AggregationTests(TestCase):
         self.assertEqual(totals["today"], Decimal("0.50"))
 
     def test_week_lots_correct(self):
-        from simulator.ib_admin_ops import ib_lot_totals
+        """
+        IB-RISK-HOLDS-07B.3 — anchored directly to the real week_start
+        boundary _period_starts() computes (business definition: current
+        calendar week, Monday 00:00 -> now — confirmed correct and left
+        unmodified in production), instead of a fixed "N days ago"
+        offset. A fixed offset is not deterministic: whenever the suite
+        runs within the first ~2 days of a new calendar week, "2 days
+        ago" can cross the Monday 00:00 boundary into the PREVIOUS week
+        and be wrongly excluded — this was a test-fixture defect, not a
+        production defect (confirmed via IB-RISK-HOLDS-07B.3 audit).
+        """
+        from simulator.ib_admin_ops import _period_starts, ib_lot_totals
         now = timezone.now()
-        _make_lot_event(self.account1, qty="1.00", created_at=now - timezone.timedelta(days=2))
-        _make_lot_event(self.account1, qty="5.00", created_at=now - timezone.timedelta(days=20))
+        _, week_start, _ = _period_starts(now)
+        _make_lot_event(self.account1, qty="1.00", created_at=week_start)
+        _make_lot_event(self.account1, qty="5.00", created_at=week_start - timezone.timedelta(days=1))
         totals = ib_lot_totals(self.referral, at_time=now)
         self.assertEqual(totals["week"], Decimal("1.00"))
 

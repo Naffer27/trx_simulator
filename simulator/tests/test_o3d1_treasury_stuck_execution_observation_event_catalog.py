@@ -262,11 +262,22 @@ class NoFinancialOrOperationalLogicIntroducedTests(SimpleTestCase):
         the "observe-treasury-stuck-executions-15m" CELERY_BEAT_SCHEDULE
         entry. Same supersession pattern as the task-registration guard
         above.
+
+        IB-RISK-HOLDS-07B.1 — IB-TREASURY-RECONCILIATION-06B (commit
+        560b622b, already approved/committed, unrelated to and untouched
+        by this micro-block) legitimately superseded this guard a second
+        time, adding "reconcile-ib-treasury-settlement-5m" — its other
+        new entry, "reconcile-ib-commission-adjustments-5m", does not
+        contain the substring "treasury" and so never matched this
+        filter. Same supersession pattern as above.
         """
         from django.conf import settings
         schedule = getattr(settings, "CELERY_BEAT_SCHEDULE", {})
         treasury_keys = [key for key in schedule if "treasury" in key.lower()]
-        self.assertEqual(treasury_keys, ["observe-treasury-stuck-executions-15m"])
+        self.assertEqual(
+            treasury_keys,
+            ["reconcile-ib-treasury-settlement-5m", "observe-treasury-stuck-executions-15m"],
+        )
 
     def test_no_wallet_ledger_symbol_referenced_by_either_module(self):
         import inspect

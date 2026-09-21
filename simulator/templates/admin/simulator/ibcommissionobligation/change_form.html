@@ -30,12 +30,44 @@
     </a>
   </li>
   {% endif %}
+  {% if show_ib_hold_button %}
+  <li>
+    <a href="{{ ib_hold_url }}" class="historylink"
+       style="background:rgba(231,76,60,.12);color:#e74c3c;border:1px solid rgba(231,76,60,.35);
+              border-radius:4px;padding:5px 14px;font-size:.75rem;font-weight:700;
+              text-decoration:none;letter-spacing:.04em;">
+      Hold →
+    </a>
+  </li>
+  {% endif %}
+  {% if show_ib_release_button %}
+  <li>
+    <a href="{{ ib_release_url }}" class="historylink"
+       style="background:rgba(39,174,96,.15);color:#27ae60;border:1px solid rgba(39,174,96,.3);
+              border-radius:4px;padding:5px 14px;font-size:.75rem;font-weight:700;
+              text-decoration:none;letter-spacing:.04em;">
+      Release Hold →
+    </a>
+  </li>
+  {% endif %}
   {{ block.super }}
 {% endblock %}
 
 {% block object-tools %}
 {{ block.super }}
 {% if change %}
+  {% if original.is_held %}
+  <div style="background:#0f0f1c;border:1px solid rgba(231,76,60,.35);border-radius:8px;
+              padding:14px 18px;margin:0 0 14px 0;">
+    <div style="font-size:.85rem;font-weight:800;color:#e74c3c;letter-spacing:.04em;margin-bottom:6px;">
+      ⚠ HELD (IB-RISK-HOLDS-07B)
+    </div>
+    <div style="font-size:.78rem;color:#c8ccd8;">
+      This obligation cannot be approved or linked to Treasury while held.
+      Reason: {{ original.hold_reason }}
+    </div>
+  </div>
+  {% endif %}
   {% if ib_needs_attention %}
   <div style="background:#0f0f1c;border:1px solid rgba(231,76,60,.35);border-radius:8px;
               padding:14px 18px;margin:0 0 14px 0;">

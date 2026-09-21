@@ -2109,6 +2109,13 @@ class CalendarEvent(models.Model):
 
 
 class Referral(models.Model):
+    RISK_ACTIVE  = "ACTIVE"
+    RISK_FROZEN  = "FROZEN"
+    RISK_STATUS_CHOICES = [
+        (RISK_ACTIVE, "Active"),
+        (RISK_FROZEN, "Frozen"),
+    ]
+
     user                 = models.OneToOneField(User, on_delete=models.CASCADE, related_name='referral')
     code                 = models.CharField(max_length=20, unique=True)
     clicks               = models.PositiveIntegerField(default=0)
@@ -2120,6 +2127,22 @@ class Referral(models.Model):
     registrations        = models.PositiveIntegerField(default=0)
     estimated_commission = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0'))
     created_at           = models.DateTimeField(auto_now_add=True)
+
+    # IB-RISK-HOLDS-07B — approved design: IB-RISK-HOLDS-07A section F
+    # (Option B: separate control fields, not a status-enum expansion).
+    # These fields reflect the CURRENT freeze episode only — reset to
+    # blank/null by unfreeze_referral(); permanent history lives in
+    # IBRiskEvent (append-only), never here. Freeze/unfreeze are staff
+    # actions performed exclusively via simulator/ib_risk_holds.py.
+    risk_status   = models.CharField(
+        max_length=10, choices=RISK_STATUS_CHOICES, default=RISK_ACTIVE, db_index=True,
+    )
+    frozen_at     = models.DateTimeField(null=True, blank=True)
+    frozen_by     = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="referrals_frozen",
+    )
+    frozen_reason = models.TextField(blank=True, default="")
 
     class Meta:
         verbose_name = 'Referral / IB Link'
@@ -2385,6 +2408,23 @@ class IBCommissionObligation(models.Model):
     )
     metadata = models.JSONField(default=dict, blank=True)
 
+    # IB-RISK-HOLDS-07B — approved design: IB-RISK-HOLDS-07A section G
+    # (Option B: separate boolean flag, orthogonal to `status`, not a
+    # status-enum expansion). Blocks approve_obligation()/
+    # link_treasury_request() only (simulator/ib_treasury_settlement.py)
+    # — never blocks reconciliation or IB-REVERSALS-FRAUD-05's
+    # adjustment/reversal path, both deliberately untouched by this
+    # block. Reset to blank/null by release_obligation(); permanent
+    # history lives in IBRiskEvent, never here. Hold/release are staff
+    # actions performed exclusively via simulator/ib_risk_holds.py.
+    is_held     = models.BooleanField(default=False, db_index=True)
+    held_at     = models.DateTimeField(null=True, blank=True)
+    held_by     = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="ib_obligations_held",
+    )
+    hold_reason = models.TextField(blank=True, default="")
+
     class Meta:
         verbose_name        = "IB Commission Obligation"
         verbose_name_plural  = "IB Commission Obligations"
@@ -2539,6 +2579,65 @@ class IBCommissionAdjustment(models.Model):
             f"IBCommissionAdjustment(#{self.pk}, obligation=#{self.obligation_id}, "
             f"{self.adjustment_type}, ${self.amount}, status={self.status})"
         )
+
+
+class IBRiskEvent(models.Model):
+    """
+    IB-RISK-HOLDS-07B — append-only audit trail for IB freeze/unfreeze
+    and obligation hold/release transitions.
+
+    Approved design: IB-RISK-HOLDS-07A section H. The bare current-state
+    fields (Referral.risk_status/frozen_*, IBCommissionObligation.
+    is_held/held_*) are overwritten on every transition and cannot alone
+    reconstruct history across a freeze->unfreeze->freeze cycle — this
+    model is the permanent record, mirroring the existing AuditLog /
+    BrokerAuditEvent append-only convention already proven elsewhere in
+    this codebase. Written exclusively, and only ever created (never
+    updated or deleted), by simulator/ib_risk_holds.py, in the same
+    atomic transaction as the state change itself.
+
+    referral is always set (denormalized even for obligation-scoped
+    events, from obligation.referral, same discipline as
+    IBCommissionAdjustment.referral). obligation is null for the two
+    referral-scoped event types (FROZEN/UNFROZEN) and set for the two
+    obligation-scoped event types (OBLIGATION_HELD/OBLIGATION_RELEASED).
+    """
+    EVENT_FROZEN              = "FROZEN"
+    EVENT_UNFROZEN            = "UNFROZEN"
+    EVENT_OBLIGATION_HELD     = "OBLIGATION_HELD"
+    EVENT_OBLIGATION_RELEASED = "OBLIGATION_RELEASED"
+    EVENT_TYPE_CHOICES = [
+        (EVENT_FROZEN,              "Frozen"),
+        (EVENT_UNFROZEN,            "Unfrozen"),
+        (EVENT_OBLIGATION_HELD,     "Obligation Held"),
+        (EVENT_OBLIGATION_RELEASED, "Obligation Released"),
+    ]
+
+    event_type = models.CharField(max_length=32, choices=EVENT_TYPE_CHOICES, db_index=True)
+    referral   = models.ForeignKey(
+        Referral, on_delete=models.PROTECT, related_name="risk_events",
+    )
+    obligation = models.ForeignKey(
+        IBCommissionObligation, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="risk_events",
+    )
+    actor = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="ib_risk_events_actioned",
+    )
+    reason     = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        verbose_name        = "IB Risk Event"
+        verbose_name_plural  = "IB Risk Events"
+        indexes = [
+            models.Index(fields=["referral", "created_at"]),
+            models.Index(fields=["obligation", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"IBRiskEvent(#{self.pk}, {self.event_type}, referral={self.referral_id})"
 
 
 class Bonus(models.Model):

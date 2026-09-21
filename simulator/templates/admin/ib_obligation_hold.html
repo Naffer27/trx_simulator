@@ -1,0 +1,58 @@
+{% extends "admin/base_site.html" %}
+{% block title %}Hold Obligation #{{ instance.pk }}{% endblock %}
+{% block content %}
+<style>
+:root{--bg:#07070f;--panel:#0f0f1c;--panel2:#13131f;--border:#1e1e30;--bear:#e74c3c;--muted:#55556a;--text:#c8ccd8;--r:8px;}
+#content{background:var(--bg)!important;color:var(--text);}
+.tr-header{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);padding:14px 18px;margin-bottom:14px;}
+.tr-title{font-size:.95rem;font-weight:800;color:var(--bear);letter-spacing:.04em;}
+.tr-summary{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);padding:16px 18px;margin-bottom:16px;}
+.tr-summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px 20px;}
+.sm-label{font-size:.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;}
+.sm-val{font-size:.85rem;color:var(--text);font-weight:700;margin-top:2px;}
+.tr-section{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);padding:16px 18px;margin-bottom:14px;}
+.tr-field label{display:block;font-size:.72rem;font-weight:700;color:var(--text);margin-bottom:4px;}
+.tr-field textarea{width:100%;max-width:640px;background:var(--panel2);border:1px solid var(--border);
+  color:var(--text);border-radius:5px;padding:7px 10px;font-size:.8rem;min-height:64px;resize:vertical;}
+.tr-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:6px;}
+.tr-btn{display:inline-block;padding:8px 20px;border-radius:6px;font-size:.78rem;font-weight:700;cursor:pointer;border:none;text-decoration:none;}
+.tr-btn-bear{background:var(--bear);color:#1a0505;}
+.tr-btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--border);}
+</style>
+
+{% if messages %}{% for m in messages %}<div class="messagelist"><li class="{{ m.tags }}">{{ m }}</li></div>{% endfor %}{% endif %}
+
+<div class="tr-header">
+  <div class="tr-title">Hold Obligation #{{ instance.pk }}</div>
+</div>
+
+<div class="tr-summary">
+  <div class="tr-summary-grid">
+    <div><div class="sm-label">Obligation ID</div><div class="sm-val">#{{ instance.pk }}</div></div>
+    <div><div class="sm-label">IB / Referral</div><div class="sm-val">{{ instance.referral }}</div></div>
+    <div><div class="sm-label">Rule Type</div><div class="sm-val">{{ instance.rule_type }}</div></div>
+    <div><div class="sm-label">Amount</div><div class="sm-val">${{ instance.calculated_amount }}</div></div>
+    <div><div class="sm-label">Status</div><div class="sm-val">{{ instance.status }}</div></div>
+  </div>
+</div>
+
+<div class="tr-section" style="font-size:.78rem;color:#c8ccd8;">
+  Holding this obligation blocks approval and Treasury linking (IB-RISK-HOLDS-07B). It does not
+  affect an already-linked Treasury request, reconciliation, or adjustment/reversal eligibility.
+</div>
+
+<form method="post">
+  {% csrf_token %}
+  <div class="tr-section">
+    <div class="tr-field">
+      <label for="id_reason">Hold Reason (required)</label>
+      <textarea name="reason" id="id_reason"></textarea>
+    </div>
+  </div>
+  <div class="tr-actions">
+    <a href="{{ cancel_url }}" class="tr-btn tr-btn-ghost">Cancel</a>
+    <button type="submit" class="tr-btn tr-btn-bear">Hold Obligation</button>
+  </div>
+</form>
+
+{% endblock %}

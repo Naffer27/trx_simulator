@@ -82,7 +82,7 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from .forms import TreasuryOperationRequestForm
-from .models import IBCommissionObligation, TreasuryOperationRequest
+from .models import IBCommissionObligation, Referral, TreasuryOperationRequest
 from .treasury_requests import (
     TREASURY_REVIEW_PERMISSION, TREASURY_SUBMIT_PERMISSION, submit_treasury_request,
 )
@@ -124,6 +124,26 @@ class ObligationInvalidAmount(Exception):
     positivity, so this module does not trust that alone."""
 
 
+class ReferralNotActive(Exception):
+    """IB-RISK-HOLDS-07B. Raised by approve_obligation()/
+    link_treasury_request() when the obligation's IB (referral) is not
+    ACTIVE (risk_status != Referral.RISK_ACTIVE — fail-closed, per
+    IB-RISK-HOLDS-07A section Q). Freezing an IB blocks its PENDING
+    obligations from being approved and its APPROVED obligations from
+    being linked to Treasury; it never touches an obligation that has
+    already reached CREDITED, and never blocks reconciliation or
+    IB-REVERSALS-FRAUD-05's adjustment/reversal path (both untouched by
+    this block)."""
+
+
+class ObligationHeld(Exception):
+    """IB-RISK-HOLDS-07B. Raised by approve_obligation()/
+    link_treasury_request() when the specific obligation has is_held=
+    True — orthogonal to (and checked independently of) the IB-level
+    freeze above; a single obligation can be held without freezing the
+    whole IB."""
+
+
 def _validate_amount(obligation):
     if obligation.calculated_amount is None or obligation.calculated_amount <= 0:
         raise ObligationInvalidAmount(
@@ -160,6 +180,10 @@ def approve_obligation(obligation, *, request):
                                   lacks TREASURY_REVIEW_PERMISSION.
         ObligationNotPending:    current status is not PENDING.
         ObligationInvalidAmount: calculated_amount is not positive.
+        ReferralNotActive:       the obligation's IB is frozen
+                                  (IB-RISK-HOLDS-07B).
+        ObligationHeld:          this specific obligation is held
+                                  (IB-RISK-HOLDS-07B).
     """
     if not request.user.is_authenticated:
         raise PermissionDenied("Authentication required to approve an IB commission obligation.")
@@ -167,11 +191,28 @@ def approve_obligation(obligation, *, request):
         raise PermissionDenied(f"Missing permission: {TREASURY_REVIEW_PERMISSION}")
 
     with transaction.atomic():
+        # IB-RISK-HOLDS-07B — lock order Referral -> IBCommissionObligation
+        # (IB-RISK-HOLDS-07A section P), so a concurrent freeze can never
+        # interleave with this transition. obligation.referral_id is
+        # immutable once the obligation is created, so reading it off the
+        # (possibly stale) passed-in instance before locking is safe.
+        referral_locked = Referral.objects.select_for_update().get(pk=obligation.referral_id)
         locked = IBCommissionObligation.objects.select_for_update().get(pk=obligation.pk)
 
         if locked.status != IBCommissionObligation.ST_PENDING:
             raise ObligationNotPending(
                 f"IBCommissionObligation #{locked.pk} is not pending (status={locked.status})."
+            )
+
+        if referral_locked.risk_status != Referral.RISK_ACTIVE:
+            raise ReferralNotActive(
+                f"Referral #{referral_locked.pk} is not ACTIVE (risk_status="
+                f"{referral_locked.risk_status}) — cannot approve obligation #{locked.pk}."
+            )
+
+        if locked.is_held:
+            raise ObligationHeld(
+                f"IBCommissionObligation #{locked.pk} is held — cannot approve."
             )
 
         _validate_amount(locked)
@@ -238,6 +279,14 @@ def link_treasury_request(obligation, *, request):
         ObligationNotApproved:   obligation is not linked AND its status
                                   is not APPROVED.
         ObligationInvalidAmount: calculated_amount is not positive.
+        ReferralNotActive:       the obligation's IB is frozen
+                                  (IB-RISK-HOLDS-07B). Never raised on an
+                                  already-linked obligation (see the
+                                  idempotent-return branch below, checked
+                                  first).
+        ObligationHeld:          this specific obligation is held
+                                  (IB-RISK-HOLDS-07B). Same already-linked
+                                  exception as above.
         ValidationError:         the constructed form is somehow invalid
                                   (defensive — should not occur given the
                                   fields this function itself supplies).
@@ -248,16 +297,36 @@ def link_treasury_request(obligation, *, request):
         raise PermissionDenied(f"Missing permission: {TREASURY_SUBMIT_PERMISSION}")
 
     with transaction.atomic():
+        # IB-RISK-HOLDS-07B — lock order Referral -> IBCommissionObligation
+        # (IB-RISK-HOLDS-07A section P), same discipline as
+        # approve_obligation() above.
+        referral_locked = Referral.objects.select_for_update().get(pk=obligation.referral_id)
         locked = IBCommissionObligation.objects.select_for_update().get(pk=obligation.pk)
 
         if locked.treasury_operation_id is not None:
             # Idempotent no-op — already linked. Re-fetch to hand back a
-            # fully-loaded instance rather than a lazy FK.
+            # fully-loaded instance rather than a lazy FK. Checked BEFORE
+            # the freeze/hold guards below: once a TreasuryOperationRequest
+            # already exists, IB-RISK-HOLDS-07A section L is explicit that
+            # nothing in this layer may block or pretend to undo it — this
+            # repeat call must keep behaving exactly as it did before this
+            # block, never start raising on an already-linked obligation.
             return TreasuryOperationRequest.objects.get(pk=locked.treasury_operation_id)
 
         if locked.status != IBCommissionObligation.ST_APPROVED:
             raise ObligationNotApproved(
                 f"IBCommissionObligation #{locked.pk} is not approved (status={locked.status})."
+            )
+
+        if referral_locked.risk_status != Referral.RISK_ACTIVE:
+            raise ReferralNotActive(
+                f"Referral #{referral_locked.pk} is not ACTIVE (risk_status="
+                f"{referral_locked.risk_status}) — cannot link obligation #{locked.pk} to Treasury."
+            )
+
+        if locked.is_held:
+            raise ObligationHeld(
+                f"IBCommissionObligation #{locked.pk} is held — cannot link to Treasury."
             )
 
         _validate_amount(locked)
