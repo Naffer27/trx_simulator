@@ -28,7 +28,7 @@ from decimal import Decimal
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 from django.db import connection
-from django.urls import NoReverseMatch, reverse
+from django.urls import reverse
 from django.utils import timezone
 
 from simulator.models import (
@@ -417,12 +417,16 @@ class ClientsNavigationTests(TestCase):
         self.assertContains(r, reverse("simulator:associates"))
         self.assertContains(r, reverse("simulator:associates_clients"))
 
-    def test_sidebar_shows_programa_badge_but_no_real_route(self):
+    def test_sidebar_shows_programa_link(self):
+        """IB-PORTAL-UX-10C implemented /associates/program/ as a real
+        route — this test originally asserted the opposite (a disabled
+        "Próximamente" placeholder with NoReverseMatch), which was
+        correct for 10B's own scope at the time but is now intentionally
+        superseded by 10C. Updated to assert the current, correct
+        reality: Programa is a real, reachable link from the Clients
+        page's own sidebar."""
         r = self.client.get(_clients_url())
-        self.assertContains(r, "Próximamente")
-        self.assertContains(r, "sb-disabled")
-        with self.assertRaises(NoReverseMatch):
-            reverse("simulator:associates_program")
+        self.assertContains(r, reverse("simulator:associates_program"))
 
     def test_active_section_marks_clients_link_active(self):
         r = self.client.get(_clients_url())

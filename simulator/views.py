@@ -3,7 +3,7 @@ from decimal import Decimal, InvalidOperation
 from django.utils import timezone
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_POST, require_GET
 from django.views.decorators.cache import never_cache
 from django.core.serializers.json import DjangoJSONEncoder
 from django.contrib.auth import authenticate, login as auth_login, logout
@@ -4711,6 +4711,111 @@ def associates_clients_view(request):
         'client_rows': client_rows,
         'page': page,
         'total_clients': paginator.count,
+    })
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# IB-PORTAL-UX-10C — Affiliate Program (read-only). Third and final page
+# of the Associates module authorized so far (Dashboard=10A, Clients=10B,
+# Programa=10C) — separate view/template, per the same architecture
+# directive as 10B. Reuses ib_admin_ops.ib_effective_rate() completely
+# unmodified — never a second rule-resolution implementation here. No
+# rate/rule is ever edited from this page (staff/admin-only, unchanged).
+#
+# Compensation types shown (IB-PORTAL-UX-10C audit, section C): PER_LOT,
+# TRADING_COMMISSION_REVENUE_SHARE, SPREAD_REVENUE_SHARE. CPA_BONUS is
+# deliberately EXCLUDED — the audit confirmed it has a rule_type and DB
+# constraints but no generate_*_obligation()/sweep_* anywhere in
+# ib_commission.py/ib_commission_triggers.py, i.e. it cannot actually
+# produce an obligation today. Never presented as an active program
+# component, per explicit Owner instruction.
+#
+# A rule_type with no currently-effective rule (ib_effective_rate()
+# returns (None, ...)) is rendered as "Not configured" — never a
+# fabricated $0/0% standing in for "no rule". Sub-IB is a fixed, honest
+# empty state (10C audit section H: zero parent/child/upline schema
+# exists anywhere today) — never invented levels/percentages.
+# ─────────────────────────────────────────────────────────────────────────
+
+_IB_PROGRAM_COMPENSATION_TYPES = (
+    (IBCommissionRule.RULE_PER_LOT, 'Per Lot', 'fixed', '$ / lot'),
+    (IBCommissionRule.RULE_TRADING_COMMISSION_REVENUE_SHARE, 'Trading Commission Revenue Share', 'percentage', '%'),
+    (IBCommissionRule.RULE_SPREAD_REVENUE_SHARE, 'Spread Revenue Share', 'percentage', '%'),
+)
+
+
+def _human_decimal(value):
+    """
+    IB-PORTAL-UX-10C Owner Visual Review FIX-02 — display-only trailing-
+    zero stripping for a percentage rate (20.000 -> "20", 12.500 ->
+    "12.5", 12.250 -> "12.25", 33.333 -> "33.333", nothing lost). Never
+    touches the underlying Decimal — this returns a new str, the
+    IBCommissionRule.percentage field/value passed in is untouched by
+    construction (Decimal formatting is non-mutating). Deliberately NOT
+    floatformat:"-2": that filter only omits the decimal part entirely
+    for a whole number and otherwise pads to a fixed width (confirmed
+    empirically: floatformat:"-2" on Decimal('12.500') renders "12.50",
+    not the desired "12.5") — this strips every trailing zero, never
+    just up to a fixed precision.
+    """
+    s = format(value, 'f')
+    if '.' in s:
+        s = s.rstrip('0').rstrip('.')
+    return s
+
+
+@login_required
+@require_GET
+def associates_program_view(request):
+    """
+    IB-PORTAL-UX-10C. Strictly scoped to request.user's own Referral,
+    exactly like associates_view()/associates_clients_view() — no ID is
+    ever accepted from GET/POST to change scope (IDOR-safe by
+    construction). Read-only: no POST handling, no mutation path exists
+    on this view at all.
+    """
+    ref, _ = Referral.objects.get_or_create(
+        user=request.user,
+        defaults={'code': _secrets.token_urlsafe(8)},
+    )
+
+    from .ib_admin_ops import ib_effective_rate
+
+    components = []
+    for rule_type, label, unit, unit_label in _IB_PROGRAM_COMPENSATION_TYPES:
+        rule, source = ib_effective_rate(ref, rule_type)
+        if rule is not None:
+            raw_value = rule.fixed_amount if unit == 'fixed' else rule.percentage
+            components.append({
+                'rule_type': rule_type,
+                'label': label,
+                'unit': unit,
+                'unit_label': unit_label,
+                'active': True,
+                'value': raw_value,  # untouched Decimal — used by tests/any future calculation
+                'value_display': _human_decimal(raw_value) if unit == 'percentage' else None,
+                'source': source,  # 'per-IB' or 'global'
+                'effective_from': rule.effective_from,
+                'effective_until': rule.effective_until,
+            })
+        else:
+            # rule is None for "no rule resolves" AND for "ambiguous" —
+            # both cases are shown identically as Not Configured to the
+            # IB (an internal resolution ambiguity is a staff/Risk Desk
+            # concern, never surfaced here); never a fabricated rate.
+            components.append({
+                'rule_type': rule_type, 'label': label, 'unit': unit,
+                'unit_label': unit_label, 'active': False,
+            })
+
+    active_component_count = sum(1 for c in components if c['active'])
+    return render(request, 'simulator/associates_program.html', {
+        'referral': ref,
+        'active_section': 'associates_program',
+        'is_frozen': ref.risk_status == Referral.RISK_FROZEN,
+        'components': components,
+        'has_active_component': active_component_count > 0,
+        'active_component_count': active_component_count,
     })
 
 
