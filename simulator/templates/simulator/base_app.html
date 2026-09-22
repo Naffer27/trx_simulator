@@ -195,6 +195,11 @@
     }
     .sb-child:hover { color: var(--text); background: rgba(255,255,255,.018); }
     .sb-child.active { color: var(--gold); }
+    /* IB-PORTAL-UX-10B — visible-but-inert child (e.g. "Programa",
+       reserved for 10C): unlike .sb-hidden (display:none), this stays
+       visible with a "Próximamente" badge, just non-interactive. */
+    .sb-child.sb-disabled { opacity: .45; cursor: not-allowed; pointer-events: none; }
+    .sb-child.sb-disabled:hover { background: none; }
     .sb-cdot {
       width: 4px; height: 4px; border-radius: 50%;
       background: currentColor; opacity: .5; flex-shrink: 0;
@@ -603,12 +608,30 @@
 
       <div class="sb-divider"></div>
 
-      <!-- Asociados -->
-      <a href="{% url 'simulator:associates' %}"
-         class="sb-link {% if active_section == 'associates' %}active{% endif %}">
-        <span class="sb-icon"><i class="fa-solid fa-handshake"></i></span>
-        <span class="sb-text">Asociados</span>
-      </a>
+      <!-- Asociados (dropdown) — IB-PORTAL-UX-10B: Dashboard / Clientes /
+           Programa (reservado, no implementado hasta 10C) -->
+      <div class="sb-group {% if active_section == 'associates' or active_section == 'associates_clients' %}open{% endif %}"
+           data-group="asociados">
+        <div class="sb-link sb-group-hd">
+          <span class="sb-icon"><i class="fa-solid fa-handshake"></i></span>
+          <span class="sb-text">Asociados</span>
+          <span class="sb-chevron"><i class="fa-solid fa-chevron-right"></i></span>
+        </div>
+        <div class="sb-children">
+          <a href="{% url 'simulator:associates' %}"
+             class="sb-child {% if active_section == 'associates' %}active{% endif %}">
+            <span class="sb-cdot"></span>Dashboard
+          </a>
+          <a href="{% url 'simulator:associates_clients' %}"
+             class="sb-child {% if active_section == 'associates_clients' %}active{% endif %}">
+            <span class="sb-cdot"></span>Clientes
+          </a>
+          <a href="#" class="sb-child sb-disabled" aria-disabled="true" title="Próximamente — IB-PORTAL-UX-10C">
+            <span class="sb-cdot"></span>Programa
+            <span class="sb-badge sb-badge-soon" style="margin-left:auto;">Próximamente</span>
+          </a>
+        </div>
+      </div>
 
       <!-- Bonos -->
       <a href="{% url 'simulator:bonuses' %}"

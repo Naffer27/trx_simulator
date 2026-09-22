@@ -13,8 +13,8 @@ from django.contrib.auth.decorators import login_required
 from django.core.mail import send_mail
 from django.core.paginator import Paginator
 from django.conf import settings
-from django.db.models import Sum, Count, Max, Min, Avg, Case, When, Q
-from django.db.models.functions import TruncDate
+from django.db.models import Sum, Count, Max, Min, Avg, Case, When, Q, Exists, OuterRef, Subquery, DecimalField
+from django.db.models.functions import Coalesce, TruncDate
 from django.db import transaction
 from django.urls import reverse
 import json, random, logging, time, secrets as _secrets
@@ -4522,6 +4522,195 @@ def associates_view(request):
         'ib_deposits_total': ib_deposits_total,
         'ib_withdrawals_total': ib_withdrawals_total,
         'ib_traded_volume': ib_traded_volume,
+    })
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# IB-PORTAL-UX-10B — Clients. Separate page from the Associates dashboard
+# (10A), per the Owner's explicit architecture directive: /associates/
+# stays the dashboard, /associates/clients/ is its own view/template, and
+# /associates/program/ is reserved (not implemented) for a future
+# IB-PORTAL-UX-10C. This view reuses the same real SSOTs as 10A — never a
+# second commission/attribution calculation — and the exact same
+# OneToOneField join discipline for cross-IB isolation
+# (user__referral_attribution__referral=ref /
+# account__user__referral_attribution__referral=ref), extended here to
+# one additional real field: IBCommissionObligation.attribution, grouped
+# per client instead of summed for the whole IB.
+#
+# Client Status (Owner decision J.1, locked): a purely derived label from
+# two real, already-certified facts — never a new model field:
+#   Registered — no Live account yet (Live = TradingAccount.
+#                WITHDRAWABLE_ACCOUNT_TYPES, same SSOT as 10A).
+#   Active     — has a Live account AND at least one LotExecutionEvent in
+#                the last 30 days.
+#   Dormant    — has a Live account but no LotExecutionEvent in the last
+#                30 days.
+# Deliberately NOT User.is_active (Owner decision J.1) — that flag is
+# account-enabled/disabled, not a commercial trading-activity signal.
+# ─────────────────────────────────────────────────────────────────────────
+
+_IB_CLIENTS_PAGE_SIZE = 20
+_IB_CLIENTS_STATUS_CHOICES = (
+    ('all', 'All'),
+    ('registered', 'Registered'),
+    ('active', 'Active'),
+    ('dormant', 'Dormant'),
+)
+_IB_CLIENTS_STATUS_KEYS = frozenset(k for k, _ in _IB_CLIENTS_STATUS_CHOICES)
+_IB_CLIENTS_ACTIVITY_WINDOW_DAYS = 30
+
+
+@login_required
+def associates_clients_view(request):
+    """
+    IB-PORTAL-UX-10B. Lists the traders attributed to request.user's own
+    Referral — one annotated, paginated query, no N+1 — mirroring the
+    exact correlated-subquery discipline simulator/ib_admin_ops.py's own
+    ib_directory_queryset() already established for the (unrelated,
+    staff-only) IB directory, one level down: there it annotates a list
+    of Referral rows; here it annotates a list of this ONE IB's own
+    ReferralAttribution rows. ib_admin_ops.py itself is never imported or
+    modified here — this is the same PATTERN, reimplemented locally,
+    never the same protected staff module.
+
+    PII discipline (identical to associates_view()'s own, IB-PORTAL-08B
+    section 7): username only, never email/KYC/wallet/balance/individual
+    trades. A client's actual account balance/equity is the client's own
+    money, not the IB's business data — never queried or displayed here.
+
+    Cross-IB isolation: every annotation and the search filter are all
+    applied to a queryset already scoped by `referral=ref` — a client
+    belonging to another IB can never appear, regardless of search/filter
+    input (IDOR-safe by construction, same as associates_view()).
+    """
+    ref, _ = Referral.objects.get_or_create(
+        user=request.user,
+        defaults={'code': _secrets.token_urlsafe(8)},
+    )
+
+    # ── Joined period filter (Owner decision J.2) — reuses the exact
+    # same whitelist/resolver as the Associates dashboard (10A), imported
+    # as constants only, never shared mutable state. Default 'all': a
+    # client list should show every client by default, unlike the
+    # dashboard's growth-vs-period cards. ──
+    period = request.GET.get('period', 'all')
+    if period not in _IB_PERIOD_KEYS:
+        period = 'all'
+    now = timezone.now()
+    period_start = _ib_period_start(period, now)
+
+    status_filter = request.GET.get('status', 'all')
+    if status_filter not in _IB_CLIENTS_STATUS_KEYS:
+        status_filter = 'all'
+
+    search_q = request.GET.get('q', '').strip()
+
+    activity_since = now - timezone.timedelta(days=_IB_CLIENTS_ACTIVITY_WINDOW_DAYS)
+
+    live_accounts_sq = TradingAccount.objects.filter(
+        user=OuterRef('referred_user'), account_type__in=TradingAccount.WITHDRAWABLE_ACCOUNT_TYPES,
+    )
+    demo_accounts_sq = TradingAccount.objects.filter(
+        user=OuterRef('referred_user'), account_type='DEMO',
+    )
+    recent_lots_sq = LotExecutionEvent.objects.filter(
+        account__user=OuterRef('referred_user'), created_at__gte=activity_since,
+    )
+    ftd_deposits_sq = Deposit.objects.filter(
+        user=OuterRef('referred_user'), credited=True, challenge_product__isnull=True,
+    )
+    deposits_sum_sq = (
+        Deposit.objects.filter(
+            user=OuterRef('referred_user'), credited=True, challenge_product__isnull=True,
+        )
+        .order_by().values('user').annotate(total=Sum('amount_usd')).values('total')
+    )
+    withdrawals_sum_sq = (
+        WithdrawalRequest.objects.filter(
+            user=OuterRef('referred_user'), status=WithdrawalRequest.STATUS_COMPLETED,
+        )
+        .order_by().values('user').annotate(total=Sum('amount_usd')).values('total')
+    )
+    lots_sum_sq = (
+        LotExecutionEvent.objects.filter(account__user=OuterRef('referred_user'))
+        .order_by().values('account__user').annotate(total=Sum('qty')).values('total')
+    )
+    commission_sum_sq = (
+        IBCommissionObligation.objects.filter(attribution=OuterRef('pk'))
+        .order_by().values('attribution').annotate(total=Sum('calculated_amount')).values('total')
+    )
+    ftd_date_sq = ftd_deposits_sq.order_by('credited_at').values('credited_at')[:1]
+
+    _money = DecimalField(max_digits=18, decimal_places=2)
+    _lots = DecimalField(max_digits=18, decimal_places=6)
+
+    clients_qs = (
+        ReferralAttribution.objects.filter(referral=ref)
+        .select_related('referred_user')
+        .annotate(
+            has_live=Exists(live_accounts_sq),
+            has_demo=Exists(demo_accounts_sq),
+            has_ftd=Exists(ftd_deposits_sq),
+            ftd_date=Subquery(ftd_date_sq),
+            recently_active=Exists(recent_lots_sq),
+            deposits_total=Coalesce(Subquery(deposits_sum_sq, output_field=_money), Decimal('0.00')),
+            withdrawals_total=Coalesce(Subquery(withdrawals_sum_sq, output_field=_money), Decimal('0.00')),
+            traded_volume=Coalesce(Subquery(lots_sum_sq, output_field=_lots), Decimal('0')),
+            commission_total=Coalesce(Subquery(commission_sum_sq, output_field=_money), Decimal('0.00')),
+        )
+    )
+
+    if period_start is not None:
+        clients_qs = clients_qs.filter(attributed_at__gte=period_start)
+    if search_q:
+        clients_qs = clients_qs.filter(referred_user__username__icontains=search_q)
+    if status_filter == 'registered':
+        clients_qs = clients_qs.filter(has_live=False)
+    elif status_filter == 'active':
+        clients_qs = clients_qs.filter(has_live=True, recently_active=True)
+    elif status_filter == 'dormant':
+        clients_qs = clients_qs.filter(has_live=True, recently_active=False)
+
+    clients_qs = clients_qs.order_by('-attributed_at')
+
+    paginator = Paginator(clients_qs, _IB_CLIENTS_PAGE_SIZE)
+    page = paginator.get_page(request.GET.get('page', 1))
+
+    client_rows = []
+    for row in page.object_list:
+        if not row.has_live:
+            status_label = 'Registered'
+        elif row.recently_active:
+            status_label = 'Active'
+        else:
+            status_label = 'Dormant'
+        client_rows.append({
+            'attribution': row,
+            'username': row.referred_user.username,
+            'joined_at': row.attributed_at,
+            'has_demo': row.has_demo,
+            'has_live': row.has_live,
+            'ftd_date': row.ftd_date,
+            'deposits_total': row.deposits_total,
+            'traded_volume': row.traded_volume,
+            'commission_total': row.commission_total,
+            'status_label': status_label,
+        })
+
+    return render(request, 'simulator/associates_clients.html', {
+        'referral': ref,
+        'active_section': 'associates_clients',
+        'is_frozen': ref.risk_status == Referral.RISK_FROZEN,
+        'period': period,
+        'period_label': _IB_PERIOD_LABELS.get(period, 'All'),
+        'period_choices': _IB_PERIODS,
+        'status_filter': status_filter,
+        'status_choices': _IB_CLIENTS_STATUS_CHOICES,
+        'search_q': search_q,
+        'client_rows': client_rows,
+        'page': page,
+        'total_clients': paginator.count,
     })
 
 

@@ -1,0 +1,246 @@
+{% extends "simulator/base_app.html" %}
+{% block title %}Clientes — Asociados — Money Broker{% endblock %}
+{% block page_title %}Clientes{% endblock %}
+
+{% block extra_styles %}
+/* ═══════════════ IB-PORTAL-UX-10B — Clients ═══════════════ */
+
+.clx-card {
+  background: var(--bg-card-2); border: 1px solid var(--border);
+  border-radius: 12px; overflow: hidden; margin-bottom: 20px;
+}
+.clx-card-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px; border-bottom: 1px solid var(--border);
+  flex-wrap: wrap; gap: 10px;
+}
+.clx-card-title {
+  font-family: 'Orbitron', sans-serif; font-size: .72rem; font-weight: 700;
+  color: var(--muted-2); letter-spacing: .08em; text-transform: uppercase;
+}
+.clx-card-body { padding: 18px; }
+
+.clx-toolbar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 14px 18px; border-bottom: 1px solid var(--border);
+}
+.clx-search {
+  flex: 1; min-width: 180px; display: flex; align-items: center; gap: 8px;
+  background: var(--bg-app); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 12px;
+}
+.clx-search i { color: var(--muted); font-size: .8rem; }
+.clx-search input {
+  flex: 1; background: transparent; border: none; outline: none;
+  color: var(--text); font-size: .82rem; font-family: 'Inter', sans-serif;
+}
+.clx-select {
+  background: var(--bg-app); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 12px; color: var(--text); font-size: .8rem; font-family: 'Inter', sans-serif;
+}
+.clx-period-selector {
+  display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+  background: var(--bg-app); border: 1px solid var(--border);
+  border-radius: 8px; padding: 3px;
+}
+.clx-period-pill {
+  padding: 5px 10px; border-radius: 6px; font-size: .7rem; font-weight: 600;
+  color: var(--muted-2); text-decoration: none; white-space: nowrap;
+}
+.clx-period-pill:hover { color: var(--text); }
+.clx-period-pill.active { background: rgba(255,215,0,.12); color: var(--gold); }
+.clx-apply-btn {
+  background: var(--gold); color: #000; font-weight: 700; border: none;
+  border-radius: 8px; padding: 8px 16px; font-size: .8rem; cursor: pointer;
+}
+
+.clx-table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+.clx-table th {
+  color: var(--muted-2); font-size: .64rem; text-transform: uppercase; letter-spacing: .05em;
+  padding: 10px 14px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap;
+}
+.clx-table td {
+  padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,.04);
+  color: var(--text); white-space: nowrap;
+}
+.clx-table tbody tr:hover { background: rgba(255,255,255,.015); }
+.clx-username { font-weight: 700; color: #fff; }
+.clx-yesno { font-size: .78rem; }
+.clx-yes { color: var(--bull); }
+.clx-no { color: var(--muted); }
+.clx-money { font-weight: 600; }
+
+.clx-status-pill {
+  display: inline-block; padding: 3px 10px; border-radius: 20px;
+  font-size: .66rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+}
+.clx-status-registered { background: rgba(52,152,219,.15); color: #3498db; border: 1px solid rgba(52,152,219,.3); }
+.clx-status-active     { background: rgba(38,166,154,.15); color: var(--bull); border: 1px solid rgba(38,166,154,.3); }
+.clx-status-dormant    { background: rgba(120,123,134,.15); color: var(--muted-2); border: 1px solid rgba(120,123,134,.3); }
+
+.clx-empty {
+  text-align: center; padding: 48px 16px; color: var(--muted); font-size: .85rem;
+}
+.clx-empty i { font-size: 2rem; opacity: .3; display: block; margin-bottom: 12px; }
+
+.clx-pager {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px; border-top: 1px solid var(--border); flex-wrap: wrap; gap: 10px;
+}
+.clx-pager-info { font-size: .74rem; color: var(--muted-2); }
+.clx-pager-links { display: flex; gap: 8px; font-size: .78rem; }
+.clx-pager-links a { color: var(--gold); text-decoration: none; }
+.clx-pager-links a:hover { text-decoration: underline; }
+.clx-pager-links span.disabled { color: var(--muted); }
+
+.clx-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap; margin-bottom: 18px;
+}
+.clx-header h1 { font-size: 1.2rem; font-weight: 700; color: #fff; margin-bottom: 4px; }
+.clx-header p { font-size: .8rem; color: var(--muted); }
+.clx-total-badge {
+  background: rgba(255,215,0,.08); border: 1px solid rgba(255,215,0,.2);
+  border-radius: 20px; padding: 6px 14px; font-size: .78rem; color: var(--gold); font-weight: 700;
+  white-space: nowrap;
+}
+
+/* ── Mobile: collapse table to stacked cards ── */
+@media (max-width: 760px) {
+  .clx-table thead { display: none; }
+  .clx-table, .clx-table tbody, .clx-table tr, .clx-table td { display: block; width: 100%; }
+  .clx-table tr {
+    border-bottom: 1px solid var(--border); padding: 10px 14px; margin: 0;
+  }
+  .clx-table td {
+    border-bottom: none; padding: 4px 0; white-space: normal;
+    display: flex; justify-content: space-between; gap: 10px;
+  }
+  .clx-table td::before {
+    content: attr(data-label); color: var(--muted-2); font-size: .68rem;
+    text-transform: uppercase; letter-spacing: .04em; flex-shrink: 0;
+  }
+}
+{% endblock %}
+
+{% block content %}
+<div>
+
+  <!-- Frozen banner (same as the Dashboard page) -->
+  {% if is_frozen %}
+  <div style="background:rgba(239,83,80,.08);border:1px solid rgba(239,83,80,.35);border-radius:12px;padding:16px 20px;margin-bottom:20px;font-size:.84rem;color:var(--text);display:flex;align-items:center;gap:12px;">
+    <i class="fa-solid fa-triangle-exclamation" style="color:#ef5350;font-size:1.1rem;"></i>
+    <div><strong style="color:#ef5350;">Programa IB temporalmente congelado.</strong> Los datos de tus clientes siguen disponibles abajo en modo de solo lectura.</div>
+  </div>
+  {% endif %}
+
+  <div class="clx-header">
+    <div>
+      <h1>My <span style="color:var(--gold);">Clients</span></h1>
+      <p>Traders attributed to your referral link.</p>
+    </div>
+    <div class="clx-total-badge">{{ total_clients }} client{{ total_clients|pluralize }}</div>
+  </div>
+
+  <div class="clx-card">
+    <form method="get" class="clx-toolbar">
+      <div class="clx-search">
+        <i class="fa-solid fa-magnifying-glass"></i>
+        <input type="text" name="q" value="{{ search_q }}" placeholder="Search by username…">
+      </div>
+      <select name="status" class="clx-select" onchange="this.form.submit()">
+        {% for skey, slabel in status_choices %}
+        <option value="{{ skey }}" {% if skey == status_filter %}selected{% endif %}>{{ slabel }}</option>
+        {% endfor %}
+      </select>
+      <input type="hidden" name="period" value="{{ period }}" id="clxPeriodInput">
+      <button type="submit" class="clx-apply-btn">Apply</button>
+    </form>
+
+    <div class="clx-toolbar" style="border-top:none;">
+      <span style="font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;">Joined</span>
+      <div class="clx-period-selector">
+        {% for pkey, plabel in period_choices %}
+        <a href="?period={{ pkey }}&status={{ status_filter }}{% if search_q %}&q={{ search_q }}{% endif %}"
+           class="clx-period-pill {% if pkey == period %}active{% endif %}">{{ plabel }}</a>
+        {% endfor %}
+      </div>
+    </div>
+
+    {% if client_rows %}
+    <div style="overflow-x:auto;">
+      <table class="clx-table">
+        <thead>
+          <tr>
+            <th>Client</th>
+            <th>Joined</th>
+            <th>Demo</th>
+            <th>Live</th>
+            <th>FTD</th>
+            <th>Deposits</th>
+            <th>Traded Volume</th>
+            <th>Commission</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in client_rows %}
+          <tr>
+            <td data-label="Client"><span class="clx-username">{{ row.username }}</span></td>
+            <td data-label="Joined">{{ row.joined_at|date:"d M Y" }}</td>
+            <td data-label="Demo">
+              {% if row.has_demo %}<span class="clx-yesno clx-yes"><i class="fa-solid fa-circle-check"></i> Yes</span>
+              {% else %}<span class="clx-yesno clx-no">—</span>{% endif %}
+            </td>
+            <td data-label="Live">
+              {% if row.has_live %}<span class="clx-yesno clx-yes"><i class="fa-solid fa-circle-check"></i> Yes</span>
+              {% else %}<span class="clx-yesno clx-no">—</span>{% endif %}
+            </td>
+            <td data-label="FTD">
+              {% if row.ftd_date %}{{ row.ftd_date|date:"d M Y" }}
+              {% else %}<span class="clx-no">—</span>{% endif %}
+            </td>
+            <td data-label="Deposits" class="clx-money">${{ row.deposits_total|floatformat:2 }}</td>
+            <td data-label="Traded Volume" class="clx-money">{{ row.traded_volume|floatformat:"-2" }} lots</td>
+            <td data-label="Commission" class="clx-money" style="color:var(--gold);">${{ row.commission_total|floatformat:2 }}</td>
+            <td data-label="Status">
+              <span class="clx-status-pill clx-status-{{ row.status_label|lower }}">{{ row.status_label }}</span>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="clx-pager">
+      <span class="clx-pager-info">
+        Page {{ page.number }} of {{ page.paginator.num_pages }} &middot; {{ total_clients }} total
+      </span>
+      <div class="clx-pager-links">
+        {% if page.has_previous %}
+        <a href="?page={{ page.previous_page_number }}&period={{ period }}&status={{ status_filter }}{% if search_q %}&q={{ search_q }}{% endif %}">&laquo; Previous</a>
+        {% else %}
+        <span class="disabled">&laquo; Previous</span>
+        {% endif %}
+        {% if page.has_next %}
+        <a href="?page={{ page.next_page_number }}&period={{ period }}&status={{ status_filter }}{% if search_q %}&q={{ search_q }}{% endif %}">Next &raquo;</a>
+        {% else %}
+        <span class="disabled">Next &raquo;</span>
+        {% endif %}
+      </div>
+    </div>
+
+    {% else %}
+    <div class="clx-empty">
+      <i class="fa-solid fa-user-group"></i>
+      {% if search_q or status_filter != 'all' or period != 'all' %}
+      No clients match your current filters.
+      {% else %}
+      No clients yet — share your referral link from the Dashboard to start.
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}

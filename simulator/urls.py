@@ -70,6 +70,7 @@ from .views import (
     # Broker ecosystem modules
     calendar_view,
     associates_view,
+    associates_clients_view,
     referral_click_view,
     bonuses_view,
     documents_view,
@@ -196,7 +197,8 @@ urlpatterns = [
 
     # ── Broker Ecosystem Modules ─────────────────────────────────────────────
     path("calendar/",             calendar_view,       name="calendar"),
-    path("associates/",           associates_view,     name="associates"),
+    path("associates/",           associates_view,         name="associates"),
+    path("associates/clients/",   associates_clients_view, name="associates_clients"),
     path("ref/<str:code>/",       referral_click_view, name="referral_click"),
     path("bonuses/",              bonuses_view,        name="bonuses"),
     path("documents/",            documents_view,      name="documents"),
