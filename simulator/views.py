@@ -14,6 +14,7 @@ from django.core.mail import send_mail
 from django.core.paginator import Paginator
 from django.conf import settings
 from django.db.models import Sum, Count, Max, Min, Avg, Case, When, Q
+from django.db.models.functions import TruncDate
 from django.db import transaction
 from django.urls import reverse
 import json, random, logging, time, secrets as _secrets
@@ -28,7 +29,7 @@ from .models import (
     KYCProfile, SupportTicket, SupportMessage,
     FundedConfig, FundedPayoutRequest,
     WithdrawalEmailOTPChallenge, VerifiedWithdrawalWallet,
-    IBCommissionObligation, IBCommissionRule,
+    IBCommissionObligation, IBCommissionRule, ReferralAttribution, LotExecutionEvent,
 )
 from .challenge_engine import (
     evaluate_phase as _ce_evaluate_phase,
@@ -4225,17 +4226,119 @@ def calendar_view(request):
 _IB_PORTAL_HISTORY_PAGE_SIZE = 20
 
 
+# IB-PORTAL-UX-10A — whitelisted period selector for the Associates
+# performance dashboard (Performance Overview tabs, financial cards,
+# top-4-card deltas). Independent from _DASHBOARD_PERIODS (home_view's
+# own selector) — separate instance, no shared state, so a change here
+# can never affect /home/. Default is 'month' to match the reference's
+# "vs last month" framing for the top-4 cards.
+_IB_PERIODS = (
+    ('7d', '7D'),
+    ('30d', '30D'),
+    ('month', 'This Month'),
+    ('3m', '3M'),
+    ('6m', '6M'),
+    ('1y', '1Y'),
+    ('all', 'All'),
+)
+_IB_PERIOD_KEYS = frozenset(k for k, _ in _IB_PERIODS)
+_IB_PERIOD_LABELS = dict(_IB_PERIODS)
+_IB_DEFAULT_PERIOD = 'month'
+
+
+def _ib_period_start(period, now):
+    """Same single-interpretation-per-period discipline as
+    _dashboard_period_start() (DASHBOARD-UX-01B) — no 'today' variant
+    needed here, this dashboard has no daily-drill-down widget."""
+    if period == '7d':
+        return now - timezone.timedelta(days=7)
+    if period == '30d':
+        return now - timezone.timedelta(days=30)
+    if period == 'month':
+        return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if period == '3m':
+        return now - timezone.timedelta(days=90)
+    if period == '6m':
+        return now - timezone.timedelta(days=180)
+    if period == '1y':
+        return now - timezone.timedelta(days=365)
+    return None  # 'all'
+
+
+def _ib_total_with_delta(qs, date_field, period_start):
+    """
+    Top-4-card semantic: a CUMULATIVE total 'as of now' plus its growth
+    vs. the same cumulative total 'as of period_start' — matches the
+    reference's "8 Registered ↑+14% vs last month" framing (a running
+    total's growth rate, not a count of new rows in the period).
+    period_start=None ('all') or a zero prior baseline both return
+    delta=None — never a fabricated/undefined percentage.
+    """
+    current_total = qs.count()
+    if period_start is None:
+        return current_total, None
+    prev_total = qs.filter(**{f'{date_field}__lt': period_start}).count()
+    if prev_total == 0:
+        return current_total, None
+    return current_total, round((current_total - prev_total) / prev_total * 100, 1)
+
+
+def _ib_safe_pct(numerator, denominator):
+    """Zero-denominator-guarded percentage — returns None (never a
+    fabricated number, never a ZeroDivisionError) when denominator<=0."""
+    if not denominator:
+        return None
+    return round(numerator / denominator * 100, 1)
+
+
+def _ib_daily_series(qs, date_field, period_start, value_expr=None):
+    """
+    Day-bucketed real aggregate for the Performance Overview chart —
+    IB acquisition/performance analytics, NOT AccountEquitySnapshot
+    (that model is trader equity, a different domain entirely; see
+    DASHBOARD-UX-01A.1's own finding on this model's deferred fields —
+    irrelevant here since this function never reads it). Returns a list
+    of {'time': 'YYYY-MM-DD', 'value': float} points, one per day that
+    actually has real activity — no synthetic zero-padding for empty
+    days (mirrors DASHBOARD-UX-01B's equity-curve convention of never
+    inventing a data point).
+    """
+    filters = {}
+    if period_start is not None:
+        filters[f'{date_field}__gte'] = period_start
+    rows = (
+        qs.filter(**filters)
+        .annotate(day=TruncDate(date_field))
+        .values('day')
+        .annotate(value=value_expr if value_expr is not None else Count('id'))
+        .order_by('day')
+    )
+    return [{'time': r['day'].isoformat(), 'value': float(r['value'] or 0)} for r in rows]
+
+
 @login_required
 def associates_view(request):
     """
-    IB-PORTAL-08B. Reads exclusively from the real IB commission SSOT
-    (IBCommissionObligation / LotExecutionEvent / IBCommissionRule, via
-    the same, unmodified helpers simulator/ib_admin_ops.py already uses
-    for the Risk Desk) — never a second calculation, never
-    Referral.estimated_commission (dead field, confirmed unused by the
-    real settlement pipeline by IB-PORTAL-08A). Strictly scoped to
-    request.user's own Referral throughout — no ID is ever accepted
-    from GET/POST to change scope (IDOR-safe by construction).
+    IB-PORTAL-08B (commission/lot/rate figures) + IB-PORTAL-UX-10A
+    (acquisition/performance dashboard). Reads exclusively from real IB
+    SSOTs throughout:
+      - Commission/lots/rate: the same, unmodified helpers
+        simulator/ib_admin_ops.py already uses for the Risk Desk
+        (ib_commission_summary/ib_lot_totals/ib_effective_rate/
+        ib_obligation_status_label) — never Referral.estimated_commission
+        (dead field, confirmed unused by the real settlement pipeline by
+        IB-PORTAL-08A).
+      - Registered/Demo/Live/FTD/funnel/performance-series/financial
+        cards: real aggregates added by IB-PORTAL-UX-10A, every one
+        scoped via the referred_user OneToOneField join
+        (user__referral_attribution__referral=ref /
+        account__user__referral_attribution__referral=ref) — structurally
+        impossible for one IB's query to return another IB's traders,
+        since ReferralAttribution.referred_user is OneToOne (see
+        IB-PORTAL-UX-10A audit section R).
+    Strictly scoped to request.user's own Referral throughout — no ID is
+    ever accepted from GET/POST to change scope (IDOR-safe by
+    construction).
     """
     ref, _ = Referral.objects.get_or_create(
         user=request.user,
@@ -4281,6 +4384,122 @@ def associates_view(request):
         for ob in history_page.object_list
     ]
 
+    # ── IB-PORTAL-UX-10A — period selector (whitelisted) ────────────────
+    period = request.GET.get('period', _IB_DEFAULT_PERIOD)
+    if period not in _IB_PERIOD_KEYS:
+        period = _IB_DEFAULT_PERIOD
+    now = timezone.now()
+    period_start = _ib_period_start(period, now)
+
+    # ── Base querysets — every one scoped via the OneToOne attribution
+    # join, never a client-suppliable id. Reused for top-4 cards, funnel
+    # (all-time), performance series, and financial cards. ──
+    registered_qs = ReferralAttribution.objects.filter(referral=ref)
+    demo_qs = TradingAccount.objects.filter(
+        user__referral_attribution__referral=ref, account_type='DEMO',
+    )
+    live_qs = TradingAccount.objects.filter(
+        user__referral_attribution__referral=ref,
+        account_type__in=TradingAccount.WITHDRAWABLE_ACCOUNT_TYPES,
+    )
+    # FTD — grouped by user (MIN(credited_at) per attributed user with at
+    # least one real, credited, non-challenge deposit). .count() on this
+    # annotated/grouped queryset counts distinct users reaching the
+    # event, not raw deposit rows.
+    ftd_qs = (
+        Deposit.objects.filter(
+            user__referral_attribution__referral=ref, credited=True, challenge_product__isnull=True,
+        )
+        .values('user_id')
+        .annotate(first_dep=Min('credited_at'))
+    )
+
+    # ── Top 4 cards: cumulative total + growth vs period_start ──────────
+    registered_total, registered_delta = _ib_total_with_delta(registered_qs, 'attributed_at', period_start)
+    demo_total, demo_delta = _ib_total_with_delta(demo_qs, 'created_at', period_start)
+    live_total, live_delta = _ib_total_with_delta(live_qs, 'created_at', period_start)
+    ftd_total = ftd_qs.count()
+    if period_start is not None:
+        ftd_prev_total = ftd_qs.filter(first_dep__lt=period_start).count()
+        ftd_delta = round((ftd_total - ftd_prev_total) / ftd_prev_total * 100, 1) if ftd_prev_total else None
+    else:
+        ftd_delta = None
+
+    top_cards = {
+        'registered': {'value': registered_total, 'delta': registered_delta},
+        'demo':       {'value': demo_total, 'delta': demo_delta},
+        'live':       {'value': live_total, 'delta': live_delta},
+        'ftd':        {'value': ftd_total, 'delta': ftd_delta},
+    }
+
+    # ── Funnel — ALWAYS all-time (never period-filtered). Referral.clicks
+    # is a single incrementing counter with no per-click timestamp (see
+    # referral_click_view()) — there is no real data to compute a
+    # period-scoped click count, so the whole funnel stays all-time
+    # rather than mixing an all-time stage with period-scoped ones. ──
+    # Reuses the already-fetched cumulative totals from the top-4 cards
+    # above (registered_total/demo_total/live_total are unfiltered
+    # qs.count() results, i.e. all-time) — never re-queries the same
+    # count twice.
+    funnel_clicks = ref.clicks
+    funnel_registered = registered_total
+    funnel_demo = demo_total
+    funnel_live = live_total
+    funnel_ftd = ftd_total
+    funnel_stages = [
+        {'label': 'Clicks', 'value': funnel_clicks, 'pct': _ib_safe_pct(funnel_clicks, funnel_clicks)},
+        {'label': 'Registered', 'value': funnel_registered, 'pct': _ib_safe_pct(funnel_registered, funnel_clicks)},
+        {'label': 'Demo Accounts', 'value': funnel_demo, 'pct': _ib_safe_pct(funnel_demo, funnel_clicks)},
+        {'label': 'Live Accounts', 'value': funnel_live, 'pct': _ib_safe_pct(funnel_live, funnel_clicks)},
+        {'label': 'First-Time Deposit', 'value': funnel_ftd, 'pct': _ib_safe_pct(funnel_ftd, funnel_clicks)},
+    ]
+
+    # ── Conversion Rates donuts — same all-time basis as the funnel, for
+    # internal consistency (a period-scoped donut next to an all-time
+    # funnel would silently disagree with it). Zero-denominator-guarded. ──
+    conversion_rates = {
+        'registration': {'pct': _ib_safe_pct(funnel_registered, funnel_clicks), 'num': funnel_registered, 'den': funnel_clicks},
+        'live':         {'pct': _ib_safe_pct(funnel_live, funnel_registered), 'num': funnel_live, 'den': funnel_registered},
+        'ftd':          {'pct': _ib_safe_pct(funnel_ftd, funnel_live), 'num': funnel_ftd, 'den': funnel_live},
+    }
+
+    # ── Performance Overview — day-bucketed real series, period-scoped. ──
+    performance_series = {
+        'registered': _ib_daily_series(registered_qs, 'attributed_at', period_start),
+        'demo': _ib_daily_series(demo_qs, 'created_at', period_start),
+        'live': _ib_daily_series(live_qs, 'created_at', period_start),
+        'deposits': _ib_daily_series(
+            Deposit.objects.filter(
+                user__referral_attribution__referral=ref, credited=True, challenge_product__isnull=True,
+            ),
+            'credited_at', period_start, value_expr=Sum('amount_usd'),
+        ),
+    }
+    performance_series_json = json.dumps(performance_series)
+
+    # ── Financial / Activity cards — period-scoped, attributed traders
+    # only. Withdrawals mirror DASHBOARD-UX-01B's own definition exactly
+    # (status=COMPLETED, the only state where funds actually left).
+    # Traded Volume reuses the LotExecutionEvent.qty SSOT (same field,
+    # same join pattern as ib_lot_totals()/_lot_sum_subquery() in
+    # ib_admin_ops.py) — just my own period window, not a new formula. ──
+    ib_deposits_qs = Deposit.objects.filter(
+        user__referral_attribution__referral=ref, credited=True, challenge_product__isnull=True,
+    )
+    ib_withdrawals_qs = WithdrawalRequest.objects.filter(
+        user__referral_attribution__referral=ref, status=WithdrawalRequest.STATUS_COMPLETED,
+    )
+    ib_lots_qs = LotExecutionEvent.objects.filter(
+        account__user__referral_attribution__referral=ref,
+    )
+    if period_start is not None:
+        ib_deposits_qs = ib_deposits_qs.filter(credited_at__gte=period_start)
+        ib_withdrawals_qs = ib_withdrawals_qs.filter(created_at__gte=period_start)
+        ib_lots_qs = ib_lots_qs.filter(created_at__gte=period_start)
+    ib_deposits_total = ib_deposits_qs.aggregate(total=Sum('amount_usd'))['total'] or Decimal('0.00')
+    ib_withdrawals_total = ib_withdrawals_qs.aggregate(total=Sum('amount_usd'))['total'] or Decimal('0.00')
+    ib_traded_volume = ib_lots_qs.aggregate(total=Sum('qty'))['total'] or Decimal('0')
+
     return render(request, 'simulator/associates.html', {
         'referral':     ref,
         'referral_url': referral_url,
@@ -4291,6 +4510,18 @@ def associates_view(request):
         'commission_summary': commission_summary,
         'history_page': history_page,
         'history_rows': history_rows,
+        # IB-PORTAL-UX-10A — Associates performance dashboard
+        'period': period,
+        'period_label': _IB_PERIOD_LABELS[period],
+        'period_choices': _IB_PERIODS,
+        'top_cards': top_cards,
+        'funnel_stages': funnel_stages,
+        'conversion_rates': conversion_rates,
+        'performance_series_json': performance_series_json,
+        'has_performance_data': any(performance_series.values()),
+        'ib_deposits_total': ib_deposits_total,
+        'ib_withdrawals_total': ib_withdrawals_total,
+        'ib_traded_volume': ib_traded_volume,
     })
 
 
