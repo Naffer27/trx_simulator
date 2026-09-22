@@ -13,7 +13,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.mail import send_mail
 from django.core.paginator import Paginator
 from django.conf import settings
-from django.db.models import Sum, Count, Max, Min, Q
+from django.db.models import Sum, Count, Max, Min, Avg, Case, When, Q
 from django.db import transaction
 from django.urls import reverse
 import json, random, logging, time, secrets as _secrets
@@ -717,6 +717,55 @@ def _home_total_margin(account, positions):
     return total
 
 
+# DASHBOARD-UX-01B — whitelisted period selector for the customer dashboard
+# analytics widgets (Performance Overview, financial cards, performance
+# metrics, Top Instruments). Deliberately a positive allowlist: an
+# unrecognized/absent ?period= value falls back to the default rather than
+# being interpreted at all — never accepts an arbitrary client-supplied
+# range. Does NOT affect the top 4 KPI cards (Balance/Equity/P&L
+# Hoy/Margin Used), which remain current-state or "today" figures with
+# their own precise, unchanged labels.
+_DASHBOARD_PERIODS = (
+    ('today', 'Hoy'),
+    ('7d', '7D'),
+    ('30d', '30D'),
+    ('month', 'Este mes'),
+    ('3m', '3M'),
+    ('6m', '6M'),
+    ('1y', '1A'),
+    ('all', 'Todo'),
+)
+_DASHBOARD_PERIOD_KEYS = frozenset(k for k, _ in _DASHBOARD_PERIODS)
+_DASHBOARD_PERIOD_LABELS = dict(_DASHBOARD_PERIODS)
+_DASHBOARD_DEFAULT_PERIOD = '30d'
+
+
+def _dashboard_period_start(period, now):
+    """
+    Return the inclusive start datetime for *period* (already validated
+    against _DASHBOARD_PERIOD_KEYS by the caller), or None for 'all' (no
+    lower bound — every historical row). Single, unambiguous definition
+    per period: 'today'/'month' are calendar-boundary anchored (local
+    server day/month start); the rest are rolling N-day windows back from
+    now. No other interpretation is implemented.
+    """
+    if period == 'today':
+        return now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if period == '7d':
+        return now - timezone.timedelta(days=7)
+    if period == '30d':
+        return now - timezone.timedelta(days=30)
+    if period == 'month':
+        return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if period == '3m':
+        return now - timezone.timedelta(days=90)
+    if period == '6m':
+        return now - timezone.timedelta(days=180)
+    if period == '1y':
+        return now - timezone.timedelta(days=365)
+    return None  # 'all'
+
+
 @login_required
 def home_view(request):
     account = _resolve_account(request)
@@ -738,6 +787,7 @@ def home_view(request):
     ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
 
     open_positions = Position.objects.filter(account=account)
+    open_positions_count = open_positions.count()
     margin_used = _home_total_margin(account, open_positions)
 
     initial_balance = float(account.initial_balance or account.balance or 1)
@@ -750,6 +800,125 @@ def home_view(request):
     recent_trades = Trade.objects.filter(account=account).order_by('-opened_at')[:5]
 
     now = timezone.now()
+
+    # ── DASHBOARD-UX-01B — period selector (whitelisted; see
+    # _DASHBOARD_PERIODS / _dashboard_period_start above) ──────────────────
+    period = request.GET.get('period', _DASHBOARD_DEFAULT_PERIOD)
+    if period not in _DASHBOARD_PERIOD_KEYS:
+        period = _DASHBOARD_DEFAULT_PERIOD
+    period_start = _dashboard_period_start(period, now)
+
+    # ── Financial cards: Total Deposited / Total Withdrawn / Available
+    # funds. Deposits use the same credited=True, challenge_product=None,
+    # credited_at-anchored definition already established by
+    # ib_commission_triggers.sweep_deposit_percent() for "real wallet
+    # deposit" — never recomputed, just the identical filter. Withdrawals
+    # use status=COMPLETED (the only state where funds actually left),
+    # anchored on created_at (request time — WithdrawalRequest has no
+    # dedicated completion timestamp). Wallet available_balance is a
+    # current-state balance, not a period flow — never period-filtered. ──
+    deposit_qs = Deposit.objects.filter(user=request.user, credited=True, challenge_product__isnull=True)
+    withdrawal_qs = WithdrawalRequest.objects.filter(user=request.user, status=WithdrawalRequest.STATUS_COMPLETED)
+    if period_start is not None:
+        deposit_qs = deposit_qs.filter(credited_at__gte=period_start)
+        withdrawal_qs = withdrawal_qs.filter(created_at__gte=period_start)
+    total_deposited = deposit_qs.aggregate(total=Sum('amount_usd'))['total'] or Decimal('0.00')
+    total_withdrawn = withdrawal_qs.aggregate(total=Sum('amount_usd'))['total'] or Decimal('0.00')
+    wallet, _ = get_or_create_wallet(request.user)
+
+    # ── Performance metrics (Win Rate / Wins / Losses / Avg Win / Avg
+    # Loss) for the selected period, over CLOSED trades on this account.
+    # win/loss definition mirrors history_view()'s own established
+    # profit_loss__gt=0 / profit_loss__lte=0 split exactly — one
+    # .aggregate() call via conditional Count/Avg, no per-trade Python
+    # loop, no duplicated formula (profit_loss itself is the certified,
+    # already-account-currency-converted field — see Trade.profit_loss /
+    # MARGIN-02). ──
+    closed_trades_qs = Trade.objects.filter(account=account, closed_at__isnull=False)
+    if period_start is not None:
+        closed_trades_qs = closed_trades_qs.filter(closed_at__gte=period_start)
+    perf_agg = closed_trades_qs.aggregate(
+        total=Count('id'),
+        wins=Count(Case(When(profit_loss__gt=0, then=1))),
+        losses=Count(Case(When(profit_loss__lte=0, then=1))),
+        avg_win=Avg(Case(When(profit_loss__gt=0, then='profit_loss'))),
+        avg_loss=Avg(Case(When(profit_loss__lte=0, then='profit_loss'))),
+    )
+    perf_total = perf_agg['total'] or 0
+    win_rate = round((perf_agg['wins'] / perf_total * 100), 1) if perf_total else None
+    performance_metrics = {
+        'total': perf_total,
+        'wins': perf_agg['wins'] or 0,
+        'losses': perf_agg['losses'] or 0,
+        'win_rate': win_rate,
+        'avg_win': perf_agg['avg_win'],
+        'avg_loss': perf_agg['avg_loss'],
+    }
+
+    # ── Top Instruments — closed trades in the selected period, grouped
+    # by symbol. Single ranking semantic: number of trades (trade_count).
+    # total_lots/total_pnl shown as additional context only, never used
+    # to re-sort — no mixed/incompatible ranking. Isolated to this
+    # account's own trades (account=account), never cross-user. ──
+    top_instruments = list(
+        closed_trades_qs.values('symbol')
+        .annotate(trade_count=Count('id'), total_lots=Sum('lot_size'), total_pnl=Sum('profit_loss'))
+        .order_by('-trade_count')[:5]
+    )
+
+    # ── Performance Overview — equity curve for the selected period, read
+    # ONLY from AccountEquitySnapshot.equity. DASHBOARD-UX-01A.1 flagged
+    # margin_used/free_margin on this same model as a DEFERRED finding
+    # (snapshots.py reimplements margin math without FX conversion) — this
+    # view never reads those two fields. .equity is a verbatim copy of
+    # TradingAccount.equity at snapshot time (see snapshots.py's own
+    # `.values("id","balance","equity","drawdown","leverage")` read),
+    # with zero margin/FX dependency, so it carries none of that risk.
+    # Capped at the 500 most recent points within the period (a single
+    # indexed LIMIT query, not a full scan) — plenty for a chart, and
+    # bounded regardless of account age. ──
+    equity_curve_qs = AccountEquitySnapshot.objects.filter(account=account)
+    if period_start is not None:
+        equity_curve_qs = equity_curve_qs.filter(taken_at__gte=period_start)
+    equity_curve = list(
+        equity_curve_qs.order_by('-taken_at').values('taken_at', 'equity')[:500]
+    )
+    equity_curve.reverse()
+    # Same {time, value} shape lightweight-charts' AreaSeries.setData()
+    # expects, mirroring trading_dashboard()'s own equity_curve_json
+    # pattern (json.dumps + explicit float()) — never the raw Decimal.
+    equity_curve_json = json.dumps([
+        {'time': int(p['taken_at'].timestamp()), 'value': float(p['equity'])}
+        for p in equity_curve
+    ])
+
+    # ── Challenge/Account Progress + Monthly Goal equivalent. Uses only
+    # real TradingAccount fields (profit_target, equity, initial_balance,
+    # drawdown, max_drawdown — all certified engine fields, never
+    # recomputed by the challenge engine itself) — no challenge-engine
+    # phase-advancement formula is reimplemented (see TradingAccount.
+    # check_rules() for that certified logic, untouched by this view).
+    # None for a normal (non-Challenge/Funded) account or one without a
+    # persisted profit_target — the template renders a real "Trading
+    # Activity" component or a neutral empty state instead, never an
+    # invented challenge. ──
+    challenge_progress = None
+    if account.account_type in ('CHALLENGE', 'FUNDED') and account.profit_target:
+        target = float(account.profit_target)
+        current_profit = float(account.equity) - initial_balance
+        progress_pct = max(0.0, min(100.0, round(current_profit / target * 100, 1))) if target else 0.0
+        dd_used = float(account.drawdown or 0)
+        dd_max = float(account.max_drawdown or 0)
+        dd_used_pct = round(min(dd_used / dd_max * 100, 100), 1) if dd_max else 0.0
+        challenge_progress = {
+            'profit_target': round(target, 2),
+            'current_profit': round(current_profit, 2),
+            'progress_pct': progress_pct,
+            'daily_dd_pct': daily_dd_pct,
+            'max_drawdown': round(dd_max, 2),
+            'drawdown_used': round(dd_used, 2),
+            'drawdown_used_pct': dd_used_pct,
+        }
 
     # Broker ecosystem widgets
     upcoming_events   = CalendarEvent.objects.filter(published=True, event_date__gte=now).order_by('event_date')[:3]
@@ -767,11 +936,23 @@ def home_view(request):
         'all_accounts': all_accounts,
         'pnl_today': pnl_today,
         'margin_used': round(margin_used, 2),
-        'open_positions_count': open_positions.count(),
+        'open_positions_count': open_positions_count,
         'daily_dd_pct': daily_dd_pct,
         'total_trades': total_trades,
         'recent_moves': recent_moves,
         'recent_trades': recent_trades,
+        # DASHBOARD-UX-01B — period selector + analytics widgets
+        'period': period,
+        'period_label': _DASHBOARD_PERIOD_LABELS[period],
+        'period_choices': _DASHBOARD_PERIODS,
+        'total_deposited': total_deposited,
+        'total_withdrawn': total_withdrawn,
+        'wallet_available': wallet.available_balance,
+        'performance_metrics': performance_metrics,
+        'top_instruments': top_instruments,
+        'equity_curve': equity_curve,
+        'equity_curve_json': equity_curve_json,
+        'challenge_progress': challenge_progress,
         # Ecosystem widgets
         'upcoming_events': upcoming_events,
         'active_bonuses_ct': active_bonuses_ct,

@@ -276,6 +276,124 @@
   flex-shrink: 0;
 }
 .acc-switcher-trade:hover { opacity: .85; }
+
+/* ═══════════════ DASHBOARD-UX-01B ═══════════════ */
+
+/* ─── Page header + period selector ─── */
+.dash-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap; margin-bottom: 20px;
+}
+.dash-welcome h1 {
+  font-size: 1.3rem; font-weight: 700; color: #fff; margin-bottom: 4px;
+}
+.dash-welcome h1 .gold { color: var(--gold); }
+.dash-welcome p { font-size: .8rem; color: var(--muted); }
+
+.period-selector {
+  display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+  background: var(--bg-card-2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 4px; flex-shrink: 0;
+}
+.period-pill {
+  padding: 6px 12px; border-radius: 7px; font-size: .72rem; font-weight: 600;
+  color: var(--muted-2); text-decoration: none; white-space: nowrap;
+  transition: background .15s, color .15s;
+}
+.period-pill:hover { color: var(--text); }
+.period-pill.active { background: rgba(255,215,0,.12); color: var(--gold); }
+
+/* ─── Two-column analytics row (Progress + Goal) ─── */
+.analytics-row {
+  display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; margin-bottom: 16px;
+}
+@media (max-width: 960px) { .analytics-row { grid-template-columns: 1fr; } }
+
+.progress-item { margin-bottom: 16px; }
+.progress-item:last-child { margin-bottom: 0; }
+.progress-item-row {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: .78rem; margin-bottom: 6px;
+}
+.progress-item-lbl { color: var(--muted-2); font-weight: 600; }
+.progress-item-val { color: var(--text); font-weight: 700; }
+.progress-track {
+  height: 10px; background: rgba(255,255,255,.05); border-radius: 6px; overflow: hidden;
+}
+.progress-fill {
+  height: 100%; border-radius: 6px;
+  background: linear-gradient(90deg, #FFD700, #FFA500);
+  transition: width .6s ease;
+}
+.progress-fill.bull { background: linear-gradient(90deg, #26a69a, #4fd1c5); }
+.progress-fill.bear { background: linear-gradient(90deg, #ef5350, #ff8a80); }
+
+/* Goal ring */
+.goal-ring-wrap { display: flex; flex-direction: column; align-items: center; padding: 8px 0 4px; }
+.goal-ring {
+  width: 150px; height: 150px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: conic-gradient(var(--gold) calc(var(--pct,0) * 1%), rgba(255,255,255,.06) 0);
+  position: relative;
+}
+.goal-ring::before {
+  content: ''; position: absolute; inset: 10px; border-radius: 50%;
+  background: var(--bg-card-2);
+}
+.goal-ring-inner { position: relative; z-index: 1; text-align: center; }
+.goal-ring-pct { font-size: 1.5rem; font-weight: 800; color: #fff; }
+.goal-ring-lbl { font-size: .68rem; color: var(--muted); margin-top: 2px; }
+.goal-meta { text-align: center; margin-top: 14px; font-size: .78rem; color: var(--muted-2); }
+.goal-meta b { color: var(--gold); }
+.goal-empty { text-align: center; padding: 30px 10px; color: var(--muted); font-size: .82rem; }
+.goal-empty i { font-size: 1.6rem; opacity: .3; display: block; margin-bottom: 10px; }
+
+/* ─── Performance Overview chart ─── */
+.perf-overview-card { margin-bottom: 16px; }
+.perf-chart-wrap { padding: 8px 14px 14px; }
+#perfOverviewChart { width: 100%; height: 260px; }
+.perf-empty {
+  height: 260px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  color: var(--muted); font-size: .82rem; gap: 10px;
+}
+.perf-empty i { font-size: 1.8rem; opacity: .3; }
+
+/* ─── Financial cards row ─── */
+.fin-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 16px; }
+@media (max-width: 900px) { .fin-grid { grid-template-columns: 1fr; } }
+.fin-card {
+  background: var(--bg-card-2); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px;
+}
+.fin-card-head { display: flex; align-items: center; gap: 8px; font-size: .74rem; color: var(--muted-2); font-weight: 600; margin-bottom: 10px; }
+.fin-card-head i { color: var(--gold); }
+.fin-card-val { font-size: 1.35rem; font-weight: 700; color: #fff; }
+
+/* ─── Performance metrics + Top Instruments row ─── */
+.metrics-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+@media (max-width: 960px) { .metrics-row { grid-template-columns: 1fr; } }
+
+.winrate-ring-row { display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
+.winrate-ring {
+  width: 120px; height: 120px; border-radius: 50%; flex-shrink: 0;
+  background: conic-gradient(var(--bull) calc(var(--pct,0) * 1%), rgba(239,83,80,.35) 0);
+  display: flex; align-items: center; justify-content: center; position: relative;
+}
+.winrate-ring::before { content:''; position:absolute; inset:8px; border-radius:50%; background: var(--bg-card-2); }
+.winrate-ring-inner { position: relative; z-index: 1; text-align: center; }
+.winrate-ring-pct { font-size: 1.3rem; font-weight: 800; color: #fff; }
+.winrate-stats { display: flex; flex-direction: column; gap: 10px; flex: 1; min-width: 140px; }
+.winrate-stat-row { display: flex; justify-content: space-between; font-size: .78rem; }
+.winrate-stat-lbl { color: var(--muted-2); }
+.winrate-stat-val { font-weight: 700; }
+
+.instr-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.instr-row:last-child { margin-bottom: 0; }
+.instr-sym { width: 76px; flex-shrink: 0; font-size: .78rem; font-weight: 700; color: var(--text); }
+.instr-track { flex: 1; height: 8px; background: rgba(255,255,255,.05); border-radius: 5px; overflow: hidden; }
+.instr-fill { height: 100%; border-radius: 5px; background: linear-gradient(90deg, #FFD700, #FFA500); }
+.instr-meta { width: 92px; flex-shrink: 0; text-align: right; font-size: .72rem; color: var(--muted-2); }
+.empty-mini { text-align: center; padding: 24px 10px; color: var(--muted); font-size: .8rem; }
+.empty-mini i { font-size: 1.5rem; opacity: .3; display: block; margin-bottom: 8px; }
 {% endblock %}
 
 {% block content %}
@@ -302,6 +420,21 @@
   </div>
   {% endif %}
   <!-- /ACCOUNT SELECTOR -->
+
+  <!-- ╔══════════════════ DASH HEADER + PERIOD SELECTOR ══════════════════╗ -->
+  <div class="dash-header">
+    <div class="dash-welcome">
+      <h1>Welcome back, <span class="gold">{{ user.first_name|default:user.username }}</span></h1>
+      <p>Here&rsquo;s your account activity and performance overview.</p>
+    </div>
+    <div class="period-selector">
+      {% for pkey, plabel in period_choices %}
+      <a href="?period={{ pkey }}"
+         class="period-pill {% if pkey == period %}active{% endif %}">{{ plabel }}</a>
+      {% endfor %}
+    </div>
+  </div>
+  <!-- /DASH HEADER -->
 
   <!-- ╔══════════════════ STATS ══════════════════╗ -->
   <div class="stats-grid">
@@ -369,6 +502,201 @@
 
   </div>
   <!-- /STATS -->
+
+  <!-- ╔══════════════════ PROGRESS + GOAL ══════════════════╗ -->
+  <div class="analytics-row">
+
+    <!-- Account activity / challenge status -->
+    <div class="info-card">
+      <div class="ic-head">
+        <div class="ic-title">
+          {% if challenge_progress %}Challenge Progress{% else %}Trading Activity{% endif %}
+        </div>
+      </div>
+      <div class="ic-body">
+        {% if challenge_progress %}
+          <div class="progress-item">
+            <div class="progress-item-row">
+              <span class="progress-item-lbl">Profit Target</span>
+              <span class="progress-item-val">${{ challenge_progress.current_profit|floatformat:2 }} / ${{ challenge_progress.profit_target|floatformat:2 }}</span>
+            </div>
+            <div class="progress-track"><div class="progress-fill" style="width:{{ challenge_progress.progress_pct }}%"></div></div>
+          </div>
+          <div class="progress-item">
+            <div class="progress-item-row">
+              <span class="progress-item-lbl">Daily Drawdown</span>
+              <span class="progress-item-val">{{ challenge_progress.daily_dd_pct }}%</span>
+            </div>
+            <div class="progress-track"><div class="progress-fill bear" style="width:{{ challenge_progress.daily_dd_pct }}%"></div></div>
+          </div>
+          <div class="progress-item">
+            <div class="progress-item-row">
+              <span class="progress-item-lbl">Max Drawdown</span>
+              <span class="progress-item-val">${{ challenge_progress.drawdown_used|floatformat:2 }} / ${{ challenge_progress.max_drawdown|floatformat:2 }}</span>
+            </div>
+            <div class="progress-track"><div class="progress-fill bear" style="width:{{ challenge_progress.drawdown_used_pct }}%"></div></div>
+          </div>
+        {% else %}
+          <div class="progress-item">
+            <div class="progress-item-row">
+              <span class="progress-item-lbl">Total Trades</span>
+              <span class="progress-item-val">{{ total_trades }}</span>
+            </div>
+            <div class="progress-track"><div class="progress-fill" style="width:{% if total_trades %}100{% else %}0{% endif %}%"></div></div>
+          </div>
+          <div class="progress-item">
+            <div class="progress-item-row">
+              <span class="progress-item-lbl">Open Positions</span>
+              <span class="progress-item-val">{{ open_positions_count }}</span>
+            </div>
+            <div class="progress-track"><div class="progress-fill" style="width:{% if open_positions_count %}100{% else %}0{% endif %}%"></div></div>
+          </div>
+          <div class="progress-item">
+            <div class="progress-item-row">
+              <span class="progress-item-lbl">Win Rate ({{ period_label }})</span>
+              <span class="progress-item-val">
+                {% if performance_metrics.win_rate is not None %}{{ performance_metrics.win_rate }}%{% else %}&mdash;{% endif %}
+              </span>
+            </div>
+            <div class="progress-track"><div class="progress-fill bull" style="width:{{ performance_metrics.win_rate|default:0 }}%"></div></div>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Monthly Goal / Challenge Goal -->
+    <div class="info-card">
+      <div class="ic-head">
+        <div class="ic-title">{% if challenge_progress %}Challenge Goal{% else %}Account Goal{% endif %}</div>
+      </div>
+      <div class="ic-body">
+        {% if challenge_progress %}
+        <div class="goal-ring-wrap">
+          <div class="goal-ring" style="--pct:{{ challenge_progress.progress_pct }}">
+            <div class="goal-ring-inner">
+              <div class="goal-ring-pct">{{ challenge_progress.progress_pct }}%</div>
+              <div class="goal-ring-lbl">Progress</div>
+            </div>
+          </div>
+          <div class="goal-meta">Target <b>${{ challenge_progress.profit_target|floatformat:0 }}</b></div>
+        </div>
+        {% else %}
+        <div class="goal-empty">
+          <i class="fa-solid fa-bullseye"></i>
+          No active goal for this account.<br>Challenge/Funded accounts show their profit target here.
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+  </div>
+  <!-- /PROGRESS + GOAL -->
+
+  <!-- ╔══════════════════ PERFORMANCE OVERVIEW ══════════════════╗ -->
+  <div class="info-card perf-overview-card">
+    <div class="ic-head">
+      <div class="ic-title">Performance Overview</div>
+      <span style="font-size:.72rem;color:var(--muted)">Equity &middot; {{ period_label }}</span>
+    </div>
+    <div class="perf-chart-wrap">
+      {% if equity_curve %}
+      <div id="perfOverviewChart"></div>
+      {% else %}
+      <div class="perf-empty">
+        <i class="fa-solid fa-chart-area"></i>
+        No data yet for this period.
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  <!-- /PERFORMANCE OVERVIEW -->
+
+  <!-- ╔══════════════════ FINANCIAL CARDS ══════════════════╗ -->
+  <div class="fin-grid">
+    <div class="fin-card">
+      <div class="fin-card-head"><i class="fa-solid fa-coins"></i> Total Deposited &middot; {{ period_label }}</div>
+      <div class="fin-card-val">${{ total_deposited|floatformat:2 }}</div>
+    </div>
+    <div class="fin-card">
+      <div class="fin-card-head"><i class="fa-solid fa-arrow-up-from-bracket"></i> Total Withdrawn &middot; {{ period_label }}</div>
+      <div class="fin-card-val">${{ total_withdrawn|floatformat:2 }}</div>
+    </div>
+    <div class="fin-card">
+      <div class="fin-card-head"><i class="fa-solid fa-wallet"></i> Available Funds</div>
+      <div class="fin-card-val">${{ wallet_available|floatformat:2 }}</div>
+    </div>
+  </div>
+  <!-- /FINANCIAL CARDS -->
+
+  <!-- ╔══════════════════ PERFORMANCE METRICS + TOP INSTRUMENTS ══════════════════╗ -->
+  <div class="metrics-row">
+
+    <!-- Win Rate -->
+    <div class="info-card">
+      <div class="ic-head">
+        <div class="ic-title">Performance &middot; {{ period_label }}</div>
+      </div>
+      <div class="ic-body">
+        {% if performance_metrics.total %}
+        <div class="winrate-ring-row">
+          <div class="winrate-ring" style="--pct:{{ performance_metrics.win_rate }}">
+            <div class="winrate-ring-inner">
+              <div class="winrate-ring-pct">{{ performance_metrics.win_rate }}%</div>
+            </div>
+          </div>
+          <div class="winrate-stats">
+            <div class="winrate-stat-row"><span class="winrate-stat-lbl">Winning trades</span><span class="winrate-stat-val" style="color:var(--bull)">{{ performance_metrics.wins }}</span></div>
+            <div class="winrate-stat-row"><span class="winrate-stat-lbl">Losing trades</span><span class="winrate-stat-val" style="color:var(--bear)">{{ performance_metrics.losses }}</span></div>
+            <div class="winrate-stat-row"><span class="winrate-stat-lbl">Average win</span><span class="winrate-stat-val" style="color:var(--bull)">
+              {% if performance_metrics.avg_win is not None %}+${{ performance_metrics.avg_win|floatformat:2 }}{% else %}&mdash;{% endif %}
+            </span></div>
+            <div class="winrate-stat-row"><span class="winrate-stat-lbl">Average loss</span><span class="winrate-stat-val" style="color:var(--bear)">
+              {% if performance_metrics.avg_loss is not None %}${{ performance_metrics.avg_loss|floatformat:2 }}{% else %}&mdash;{% endif %}
+            </span></div>
+          </div>
+        </div>
+        {% else %}
+        <div class="empty-mini">
+          <i class="fa-solid fa-chart-pie"></i>
+          No closed trades yet for this period.
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Top Instruments -->
+    <div class="info-card">
+      <div class="ic-head">
+        <div class="ic-title">Top Instruments &middot; {{ period_label }}</div>
+      </div>
+      <div class="ic-body">
+        {% if top_instruments %}
+          {% for ins in top_instruments %}
+          <div class="instr-row">
+            <span class="instr-sym">{{ ins.symbol }}</span>
+            <div class="instr-track">
+              <div class="instr-fill" style="width:{% widthratio ins.trade_count top_instruments.0.trade_count 100 %}%"></div>
+            </div>
+            <span class="instr-meta">
+              {{ ins.trade_count }} trade{{ ins.trade_count|pluralize }}
+              &middot;
+              <span style="{% if ins.total_pnl and ins.total_pnl >= 0 %}color:var(--bull){% elif ins.total_pnl %}color:var(--bear){% endif %}">
+                {% if ins.total_pnl and ins.total_pnl >= 0 %}+{% endif %}${{ ins.total_pnl|default:0|floatformat:2 }}
+              </span>
+            </span>
+          </div>
+          {% endfor %}
+        {% else %}
+        <div class="empty-mini">
+          <i class="fa-solid fa-layer-group"></i>
+          No instruments traded yet for this period.
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+  </div>
+  <!-- /PERFORMANCE METRICS + TOP INSTRUMENTS -->
 
   <!-- ╔══════════════════ ACCESO RÁPIDO ══════════════════╗ -->
   <div class="qa-grid">
@@ -719,4 +1047,54 @@
   <!-- /BROKER ECOSYSTEM -->
 
 </div>
+{% endblock %}
+
+{% block extra_scripts %}
+{% if equity_curve %}
+<!-- DASHBOARD-UX-01B — Performance Overview chart. Independent
+     lightweight-charts instance, own container id, own script scope —
+     zero shared state with the Trading Terminal's chart (dashboard.html).
+     Loaded here only (not in base_app.html), so no other page pays for
+     it. -->
+<script>
+(function () {
+  var eqData = {{ equity_curve_json|safe }};
+  function renderPerfChart() {
+    var el = document.getElementById('perfOverviewChart');
+    if (!el || !window.LightweightCharts || !eqData.length) { return; }
+    var chart = LightweightCharts.createChart(el, {
+      width: el.clientWidth,
+      height: 260,
+      layout: { background: { color: 'transparent' }, textColor: '#787b86' },
+      grid: {
+        vertLines: { color: 'rgba(255,255,255,.04)' },
+        horzLines: { color: 'rgba(255,255,255,.04)' },
+      },
+      rightPriceScale: { borderColor: 'rgba(255,255,255,.08)' },
+      timeScale: { borderColor: 'rgba(255,255,255,.08)' },
+      crosshair: { mode: 0 },
+    });
+    var series = chart.addAreaSeries({
+      lineColor: '#FFD700',
+      topColor: 'rgba(255,215,0,.28)',
+      bottomColor: 'rgba(255,215,0,0)',
+      lineWidth: 2,
+    });
+    series.setData(eqData);
+    chart.timeScale().fitContent();
+    window.addEventListener('resize', function () {
+      chart.applyOptions({ width: el.clientWidth });
+    });
+  }
+  if (window.LightweightCharts) {
+    renderPerfChart();
+  } else {
+    var s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js';
+    s.onload = renderPerfChart;
+    document.head.appendChild(s);
+  }
+})();
+</script>
+{% endif %}
 {% endblock %}
