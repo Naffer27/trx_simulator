@@ -72,6 +72,8 @@ from .views import (
     associates_view,
     associates_clients_view,
     associates_program_view,
+    owner_broker_adjustment_view,
+    owner_broker_adjustment_confirm_view,
     referral_click_view,
     bonuses_view,
     documents_view,
@@ -201,6 +203,11 @@ urlpatterns = [
     path("associates/",           associates_view,         name="associates"),
     path("associates/clients/",   associates_clients_view, name="associates_clients"),
     path("associates/program/",   associates_program_view, name="associates_program"),
+
+    # ── BROKER-ECONOMICS-02C — Owner Control Plane (Owner Root only) ────────
+    path("owner/broker-adjustment/",         owner_broker_adjustment_view,         name="owner_broker_adjustment"),
+    path("owner/broker-adjustment/confirm/", owner_broker_adjustment_confirm_view, name="owner_broker_adjustment_confirm"),
+
     path("ref/<str:code>/",       referral_click_view, name="referral_click"),
     path("bonuses/",              bonuses_view,        name="bonuses"),
     path("documents/",            documents_view,      name="documents"),

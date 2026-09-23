@@ -1,0 +1,29 @@
+{% extends "simulator/base_app.html" %}
+{% block title %}Ajuste registrado — Owner{% endblock %}
+{% block page_title %}Broker Economic Adjustment{% endblock %}
+
+{% block extra_styles %}
+.oba-card {
+  background: var(--bg-card-2); border: 1px solid var(--border);
+  border-radius: 12px; padding: 22px 24px; max-width: 640px;
+}
+.oba-title { font-size: 1rem; font-weight: 700; color: var(--bull); margin-bottom: 14px; }
+.oba-preview-row {
+  display: flex; justify-content: space-between; padding: 7px 0;
+  border-bottom: 1px solid var(--border-dim); font-size: .86rem;
+}
+.oba-preview-row:last-child { border-bottom: none; }
+.oba-preview-row .k { color: var(--muted); }
+.oba-preview-row .v { color: var(--text); font-weight: 600; }
+{% endblock %}
+
+{% block content %}
+<div class="oba-card">
+  <div class="oba-title">✓ Ajuste registrado</div>
+  <div class="oba-preview-row"><span class="k">Referencia</span><span class="v">{{ adjustment.reference }}</span></div>
+  <div class="oba-preview-row"><span class="k">Monto</span><span class="v">{{ adjustment.amount }}</span></div>
+  <div class="oba-preview-row"><span class="k">Motivo</span><span class="v">{{ adjustment.reason }}</span></div>
+  <div class="oba-preview-row"><span class="k">Actor</span><span class="v">{{ adjustment.actor.username }}</span></div>
+  <div class="oba-preview-row"><span class="k">Fecha</span><span class="v">{{ adjustment.created_at }}</span></div>
+</div>
+{% endblock %}

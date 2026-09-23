@@ -14,6 +14,14 @@ role-management actions. These are the ONLY sanctioned entry points for:
     by this module).
   - replace_ops_admin() — the only way OpsAdminProfile's single row can
     ever change hands; Owner Root only.
+  - owner_broker_economic_adjustment() — BROKER-ECONOMICS-02C. The only
+    sanctioned way an Owner-facing surface may originate a
+    BrokerEconomicAdjustment / BrokerLedger.REV_ADJUSTMENT correction.
+    Calls simulator.broker_economic_adjustment.create_broker_economic_
+    adjustment() (BROKER-ECONOMICS-02B, unmodified) exclusively — never
+    writes either model itself. For a reversal, amount is ALWAYS
+    server-derived from the target being reversed; a caller-supplied
+    reversal amount is never read.
 
 Every function here:
   - Verifies is_owner_root(actor) FIRST, before anything else.
@@ -26,7 +34,7 @@ Every function here:
 """
 import logging
 import uuid
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from django.core.exceptions import PermissionDenied
 from django.db import IntegrityError, transaction
@@ -332,3 +340,137 @@ def replace_ops_admin(new_user, *, actor, reason: str = ""):
         )
 
     return OpsAdminProfile.objects.get(singleton_enforcer=True)
+
+
+def owner_broker_economic_adjustment(
+    *, reason: str, actor, totp_code: str, idempotency_key: str,
+    amount=None, source_ledger_id=None, source_account_id=None,
+    symbol: str | None = None, reverses_id=None,
+):
+    """
+    BROKER-ECONOMICS-02C — Owner Root's dedicated entry point for an
+    extraordinary broker economic correction. The ONLY function a
+    user-facing surface may call to originate a BrokerEconomicAdjustment
+    / BrokerLedger.REV_ADJUSTMENT row — it never writes either model
+    itself, only through simulator.broker_economic_adjustment.
+    create_broker_economic_adjustment() (BROKER-ECONOMICS-02B,
+    unmodified, untouched by this function).
+
+    For a REVERSAL (reverses_id given), `amount` is ALWAYS derived here
+    as -reverses.amount — any caller-supplied `amount` argument is
+    completely ignored in that case, never read, never trusted from a
+    browser. BROKER-ECONOMICS-02B's own service independently
+    re-validates this exact invariant again as the last, authoritative,
+    DB/service-backed barrier (REVERSAL-AMOUNT-INTEGRITY-01) — this
+    function's server-side derivation is a second, earlier line of
+    defense, not a replacement for it.
+
+    idempotency_key must be generated exactly once by the caller (at
+    preview time, per BROKER-ECONOMICS-02C's closed design decision) and
+    supplied unchanged on every call representing the same logical
+    operation, including retries. This function never generates one
+    itself. The real, atomic, DB-constraint-backed duplicate-prevention
+    guarantee remains entirely inside create_broker_economic_adjustment()
+    — this function adds no second correctness mechanism, per design.
+
+    Returns the created BrokerEconomicAdjustment, or the PRE-EXISTING one
+    if idempotency_key was already used. Writes AuditLog +
+    BrokerAuditEvent exactly once — only when this call is the one that
+    actually created the row, never on an idempotent-retry return
+    (matching owner_wallet_adjustment()'s own established behavior). The
+    pre-check used to decide this is purely informational (worst case: a
+    genuinely concurrent duplicate might log audit twice) — it is NOT
+    the economic-correctness mechanism, which is 02B's alone.
+    """
+    if not is_owner_root(actor):
+        raise PermissionDenied("Only Owner Root can perform a Broker Economic Adjustment.")
+    if not reason or not reason.strip():
+        raise InvalidAdjustment("reason is required.")
+    if not idempotency_key or not idempotency_key.strip():
+        raise InvalidAdjustment("idempotency_key is required.")
+
+    from .models import BrokerEconomicAdjustment, BrokerLedger, TradingAccount
+    from .broker_economic_adjustment import (
+        InvalidEconomicAdjustment, create_broker_economic_adjustment,
+    )
+
+    reverses = None
+    if reverses_id is not None:
+        reverses = BrokerEconomicAdjustment.objects.filter(pk=reverses_id).first()
+        if reverses is None:
+            raise InvalidAdjustment(f"reverses target #{reverses_id} does not exist.")
+        # SERVER-DERIVED — see docstring. The browser's `amount`, if any
+        # was even submitted for this request, is never read past this
+        # point for a reversal.
+        amount = -reverses.amount
+    else:
+        if amount is None or (isinstance(amount, str) and not amount.strip()):
+            raise InvalidAdjustment("amount is required for a non-reversal adjustment.")
+        try:
+            amount = Decimal(str(amount))
+        except (InvalidOperation, TypeError, ValueError):
+            raise InvalidAdjustment("amount must be a valid decimal value.")
+        if amount == 0:
+            raise InvalidAdjustment("amount must not be zero.")
+
+    source_ledger = None
+    if source_ledger_id is not None:
+        source_ledger = BrokerLedger.objects.filter(pk=source_ledger_id).first()
+        if source_ledger is None:
+            raise InvalidAdjustment(f"source_ledger #{source_ledger_id} does not exist.")
+
+    source_account = None
+    if source_account_id is not None:
+        source_account = TradingAccount.objects.filter(pk=source_account_id).first()
+        if source_account is None:
+            raise InvalidAdjustment(f"source_account #{source_account_id} does not exist.")
+
+    if not verify_totp(actor, totp_code):
+        raise InvalidAdjustment("Invalid TOTP code.")
+
+    # Audit-decision pre-check ONLY (see docstring) — never the
+    # correctness mechanism.
+    was_already_recorded = BrokerEconomicAdjustment.objects.filter(
+        idempotency_key=idempotency_key,
+    ).exists()
+
+    try:
+        adjustment = create_broker_economic_adjustment(
+            amount=amount, reason=reason, actor=actor,
+            idempotency_key=idempotency_key, source_ledger=source_ledger,
+            source_account=source_account, symbol=symbol, reverses=reverses,
+        )
+    except InvalidEconomicAdjustment as exc:
+        raise InvalidAdjustment(str(exc)) from exc
+
+    if not was_already_recorded:
+        from .audit import EV_OWNER_BROKER_ECONOMIC_ADJUSTMENT, log_audit
+        from . import broker_audit as _audit
+
+        detail = {
+            "reference": adjustment.reference,
+            "actor_id": actor.pk,
+            "amount": str(adjustment.amount),
+            "reason": reason,
+            "source_ledger_id": source_ledger.pk if source_ledger else None,
+            "source_account_id": source_account.pk if source_account else None,
+            "reverses_id": reverses.pk if reverses else None,
+            "created_ledger_entry_id": adjustment.created_ledger_entry_id,
+        }
+        log_audit(
+            None, EV_OWNER_BROKER_ECONOMIC_ADJUSTMENT,
+            f"Owner broker economic adjustment {adjustment.reference}: "
+            f"{adjustment.amount:+}"
+            + (f" (reverses {reverses.reference})" if reverses else ""),
+            detail=detail,
+        )
+        _audit.record_admin_event(
+            event_type=EV_OWNER_BROKER_ECONOMIC_ADJUSTMENT,
+            severity=_audit.Severity.WARNING,
+            description=f"Owner Broker Economic Adjustment — ref {adjustment.reference}",
+            actor_id=actor.pk,
+            source_module="simulator.owner_actions",
+            metadata=detail,
+        )
+
+    return adjustment

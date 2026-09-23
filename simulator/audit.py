@@ -56,6 +56,11 @@ EV_OWNER_TRADING_ADJUSTMENT = "owner.trading_adjustment"
 EV_OWNER_WALLET_ADJUSTMENT  = "owner.wallet_adjustment"
 EV_OPS_ADMIN_REPLACED       = "ops_admin.replaced"
 
+# BROKER-ECONOMICS-02C — written exactly once per completed
+# owner_broker_economic_adjustment() call (owner_actions.py), never on
+# an idempotent-retry return that reused an existing adjustment.
+EV_OWNER_BROKER_ECONOMIC_ADJUSTMENT = "owner.broker_economic_adjustment"
+
 # FIX-02A.4 — UNKNOWN reconciliation / durable webhook inbox. Deliberately
 # sparse: routine "still unknown, nothing changed" cycles are NOT logged
 # here (would spam AuditLog every 15 min per unresolved attempt) — only

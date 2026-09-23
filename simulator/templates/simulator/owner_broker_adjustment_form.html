@@ -1,0 +1,81 @@
+{% extends "simulator/base_app.html" %}
+{% block title %}Broker Economic Adjustment — Owner{% endblock %}
+{% block page_title %}Broker Economic Adjustment{% endblock %}
+
+{% block extra_styles %}
+/* BROKER-ECONOMICS-02C — Owner Control Plane form */
+.oba-card {
+  background: var(--bg-card-2); border: 1px solid var(--border);
+  border-radius: 12px; padding: 22px 24px; max-width: 640px;
+}
+.oba-title { font-size: 1rem; font-weight: 700; color: var(--gold); margin-bottom: 14px; }
+.oba-errors {
+  background: rgba(239,83,80,.08); border: 1px solid rgba(239,83,80,.35);
+  border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; color: var(--bear);
+  font-size: .84rem;
+}
+.oba-errors ul { margin: 0; padding-left: 18px; }
+.oba-field { margin-bottom: 14px; }
+.oba-field label {
+  display: block; font-size: .72rem; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--muted-2); margin-bottom: 5px;
+}
+.oba-field input, .oba-field select, .oba-field textarea {
+  width: 100%; background: var(--bg-card); border: 1px solid var(--border-dim);
+  border-radius: 6px; padding: 9px 11px; color: var(--text); font-size: .88rem;
+  font-family: inherit;
+}
+.oba-hint { font-size: .74rem; color: var(--muted); margin-top: 4px; }
+.oba-submit {
+  background: var(--gold); color: #05050a; border: none; border-radius: 6px;
+  padding: 10px 22px; font-weight: 700; font-size: .86rem; cursor: pointer;
+}
+{% endblock %}
+
+{% block content %}
+<div class="oba-card">
+  <div class="oba-title">Broker Economic Adjustment — Owner Only</div>
+
+  {% if errors %}
+  <div class="oba-errors"><ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul></div>
+  {% endif %}
+
+  <form method="post" action="{% url 'simulator:owner_broker_adjustment' %}">
+    {% csrf_token %}
+    <div class="oba-field">
+      <label for="mode">Tipo</label>
+      <select name="mode" id="mode">
+        <option value="new" {% if mode == "new" %}selected{% endif %}>Nuevo ajuste</option>
+        <option value="reversal" {% if mode == "reversal" %}selected{% endif %}>Reversión de un ajuste existente</option>
+      </select>
+    </div>
+    <div class="oba-field">
+      <label for="amount">Monto (solo para "Nuevo ajuste" — ignorado en reversión)</label>
+      <input type="text" name="amount" id="amount" value="{{ amount_input|default:'' }}" placeholder="-20.00">
+      <div class="oba-hint">Positivo aumenta la economía del broker; negativo la reduce.</div>
+    </div>
+    <div class="oba-field">
+      <label for="reason">Motivo (obligatorio)</label>
+      <textarea name="reason" id="reason" rows="3">{{ reason|default:'' }}</textarea>
+    </div>
+    <div class="oba-field">
+      <label for="source_ledger_id">BrokerLedger a corregir (opcional — vacío = revenue omitido)</label>
+      <input type="text" name="source_ledger_id" id="source_ledger_id" value="{{ source_ledger_id|default:'' }}">
+    </div>
+    <div class="oba-field">
+      <label for="source_account_id">TradingAccount (opcional, solo para alcance/reporting)</label>
+      <input type="text" name="source_account_id" id="source_account_id" value="{{ source_account_id|default:'' }}">
+    </div>
+    <div class="oba-field">
+      <label for="symbol">Símbolo (opcional)</label>
+      <input type="text" name="symbol" id="symbol" value="{{ symbol|default:'' }}">
+    </div>
+    <div class="oba-field">
+      <label for="reverses_id">BrokerEconomicAdjustment a revertir (solo modo Reversión)</label>
+      <input type="text" name="reverses_id" id="reverses_id" value="{{ reverses_id|default:'' }}">
+      <div class="oba-hint">El monto de la reversión se calcula en el servidor — nunca se acepta desde el navegador.</div>
+    </div>
+    <button type="submit" class="oba-submit">Ver vista previa</button>
+  </form>
+</div>
+{% endblock %}
