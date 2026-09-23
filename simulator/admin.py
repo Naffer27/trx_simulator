@@ -31,6 +31,7 @@ from .models import (
     PendingOrder,
     WithdrawalEmailOTPChallenge, VerifiedWithdrawalWallet,
     OwnerRoot, OpsAdminProfile, ManualBalanceAdjustment, OwnerWalletAdjustment,
+    BrokerEconomicAdjustment,
 )
 from . import challenge_engine
 from .secure_media import broker_document_secure_widget, kyc_secure_widget
@@ -5888,6 +5889,32 @@ class OwnerWalletAdjustmentAdmin(admin.ModelAdmin):
     search_fields = ("reference", "wallet__id", "actor__username", "idempotency_key")
     ordering = ("-created_at",)
     readonly_fields = [f.name for f in OwnerWalletAdjustment._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(BrokerEconomicAdjustment)
+class BrokerEconomicAdjustmentAdmin(admin.ModelAdmin):
+    """
+    BROKER-ECONOMICS-02B — sealed/read-only, matching the exact precedent
+    of BrokerLedgerAdmin/ManualBalanceAdjustmentAdmin/
+    OwnerWalletAdjustmentAdmin: staff can browse/audit every adjustment
+    here, but the admin UI itself is not, and must never become, a way to
+    create, edit, or delete one. The only sanctioned writer is
+    simulator.broker_economic_adjustment.create_broker_economic_adjustment().
+    """
+    list_display = ("reference", "amount", "source_account", "symbol", "actor", "reverses", "created_at")
+    list_filter = ("created_at",)
+    search_fields = ("reference", "source_account__id", "actor__username", "idempotency_key")
+    ordering = ("-created_at",)
+    readonly_fields = [f.name for f in BrokerEconomicAdjustment._meta.fields]
 
     def has_add_permission(self, request):
         return False

@@ -4492,3 +4492,120 @@ class OwnerWalletAdjustment(models.Model):
 
     def __str__(self):
         return f"OwnerWalletAdjustment #{self.pk} wallet={self.wallet_id} amount={self.amount}"
+
+
+class BrokerEconomicAdjustment(models.Model):
+    """
+    BROKER-ECONOMICS-02B — append-only compensating-entry foundation for
+    BrokerLedger.REV_ADJUSTMENT. Original BrokerLedger rows are NEVER
+    edited or deleted to "correct" them (BrokerLedger's own docstring:
+    "records are never modified or deleted") — every correction is a
+    new, separate, signed entry, referencing the row it corrects when
+    one exists.
+
+    amount is signed from the BROKER's own economic perspective, matching
+    broker_pnl.py's existing, already-tested arithmetic contract exactly
+    (broker_net_pnl = fee_revenue + counterparty_pnl + adjustments,
+    summed signed, unconditionally) — positive increases broker
+    economics, negative reduces it. No new calculation is introduced to
+    support this: broker_pnl.py already sums REV_ADJUSTMENT this way.
+
+    source_ledger is nullable specifically for the omitted-revenue case —
+    a correction recording revenue that was never captured in the first
+    place has no original BrokerLedger row to reference.
+
+    reverses is a OneToOneField (not a plain FK) used only to undo a
+    PRIOR BrokerEconomicAdjustment — never the reverse of a reverse (the
+    service layer enforces one-hop-only). The OneToOneField's own unique
+    constraint is what guarantees "at most one reversal per adjustment"
+    at the database level; NULL is unrestricted (the vast majority of
+    rows, which reverse nothing), matching standard SQL NULL-in-UNIQUE
+    semantics on both backends this project runs on.
+
+    When reverses is set, amount == -reverses.amount is a mandatory
+    invariant (REVERSAL-AMOUNT-INTEGRITY-01) — a reversal must
+    neutralize the target's economic effect exactly, never partially or
+    in excess. This is SERVICE-enforced, not DB-enforced: a SQL CHECK
+    constraint cannot reference another row's column, so
+    create_broker_economic_adjustment() is the sole guarantor, checked
+    under the same row lock used for the one-hop/already-reversed
+    checks. There is no other production writer of this model (verified
+    by tree-wide grep — see that function's own module docstring).
+
+    created_ledger_entry is the specific BrokerLedger REV_ADJUSTMENT row
+    this adjustment produced — OneToOne, mirroring the exact precedent
+    OwnerWalletAdjustment.wallet_transaction already established for
+    linking a governance sidecar to the immutable ledger row it created.
+
+    This model and its service layer carry no permission/authentication/
+    authorization concept of their own (no TOTP, no is_owner_root check,
+    no reauthentication) — those belong to a future Owner Control Plane
+    block that will call into this foundation's service function, never
+    write BrokerLedger or this model directly. actor/reason/
+    idempotency_key exist here because they are accounting invariants
+    (who is recorded as responsible, why, and exactly-once execution),
+    not because this model performs authorization.
+    """
+    reference = models.CharField(max_length=40, unique=True)
+    amount    = models.DecimalField(max_digits=18, decimal_places=2)  # signed, broker's own perspective
+    reason    = models.TextField()
+    actor     = models.ForeignKey(
+        User, on_delete=models.PROTECT, related_name="broker_economic_adjustments",
+    )
+    idempotency_key = models.CharField(max_length=64, unique=True)
+
+    # The original economic fact being corrected — nullable for the
+    # omitted-revenue case (no original row exists to reference).
+    source_ledger  = models.ForeignKey(
+        BrokerLedger, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="corrected_by_adjustments",
+    )
+    # Denormalized scoping hints (mirrors BrokerLedger's own fields) —
+    # populated even when source_ledger is set, so an adjustment is
+    # filterable by account/symbol without a join, and so an
+    # omitted-revenue correction (no source_ledger) can still be scoped.
+    source_account = models.ForeignKey(
+        TradingAccount, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="broker_economic_adjustments",
+    )
+    symbol = models.CharField(max_length=12, null=True, blank=True)
+
+    # Set only when this adjustment reverses a prior one. One-hop-only
+    # (service-enforced) — a reversal is never itself reversed by a
+    # further row; instead correct forward with a new adjustment.
+    reverses = models.OneToOneField(
+        "self", null=True, blank=True, on_delete=models.PROTECT,
+        related_name="reversed_by",
+    )
+
+    # The exactly-one BrokerLedger.REV_ADJUSTMENT row this adjustment
+    # produced. Distinct from source_ledger, which points at what is
+    # being corrected (possibly a different revenue_type or none).
+    created_ledger_entry = models.OneToOneField(
+        BrokerLedger, on_delete=models.PROTECT, related_name="economic_adjustment",
+    )
+
+    meta       = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(amount=0),
+                name="broker_economic_adjustment_amount_nonzero",
+            ),
+            # Defense-in-depth: the service layer can never actually
+            # construct this state in one call (the new row has no pk
+            # yet at the point `reverses` is validated), but a direct
+            # DB-level guarantee against literal self-reference costs
+            # nothing and protects against any future direct write path
+            # (an admin script, a 02C bug) that bypasses the service.
+            models.CheckConstraint(
+                condition=~models.Q(reverses=models.F("id")),
+                name="broker_economic_adjustment_no_self_reversal",
+            ),
+        ]
+
+    def __str__(self):
+        return f"BrokerEconomicAdjustment #{self.pk} ({self.reference}) amount={self.amount}"
