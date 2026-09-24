@@ -361,18 +361,57 @@ class AttributionLimitationTests(TestCase):
 
 
 class ChallengeWithdrawEnumTests(TestCase):
-    """Item: challenge/withdrawal enum with no writer — must report
-    POLICY_APPROVED_IMPLEMENTATION_PENDING, never silently absent."""
+    """BROKER-ECONOMICS-04A — Coverage Truth Correction. Both categories
+    now have certified, LIVE, forward-only writers (challenge_revenue.py,
+    withdrawal_economics.py) — the stale COVERAGE_POLICY_APPROVED_PENDING
+    status ("no writer exists") is gone; COVERAGE_PARTIAL correctly
+    reflects that a real writer exists but historical/legacy rows of
+    unverifiable provenance may still be present in the sum."""
 
     def test_challenge_fee_zero_with_correct_coverage_status(self):
         s = broker_economics_summary()
         self.assertEqual(s.challenge_revenue, Decimal("0.00"))
-        self.assertEqual(s.challenge_coverage.status, COVERAGE_POLICY_APPROVED_PENDING)
+        self.assertEqual(s.challenge_coverage.status, COVERAGE_PARTIAL)
 
     def test_withdraw_fee_zero_with_correct_coverage_status(self):
         s = broker_economics_summary()
         self.assertEqual(s.withdrawal_fee_revenue, Decimal("0.00"))
-        self.assertEqual(s.withdrawal_fee_coverage.status, COVERAGE_POLICY_APPROVED_PENDING)
+        self.assertEqual(s.withdrawal_fee_coverage.status, COVERAGE_PARTIAL)
+
+    def test_challenge_coverage_no_longer_claims_no_writer(self):
+        s = broker_economics_summary()
+        note = s.challenge_coverage.note
+        self.assertNotIn("No current production code path writes", note)
+        self.assertIn("record_challenge_fee_revenue", note)
+        self.assertIn("LIVE", note)
+
+    def test_withdrawal_coverage_no_longer_claims_no_writer(self):
+        s = broker_economics_summary()
+        note = s.withdrawal_fee_coverage.note
+        self.assertNotIn("No current production code path writes", note)
+        self.assertNotIn("until a future WITHDRAWAL-ECONOMICS block", note)
+        self.assertIn("record_withdrawal_fee_revenue", note)
+        self.assertIn("LIVE", note)
+
+    def test_withdrawal_coverage_confirms_provider_cost_unknown(self):
+        s = broker_economics_summary()
+        self.assertIn("UNKNOWN", s.withdrawal_fee_coverage.note)
+        self.assertIn("never withdrawal profit", s.withdrawal_fee_coverage.note)
+
+    def test_retained_status_still_partial(self):
+        """Confirms the coverage-note correction never flips Retained
+        Economics from PARTIAL to an implied NET PROFIT claim."""
+        s = broker_economics_summary()
+        self.assertEqual(s.retained.status, COVERAGE_PARTIAL)
+
+    def test_coverage_notes_invent_no_historical_date_or_backfill_claim(self):
+        s = broker_economics_summary()
+        for note in (s.challenge_coverage.note, s.withdrawal_fee_coverage.note):
+            self.assertNotIn("backfill", note.lower())
+            # No hardcoded calendar date (e.g. "2026-05-24") — provenance
+            # is expressed via the source_*_enrollment/source_withdrawal
+            # FK partition, never a fabricated go-live date.
+            self.assertNotRegex(note, r"\b20\d{2}-\d{2}-\d{2}\b")
 
     def test_1_5_percent_policy_never_appears_as_computed_number(self):
         """The intended 1.5% withdrawal fee policy must never be
@@ -515,9 +554,13 @@ class CoverageStatusValidationTests(TestCase):
         with self.assertRaises(ValueError):
             CategoryCoverage(status="MADE_UP_STATUS", note="x")
 
-    def test_all_five_coverage_statuses_are_real_and_used(self):
-        """Confirms the vocabulary is exhaustive and each value actually
-        appears somewhere in a real summary — not vestigial."""
+    def test_coverage_statuses_used_in_a_real_summary(self):
+        """Confirms COMPLETE and PARTIAL — the statuses a real summary
+        currently produces — actually appear, not vestigial. As of
+        BROKER-ECONOMICS-04A, challenge/withdrawal coverage report
+        PARTIAL (a certified writer exists; historical provenance is the
+        only remaining ambiguity) rather than
+        POLICY_APPROVED_IMPLEMENTATION_PENDING."""
         s = broker_economics_summary()
         statuses_seen = {
             s.commission_coverage.status, s.spread_coverage.status,
@@ -527,4 +570,20 @@ class CoverageStatusValidationTests(TestCase):
         }
         self.assertIn(COVERAGE_COMPLETE, statuses_seen)
         self.assertIn(COVERAGE_PARTIAL, statuses_seen)
-        self.assertIn(COVERAGE_POLICY_APPROVED_PENDING, statuses_seen)
+
+    def test_policy_approved_pending_remains_valid_vocabulary(self):
+        """POLICY_APPROVED_IMPLEMENTATION_PENDING is no longer produced by
+        any current summary field (both categories that used it now have
+        real writers — BROKER-ECONOMICS-04A), but it remains a legitimate,
+        constructible status for a future category that is Owner-approved
+        with no writer yet. Not removed, just currently unused."""
+        cc = CategoryCoverage(status=COVERAGE_POLICY_APPROVED_PENDING, note="future category")
+        self.assertEqual(cc.status, COVERAGE_POLICY_APPROVED_PENDING)
+        s = broker_economics_summary()
+        statuses_seen = {
+            s.commission_coverage.status, s.spread_coverage.status,
+            s.challenge_coverage.status, s.withdrawal_fee_coverage.status,
+            s.counterparty_coverage.status, s.adjustments_coverage.status,
+            s.retained.coverage.status,
+        }
+        self.assertNotIn(COVERAGE_POLICY_APPROVED_PENDING, statuses_seen)

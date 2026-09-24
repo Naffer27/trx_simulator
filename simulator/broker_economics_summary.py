@@ -41,15 +41,22 @@ were COMPLETE. An amount that is genuinely $0.00 today because no writer
 exists is never reported as a bare absence a reader could mistake for
 "confirmed zero forever."
 
-Two Owner-approved-but-not-yet-implemented economic categories
-(BROKER-ECONOMICS-03 FASE B Decisions A/B): challenge fee revenue and
-withdrawal fee revenue. Both remain exactly $0.00 today because no
-production writer exists for either (BrokerLedger.REV_CHALLENGE_FEE /
-REV_WITHDRAW_FEE have zero writers, re-confirmed in FASE A). This module
-reports that state honestly — it does not, and must not, create one.
-The intended 1.5% withdrawal fee policy is NOT hardcoded anywhere here;
-it appears only as a coverage note describing Owner-approved-but-not-
-yet-implemented policy, never as a computed number.
+Challenge fee revenue and withdrawal fee revenue (BROKER-ECONOMICS-04A
+— Coverage Truth Correction): both categories now have certified,
+committed, forward-only production writers —
+challenge_revenue.py::record_challenge_fee_revenue() and
+withdrawal_economics.py::record_withdrawal_fee_revenue(), each booking
+exactly one DB-idempotent BrokerLedger row per certified economic event
+(challenge enrollment after verified payment; WithdrawalRequest
+reaching COMPLETED). This module itself remains strictly READ-ONLY —
+it creates zero BrokerLedger rows, zero challenge/withdrawal rows,
+regardless of which writers exist elsewhere. The withdrawal fee
+percentage is read from WithdrawalFeeConfig by that writer, not
+hardcoded anywhere in this module. Provider/network/payment
+processing cost for either category remains a separate, unimplemented
+concern — see challenge_coverage/withdrawal_fee_coverage below, and
+note that captured revenue is never the same claim as captured profit
+or margin.
 
 The pending/stop/limit-trigger spread markup gap (BROKER-ECONOMICS-02A-0,
 re-confirmed unchanged) is measured two ways: an exact, non-estimated
@@ -542,20 +549,26 @@ def broker_economics_summary(
         ),
         challenge_revenue=breakdown.challenge_fee,
         challenge_coverage=CategoryCoverage(
-            COVERAGE_POLICY_APPROVED_PENDING,
-            "BROKER-ECONOMICS-03 FASE B Decision A: approved as a real, forward-only revenue "
-            "source. No current production code path writes BrokerLedger.REV_CHALLENGE_FEE — "
-            "any non-zero figure here reflects legacy/manual rows already present in the "
-            "ledger, not ongoing capture, until a real writer is built.",
+            COVERAGE_PARTIAL,
+            "BROKER-ECONOMICS-04A: the certified writer "
+            "(challenge_revenue.py::record_challenge_fee_revenue()) is LIVE and forward-only "
+            "from its committed call sites — every new certified challenge purchase since then "
+            "produces exactly one DB-idempotent REV_CHALLENGE_FEE row. This sum may also "
+            "include historical/legacy rows with source_challenge_enrollment=NULL, predating "
+            "that writer, whose origin cannot be independently verified from this figure alone. "
+            "PARTIAL reflects that historical-provenance ambiguity, not a gap in current writer "
+            "coverage.",
         ),
         withdrawal_fee_revenue=breakdown.withdraw_fee,
         withdrawal_fee_coverage=CategoryCoverage(
-            COVERAGE_POLICY_APPROVED_PENDING,
-            "BROKER-ECONOMICS-03 FASE B Decision B: Owner-approved policy (intended 1.5%, "
-            "to be configurable, NOT hardcoded anywhere in this codebase). No current "
-            "production code path writes BrokerLedger.REV_WITHDRAW_FEE — any non-zero "
-            "figure here reflects legacy/manual rows already present in the ledger, not "
-            "ongoing capture, until a future WITHDRAWAL-ECONOMICS block implements a writer.",
+            COVERAGE_PARTIAL,
+            "BROKER-ECONOMICS-04A: the certified writer "
+            "(withdrawal_economics.py::record_withdrawal_fee_revenue()) is LIVE, booking "
+            "exactly at WithdrawalRequest COMPLETED, forward-only. This sum may also include "
+            "historical/legacy rows with source_withdrawal=NULL, predating that writer. The "
+            "withdrawal fee policy remains configurable (WithdrawalFeeConfig), never hardcoded. "
+            "Provider/network cost remains UNKNOWN — this figure is gross fee revenue, never "
+            "withdrawal profit.",
         ),
         counterparty_pnl=breakdown.counterparty_pnl,
         counterparty_coverage=counterparty_coverage,
