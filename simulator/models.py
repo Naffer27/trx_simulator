@@ -633,6 +633,15 @@ class BrokerLedger(models.Model):
         'ChallengeEnrollment', null=True, blank=True,
         on_delete=models.SET_NULL, related_name='broker_ledger',
     )
+    # WITHDRAWAL-ECONOMICS-01 — links a REV_WITHDRAW_FEE row to the
+    # WithdrawalRequest it represents. Same rationale as
+    # source_challenge_enrollment above: null for every other
+    # revenue_type, SET_NULL so a ledger row survives deletion of its
+    # source request.
+    source_withdrawal = models.ForeignKey(
+        'WithdrawalRequest', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='broker_ledger',
+    )
     symbol         = models.CharField(max_length=12, null=True, blank=True)
     meta           = models.JSONField(default=dict, blank=True)
     created_at     = models.DateTimeField(auto_now_add=True, db_index=True)
@@ -661,6 +670,13 @@ class BrokerLedger(models.Model):
                 fields=['source_challenge_enrollment', 'revenue_type'],
                 condition=models.Q(source_challenge_enrollment__isnull=False),
                 name='uniq_brokerledger_source_challenge_enrollment_revenue_type',
+            ),
+            # WITHDRAWAL-ECONOMICS-01 — same DB-enforced idempotency floor,
+            # same pattern, for the withdrawal fee writer.
+            models.UniqueConstraint(
+                fields=['source_withdrawal', 'revenue_type'],
+                condition=models.Q(source_withdrawal__isnull=False),
+                name='uniq_brokerledger_source_withdrawal_revenue_type',
             ),
         ]
 
@@ -737,6 +753,61 @@ class BrokerSpreadConfig(models.Model):
 
     def __str__(self):
         return f"{self.symbol} spread={self.spread_pips}pip enabled={self.enabled}"
+
+
+class WithdrawalFeeConfig(models.Model):
+    """
+    WITHDRAWAL-ECONOMICS-01 — the single, Owner-controlled source for the
+    commercial withdrawal fee percentage. Singleton by construction: pk
+    is always 1 (save() forces it), so there is exactly one row, ever,
+    editable in place via the admin — never a second row, never deleted.
+
+    Read only at WithdrawalRequest creation time (get_current()) to
+    resolve the CURRENT percentage, which is then snapshotted onto that
+    WithdrawalRequest (fee_rate/fee_amount/net_amount) and never
+    consulted again for that request — changing percent here has zero
+    retroactive effect on any already-created WithdrawalRequest.
+
+    enabled=False means the fee is off: new withdrawals snapshot
+    fee_rate=0.00 explicitly (never "no snapshot" — an explicit
+    zero-rate decision is a real fact, distinct from a legacy row that
+    predates this feature entirely and has fee_rate=None).
+    """
+    percent    = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal("1.50"),
+        help_text="Commercial withdrawal fee, as a percentage of the gross withdrawal amount (e.g. 1.50 = 1.5%).",
+    )
+    enabled    = models.BooleanField(
+        default=True,
+        help_text="When off, new withdrawals snapshot a 0.00% fee — the fee is not charged.",
+    )
+    reason     = models.TextField(
+        blank=True, default="",
+        help_text="Why this value was set — required by the admin form on every save, free-text audit note.",
+    )
+    updated_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name="withdrawal_fee_config_changes",
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Withdrawal Fee Config"
+        verbose_name_plural = "Withdrawal Fee Config"
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValueError("WithdrawalFeeConfig is a singleton and cannot be deleted.")
+
+    @classmethod
+    def get_current(cls) -> "WithdrawalFeeConfig":
+        obj, _ = cls.objects.get_or_create(pk=1, defaults={"percent": Decimal("1.50"), "enabled": True})
+        return obj
+
+    def __str__(self):
+        return f"Withdrawal fee: {self.percent}% ({'enabled' if self.enabled else 'disabled'})"
 
 
 class Deposit(models.Model):
@@ -855,6 +926,21 @@ class WithdrawalRequest(models.Model):
     crypto_currency = models.CharField(max_length=20, choices=WITHDRAWAL_CHOICES)
     wallet_address  = models.CharField(max_length=200)
     status          = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING, db_index=True)
+
+    # WITHDRAWAL-ECONOMICS-01 — commercial fee snapshot, resolved once
+    # from WithdrawalFeeConfig at creation time (_finalize(), same
+    # atomic block as the gross debit) and NEVER recomputed afterward —
+    # same discipline as IBCommissionObligation.calculated_amount. All
+    # three are NULL for every row created before this field existed
+    # (legacy rows): null == "no fee policy was ever evaluated for this
+    # withdrawal", never reinterpreted as "0% was charged". amount_usd
+    # keeps its original meaning — the GROSS amount debited from the
+    # Wallet — unchanged by this block (MODEL A). net_amount is what
+    # actually gets converted to crypto and sent to the client;
+    # fee_amount is what the broker keeps.
+    fee_rate    = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    fee_amount  = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    net_amount  = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
 
     # NowPayments payout references
     np_batch_id      = models.CharField(max_length=100, blank=True, default="", db_index=True)

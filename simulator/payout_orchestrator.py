@@ -128,8 +128,15 @@ def submit_withdrawal_to_provider(withdrawal_request, *, adapter, actor, callbac
         )
 
     # Step 2 — estimate(). HTTP, no atomic, no locks. Side-effect-free.
+    # WITHDRAWAL-ECONOMICS-01 — the client receives NET (gross minus the
+    # snapshotted commercial fee), never the full gross amount_usd. A
+    # legacy WithdrawalRequest (net_amount is None — created before this
+    # block existed, no fee was ever evaluated for it) falls back to
+    # amount_usd unchanged — its historical economics are never
+    # reinterpreted as if a fee had applied.
+    estimate_basis = wr_preview.net_amount if wr_preview.net_amount is not None else wr_preview.amount_usd
     try:
-        provider_amount = adapter.estimate(wr_preview.amount_usd, wr_preview.crypto_currency)
+        provider_amount = adapter.estimate(estimate_basis, wr_preview.crypto_currency)
     except ProviderError as exc:
         raise EstimateFailed(str(exc)) from exc
 
@@ -151,7 +158,11 @@ def submit_withdrawal_to_provider(withdrawal_request, *, adapter, actor, callbac
             provider=adapter.provider_name,
             requested_asset=wr.crypto_currency,
             destination_address=wr.wallet_address,
-            requested_amount_usd=wr.amount_usd,
+            # WITHDRAWAL-ECONOMICS-01 — same estimate_basis computed above
+            # (net_amount, or amount_usd for a legacy request with no fee
+            # snapshot): this is the actual USD figure requested of the
+            # provider, kept consistent with the adapter.estimate() call.
+            requested_amount_usd=estimate_basis,
             actor=actor,
         )
         # provider_amount (the estimate) is not part of .1's frozen
@@ -229,6 +240,21 @@ def _apply_result_without_refund(attempt_id, new_status, *, reason="", raw_provi
             now = timezone.now()
             PayoutAttempt.objects.filter(pk=attempt.pk).update(reconciled_at=now)
             attempt.reconciled_at = now
+
+        # WITHDRAWAL-ECONOMICS-01 — the single certified call site: fires
+        # exactly when a withdrawal genuinely reaches COMPLETED, inside
+        # this same locked transaction (the TERMINAL_STATUSES guard above
+        # already makes this unreachable a second time for the same
+        # attempt; the writer's own DB constraint is an independent,
+        # second layer of protection — see withdrawal_economics.py).
+        if new_status == PayoutAttempt.STATUS_COMPLETED:
+            from .withdrawal_economics import (
+                DuplicateWithdrawalFeeRevenue, record_withdrawal_fee_revenue,
+            )
+            try:
+                record_withdrawal_fee_revenue(wr)
+            except DuplicateWithdrawalFeeRevenue as exc:
+                logger.warning("[payout_orchestrator] %s", exc)
 
     if new_status == PayoutAttempt.STATUS_COMPLETED:
         log_audit(

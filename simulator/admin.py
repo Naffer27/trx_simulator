@@ -1,6 +1,7 @@
 # simulator/admin.py
 from decimal import Decimal
 
+from django import forms
 from django.contrib import admin, messages
 from django.utils.translation import gettext_lazy as _
 from django.db.models import Sum, Count, Q
@@ -19,7 +20,7 @@ from .models import (
     BrokerSnapshot, SymbolExposure, TraderClassExposure,
     AuditLog,
     CalendarEvent, Referral, ReferralAttribution, Bonus, BrokerDocument, ExpertAdvisor,
-    BrokerLedger, BrokerSpreadConfig, Instrument,
+    BrokerLedger, BrokerSpreadConfig, WithdrawalFeeConfig, Instrument,
     BrokerEquitySnapshot, BrokerRevenueSnapshot,
     AccountProduct, ChallengeProduct, ChallengeEnrollment, FundedConfig,
     KYCProfile, SupportTicket, EmailVerification, TermsAcceptance, TOTPDevice,
@@ -4149,6 +4150,84 @@ class BrokerSpreadConfigAdmin(admin.ModelAdmin):
         'spread_bounds_enabled', 'min_spread', 'max_spread', 'created_at',
     )
     ordering       = ('symbol',)
+
+
+class WithdrawalFeeConfigForm(forms.ModelForm):
+    """A reason is required on every save — enforced at the form level
+    (not the model level) so the lazily-created default row from
+    get_current() never needs one, but every human-driven admin change
+    does."""
+
+    class Meta:
+        model = WithdrawalFeeConfig
+        fields = ("percent", "enabled", "reason")
+
+    def clean_reason(self):
+        reason = (self.cleaned_data.get("reason") or "").strip()
+        if not reason:
+            raise forms.ValidationError(
+                "A reason is required for every change to the withdrawal fee policy."
+            )
+        return reason
+
+
+@admin.register(WithdrawalFeeConfig)
+class WithdrawalFeeConfigAdmin(admin.ModelAdmin):
+    """
+    WITHDRAWAL-ECONOMICS-01 — the minimum control certified in FASE A:
+    superuser-only, mandatory reason on every change, audit-logged.
+    NOT the full Owner Control Plane (TOTP re-authentication,
+    idempotency-key-once-at-preview, BROKER-ECONOMICS-02C's pattern) —
+    that remains an explicitly deferred future block, per FASE A §P.
+    A normal staff account cannot view, add, change, or delete this
+    row: has_module_permission alone hides it from a non-superuser's
+    admin index entirely.
+    """
+    form = WithdrawalFeeConfigForm
+    list_display = ("percent", "enabled", "updated_by", "updated_at")
+    readonly_fields = ("updated_by", "updated_at")
+    fields = ("percent", "enabled", "reason", "updated_by", "updated_at")
+
+    def has_module_permission(self, request):
+        return bool(request.user.is_active and request.user.is_superuser)
+
+    def has_view_permission(self, request, obj=None):
+        return bool(request.user.is_active and request.user.is_superuser)
+
+    def has_add_permission(self, request):
+        if not (request.user.is_active and request.user.is_superuser):
+            return False
+        return not WithdrawalFeeConfig.objects.exists()
+
+    def has_change_permission(self, request, obj=None):
+        return bool(request.user.is_active and request.user.is_superuser)
+
+    def has_delete_permission(self, request, obj=None):
+        return False  # singleton — WithdrawalFeeConfig.delete() also refuses at the model level
+
+    def save_model(self, request, obj, form, change):
+        old_percent, old_enabled = None, None
+        if change:
+            previous = WithdrawalFeeConfig.objects.filter(pk=obj.pk).first()
+            if previous is not None:
+                old_percent, old_enabled = previous.percent, previous.enabled
+
+        obj.updated_by = request.user
+        super().save_model(request, obj, form, change)
+
+        from .audit import log_audit
+        log_audit(
+            request, "withdrawal.fee_config_changed",
+            f"Withdrawal fee config changed by {request.user.username}: "
+            f"percent {old_percent}→{obj.percent}, enabled {old_enabled}→{obj.enabled}",
+            detail={
+                "old_percent": str(old_percent) if old_percent is not None else None,
+                "new_percent": str(obj.percent),
+                "old_enabled": old_enabled,
+                "new_enabled": obj.enabled,
+                "reason": obj.reason,
+            },
+        )
 
 
 @admin.register(Instrument)

@@ -2847,6 +2847,14 @@ def withdraw_otp_verify_view(request):
                 crypto_currency = CURRENCY_BY_ASSET_NETWORK[(verified_challenge.asset, verified_challenge.network)]
                 required_approvals = 2 if final_amount > Decimal("1000") else 1
 
+                # WITHDRAWAL-ECONOMICS-01 — resolve + snapshot the commercial
+                # fee from the CURRENT WithdrawalFeeConfig, once, here, inside
+                # the same atomic block as the gross debit. Never recomputed
+                # after this point — a later change to WithdrawalFeeConfig
+                # has zero retroactive effect on this WithdrawalRequest.
+                from .withdrawal_economics import calculate_withdrawal_fee
+                fee_rate, fee_amount, net_amount = calculate_withdrawal_fee(final_amount)
+
                 debit_tx = debit_wallet(
                     wallet_locked.id,
                     final_amount,
@@ -2866,6 +2874,9 @@ def withdraw_otp_verify_view(request):
                     debit_tx=debit_tx,
                     otp_challenge=verified_challenge,
                     required_approvals=required_approvals,
+                    fee_rate=fee_rate,
+                    fee_amount=fee_amount,
+                    net_amount=net_amount,
                 )
                 mark_challenge_used(verified_challenge)
         except _PendingWithdrawalExists:
