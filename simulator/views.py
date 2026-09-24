@@ -1499,6 +1499,7 @@ def external_challenge_activate(request):
 
     # ── Atomic: create enrollment + activate ──────────────────────────────────
     from .tasks import send_email_async as _send_email
+    from .challenge_revenue import DuplicateChallengeRevenue, record_challenge_fee_revenue
 
     with transaction.atomic():
         enrollment = ChallengeEnrollment.objects.create(
@@ -1509,6 +1510,10 @@ def external_challenge_activate(request):
             external_event_id=event_id or None,
             external_payment_id=payment_id or None,
         )
+        try:
+            record_challenge_fee_revenue(enrollment)
+        except DuplicateChallengeRevenue as exc:
+            logger.warning("[ext_challenge] %s", exc)
         _ce_activate(enrollment)
 
     logger.info(
@@ -1576,6 +1581,7 @@ def _fulfill_challenge_purchase(deposit):
     rolls back the entire callback transaction, leaving deposit.credited=False for retry.
     """
     from .tasks import send_email_async
+    from .challenge_revenue import DuplicateChallengeRevenue, record_challenge_fee_revenue
     product = deposit.challenge_product
     enrollment = ChallengeEnrollment.objects.create(
         user=deposit.user,
@@ -1583,6 +1589,10 @@ def _fulfill_challenge_purchase(deposit):
         deposit=deposit,
         status=ChallengeEnrollment.ST_PHASE_1,
     )
+    try:
+        record_challenge_fee_revenue(enrollment)
+    except DuplicateChallengeRevenue as exc:
+        logger.warning("[challenge_purchase] %s", exc)
     _ce_activate(enrollment)
     logger.info(
         "[challenge_purchase] enrollment=%d product=%d user=%s phase1 activated",
@@ -1739,6 +1749,7 @@ def challenge_wallet_purchase_view(request, product_id):
     enrollment = None
     try:
         from .tasks import send_email_async
+        from .challenge_revenue import DuplicateChallengeRevenue, record_challenge_fee_revenue
         with transaction.atomic():
             # Idempotency guard: lock and check for any active enrollment for this product
             active_exists = (
@@ -1774,6 +1785,10 @@ def challenge_wallet_purchase_view(request, product_id):
                 deposit=None,
                 status=ChallengeEnrollment.ST_PHASE_1,
             )
+            try:
+                record_challenge_fee_revenue(enrollment)
+            except DuplicateChallengeRevenue as exc:
+                logger.warning("[challenge_wallet_purchase] %s", exc)
 
             # Activate Phase 1 — creates TradingAccount + RiskRule (idempotent)
             _ce_activate(enrollment)

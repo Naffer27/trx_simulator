@@ -624,6 +624,15 @@ class BrokerLedger(models.Model):
         LedgerEntry, null=True, blank=True,
         on_delete=models.SET_NULL, related_name='broker_ledger',
     )
+    # CHALLENGE-REVENUE-WRITER-01 — links a REV_CHALLENGE_FEE row to the
+    # ChallengeEnrollment it represents. Null for every other revenue_type
+    # and for every row that predates this field. SET_NULL (not CASCADE):
+    # a ledger row is an immutable financial fact and must survive the
+    # deletion of its source enrollment.
+    source_challenge_enrollment = models.ForeignKey(
+        'ChallengeEnrollment', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='broker_ledger',
+    )
     symbol         = models.CharField(max_length=12, null=True, blank=True)
     meta           = models.JSONField(default=dict, blank=True)
     created_at     = models.DateTimeField(auto_now_add=True, db_index=True)
@@ -641,6 +650,17 @@ class BrokerLedger(models.Model):
                 fields=['source_trade', 'revenue_type'],
                 condition=models.Q(source_trade__isnull=False),
                 name='uniq_brokerledger_source_trade_revenue_type',
+            ),
+            # CHALLENGE-REVENUE-WRITER-01 — at most one entry of a given
+            # revenue_type per source ChallengeEnrollment (today only
+            # REV_CHALLENGE_FEE ever sets this field). DB-enforced
+            # idempotency floor for the writer: a second attempt to book
+            # revenue for the same enrollment always raises IntegrityError,
+            # regardless of application-level checks or concurrent races.
+            models.UniqueConstraint(
+                fields=['source_challenge_enrollment', 'revenue_type'],
+                condition=models.Q(source_challenge_enrollment__isnull=False),
+                name='uniq_brokerledger_source_challenge_enrollment_revenue_type',
             ),
         ]
 
