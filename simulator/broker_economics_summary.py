@@ -187,6 +187,8 @@ class BrokerEconomicsSummary:
     withdrawal_fee_coverage: CategoryCoverage = None
     funded_profit_share_revenue: Decimal = _ZERO
     funded_profit_share_coverage: CategoryCoverage = None
+    provider_cost_revenue: Decimal = _ZERO
+    provider_cost_coverage: CategoryCoverage = None
     counterparty_pnl: Decimal = _ZERO
     counterparty_coverage: CategoryCoverage = None
     adjustments: Decimal = _ZERO
@@ -503,11 +505,18 @@ def broker_economics_summary(
     capital_flows = _capital_flows_summary(period=period, start=start, end=end, now=now)
     pending_spread_estimate = _pending_spread_estimate(period=period, start=start, end=end, now=now, symbol=symbol)
 
-    # Retained Broker Economics — PARTIAL by construction today: 3 of its
-    # 4 subtracted cost categories have no data source in this codebase
-    # at all (BROKER-ECONOMICS-03 FASE A section 7).
+    # Retained Broker Economics — PARTIAL by construction today: 2 of its
+    # 4 subtracted cost categories still have no data source anywhere in
+    # this codebase (BROKER-ECONOMICS-03 FASE A section 7). Payment/
+    # transaction cost (BROKER-ECONOMICS-04C.4) now has a real, certified
+    # data source — BrokerLedger.REV_PROVIDER_COST, which only ever
+    # contains ACTUAL + FINAL + USD-valued provider costs
+    # (provider_cost_economics.py's booking gate) — but reads $0.00 today
+    # because the certified NowPayments adapter has observed no real fee
+    # evidence in any of the 4 live payments checked in 04C.2. That is an
+    # honest reading of current evidence, not a fabricated zero.
     known_execution_liquidity_costs = _ZERO
-    known_payment_transaction_costs = _ZERO
+    known_payment_transaction_costs = -breakdown.provider_cost  # provider_cost is <= 0; this is the positive magnitude
     other_captured_variable_costs = _ZERO
     retained_economics_value = (
         breakdown.broker_net_pnl
@@ -526,10 +535,11 @@ def broker_economics_summary(
         status=COVERAGE_PARTIAL,
         coverage=CategoryCoverage(
             COVERAGE_PARTIAL,
-            "Execution/liquidity cost, payment/transaction cost, and other variable cost "
-            "have no data source anywhere in this codebase yet (BOOK-04/05/06 remain "
-            "simulated; no payment-processor cost is ever captured) — all three are "
-            "included as $0.00 by construction, not because they are actually zero. "
+            "Execution/liquidity cost and other variable cost still have no data source "
+            "anywhere in this codebase (BOOK-04/05/06 remain simulated). Payment/transaction "
+            "cost (BROKER-ECONOMICS-04C.4) is now sourced from BrokerLedger.REV_PROVIDER_COST "
+            "— ACTUAL + FINAL + USD-valued only — but reads $0.00 today because no adapter "
+            "has yet observed real fee evidence, not because it is excluded by construction. "
             "This figure must never be presented as final/true net profit.",
         ),
     )
@@ -587,6 +597,18 @@ def broker_economics_summary(
             "because this sum has no historical/legacy rows predating the writer (forward-only, "
             "no backfill) and provider/network cost for the FUNDED_INTERNAL payout leg remains "
             "UNKNOWN, same limitation as withdrawal_fee_coverage.",
+        ),
+        provider_cost_revenue=breakdown.provider_cost,
+        provider_cost_coverage=CategoryCoverage(
+            COVERAGE_PARTIAL,
+            "BROKER-ECONOMICS-04C.4: the certified writer "
+            "(provider_cost_economics.py::record_provider_cost_revenue()) is LIVE, booking "
+            "exactly at the moment a ProviderCostRecord is ACTUAL + FINAL + USD-valued, "
+            "forward-only. Today this sum is $0.00 because the certified NowPayments adapter "
+            "(provider_cost_adapters.py) has observed no `fee` evidence in any real payment "
+            "checked so far (04C.2: 0/4 live) — ESTIMATED/UNKNOWN provider costs are captured "
+            "in ProviderCostRecord for audit but never included here. PARTIAL reflects that "
+            "evidence-availability gap, not a defect in the writer.",
         ),
         counterparty_pnl=breakdown.counterparty_pnl,
         counterparty_coverage=counterparty_coverage,

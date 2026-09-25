@@ -606,6 +606,15 @@ class BrokerLedger(models.Model):
     # already recorded the full trading result as a directional broker
     # loss) — never a duplicate of it. See funded_economics.py.
     REV_FUNDED_PROFIT_SHARE = 'FUNDED_PROFIT_SHARE'
+    # BROKER-ECONOMICS-04C.4 — a NEGATIVE-signed entry (amount <= 0):
+    # the broker's real, ACTUAL + FINAL + USD-valued provider/network/
+    # payment processing cost, normalized from ProviderCostRecord by
+    # provider_cost_economics.py — the ONLY module that may ever create
+    # one. Never a duplicate of, or netted against, any REV_* revenue
+    # row above — revenue and cost stay separately auditable. See
+    # provider_cost_economics.py for the full booking-gate/sign
+    # discipline.
+    REV_PROVIDER_COST = 'PROVIDER_COST'
 
     REVENUE_CHOICES = [
         (REV_COMMISSION,    'Commission'),
@@ -615,6 +624,7 @@ class BrokerLedger(models.Model):
         (REV_ADJUSTMENT,    'Adjustment'),
         (REV_COUNTERPARTY_PNL, 'Counterparty PnL (B-Book)'),
         (REV_FUNDED_PROFIT_SHARE, 'Funded Profit Share'),
+        (REV_PROVIDER_COST, 'Provider / Network Cost'),
     ]
 
     # max_length=24 — widened by BROKER-ECONOMICS-04B to fit
@@ -660,6 +670,16 @@ class BrokerLedger(models.Model):
         'FundedPayoutRequest', null=True, blank=True,
         on_delete=models.SET_NULL, related_name='broker_ledger',
     )
+    # BROKER-ECONOMICS-04C.4 — links a REV_PROVIDER_COST row to the
+    # ProviderCostRecord it represents. Same rationale as
+    # source_challenge_enrollment/source_withdrawal/source_funded_payout
+    # above. A correction posts a NEW ProviderCostRecord (and therefore a
+    # NEW BrokerLedger row pointing at that new record) — the original
+    # row/link is never mutated or reused.
+    source_provider_cost = models.ForeignKey(
+        'ProviderCostRecord', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='broker_ledger',
+    )
     symbol         = models.CharField(max_length=12, null=True, blank=True)
     meta           = models.JSONField(default=dict, blank=True)
     created_at     = models.DateTimeField(auto_now_add=True, db_index=True)
@@ -702,6 +722,16 @@ class BrokerLedger(models.Model):
                 fields=['source_funded_payout', 'revenue_type'],
                 condition=models.Q(source_funded_payout__isnull=False),
                 name='uniq_brokerledger_source_funded_payout_revenue_type',
+            ),
+            # BROKER-ECONOMICS-04C.4 — same DB-enforced idempotency floor,
+            # same pattern, for the provider-cost writer. At most one
+            # REV_PROVIDER_COST row can ever exist per ProviderCostRecord
+            # — a correction posts against a NEW ProviderCostRecord, so
+            # this constraint never blocks a legitimate correction.
+            models.UniqueConstraint(
+                fields=['source_provider_cost', 'revenue_type'],
+                condition=models.Q(source_provider_cost__isnull=False),
+                name='uniq_brokerledger_source_provider_cost_revenue_type',
             ),
         ]
 
@@ -4328,6 +4358,139 @@ class PaymentWebhookEvent(models.Model):
         return (
             f"PaymentWebhookEvent #{self.id} provider={self.provider} "
             f"payment_id={self.payment_id or '(none)'} status={self.payment_status or '(none)'}"
+        )
+
+
+class ProviderCostRecord(models.Model):
+    """
+    BROKER-ECONOMICS-04C.4 — normalized, provider-agnostic evidence of a
+    provider/network/payment processing cost. Represents NORMALIZED
+    PROVIDER COST EVIDENCE only. It is NOT client fee revenue, NOT a
+    Wallet movement, NOT Treasury balance, NOT customer principal, and
+    NOT BrokerLedger itself.
+
+    Populated exclusively by provider_cost_inbox.py::
+    capture_provider_cost_candidate(), from a ProviderCostCandidate an
+    adapter (provider_cost_adapters.py) produced by interpreting
+    PaymentWebhookEvent/PayoutWebhookEvent evidence. Never written
+    directly by an adapter, a view, or any other caller.
+
+    Immutable after creation — never UPDATE'd, matching BrokerLedger's
+    own "Additive only" convention. A provider correction is represented
+    as a NEW row (`corrects` pointing at the row it supersedes), never a
+    mutation of an existing one.
+
+    Whether a row has ever become a booked BrokerLedger expense is
+    derived entirely from BrokerLedger.source_provider_cost (a reverse
+    lookup) — this model carries no "posted" boolean of its own, the
+    same pattern ChallengeEnrollment/WithdrawalRequest/FundedPayoutRequest
+    already use for their own revenue writers.
+
+    The booking gate (provider_cost_economics.py, the ONLY module that
+    may ever read this model to create a BrokerLedger row):
+        quality == ACTUAL AND is_final == True AND usd_value IS NOT NULL
+    ESTIMATED and UNKNOWN are captured, queryable, staff-visible — and
+    structurally unbookable. A usd_value == 0.00 ACTUAL+final row is a
+    legitimate confirmed zero, fully distinct from UNKNOWN, but — matching
+    challenge_revenue.py/funded_economics.py's own "never write a $0.00
+    BrokerLedger row" convention — produces no ledger entry on its own
+    (a correction's delta may still be non-zero even when its own
+    usd_value is exactly 0.00 — see provider_cost_economics.py).
+    """
+    OP_DEPOSIT    = 'DEPOSIT'
+    OP_WITHDRAWAL = 'WITHDRAWAL'
+    OP_OTHER      = 'OTHER'
+    OPERATION_TYPE_CHOICES = [
+        (OP_DEPOSIT,    'Deposit'),
+        (OP_WITHDRAWAL, 'Withdrawal'),
+        (OP_OTHER,      'Other'),
+    ]
+
+    COST_PROVIDER_SERVICE = 'PROVIDER_SERVICE'
+    COST_NETWORK          = 'NETWORK'
+    COST_CONVERSION_FX    = 'CONVERSION_FX'
+    COST_OTHER            = 'OTHER'
+    COST_TYPE_CHOICES = [
+        (COST_PROVIDER_SERVICE, 'Provider Service Fee'),
+        (COST_NETWORK,          'Network Fee'),
+        (COST_CONVERSION_FX,    'Conversion / FX'),
+        (COST_OTHER,            'Other'),
+    ]
+
+    QUALITY_ACTUAL    = 'ACTUAL'
+    QUALITY_ESTIMATED = 'ESTIMATED'
+    QUALITY_UNKNOWN   = 'UNKNOWN'
+    QUALITY_CHOICES = [
+        (QUALITY_ACTUAL,    'Actual'),
+        (QUALITY_ESTIMATED, 'Estimated'),
+        (QUALITY_UNKNOWN,   'Unknown'),
+    ]
+
+    provider           = models.CharField(max_length=32)
+    operation_type     = models.CharField(max_length=12, choices=OPERATION_TYPE_CHOICES)
+    cost_type          = models.CharField(max_length=20, choices=COST_TYPE_CHOICES)
+    provider_reference = models.CharField(max_length=100, blank=True, default="", db_index=True)
+
+    # Evidence linkage — typed nullable FKs, not GenericForeignKey (zero
+    # precedent for GFK/ContentType anywhere in this codebase). Mirrors
+    # BrokerLedger's own source_challenge_enrollment/source_withdrawal/
+    # source_funded_payout pattern. Neither PaymentWebhookEvent nor
+    # PayoutWebhookEvent is modified by this field — the dependency runs
+    # only this direction.
+    source_payment_webhook_event = models.ForeignKey(
+        'PaymentWebhookEvent', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='provider_cost_records',
+    )
+    source_payout_webhook_event = models.ForeignKey(
+        'PayoutWebhookEvent', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='provider_cost_records',
+    )
+
+    # Original provider-currency amount/currency — preserved verbatim,
+    # never overwritten by a USD conversion. Same precision convention
+    # as Deposit.pay_amount (crypto-precision capable).
+    amount   = models.DecimalField(max_digits=24, decimal_places=10)
+    currency = models.CharField(max_length=20)
+    # USD economic value — populated ONLY when the evidence itself
+    # carries an authoritative USD figure for this exact cost. NULL is a
+    # common, legitimate state (never fabricated via a fetched/invented
+    # FX rate — see provider_cost_adapters.py).
+    usd_value = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+
+    quality  = models.CharField(max_length=10, choices=QUALITY_CHOICES)
+    is_final = models.BooleanField(default=False)
+
+    # When the provider says this cost occurred (from evidence) — distinct
+    # from received_at (when Money Broker normalized/captured it).
+    occurred_at = models.DateTimeField()
+    received_at = models.DateTimeField(auto_now_add=True)
+
+    # Deterministic content fingerprint — see provider_cost_inbox.py::
+    # _compute_fingerprint(). unique=True makes durable-inbox insertion
+    # race-safe (create + IntegrityError -> fetch), the same pattern
+    # already certified for PaymentWebhookEvent/PayoutWebhookEvent.
+    cost_fingerprint = models.CharField(max_length=64, unique=True)
+
+    # Append-only correction chain. A provider correction is new evidence
+    # producing a NEW row with `corrects` set to the row it supersedes —
+    # the original row is never edited or deleted.
+    corrects = models.ForeignKey(
+        'self', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='corrected_by',
+    )
+
+    # Bounded, adapter-produced normalization detail only (e.g. which raw
+    # fee sub-field was read) — never the full raw payload duplicated.
+    meta = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ['-received_at']
+
+    def __str__(self):
+        return (
+            f"ProviderCostRecord #{self.id} provider={self.provider} "
+            f"{self.operation_type}/{self.cost_type} quality={self.quality} "
+            f"usd_value={self.usd_value}"
         )
 
 

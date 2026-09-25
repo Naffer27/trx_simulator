@@ -31,7 +31,17 @@ re-deriving these numbers with its own ad hoc query.
                           (directional B-Book result; can be negative)
     adjustments         = sum(BrokerLedger.ADJUSTMENT.amount)
                           (real sign, whatever the adjustment recorded)
+    provider_cost       = sum(BrokerLedger.PROVIDER_COST.amount)
+                          (BROKER-ECONOMICS-04C.4 — real, ACTUAL + FINAL +
+                          USD-valued provider/network/payment processing
+                          cost, always <= 0 by construction — see
+                          provider_cost_economics.py. Deliberately NOT
+                          folded into fee_revenue: that field's own
+                          invariant below is "always >= 0," which a
+                          negative-signed cost would break. Kept as its
+                          own top-level term instead.)
     broker_net_pnl      = fee_revenue + counterparty_pnl + adjustments
+                          + provider_cost
 
 Aliases used across this module and its callers (FASE 1's "separar
 además"):
@@ -160,7 +170,8 @@ class BrokerPnLBreakdown:
     fee_revenue: Decimal = _ZERO          # == gross_revenue
     counterparty_pnl: Decimal = _ZERO     # == directional_pnl
     adjustments: Decimal = _ZERO
-    broker_net_pnl: Decimal = _ZERO       # == net_pnl == fee_revenue + counterparty_pnl + adjustments
+    provider_cost: Decimal = _ZERO        # BROKER-ECONOMICS-04C.4 — always <= 0
+    broker_net_pnl: Decimal = _ZERO       # == net_pnl == fee_revenue + counterparty_pnl + adjustments + provider_cost
 
     # FASE 8 — coverage (only meaningful where counterparty_pnl was computed
     # from a Trade population, i.e. broker_pnl_for_period/account/symbol;
@@ -242,7 +253,8 @@ def calculate_broker_pnl(
     fee_revenue   = commission + spread + challenge_fee + withdraw_fee + funded_profit_share
     counterparty_pnl = _sum(ledger_qs, BrokerLedger.REV_COUNTERPARTY_PNL)
     adjustments   = _sum(ledger_qs, BrokerLedger.REV_ADJUSTMENT)
-    broker_net_pnl = fee_revenue + counterparty_pnl + adjustments
+    provider_cost = _sum(ledger_qs, BrokerLedger.REV_PROVIDER_COST)
+    broker_net_pnl = fee_revenue + counterparty_pnl + adjustments + provider_cost
 
     # ── Coverage — same window/filters, but over Trade (the population
     # counterparty_pnl SHOULD cover), not over BrokerLedger itself.
@@ -277,6 +289,7 @@ def calculate_broker_pnl(
         commission=commission, spread=spread, challenge_fee=challenge_fee, withdraw_fee=withdraw_fee,
         funded_profit_share=funded_profit_share,
         fee_revenue=fee_revenue, counterparty_pnl=counterparty_pnl, adjustments=adjustments,
+        provider_cost=provider_cost,
         broker_net_pnl=broker_net_pnl,
         closed_trade_count=closed_trade_count,
         counterpart_entry_count=counterpart_entry_count,

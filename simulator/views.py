@@ -1989,7 +1989,30 @@ def deposit_callback(request):
     # atomic block below so a later rollback there can never erase it.
     # Fail-open: capture_payment_webhook_event() never raises.
     from .payment_webhook_inbox import capture_payment_webhook_event
-    capture_payment_webhook_event(data)
+    payment_webhook_event = capture_payment_webhook_event(data)
+
+    # BROKER-ECONOMICS-04C.4 — provider-agnostic cost normalization.
+    # Fully independent of, and fail-open around, the Wallet/challenge
+    # processing below: zero economic interpretation happens in this
+    # block itself — only the adapter/inbox/posting services decide
+    # whether anything becomes a booked BrokerLedger row, and each of
+    # those already enforces its own booking gate. A failure here must
+    # never affect deposit processing.
+    if payment_webhook_event is not None:
+        try:
+            from .provider_cost_adapters import get_cost_adapter_for_provider
+            from .provider_cost_economics import record_provider_cost_revenue
+            from .provider_cost_inbox import capture_provider_cost_candidate
+            cost_adapter = get_cost_adapter_for_provider(payment_webhook_event.provider)
+            if cost_adapter is not None:
+                for candidate in cost_adapter.normalize_payment_cost(payment_webhook_event):
+                    cost_record = capture_provider_cost_candidate(candidate)
+                    if cost_record is not None:
+                        record_provider_cost_revenue(cost_record)
+        except Exception:
+            logger.warning(
+                "[callback] provider cost normalization failed (non-fatal)", exc_info=True,
+            )
 
     payment_id     = str(data.get("payment_id", ""))
     payment_status = data.get("payment_status", "")
@@ -3358,6 +3381,26 @@ def withdraw_payout_callback(request):
     for event in events:
         try:
             webhook_event, created = get_or_create_webhook_event(event)
+
+            # BROKER-ECONOMICS-04C.4 — provider-agnostic cost
+            # normalization, payout leg. Fully independent of, and
+            # fail-open around, payout correlation/processing below —
+            # a failure here must never affect payout processing.
+            try:
+                from .provider_cost_adapters import get_cost_adapter_for_provider
+                from .provider_cost_economics import record_provider_cost_revenue
+                from .provider_cost_inbox import capture_provider_cost_candidate
+                cost_adapter = get_cost_adapter_for_provider(webhook_event.provider)
+                if cost_adapter is not None:
+                    for candidate in cost_adapter.normalize_payout_cost(webhook_event):
+                        cost_record = capture_provider_cost_candidate(candidate)
+                        if cost_record is not None:
+                            record_provider_cost_revenue(cost_record)
+            except Exception:
+                logger.warning(
+                    "[payout_cb] provider cost normalization failed (non-fatal)", exc_info=True,
+                )
+
             _, target = process_webhook_event(webhook_event.pk, request=request)
             if created and isinstance(target, (Orphan, Ambiguous, DataIntegrityViolation)):
                 log_audit(

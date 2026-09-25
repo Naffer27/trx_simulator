@@ -14,7 +14,7 @@ from django.db import transaction
 from .models import (
     TradingAccount, Position, Trade, LedgerEntry,
     Purchase, Deposit, WithdrawalRequest, Wallet, WalletTransaction, InternalTransfer,
-    PayoutAttempt, PayoutWebhookEvent,
+    PayoutAttempt, PayoutWebhookEvent, ProviderCostRecord,
     TreasuryOperationRequest,
     RiskRule, DrawdownSnapshot, TradingViolation, TraderScore,
     BrokerSnapshot, SymbolExposure, TraderClassExposure,
@@ -2485,6 +2485,35 @@ class PayoutWebhookEventAdmin(admin.ModelAdmin):
         "provider_reference", "provider_batch_id", "provider_request_id",
         "event_fingerprint", "correlated_attempt__id",
     )
+    ordering = ("-received_at",)
+
+
+@admin.register(ProviderCostRecord)
+class ProviderCostRecordAdmin(admin.ModelAdmin):
+    """
+    BROKER-ECONOMICS-04C.4 — strictly view-only normalized provider cost
+    evidence. Same has_add/change/delete_permission=False pattern as
+    PayoutWebhookEventAdmin — no action here may create/alter an economic
+    fact; only provider_cost_economics.py::record_provider_cost_revenue()
+    may ever write BrokerLedger.
+    """
+    readonly_fields = [f.name for f in ProviderCostRecord._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    list_display = (
+        "id", "provider", "operation_type", "cost_type", "provider_reference",
+        "amount", "currency", "usd_value", "quality", "is_final", "received_at",
+    )
+    list_filter = ("provider", "operation_type", "cost_type", "quality", "is_final")
+    search_fields = ("provider_reference", "cost_fingerprint")
     ordering = ("-received_at",)
 
 
