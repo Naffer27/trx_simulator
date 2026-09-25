@@ -1983,6 +1983,14 @@ def deposit_callback(request):
     except json.JSONDecodeError:
         return JsonResponse({"error": "Invalid JSON"}, status=400)
 
+    # BROKER-ECONOMICS-04C.3 — durable evidence capture. Signature already
+    # verified, body already parsed — placed BEFORE the Deposit lookup so
+    # even an unrecognized/orphan payment_id is preserved, and BEFORE the
+    # atomic block below so a later rollback there can never erase it.
+    # Fail-open: capture_payment_webhook_event() never raises.
+    from .payment_webhook_inbox import capture_payment_webhook_event
+    capture_payment_webhook_event(data)
+
     payment_id     = str(data.get("payment_id", ""))
     payment_status = data.get("payment_status", "")
     order_id       = str(data.get("order_id", ""))

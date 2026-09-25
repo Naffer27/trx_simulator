@@ -4277,6 +4277,60 @@ class PayoutWebhookEvent(models.Model):
         )
 
 
+class PaymentWebhookEvent(models.Model):
+    """
+    BROKER-ECONOMICS-04C.3 — durable, immutable inbox for every signature-
+    valid, JSON-parseable inbound PAYMENT (deposit/challenge) webhook
+    event. The payment-side counterpart to PayoutWebhookEvent, deliberately
+    smaller: this is evidence capture only, never a processing/correlation
+    engine — no correlation_status, no retry machinery, no linkage FK.
+
+    Written by views.py::deposit_callback for every event that has already
+    passed HMAC-SHA512 verification and successfully parsed as JSON — an
+    invalid signature or malformed body never reaches this model, same
+    Design Lock discipline PayoutWebhookEvent already documents for
+    itself ("HMAC siempre primero"). Written BEFORE the Deposit lookup, so
+    an unrecognized/orphan payment_id is preserved rather than lost, and
+    BEFORE the existing transaction.atomic() block that credits the
+    Wallet/activates a challenge — a later rollback in that block can
+    never erase evidence already durably captured here.
+
+    raw_payload is the complete parsed JSON payload NowPayments sent
+    (the output of json.loads(request.body)) — not a byte-for-byte
+    capture of the raw HTTP body itself, which this model does not store.
+
+    Zero economic semantics: this model has no fee/cost field of any
+    kind. A `fee` key, if NowPayments ever includes one, is preserved
+    exactly as parsed inside raw_payload — never inspected, interpreted,
+    or promoted into any BrokerLedger row by this model or its writer.
+    """
+    provider           = models.CharField(max_length=32, default="nowpayments")
+    # Deterministic fingerprint of (provider, payment_id, order_id,
+    # payment_status, canonical raw_payload) — see
+    # payment_webhook_inbox.py::_compute_fingerprint(). NEVER derived
+    # from a local timestamp. unique=True makes durable inbox insertion
+    # race-safe (create + IntegrityError -> fetch), same pattern already
+    # certified for PayoutWebhookEvent.event_fingerprint. Content-based,
+    # NOT payment_id-based — the same payment_id legitimately recurs
+    # across its lifecycle (waiting -> confirming -> finished), and each
+    # distinct delivery deserves its own row.
+    event_fingerprint  = models.CharField(max_length=64, unique=True)
+    payment_id         = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    order_id           = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    payment_status     = models.CharField(max_length=40, blank=True, default="")
+    raw_payload        = models.JSONField(default=dict, blank=True)
+    received_at        = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-received_at"]
+
+    def __str__(self):
+        return (
+            f"PaymentWebhookEvent #{self.id} provider={self.provider} "
+            f"payment_id={self.payment_id or '(none)'} status={self.payment_status or '(none)'}"
+        )
+
+
 class LastKnownMarketPrice(models.Model):
     """
     GOLDEN-WEEKEND-RISK-01 — durable last-good market price, one row per
