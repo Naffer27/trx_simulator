@@ -600,6 +600,12 @@ class BrokerLedger(models.Model):
     REV_WITHDRAW_FEE = 'WITHDRAW_FEE'
     REV_ADJUSTMENT   = 'ADJUSTMENT'
     REV_COUNTERPARTY_PNL = 'COUNTERPARTY_PNL'
+    # BROKER-ECONOMICS-04B — the broker's contractual retained share
+    # (FundedPayoutRequest.broker_cut) of a COMPLETED funded profit
+    # cycle. A separate economic fact from REV_COUNTERPARTY_PNL (which
+    # already recorded the full trading result as a directional broker
+    # loss) — never a duplicate of it. See funded_economics.py.
+    REV_FUNDED_PROFIT_SHARE = 'FUNDED_PROFIT_SHARE'
 
     REVENUE_CHOICES = [
         (REV_COMMISSION,    'Commission'),
@@ -608,9 +614,14 @@ class BrokerLedger(models.Model):
         (REV_WITHDRAW_FEE,  'Withdrawal Fee'),
         (REV_ADJUSTMENT,    'Adjustment'),
         (REV_COUNTERPARTY_PNL, 'Counterparty PnL (B-Book)'),
+        (REV_FUNDED_PROFIT_SHARE, 'Funded Profit Share'),
     ]
 
-    revenue_type   = models.CharField(max_length=16, choices=REVENUE_CHOICES, db_index=True)
+    # max_length=24 — widened by BROKER-ECONOMICS-04B to fit
+    # 'FUNDED_PROFIT_SHARE' (20 chars); was 16, sized exactly for the
+    # previous longest value ('COUNTERPARTY_PNL'). Existing rows/values
+    # unaffected — a widen-only change.
+    revenue_type   = models.CharField(max_length=24, choices=REVENUE_CHOICES, db_index=True)
     amount         = models.DecimalField(max_digits=18, decimal_places=2)
     source_account = models.ForeignKey(
         TradingAccount, null=True, blank=True,
@@ -640,6 +651,13 @@ class BrokerLedger(models.Model):
     # source request.
     source_withdrawal = models.ForeignKey(
         'WithdrawalRequest', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='broker_ledger',
+    )
+    # BROKER-ECONOMICS-04B — links a REV_FUNDED_PROFIT_SHARE row to the
+    # FundedPayoutRequest it represents. Same rationale as
+    # source_challenge_enrollment/source_withdrawal above.
+    source_funded_payout = models.ForeignKey(
+        'FundedPayoutRequest', null=True, blank=True,
         on_delete=models.SET_NULL, related_name='broker_ledger',
     )
     symbol         = models.CharField(max_length=12, null=True, blank=True)
@@ -677,6 +695,13 @@ class BrokerLedger(models.Model):
                 fields=['source_withdrawal', 'revenue_type'],
                 condition=models.Q(source_withdrawal__isnull=False),
                 name='uniq_brokerledger_source_withdrawal_revenue_type',
+            ),
+            # BROKER-ECONOMICS-04B — same DB-enforced idempotency floor,
+            # same pattern, for the funded broker-cut writer.
+            models.UniqueConstraint(
+                fields=['source_funded_payout', 'revenue_type'],
+                condition=models.Q(source_funded_payout__isnull=False),
+                name='uniq_brokerledger_source_funded_payout_revenue_type',
             ),
         ]
 

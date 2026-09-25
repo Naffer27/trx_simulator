@@ -128,6 +128,20 @@ def approve_sim_payout(fpr: FundedPayoutRequest, admin_user) -> None:
             updated_at=_now,
         )
 
+        # BROKER-ECONOMICS-04B — the certified call site: fires exactly
+        # when this FUNDED_SIM payout reaches COMPLETED, in the same
+        # locked transaction as the initial_balance reset above (the
+        # code's own definition of "broker_cut is now permanently the
+        # firm's"). fpr_locked already carries the immutable broker_cut
+        # snapshot from creation time — never recomputed here.
+        from .funded_economics import (
+            DuplicateFundedProfitShareRevenue, record_funded_broker_cut_revenue,
+        )
+        try:
+            record_funded_broker_cut_revenue(fpr_locked)
+        except DuplicateFundedProfitShareRevenue as exc:
+            logger.warning("[funded_payouts] %s", exc)
+
         # AUDIT-02 — fail-open: never allowed to affect the payout above,
         # win or lose. See broker_audit.record_event()'s own contract.
         from . import broker_audit as _audit
@@ -552,6 +566,20 @@ def handle_internal_payout_webhook(
                 cycle_reset_at=_now,
                 updated_at=_now,
             )
+
+            # BROKER-ECONOMICS-04B — the certified call site for
+            # FUNDED_INTERNAL: fires exactly when NowPayments confirms
+            # COMPLETED, in the same locked transaction as the
+            # initial_balance reset above — never at Phase 1 (APPROVED),
+            # which remains fully reversible. fpr_locked already carries
+            # the immutable broker_cut snapshot from creation time.
+            from .funded_economics import (
+                DuplicateFundedProfitShareRevenue, record_funded_broker_cut_revenue,
+            )
+            try:
+                record_funded_broker_cut_revenue(fpr_locked)
+            except DuplicateFundedProfitShareRevenue as exc:
+                logger.warning("[funded_payouts] %s", exc)
 
             # AUDIT-02 — fail-open. actor_type=SYSTEM: triggered by the
             # NowPayments webhook, no staff in the loop at this instant.

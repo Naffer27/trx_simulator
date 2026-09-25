@@ -185,6 +185,8 @@ class BrokerEconomicsSummary:
     challenge_coverage: CategoryCoverage = None
     withdrawal_fee_revenue: Decimal = _ZERO
     withdrawal_fee_coverage: CategoryCoverage = None
+    funded_profit_share_revenue: Decimal = _ZERO
+    funded_profit_share_coverage: CategoryCoverage = None
     counterparty_pnl: Decimal = _ZERO
     counterparty_coverage: CategoryCoverage = None
     adjustments: Decimal = _ZERO
@@ -569,6 +571,22 @@ def broker_economics_summary(
             "withdrawal fee policy remains configurable (WithdrawalFeeConfig), never hardcoded. "
             "Provider/network cost remains UNKNOWN — this figure is gross fee revenue, never "
             "withdrawal profit.",
+        ),
+        funded_profit_share_revenue=breakdown.funded_profit_share,
+        funded_profit_share_coverage=CategoryCoverage(
+            COVERAGE_PARTIAL,
+            "BROKER-ECONOMICS-04B: the certified writer "
+            "(funded_economics.py::record_funded_broker_cut_revenue()) is LIVE, booking "
+            "exactly at FundedPayoutRequest COMPLETED, forward-only, for both FUNDED_SIM and "
+            "FUNDED_INTERNAL. Amount is read exclusively from the immutable "
+            "FundedPayoutRequest.broker_cut snapshot, never recomputed. This is a SEPARATE "
+            "economic fact from counterparty_pnl below, not a duplicate of it — see "
+            "funded_economics.py's own module docstring for the full double-counting proof "
+            "(REV_COUNTERPARTY_PNL already records the full trading result; this category "
+            "records only the firm's subsequent contractual reclaim of broker_cut). PARTIAL "
+            "because this sum has no historical/legacy rows predating the writer (forward-only, "
+            "no backfill) and provider/network cost for the FUNDED_INTERNAL payout leg remains "
+            "UNKNOWN, same limitation as withdrawal_fee_coverage.",
         ),
         counterparty_pnl=breakdown.counterparty_pnl,
         counterparty_coverage=counterparty_coverage,

@@ -15,8 +15,18 @@ re-deriving these numbers with its own ad hoc query.
 
 ── Accounting definitions (FASE 1) ─────────────────────────────────────
     fee_revenue        = COMMISSION + SPREAD + CHALLENGE_FEE + WITHDRAW_FEE
+                          + FUNDED_PROFIT_SHARE
                           (non-directional revenue; always >= 0 per entry,
-                          the sum itself is therefore always >= 0)
+                          the sum itself is therefore always >= 0.
+                          FUNDED_PROFIT_SHARE added by
+                          BROKER-ECONOMICS-04B — the broker's contractual
+                          retained share of a completed funded profit
+                          cycle; always >= 0 by construction, snapshotted
+                          on FundedPayoutRequest.broker_cut, never
+                          recomputed here. It is a SEPARATE economic fact
+                          from REV_COUNTERPARTY_PNL, not a duplicate of
+                          it — see funded_economics.py's own module
+                          docstring for the full double-counting proof.)
     counterparty_pnl    = sum(BrokerLedger.COUNTERPARTY_PNL.amount)
                           (directional B-Book result; can be negative)
     adjustments         = sum(BrokerLedger.ADJUSTMENT.amount)
@@ -146,6 +156,7 @@ class BrokerPnLBreakdown:
     spread: Decimal = _ZERO
     challenge_fee: Decimal = _ZERO
     withdraw_fee: Decimal = _ZERO
+    funded_profit_share: Decimal = _ZERO  # BROKER-ECONOMICS-04B
     fee_revenue: Decimal = _ZERO          # == gross_revenue
     counterparty_pnl: Decimal = _ZERO     # == directional_pnl
     adjustments: Decimal = _ZERO
@@ -227,7 +238,8 @@ def calculate_broker_pnl(
     spread        = _sum(ledger_qs, BrokerLedger.REV_SPREAD)
     challenge_fee = _sum(ledger_qs, BrokerLedger.REV_CHALLENGE_FEE)
     withdraw_fee  = _sum(ledger_qs, BrokerLedger.REV_WITHDRAW_FEE)
-    fee_revenue   = commission + spread + challenge_fee + withdraw_fee
+    funded_profit_share = _sum(ledger_qs, BrokerLedger.REV_FUNDED_PROFIT_SHARE)
+    fee_revenue   = commission + spread + challenge_fee + withdraw_fee + funded_profit_share
     counterparty_pnl = _sum(ledger_qs, BrokerLedger.REV_COUNTERPARTY_PNL)
     adjustments   = _sum(ledger_qs, BrokerLedger.REV_ADJUSTMENT)
     broker_net_pnl = fee_revenue + counterparty_pnl + adjustments
@@ -263,6 +275,7 @@ def calculate_broker_pnl(
 
     return BrokerPnLBreakdown(
         commission=commission, spread=spread, challenge_fee=challenge_fee, withdraw_fee=withdraw_fee,
+        funded_profit_share=funded_profit_share,
         fee_revenue=fee_revenue, counterparty_pnl=counterparty_pnl, adjustments=adjustments,
         broker_net_pnl=broker_net_pnl,
         closed_trade_count=closed_trade_count,
