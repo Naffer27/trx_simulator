@@ -35,13 +35,43 @@ re-deriving these numbers with its own ad hoc query.
                           (BROKER-ECONOMICS-04C.4 — real, ACTUAL + FINAL +
                           USD-valued provider/network/payment processing
                           cost, always <= 0 by construction — see
-                          provider_cost_economics.py. Deliberately NOT
-                          folded into fee_revenue: that field's own
-                          invariant below is "always >= 0," which a
-                          negative-signed cost would break. Kept as its
-                          own top-level term instead.)
+                          provider_cost_economics.py. Computed and exposed
+                          on BrokerPnLBreakdown for visibility, but — see
+                          BROKER-ECONOMICS-04C.6 — deliberately EXCLUDED
+                          from broker_net_pnl below.)
     broker_net_pnl      = fee_revenue + counterparty_pnl + adjustments
-                          + provider_cost
+
+── Direct broker economics vs. third-party pass-through costs
+   (BROKER-ECONOMICS-04C.6 — architectural lock) ─────────────────────────
+broker_net_pnl represents DIRECT broker economics only: revenue the
+broker itself generates (fee_revenue), its own directional trading
+result (counterparty_pnl), and owner-initiated corrections to that
+result (adjustments). It deliberately excludes every third-party
+pass-through cost/obligation — provider/network/payment cost
+(BrokerLedger.PROVIDER_COST) chief among them — for the same reason IB
+commission expense has NEVER been part of this formula: those are
+costs the broker PAYS to someone else as a consequence of doing
+business, not part of the broker's own directly-generated result.
+
+04C.4 briefly (and incorrectly) folded provider_cost into this formula
+directly, which double-counted it once here and a second time in
+broker_economics_summary.py's Retained Economics subtraction — see
+04C.6's FASE A audit for the full root-cause trace and the six
+numeric cases proving the defect. 04C.6 FASE B restored the pre-04C.4
+formula shape above; provider_cost remains a fully computed, fully
+exposed field on BrokerPnLBreakdown (never removed), it simply no
+longer enters broker_net_pnl's own sum.
+
+GENERAL RULE for every future cost/obligation category (this is the
+rule that matters for A-Book execution/liquidity costs and any other
+future "other captured variable cost"): if a category is ever going to
+be SUBTRACTED inside broker_economics_summary.py's
+RetainedEconomicsSummary, it must NEVER also be summed into
+broker_net_pnl here. broker_pnl.py is reserved exclusively for direct
+broker economics; every third-party cost/obligation belongs to the
+Retained layer only, exactly once, exactly as IB expense
+(IBCommissionObligation — not even a BrokerLedger revenue_type at all)
+has always worked.
 
 Aliases used across this module and its callers (FASE 1's "separar
 además"):
@@ -52,6 +82,8 @@ además"):
 Sign convention (FASE 2 — must never invert silently): POSITIVE means the
 broker gains; NEGATIVE means the broker loses. fee_revenue is always >= 0.
 counterparty_pnl and adjustments carry their true sign as stored.
+provider_cost is always <= 0 and is exposed for visibility only — it is
+NOT part of broker_net_pnl (see above).
 
 ── Source of truth (FASE 3) ────────────────────────────────────────────
 BrokerLedger is authoritative. counterparty_pnl is NEVER recomputed from
@@ -170,8 +202,10 @@ class BrokerPnLBreakdown:
     fee_revenue: Decimal = _ZERO          # == gross_revenue
     counterparty_pnl: Decimal = _ZERO     # == directional_pnl
     adjustments: Decimal = _ZERO
-    provider_cost: Decimal = _ZERO        # BROKER-ECONOMICS-04C.4 — always <= 0
-    broker_net_pnl: Decimal = _ZERO       # == net_pnl == fee_revenue + counterparty_pnl + adjustments + provider_cost
+    provider_cost: Decimal = _ZERO        # BROKER-ECONOMICS-04C.4 — always <= 0. Exposed for
+                                           # visibility only — NOT part of broker_net_pnl
+                                           # (BROKER-ECONOMICS-04C.6 — see module docstring).
+    broker_net_pnl: Decimal = _ZERO       # == net_pnl == fee_revenue + counterparty_pnl + adjustments
 
     # FASE 8 — coverage (only meaningful where counterparty_pnl was computed
     # from a Trade population, i.e. broker_pnl_for_period/account/symbol;
@@ -253,8 +287,14 @@ def calculate_broker_pnl(
     fee_revenue   = commission + spread + challenge_fee + withdraw_fee + funded_profit_share
     counterparty_pnl = _sum(ledger_qs, BrokerLedger.REV_COUNTERPARTY_PNL)
     adjustments   = _sum(ledger_qs, BrokerLedger.REV_ADJUSTMENT)
+    # BROKER-ECONOMICS-04C.6 — provider_cost is computed and exposed on
+    # the breakdown below for visibility, but deliberately EXCLUDED from
+    # broker_net_pnl — see module docstring's "Direct broker economics
+    # vs. third-party pass-through costs" section. It is subtracted
+    # exactly once, in broker_economics_summary.py's Retained Economics
+    # layer only (known_payment_transaction_costs), never here.
     provider_cost = _sum(ledger_qs, BrokerLedger.REV_PROVIDER_COST)
-    broker_net_pnl = fee_revenue + counterparty_pnl + adjustments + provider_cost
+    broker_net_pnl = fee_revenue + counterparty_pnl + adjustments
 
     # ── Coverage — same window/filters, but over Trade (the population
     # counterparty_pnl SHOULD cover), not over BrokerLedger itself.

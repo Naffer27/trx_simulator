@@ -30,9 +30,9 @@ from django.test import TestCase, TransactionTestCase
 from django.utils import timezone
 
 from simulator.models import (
-    BrokerLedger, ChallengeEnrollment, Deposit, PaymentWebhookEvent,
-    PayoutAttempt, PayoutWebhookEvent, ProviderCostRecord, Wallet, WalletTransaction,
-    WithdrawalRequest,
+    BrokerLedger, ChallengeEnrollment, Deposit, IBCommissionObligation, IBCommissionRule,
+    PaymentWebhookEvent, PayoutAttempt, PayoutWebhookEvent, ProviderCostRecord, Referral,
+    ReferralAttribution, Wallet, WalletTransaction, WithdrawalRequest,
 )
 from simulator.provider_cost_adapters import (
     NowPaymentsCostAdapter, ProviderCostCandidate, get_cost_adapter_for_provider,
@@ -41,7 +41,9 @@ from simulator.provider_cost_economics import (
     DuplicateProviderCostRevenue, record_provider_cost_revenue,
 )
 from simulator.provider_cost_inbox import capture_provider_cost_candidate
-from simulator.tests.factories import make_challenge_product, make_deposit, make_user, make_wallet
+from simulator.tests.factories import (
+    make_broker_ledger, make_challenge_product, make_deposit, make_user, make_wallet,
+)
 from simulator.wallet_ledger import debit_wallet
 
 CALLBACK_URL = "/deposit/callback/"
@@ -109,6 +111,28 @@ def _make_pending_wr(user, wallet, amount="80.00"):
         user=user, amount_usd=Decimal(amount), crypto_currency="btc",
         wallet_address="bc1qtest000000000000000000000000000000000",
         status=WithdrawalRequest.STATUS_PROCESSING, debit_tx=debit_tx,
+    )
+
+
+def _make_credited_ib_obligation(amount):
+    """BROKER-ECONOMICS-04C.6 — minimal scaffolding to get a real,
+    CREDITED IBCommissionObligation (hence a non-zero ib_expense.net_paid)
+    for the mandatory numeric cases — mirrors
+    test_broker_economics_03_summary.py's own _make_referral/_make_rule/
+    _make_obligation helpers."""
+    owner = make_user()
+    referral = Referral.objects.create(user=owner, code=f"04c6{uuid.uuid4().hex[:8]}")
+    trader = make_user()
+    attribution = ReferralAttribution.objects.create(referred_user=trader, referral=referral)
+    rule = IBCommissionRule.objects.create(
+        rule_type=IBCommissionRule.RULE_PER_LOT, enabled=True,
+        fixed_amount=amount, effective_from=timezone.now() - timezone.timedelta(minutes=5),
+    )
+    return IBCommissionObligation.objects.create(
+        attribution=attribution, referral=referral, rule=rule,
+        rule_type=IBCommissionRule.RULE_PER_LOT,
+        source_event_type="04c6_test", source_event_id=1,
+        calculated_amount=amount, status=IBCommissionObligation.ST_CREDITED,
     )
 
 
@@ -441,7 +465,14 @@ class CorrectionTests(TestCase):
 # ── D. SSOT integration ──────────────────────────────────────────────────
 
 class BrokerPnLIntegrationTests(TestCase):
-    def test_provider_cost_enters_broker_net_pnl_exactly_once(self):
+    """BROKER-ECONOMICS-04C.6 — provider_cost is computed and exposed on
+    BrokerPnLBreakdown, but is architecturally EXCLUDED from
+    broker_net_pnl (04C.4 briefly, incorrectly, included it — see the
+    04C.6 FASE A audit's root-cause trace). It is subtracted exactly
+    once, downstream, in broker_economics_summary.py's Retained
+    Economics layer only."""
+
+    def test_provider_cost_field_still_computed_and_exposed(self):
         from simulator import broker_pnl
 
         record = _make_cost_record(usd_value=Decimal("10.00"))
@@ -449,10 +480,41 @@ class BrokerPnLIntegrationTests(TestCase):
 
         breakdown = broker_pnl.calculate_broker_pnl()
         self.assertEqual(breakdown.provider_cost, Decimal("-10.00"))
+
+    def test_provider_cost_excluded_from_broker_net_pnl(self):
+        from simulator import broker_pnl
+
+        record = _make_cost_record(usd_value=Decimal("10.00"))
+        record_provider_cost_revenue(record)
+
+        breakdown = broker_pnl.calculate_broker_pnl()
         self.assertEqual(
+            breakdown.broker_net_pnl,
+            breakdown.fee_revenue + breakdown.counterparty_pnl + breakdown.adjustments,
+        )
+        # The architectural invariant, stated the other way: broker_net_pnl
+        # must NOT equal fee_revenue + counterparty_pnl + adjustments +
+        # provider_cost (the pre-04C.6 buggy shape) whenever provider_cost
+        # is non-zero.
+        self.assertNotEqual(
             breakdown.broker_net_pnl,
             breakdown.fee_revenue + breakdown.counterparty_pnl + breakdown.adjustments + breakdown.provider_cost,
         )
+
+    def test_adding_provider_cost_row_does_not_change_broker_net_pnl(self):
+        """Adding/removing a REV_PROVIDER_COST row DOES change
+        provider_cost, DOES NOT change broker_net_pnl."""
+        from simulator import broker_pnl
+
+        before = broker_pnl.calculate_broker_pnl()
+        self.assertEqual(before.provider_cost, Decimal("0.00"))
+
+        record = _make_cost_record(usd_value=Decimal("10.00"))
+        record_provider_cost_revenue(record)
+
+        after = broker_pnl.calculate_broker_pnl()
+        self.assertEqual(after.provider_cost, Decimal("-10.00"))
+        self.assertEqual(after.broker_net_pnl, before.broker_net_pnl)
 
     def test_fee_revenue_invariant_unaffected_by_provider_cost(self):
         from simulator import broker_pnl
@@ -479,6 +541,169 @@ class BrokerEconomicsSummaryIntegrationTests(TestCase):
         summary = bes.broker_economics_summary()
         self.assertEqual(summary.provider_cost_revenue, Decimal("-4.50"))
         self.assertEqual(summary.retained.known_payment_transaction_costs, Decimal("4.50"))
+
+    def test_adding_provider_cost_row_changes_retained_exactly_once(self):
+        """Adding a REV_PROVIDER_COST row DOES change
+        known_payment_transaction_costs, DOES NOT change
+        gross_broker_economic_result, and DOES change retained_economics
+        by exactly that one amount — not twice."""
+        from simulator import broker_economics_summary as bes
+
+        before = bes.broker_economics_summary()
+        record = _make_cost_record(usd_value=Decimal("10.00"))
+        record_provider_cost_revenue(record)
+        after = bes.broker_economics_summary()
+
+        self.assertEqual(
+            after.retained.gross_broker_economic_result,
+            before.retained.gross_broker_economic_result,
+        )
+        self.assertEqual(
+            after.retained.known_payment_transaction_costs,
+            before.retained.known_payment_transaction_costs + Decimal("10.00"),
+        )
+        self.assertEqual(
+            after.retained.retained_economics,
+            before.retained.retained_economics - Decimal("10.00"),
+        )
+
+
+class RetainedEconomicsGeneralInvariantTests(TestCase):
+    """BROKER-ECONOMICS-04C.6 — the general regression guard: the GAP
+    between gross_broker_economic_result and retained_economics must
+    equal exactly the sum of the four Retained-only cost/obligation
+    categories, for any populated scenario — never more (double-count),
+    never less (under-count). This is what would catch the exact same
+    class of bug for a future A-Book execution/liquidity cost writer."""
+
+    def test_invariant_holds_with_populated_mixed_data(self):
+        from simulator import broker_economics_summary as bes
+
+        make_broker_ledger(revenue_type=BrokerLedger.REV_COMMISSION, amount=Decimal("42.00"))
+        make_broker_ledger(revenue_type=BrokerLedger.REV_COUNTERPARTY_PNL, amount=Decimal("-15.00"))
+        make_broker_ledger(revenue_type=BrokerLedger.REV_ADJUSTMENT, amount=Decimal("-3.00"))
+        record = _make_cost_record(usd_value=Decimal("6.25"))
+        record_provider_cost_revenue(record)
+        _make_credited_ib_obligation(Decimal("8.00"))
+
+        s = bes.broker_economics_summary()
+        r = s.retained
+        gap = r.gross_broker_economic_result - r.retained_economics
+        expected_gap = (
+            r.net_paid_ib_expense
+            + r.known_execution_liquidity_costs
+            + r.known_payment_transaction_costs
+            + r.other_captured_variable_costs
+        )
+        self.assertEqual(gap, expected_gap)
+
+    def test_invariant_holds_with_zero_data(self):
+        from simulator import broker_economics_summary as bes
+
+        s = bes.broker_economics_summary()
+        r = s.retained
+        gap = r.gross_broker_economic_result - r.retained_economics
+        expected_gap = (
+            r.net_paid_ib_expense
+            + r.known_execution_liquidity_costs
+            + r.known_payment_transaction_costs
+            + r.other_captured_variable_costs
+        )
+        self.assertEqual(gap, expected_gap)
+        self.assertEqual(gap, Decimal("0.00"))
+
+
+class MandatoryEconomicCaseTests(TestCase):
+    """BROKER-ECONOMICS-04C.6 FASE B — the six mandatory numeric cases
+    from the FASE A audit, now permanent regression tests."""
+
+    def test_case1_revenue100_cost7_50_ib0(self):
+        from simulator import broker_economics_summary as bes
+
+        make_broker_ledger(revenue_type=BrokerLedger.REV_COMMISSION, amount=Decimal("100.00"))
+        record = _make_cost_record(usd_value=Decimal("7.50"))
+        record_provider_cost_revenue(record)
+
+        s = bes.broker_economics_summary()
+        self.assertEqual(s.retained.gross_broker_economic_result, Decimal("100.00"))
+        self.assertEqual(s.retained.known_payment_transaction_costs, Decimal("7.50"))
+        self.assertEqual(s.retained.retained_economics, Decimal("92.50"))
+
+    def test_case2_revenue100_cost7_50_ib10(self):
+        from simulator import broker_economics_summary as bes
+
+        make_broker_ledger(revenue_type=BrokerLedger.REV_COMMISSION, amount=Decimal("100.00"))
+        record = _make_cost_record(usd_value=Decimal("7.50"))
+        record_provider_cost_revenue(record)
+        _make_credited_ib_obligation(Decimal("10.00"))
+
+        s = bes.broker_economics_summary()
+        self.assertEqual(s.retained.gross_broker_economic_result, Decimal("100.00"))
+        self.assertEqual(s.retained.retained_economics, Decimal("82.50"))
+
+    def test_case3_unknown_provider_cost_no_effect(self):
+        from simulator import broker_economics_summary as bes
+
+        before = bes.broker_economics_summary()
+
+        record = ProviderCostRecord.objects.create(
+            provider="nowpayments", operation_type=ProviderCostRecord.OP_OTHER,
+            cost_type=ProviderCostRecord.COST_PROVIDER_SERVICE, provider_reference="case3",
+            amount=Decimal("0.0001"), currency="btc", usd_value=None,
+            quality=ProviderCostRecord.QUALITY_UNKNOWN, is_final=False,
+            occurred_at=timezone.now(), cost_fingerprint="case3-fp",
+        )
+        result = record_provider_cost_revenue(record)
+        self.assertIsNone(result)
+        self.assertEqual(BrokerLedger.objects.filter(revenue_type=BrokerLedger.REV_PROVIDER_COST).count(), 0)
+
+        after = bes.broker_economics_summary()
+        self.assertEqual(after.retained.gross_broker_economic_result, before.retained.gross_broker_economic_result)
+        self.assertEqual(
+            after.retained.known_payment_transaction_costs, before.retained.known_payment_transaction_costs,
+        )
+        self.assertEqual(after.retained.retained_economics, before.retained.retained_economics)
+
+    def test_case4_correction_10_to_4(self):
+        from simulator import broker_economics_summary as bes
+
+        original = _make_cost_record(usd_value=Decimal("10.00"))
+        original_row = record_provider_cost_revenue(original)
+        correction = _make_cost_record(usd_value=Decimal("4.00"), corrects=original)
+        correction_row = record_provider_cost_revenue(correction)
+
+        total = original_row.amount + correction_row.amount
+        self.assertEqual(total, Decimal("-4.00"))
+
+        s = bes.broker_economics_summary()
+        self.assertEqual(s.retained.gross_broker_economic_result, Decimal("0.00"))
+        self.assertEqual(s.retained.known_payment_transaction_costs, Decimal("4.00"))
+        self.assertEqual(s.retained.retained_economics, Decimal("-4.00"))
+
+    def test_case5_deposit_1000_no_economic_effect(self):
+        from simulator import broker_economics_summary as bes
+
+        user = make_user()
+        Deposit.objects.create(
+            user=user, amount_usd=Decimal("1000.00"), crypto_currency="btc",
+            nowpayments_payment_id="case5-dep", status=Deposit.STATUS_FINISHED, credited=True,
+        )
+        s = bes.broker_economics_summary()
+        self.assertEqual(s.capital_flows.deposits_total, Decimal("1000.00"))
+        self.assertEqual(s.retained.gross_broker_economic_result, Decimal("0.00"))
+        self.assertEqual(s.retained.retained_economics, Decimal("0.00"))
+
+    def test_case6_funded_cut_250_provider_cost_5(self):
+        from simulator import broker_economics_summary as bes
+
+        make_broker_ledger(revenue_type=BrokerLedger.REV_FUNDED_PROFIT_SHARE, amount=Decimal("250.00"))
+        record = _make_cost_record(usd_value=Decimal("5.00"))
+        record_provider_cost_revenue(record)
+
+        s = bes.broker_economics_summary()
+        self.assertEqual(s.retained.gross_broker_economic_result, Decimal("250.00"))
+        self.assertEqual(s.retained.known_payment_transaction_costs, Decimal("5.00"))
+        self.assertEqual(s.retained.retained_economics, Decimal("245.00"))
 
     def test_execution_liquidity_and_other_costs_remain_untouched_placeholders(self):
         from simulator import broker_economics_summary as bes

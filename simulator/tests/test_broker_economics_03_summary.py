@@ -24,8 +24,9 @@ from simulator.broker_economics_summary import (
 from simulator.models import (
     BrokerEconomicAdjustment, BrokerLedger, ChallengeProduct, Deposit,
     IBCommissionAdjustment, IBCommissionObligation, IBCommissionRule,
-    LotExecutionEvent, Referral, ReferralAttribution, WithdrawalRequest,
+    LotExecutionEvent, ProviderCostRecord, Referral, ReferralAttribution, WithdrawalRequest,
 )
+from simulator.provider_cost_economics import record_provider_cost_revenue
 from simulator.tests.factories import (
     make_account, make_broker_ledger, make_deposit, make_spread_config, make_user,
 )
@@ -421,6 +422,20 @@ class ChallengeWithdrawEnumTests(TestCase):
             # FK partition, never a fabricated go-live date.
             self.assertNotRegex(note, r"\b20\d{2}-\d{2}-\d{2}\b")
 
+    def test_dynamic_coverage_wording_never_hardcodes_today_zero_as_permanent(self):
+        """BROKER-ECONOMICS-04C.5 — the coverage notes must describe the
+        BOOKING GATE's semantics (ACTUAL + FINAL + USD-valued only), never
+        assert a concrete runtime snapshot ("$0.00 today", "reads $0.00
+        today") as if it were a permanent economic constant. The 04C.5
+        manual acceptance run proved the figure is genuinely dynamic —
+        $0.00 with no qualifying evidence, non-zero the moment real ACTUAL
+        evidence is booked — and the wording must reflect that, not a
+        snapshot taken before any real evidence existed."""
+        s = broker_economics_summary()
+        for note in (s.provider_cost_coverage.note, s.retained.coverage.note):
+            self.assertNotIn("Today this sum is $0.00", note)
+            self.assertNotIn("reads $0.00 today", note)
+
     def test_1_5_percent_policy_never_appears_as_computed_number(self):
         """The intended 1.5% withdrawal fee policy must never be
         hardcoded/computed anywhere in this module."""
@@ -431,6 +446,69 @@ class ChallengeWithdrawEnumTests(TestCase):
         self.assertNotIn("0.015", source)
         self.assertNotIn("Decimal(\"1.5\")", source)
         self.assertNotIn("* 0.015", source)
+
+
+class ProviderCostDynamicValueTests(TestCase):
+    """BROKER-ECONOMICS-04C.5 — proves the wording fix did not change what
+    the figure actually IS: provider_cost_revenue/known_payment_transaction_costs/
+    retained_economics remain genuinely dynamic, correctly representing both
+    a $0.00 state (no qualifying evidence) and a real non-zero state (an
+    ACTUAL + FINAL + USD-valued cost has been booked) — exactly what the
+    04C.5 manual acceptance run observed end to end."""
+
+    def _make_actual_cost_record(self, usd_value=Decimal("7.50")):
+        return ProviderCostRecord.objects.create(
+            provider="test_04c5", operation_type=ProviderCostRecord.OP_OTHER,
+            cost_type=ProviderCostRecord.COST_PROVIDER_SERVICE, provider_reference=_key(),
+            amount=usd_value, currency="usd", usd_value=usd_value,
+            quality=ProviderCostRecord.QUALITY_ACTUAL, is_final=True,
+            occurred_at=timezone.now(), cost_fingerprint=_key(),
+        )
+
+    def test_zero_state_is_correctly_zero(self):
+        s = broker_economics_summary()
+        self.assertEqual(s.provider_cost_revenue, Decimal("0.00"))
+        self.assertEqual(s.retained.known_payment_transaction_costs, Decimal("0.00"))
+
+    def test_non_zero_actual_cost_correctly_reflected(self):
+        record = self._make_actual_cost_record(Decimal("7.50"))
+        record_provider_cost_revenue(record)
+
+        s = broker_economics_summary()
+        self.assertEqual(s.provider_cost_revenue, Decimal("-7.50"))
+        self.assertEqual(s.retained.known_payment_transaction_costs, Decimal("7.50"))
+
+        # Internal formula consistency — retained_economics must equal
+        # exactly what RetainedEconomicsSummary's own documented formula
+        # computes from its own reported sub-fields. This is a regression
+        # check on internal consistency only; it takes no position on
+        # whether that formula is itself the economically correct one
+        # (see the 04C.5 delivery report's "contradiction found" section).
+        r = s.retained
+        expected = (
+            r.gross_broker_economic_result
+            - r.net_paid_ib_expense
+            - r.known_execution_liquidity_costs
+            - r.known_payment_transaction_costs
+            - r.other_captured_variable_costs
+        )
+        self.assertEqual(r.retained_economics, expected)
+
+    def test_unknown_evidence_never_becomes_booked_cost(self):
+        unknown = ProviderCostRecord.objects.create(
+            provider="test_04c5", operation_type=ProviderCostRecord.OP_OTHER,
+            cost_type=ProviderCostRecord.COST_NETWORK, provider_reference=_key(),
+            amount=Decimal("0.0001"), currency="btc", usd_value=None,
+            quality=ProviderCostRecord.QUALITY_UNKNOWN, is_final=False,
+            occurred_at=timezone.now(), cost_fingerprint=_key(),
+        )
+        result = record_provider_cost_revenue(unknown)
+        self.assertIsNone(result)
+        self.assertEqual(
+            BrokerLedger.objects.filter(revenue_type=BrokerLedger.REV_PROVIDER_COST).count(), 0,
+        )
+        s = broker_economics_summary()
+        self.assertEqual(s.provider_cost_revenue, Decimal("0.00"))
 
 
 class RetainedEconomicsPartialTests(TestCase):
