@@ -393,10 +393,18 @@ class ChallengeWithdrawEnumTests(TestCase):
         self.assertIn("record_withdrawal_fee_revenue", note)
         self.assertIn("LIVE", note)
 
-    def test_withdrawal_coverage_confirms_provider_cost_unknown(self):
+    def test_withdrawal_coverage_reflects_04c4_provider_cost_capability(self):
+        """BROKER-ECONOMICS-04C.4 — the coverage note no longer claims
+        provider/network cost unconditionally "remains UNKNOWN": 04C.4
+        gave it a real, certified recognition path (provider_cost_coverage).
+        This note must still say the withdrawal fee figure itself is GROSS
+        revenue, never withdrawal profit."""
         s = broker_economics_summary()
-        self.assertIn("UNKNOWN", s.withdrawal_fee_coverage.note)
-        self.assertIn("never withdrawal profit", s.withdrawal_fee_coverage.note)
+        note = s.withdrawal_fee_coverage.note
+        self.assertNotIn("Provider/network cost remains UNKNOWN", note)
+        self.assertIn("BROKER-ECONOMICS-04C.4", note)
+        self.assertIn("does NOT mean the actual cost is", note)
+        self.assertIn("never withdrawal profit", note)
 
     def test_retained_status_still_partial(self):
         """Confirms the coverage-note correction never flips Retained

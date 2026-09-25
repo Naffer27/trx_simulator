@@ -579,8 +579,10 @@ def broker_economics_summary(
             "exactly at WithdrawalRequest COMPLETED, forward-only. This sum may also include "
             "historical/legacy rows with source_withdrawal=NULL, predating that writer. The "
             "withdrawal fee policy remains configurable (WithdrawalFeeConfig), never hardcoded. "
-            "Provider/network cost remains UNKNOWN — this figure is gross fee revenue, never "
-            "withdrawal profit.",
+            "BROKER-ECONOMICS-04C.4 now recognizes ACTUAL provider/network cost for this leg "
+            "when authoritative evidence exists and passes the certified booking gate (see "
+            "provider_cost_coverage) — absence of fee evidence does NOT mean the actual cost is "
+            "zero. This figure remains GROSS fee revenue, never withdrawal profit.",
         ),
         funded_profit_share_revenue=breakdown.funded_profit_share,
         funded_profit_share_coverage=CategoryCoverage(
@@ -595,8 +597,11 @@ def broker_economics_summary(
             "(REV_COUNTERPARTY_PNL already records the full trading result; this category "
             "records only the firm's subsequent contractual reclaim of broker_cut). PARTIAL "
             "because this sum has no historical/legacy rows predating the writer (forward-only, "
-            "no backfill) and provider/network cost for the FUNDED_INTERNAL payout leg remains "
-            "UNKNOWN, same limitation as withdrawal_fee_coverage.",
+            "no backfill). BROKER-ECONOMICS-04C.4 now recognizes ACTUAL provider/network cost "
+            "for the FUNDED_INTERNAL payout leg when authoritative evidence exists and passes "
+            "the certified booking gate — absence of fee evidence does NOT mean the actual cost "
+            "is zero. This figure remains GROSS broker profit-share revenue before any such "
+            "attributable cost.",
         ),
         provider_cost_revenue=breakdown.provider_cost,
         provider_cost_coverage=CategoryCoverage(
