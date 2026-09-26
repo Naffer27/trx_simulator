@@ -174,15 +174,34 @@ def activate_challenge_enrollment(enrollment: ChallengeEnrollment) -> TradingAcc
     Returns the phase1_account.
     """
     with transaction.atomic():
+        # PGFIX01 — of=("self",) locks only this ChallengeEnrollment row.
+        # Without it, PostgreSQL refuses the query outright: phase1_account
+        # is a nullable OneToOneField, so select_related() on it compiles to
+        # a LEFT OUTER JOIN, and PostgreSQL rejects FOR UPDATE on the
+        # nullable side of an outer join. SQLite silently drops FOR UPDATE
+        # entirely, so this was invisible until real PostgreSQL certification
+        # (BBOOK-CLOSE-01 FASE C).
+        #
+        # PGFIX01 FASE C0 — phase1_account is deliberately NOT in
+        # select_related() here (Option 2). Under real concurrent load, a
+        # blocked FOR UPDATE that wakes up after another transaction just
+        # set phase1_account_id exhibits PostgreSQL's EvalPlanQual behavior:
+        # the locked row's own columns (phase1_account_id) are correctly
+        # refreshed, but a LEFT OUTER JOIN keyed on that very column can
+        # still return the pre-wait (stale/NULL) match. product is safe to
+        # keep — it's a non-nullable, never-written, INNER JOIN.
         enrollment = (
             ChallengeEnrollment.objects
-            .select_for_update()
-            .select_related("product", "phase1_account")
+            .select_for_update(of=("self",))
+            .select_related("product")
             .get(pk=enrollment.pk)
         )
 
         if enrollment.phase1_account_id is not None:
-            return enrollment.phase1_account
+            # Fresh, un-joined fetch keyed on the just-locked, guaranteed-
+            # fresh phase1_account_id — never trust a JOIN result computed
+            # before this transaction held the lock.
+            return TradingAccount.objects.get(pk=enrollment.phase1_account_id)
 
         product = enrollment.product
         size = Decimal(str(product.account_size))
@@ -298,15 +317,21 @@ def advance_to_phase2(enrollment: ChallengeEnrollment) -> TradingAccount:
     Raises ValueError if enrollment is not in PHASE_1 status (unless phase2 already exists).
     """
     with transaction.atomic():
+        # PGFIX01 FASE C0 (Option 2) — phase1_account is never read as an
+        # object in this function (only .phase1_account_id, below, for a
+        # plain .filter().update()), so it was never actually needed in
+        # select_related(). phase2_account is dropped too, for the same
+        # EvalPlanQual reason as activate_challenge_enrollment() above —
+        # its idempotent-return path re-fetches fresh instead.
         enrollment = (
             ChallengeEnrollment.objects
-            .select_for_update()
-            .select_related("product", "phase1_account", "phase2_account")
+            .select_for_update(of=("self",))
+            .select_related("product")
             .get(pk=enrollment.pk)
         )
 
         if enrollment.phase2_account_id is not None:
-            return enrollment.phase2_account
+            return TradingAccount.objects.get(pk=enrollment.phase2_account_id)
 
         if enrollment.status != ChallengeEnrollment.ST_PHASE_1:
             raise ValueError(
@@ -362,15 +387,20 @@ def advance_to_funded(enrollment: ChallengeEnrollment) -> TradingAccount:
     Raises ValueError if enrollment is not in PHASE_2 status (unless funded already exists).
     """
     with transaction.atomic():
+        # PGFIX01 FASE C0 (Option 2) — phase2_account is never read as an
+        # object here (only .phase2_account_id, below, for a plain
+        # .filter().update()); funded_account is dropped for the same
+        # EvalPlanQual reason as the other three functions — its
+        # idempotent-return path re-fetches fresh instead.
         enrollment = (
             ChallengeEnrollment.objects
-            .select_for_update()
-            .select_related("product", "phase2_account", "funded_account")
+            .select_for_update(of=("self",))
+            .select_related("product")
             .get(pk=enrollment.pk)
         )
 
         if enrollment.funded_account_id is not None:
-            return enrollment.funded_account
+            return TradingAccount.objects.get(pk=enrollment.funded_account_id)
 
         if enrollment.status != ChallengeEnrollment.ST_PHASE_2:
             raise ValueError(
@@ -450,10 +480,19 @@ def evaluate_enrollment_now(enrollment_id: int) -> EvalResult:
     Returns the EvalResult from evaluate_phase.
     """
     with transaction.atomic():
+        # PGFIX01 FASE C0 (Option 2) — none of phase1_account/phase2_account/
+        # funded_account is read as an object directly in this function; it
+        # only reaches them indirectly via evaluate_phase()'s and
+        # _mark_failed()'s enrollment.active_account, and via the nested
+        # advance_to_phase2()/advance_to_funded() calls below (each of which
+        # re-locks and re-fetches this same row fresh on its own, per their
+        # own PGFIX01 fix). Dropping them here means active_account's lazy
+        # attribute access does a fresh, un-joined fetch keyed on the
+        # already-locked *_account_id — never a stale pre-lock JOIN result.
         enrollment = (
             ChallengeEnrollment.objects
-            .select_for_update()
-            .select_related("product", "phase1_account", "phase2_account", "funded_account")
+            .select_for_update(of=("self",))
+            .select_related("product")
             .get(pk=enrollment_id)
         )
 

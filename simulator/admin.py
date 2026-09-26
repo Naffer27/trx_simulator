@@ -5347,12 +5347,26 @@ class AccountProductAdmin(admin.ModelAdmin):
 
 @admin.register(ChallengeEnrollment)
 class ChallengeEnrollmentAdmin(admin.ModelAdmin):
-    list_display  = ("__str__", "user", "product", "status_badge", "phase1_link",
-                     "phase2_link", "funded_link", "enrolled_at")
-    list_filter   = ("status", "product__tier")
+    # BBOOK-CLOSE-01 FASE B.1 — enrollment_source is visible (list_display,
+    # list_filter, and the Status fieldset below) but NEVER editable via
+    # admin, on either the Add or Change form — it joins readonly_fields
+    # exactly like status already does, the established pattern in this
+    # same admin class. This is a deliberate anti-bypass measure: exposing
+    # it as an editable field would let a staff member relabel an existing
+    # WALLET/DEPOSIT/EXTERNAL enrollment as ADMIN_GRANT to exempt it from
+    # uniq_active_enrollment_per_user_product, then create a second real
+    # purchase for the same user+product — silently defeating the Path B
+    # race fix through the admin UI instead of a code path. A readonly
+    # field is never bound to the ModelForm, so no POST payload (crafted
+    # or not) can change it; new admin-issued rows still get
+    # enrollment_source='ADMIN_GRANT' automatically, from the model
+    # field's own default — the admin form never needs to set it.
+    list_display  = ("__str__", "user", "product", "status_badge", "enrollment_source",
+                     "phase1_link", "phase2_link", "funded_link", "enrolled_at")
+    list_filter   = ("status", "enrollment_source", "product__tier")
     search_fields = ("user__username", "user__email", "product__name")
     readonly_fields = ("enrolled_at", "phase1_passed_at", "phase2_passed_at", "funded_at",
-                       "status", "failed_at_phase", "failure_reason")
+                       "status", "enrollment_source", "failed_at_phase", "failure_reason")
     actions = [activate_enrollments, evaluate_enrollments_now]
 
     fieldsets = (
@@ -5363,7 +5377,7 @@ class ChallengeEnrollmentAdmin(admin.ModelAdmin):
             "fields": ("phase1_account", "phase2_account", "funded_account"),
         }),
         ("Status", {
-            "fields": ("status", "failed_at_phase", "failure_reason"),
+            "fields": ("status", "enrollment_source", "failed_at_phase", "failure_reason"),
         }),
         ("Timeline", {
             "fields": ("enrolled_at", "phase1_passed_at", "phase2_passed_at", "funded_at"),

@@ -1315,6 +1315,24 @@ class ChallengeEnrollment(models.Model):
     FAILED_AT_PHASE_1 = 'PHASE_1'
     FAILED_AT_PHASE_2 = 'PHASE_2'
 
+    # BBOOK-CLOSE-01 FASE B.1 — explicit provenance. Before this field,
+    # deposit=None was the ONLY signal for two structurally different
+    # cases (a genuine wallet purchase vs. an administrative grant), which
+    # is exactly why uniq_active_enrollment_per_user_product (below) could
+    # not distinguish "must be exclusive" from "may deliberately coexist"
+    # without this field. One value per real creator in the codebase —
+    # see the FASE B.1-A audit for the full creator map.
+    SRC_DEPOSIT     = 'DEPOSIT'
+    SRC_WALLET      = 'WALLET'
+    SRC_EXTERNAL    = 'EXTERNAL'
+    SRC_ADMIN_GRANT = 'ADMIN_GRANT'
+    SOURCE_CHOICES = [
+        (SRC_DEPOSIT,     'NowPayments / Deposit'),
+        (SRC_WALLET,      'Internal Wallet'),
+        (SRC_EXTERNAL,    'External Platform'),
+        (SRC_ADMIN_GRANT, 'Admin Grant'),
+    ]
+
     user    = models.ForeignKey(User, on_delete=models.CASCADE, related_name='challenge_enrollments')
     product = models.ForeignKey(ChallengeProduct, on_delete=models.PROTECT, related_name='enrollments')
     deposit = models.ForeignKey(
@@ -1340,6 +1358,16 @@ class ChallengeEnrollment(models.Model):
     failed_at_phase = models.CharField(max_length=8, null=True, blank=True)
     failure_reason  = models.CharField(max_length=256, null=True, blank=True)
 
+    # BBOOK-CLOSE-01 FASE B.1 — default=SRC_ADMIN_GRANT is deliberate: it
+    # is the exact, correct value for the one creator that is NOT updated
+    # to pass this field explicitly — the plain Django admin "Add" form
+    # (ChallengeEnrollmentAdmin has no custom save_model()). Every other
+    # creator (_fulfill_challenge_purchase, challenge_wallet_purchase_view,
+    # external_challenge_activate) sets this explicitly at creation time.
+    enrollment_source = models.CharField(
+        max_length=16, choices=SOURCE_CHOICES, default=SRC_ADMIN_GRANT,
+    )
+
     # External webhook idempotency — set when enrollment originates from an external platform.
     # event_id: unique per webhook delivery (use for strict dedup).
     # external_payment_id: payment reference from the external platform.
@@ -1362,6 +1390,45 @@ class ChallengeEnrollment(models.Model):
                 fields=['deposit'],
                 condition=models.Q(deposit__isnull=False),
                 name='unique_enrollment_per_deposit',
+            ),
+            # BBOOK-CLOSE-01 — at most one ACTIVE, PURCHASED enrollment per
+            # (user, product). Closes the Path B wallet-purchase concurrency
+            # race: the wallet flow's own select_for_update().exists() check
+            # locks nothing when zero rows match (there is nothing to lock),
+            # so two concurrent requests could both pass it and each create
+            # their own enrollment. This constraint is the authoritative,
+            # DB-enforced backstop — enforced identically by SQLite and
+            # PostgreSQL (unlike select_for_update(), which SQLite silently
+            # no-ops), mirroring unique_enrollment_per_deposit's own proven
+            # role for Path A. ACTIVE = the same three statuses
+            # challenge_wallet_purchase_view's own idempotency check already
+            # treats as active — not invented here. ST_FAILED/ST_WITHDRAWN
+            # are terminal and deliberately excluded: a user may re-purchase
+            # the same product after failing or withdrawing an earlier
+            # attempt. Values are the literal strings of
+            # ST_PHASE_1/ST_PHASE_2/ST_FUNDED defined above in this same
+            # class — a nested Meta class body cannot reference sibling
+            # class-body names directly (Python class bodies are not
+            # closures), so the values are spelled out here verbatim rather
+            # than via the constants themselves.
+            #
+            # BBOOK-CLOSE-01 FASE B.1 — PURCHASED excludes
+            # enrollment_source='ADMIN_GRANT' by deliberate Owner decision:
+            # an admin may knowingly grant a user a second active attempt at
+            # the same product (proven historical capability — see
+            # test_multiple_admin_enrollments_without_deposit_allowed /
+            # test_activate_multiple_enrollments). Every real purchase path
+            # (DEPOSIT/WALLET/EXTERNAL) remains fully protected — the
+            # exclusion clause never matches any of them. Same literal-value
+            # spelling rule applies to 'ADMIN_GRANT' as to the status values
+            # above.
+            models.UniqueConstraint(
+                fields=['user', 'product'],
+                condition=(
+                    models.Q(status__in=['PHASE_1', 'PHASE_2', 'FUNDED'])
+                    & ~models.Q(enrollment_source='ADMIN_GRANT')
+                ),
+                name='uniq_active_enrollment_per_user_product',
             ),
         ]
         verbose_name = "Challenge Enrollment"

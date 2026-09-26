@@ -1507,6 +1507,7 @@ def external_challenge_activate(request):
             product=product,
             deposit=None,
             status=ChallengeEnrollment.ST_PHASE_1,
+            enrollment_source=ChallengeEnrollment.SRC_EXTERNAL,
             external_event_id=event_id or None,
             external_payment_id=payment_id or None,
         )
@@ -1588,6 +1589,7 @@ def _fulfill_challenge_purchase(deposit):
         product=product,
         deposit=deposit,
         status=ChallengeEnrollment.ST_PHASE_1,
+        enrollment_source=ChallengeEnrollment.SRC_DEPOSIT,
     )
     try:
         record_challenge_fee_revenue(enrollment)
@@ -1748,25 +1750,34 @@ def challenge_wallet_purchase_view(request, product_id):
 
     enrollment = None
     try:
+        from django.db import IntegrityError
         from .tasks import send_email_async
         from .challenge_revenue import DuplicateChallengeRevenue, record_challenge_fee_revenue
         with transaction.atomic():
-            # Idempotency guard: lock and check for any active enrollment for this product
-            active_exists = (
-                ChallengeEnrollment.objects
-                .select_for_update()
-                .filter(
-                    user=request.user,
-                    product=product,
-                    status__in=[
-                        ChallengeEnrollment.ST_PHASE_1,
-                        ChallengeEnrollment.ST_PHASE_2,
-                        ChallengeEnrollment.ST_FUNDED,
-                    ],
-                )
-                .exists()
-            )
-            if active_exists:
+            # BBOOK-CLOSE-01 — the DB-authoritative idempotency guard.
+            # Attempt the enrollment INSERT first, inside its own savepoint,
+            # BEFORE any wallet debit. models.py's
+            # uniq_active_enrollment_per_user_product UniqueConstraint is the
+            # real protection here — not a pre-check select_for_update(),
+            # which cannot lock rows that don't exist yet (the FASE A audit
+            # proved that check locks nothing on a first purchase, letting
+            # two concurrent requests both pass it). A concurrent duplicate
+            # loses this race at the DB level, inside the savepoint, and is
+            # caught as IntegrityError here — never reaching debit_wallet(),
+            # so the loser never debits, never creates a WalletTransaction,
+            # never books REV_CHALLENGE_FEE, never activates a second
+            # TradingAccount/RiskRule, and never sends a duplicate email.
+            # Enrollment with deposit=None marks this as a wallet-funded purchase.
+            try:
+                with transaction.atomic():
+                    enrollment = ChallengeEnrollment.objects.create(
+                        user=request.user,
+                        product=product,
+                        deposit=None,
+                        status=ChallengeEnrollment.ST_PHASE_1,
+                        enrollment_source=ChallengeEnrollment.SRC_WALLET,
+                    )
+            except IntegrityError:
                 raise _AlreadyEnrolled()
 
             # Debit wallet (TX type "CHALLENGE_FEE" — stored as plain string since
@@ -1778,13 +1789,6 @@ def challenge_wallet_purchase_view(request, product_id):
                 initiated_by=request.user,
             )
 
-            # Enrollment with deposit=None marks this as a wallet-funded purchase
-            enrollment = ChallengeEnrollment.objects.create(
-                user=request.user,
-                product=product,
-                deposit=None,
-                status=ChallengeEnrollment.ST_PHASE_1,
-            )
             try:
                 record_challenge_fee_revenue(enrollment)
             except DuplicateChallengeRevenue as exc:

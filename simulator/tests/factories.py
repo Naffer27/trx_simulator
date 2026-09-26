@@ -356,8 +356,18 @@ def make_challenge_enrollment(
     deposit: Deposit | None = None,
     phase1_account: TradingAccount | None = None,
     status: str = ChallengeEnrollment.ST_PHASE_1,
+    enrollment_source: str = ChallengeEnrollment.SRC_ADMIN_GRANT,
 ) -> ChallengeEnrollment:
-    """Create a ChallengeEnrollment. Deposit=None is valid (admin-issued)."""
+    """Create a ChallengeEnrollment. Deposit=None is valid (admin-issued).
+
+    enrollment_source defaults to SRC_ADMIN_GRANT (BBOOK-CLOSE-01 FASE B.1)
+    — matching the model field's own default and this factory's existing
+    "admin-issued" framing — so every pre-existing call site across the
+    test suite keeps behaving exactly as before (exempt from
+    uniq_active_enrollment_per_user_product). Pass a specific source
+    explicitly only when a test needs to prove behavior for a real
+    purchase path (DEPOSIT/WALLET/EXTERNAL).
+    """
     if user is None:
         user = make_user()
     if product is None:
@@ -368,6 +378,7 @@ def make_challenge_enrollment(
         deposit=deposit,
         phase1_account=phase1_account,
         status=status,
+        enrollment_source=enrollment_source,
     )
 
 

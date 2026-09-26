@@ -409,9 +409,14 @@ class TestEvaluatePhase(TestCase):
     # ── No active account ─────────────────────────────────────────────────
 
     def test_failed_when_no_active_account(self):
+        # BBOOK-CLOSE-01 — a distinct product avoids colliding with
+        # self.enrollment (same user, already ST_PHASE_1) under the new
+        # uniq_active_enrollment_per_user_product constraint; this test's
+        # own purpose (evaluate_phase() behavior with no active_account)
+        # doesn't depend on reusing the same product.
         enrollment = make_challenge_enrollment(
             user=self.user,
-            product=self.enrollment.product,
+            product=make_challenge_product(),
             status=ChallengeEnrollment.ST_PHASE_1,
         )
         result = evaluate_phase(enrollment)
@@ -728,3 +733,344 @@ class TestEvaluateEnrollmentNow(TestCase):
         self.enrollment.save(update_fields=["status"])
         result = evaluate_enrollment_now(self.enrollment.pk)
         self.assertEqual(result.status, IN_PROGRESS)
+
+
+# ---------------------------------------------------------------------------
+# PGFIX01 — select_for_update(of=("self",)) certification
+#
+# BBOOK-CLOSE-01 FASE C found that all four public functions above raised
+# psycopg2.errors.FeatureNotSupported under real PostgreSQL: phase1_account/
+# phase2_account/funded_account are nullable OneToOneFields, so
+# select_related() on them compiles to a LEFT OUTER JOIN, and PostgreSQL
+# refuses FOR UPDATE on the nullable side of an outer join. SQLite silently
+# drops FOR UPDATE entirely, so this was invisible until real PostgreSQL ran
+# this code. PGFIX01 FASE A proved (real generated SQL, read-only repro)
+# that select_for_update(of=("self",)) locks only the ChallengeEnrollment
+# row — which is all any of these four functions ever needed. The
+# idempotency/nullable-state/same-function-twice tests above already cover
+# items 3-4 of the certification requirement on every engine (they exercise
+# the exact code path that used to crash under PostgreSQL); this block adds
+# only what wasn't already covered: the real SQL shape (item 1), induced
+# rollback with no partial state (item 5), and real concurrent activation of
+# the same row, proving the lock's actual intent still holds (item 6).
+# ---------------------------------------------------------------------------
+
+import threading
+import time
+from unittest.mock import patch
+
+from django.db import OperationalError, connection, transaction
+from django.db.utils import DatabaseError
+from django.test import TransactionTestCase
+from django.test.utils import CaptureQueriesContext
+
+_IS_POSTGRES = connection.vendor == "postgresql"
+
+
+def _skip_unless_postgres(fn):
+    import unittest
+    return unittest.skipUnless(_IS_POSTGRES, "SQL-shape assertion is PostgreSQL-specific — SQLite drops FOR UPDATE entirely")(fn)
+
+
+class PGFIX01SqlShapeTests(TestCase):
+    """Item 1 — confirms the real generated SQL for each of the four
+    functions locks ONLY simulator_challengeenrollment, and (FASE C0 /
+    Option 2) that none of them joins phase1_account/phase2_account/
+    funded_account at all any more — only the safe, non-nullable
+    'product' relation remains in select_related()."""
+
+    def setUp(self):
+        self.user = make_user()
+        self.product = make_challenge_product()
+        self.enrollment = make_challenge_enrollment(user=self.user, product=self.product)
+
+    def _assert_locks_only_enrollment_no_nullable_join(self, qs_thunk):
+        with transaction.atomic():
+            with CaptureQueriesContext(connection) as ctx:
+                qs_thunk()
+        locking_queries = [q["sql"] for q in ctx.captured_queries if "FOR UPDATE" in q["sql"]]
+        self.assertEqual(len(locking_queries), 1, "expected exactly one locking query")
+        sql = locking_queries[0]
+        self.assertIn('FOR UPDATE OF "simulator_challengeenrollment"', sql)
+        self.assertNotIn("simulator_challengeproduct\" FOR UPDATE", sql)
+        # OF clause must name only the base table — no other table follows it
+        of_clause = sql.split("FOR UPDATE OF")[1]
+        self.assertNotIn("simulator_tradingaccount", of_clause)
+        self.assertNotIn("simulator_challengeproduct", of_clause)
+        # FASE C0 (Option 2) — no LEFT OUTER JOIN at all: phase1_account/
+        # phase2_account/funded_account are no longer in select_related().
+        self.assertNotIn("LEFT OUTER JOIN", sql)
+        self.assertNotIn("simulator_tradingaccount", sql)
+
+    @_skip_unless_postgres
+    def test_activate_locks_only_enrollment(self):
+        pk = self.enrollment.pk
+        self._assert_locks_only_enrollment_no_nullable_join(
+            lambda: ChallengeEnrollment.objects.select_for_update(of=("self",))
+            .select_related("product").get(pk=pk)
+        )
+
+    @_skip_unless_postgres
+    def test_advance_to_phase2_locks_only_enrollment(self):
+        pk = self.enrollment.pk
+        self._assert_locks_only_enrollment_no_nullable_join(
+            lambda: ChallengeEnrollment.objects.select_for_update(of=("self",))
+            .select_related("product").get(pk=pk)
+        )
+
+    @_skip_unless_postgres
+    def test_advance_to_funded_locks_only_enrollment(self):
+        pk = self.enrollment.pk
+        self._assert_locks_only_enrollment_no_nullable_join(
+            lambda: ChallengeEnrollment.objects.select_for_update(of=("self",))
+            .select_related("product").get(pk=pk)
+        )
+
+    @_skip_unless_postgres
+    def test_evaluate_enrollment_now_locks_only_enrollment(self):
+        pk = self.enrollment.pk
+        self._assert_locks_only_enrollment_no_nullable_join(
+            lambda: ChallengeEnrollment.objects.select_for_update(of=("self",))
+            .select_related("product").get(pk=pk)
+        )
+
+
+class PGFIX01RollbackTests(TestCase):
+    """Item 5 — an induced failure inside the locked section must leave no
+    partial TradingAccount/RiskRule/FundedConfig and no enrollment mutation,
+    on any engine (this exercises transaction.atomic() rollback, not the
+    lock itself — but must hold identically now that the query succeeds)."""
+
+    def setUp(self):
+        self.user = make_user()
+        self.product = make_challenge_product()
+
+    def test_activate_rollback_leaves_no_partial_state(self):
+        enrollment = make_challenge_enrollment(user=self.user, product=self.product)
+        with patch("simulator.challenge_engine.RiskRule.objects.create", side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError):
+                activate_challenge_enrollment(enrollment)
+        enrollment.refresh_from_db()
+        self.assertIsNone(enrollment.phase1_account_id)
+        self.assertEqual(TradingAccount.objects.filter(user=self.user).count(), 0)
+        self.assertEqual(RiskRule.objects.count(), 0)
+
+    def test_advance_to_phase2_rollback_leaves_no_partial_state(self):
+        enrollment, account = _setup_phase1(self.user)
+        pre_phase1_status = TradingAccount.objects.get(pk=account.pk).status
+        with patch("simulator.challenge_engine.RiskRule.objects.create", side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError):
+                advance_to_phase2(enrollment)
+        enrollment.refresh_from_db()
+        self.assertIsNone(enrollment.phase2_account_id)
+        self.assertEqual(enrollment.status, ChallengeEnrollment.ST_PHASE_1)
+        self.assertEqual(
+            TradingAccount.objects.filter(user=self.user, phase="Fase 2").count(), 0
+        )
+        # Phase 1 account must not have been marked Completado either — the
+        # whole transaction rolled back, including that side effect.
+        self.assertEqual(TradingAccount.objects.get(pk=account.pk).status, pre_phase1_status)
+
+    def test_advance_to_funded_rollback_leaves_no_partial_state(self):
+        enrollment, account = _setup_phase1(self.user)
+        advance_to_phase2(enrollment)
+        enrollment.refresh_from_db()
+        pre_phase2_status = TradingAccount.objects.get(pk=enrollment.phase2_account_id).status
+        with patch("simulator.challenge_engine.FundedConfig.objects.create", side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError):
+                advance_to_funded(enrollment)
+        enrollment.refresh_from_db()
+        self.assertIsNone(enrollment.funded_account_id)
+        self.assertEqual(enrollment.status, ChallengeEnrollment.ST_PHASE_2)
+        self.assertEqual(TradingAccount.objects.filter(user=self.user, phase="Funded").count(), 0)
+        self.assertEqual(FundedConfig.objects.count(), 0)
+        self.assertEqual(
+            TradingAccount.objects.get(pk=enrollment.phase2_account_id).status, pre_phase2_status
+        )
+
+    def test_evaluate_enrollment_now_rollback_leaves_no_partial_state(self):
+        enrollment, account = _setup_phase1(self.user)
+        # PASSED requires trading_days >= min_trading_days (5, the helper's
+        # default) AND profit_pct >= profit_target_pct (8.00% of 10000 =
+        # 800). 5 trades on 5 distinct days, 200 profit each -> 1000 total,
+        # clears the target without tripping drawdown/daily-loss checks.
+        for days_ago in range(5):
+            _add_closed_trade(account, Decimal("200.00"), days_ago=days_ago)
+        TradingAccount.objects.filter(pk=account.pk).update(peak_balance=Decimal("11000"))
+        with patch("simulator.challenge_engine.RiskRule.objects.create", side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError):
+                evaluate_enrollment_now(enrollment.pk)
+        enrollment.refresh_from_db()
+        self.assertEqual(enrollment.status, ChallengeEnrollment.ST_PHASE_1)
+        self.assertIsNone(enrollment.phase2_account_id)
+
+
+def _run_retry_on_locked(fn, barrier, results, index, max_retries=60):
+    """Same SQLite-lock-retry discipline already certified in
+    test_challenge_wallet_purchase.py's WalletPurchaseConcurrencyTests — a
+    no-op under PostgreSQL, since real row locks block rather than error."""
+    barrier.wait(timeout=5)
+    attempt = 0
+    try:
+        while True:
+            attempt += 1
+            try:
+                results[index] = fn()
+                return
+            except (OperationalError, DatabaseError) as exc:
+                if "locked" not in str(exc).lower() or attempt >= max_retries:
+                    results[index] = ("error", exc)
+                    return
+                time.sleep(0.01)
+    finally:
+        connection.close()
+
+
+class PGFIX01ConcurrentActivationTests(TransactionTestCase):
+    """Item 6 — the real intent of the lock: two concurrent callers activate
+    the SAME already-existing enrollment (the admin bulk-action / double
+    submit scenario documented in the PGFIX01 FASE A audit). Representative
+    of all four functions — they share the exact same
+    transaction.atomic()+select_for_update(of=("self",)) shape and the same
+    idempotency-guard-after-lock pattern."""
+
+    def test_two_concurrent_activations_of_same_enrollment_yield_one_account(self):
+        user = make_user()
+        product = make_challenge_product()
+        enrollment = make_challenge_enrollment(user=user, product=product)
+
+        barrier = threading.Barrier(2)
+        results = [None, None]
+
+        def _attempt():
+            return activate_challenge_enrollment(
+                ChallengeEnrollment.objects.get(pk=enrollment.pk)
+            ).pk
+
+        threads = [
+            threading.Thread(target=_run_retry_on_locked, args=(_attempt, barrier, results, i))
+            for i in range(2)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=20)
+
+        self.assertEqual(
+            TradingAccount.objects.filter(user=user, account_type="CHALLENGE").count(), 1,
+            "the lock must prevent two concurrent activations from creating two accounts",
+        )
+        self.assertEqual(RiskRule.objects.count(), 1)
+        enrollment.refresh_from_db()
+        self.assertIsNotNone(enrollment.phase1_account_id)
+        # Both threads must have returned a real account pk — the second one
+        # blocks on the lock, then hits the idempotency guard and returns
+        # the same account, rather than erroring.
+        for r in results:
+            self.assertIsInstance(r, int, f"expected a TradingAccount pk, got {r!r}")
+        self.assertEqual(results[0], results[1])
+
+    def test_two_concurrent_advance_to_phase2_of_same_enrollment_yield_one_account(self):
+        """FASE C0 item 8 — same lock pattern, same fix, repeated for
+        advance_to_phase2()."""
+        enrollment, _account = _setup_phase1()
+
+        barrier = threading.Barrier(2)
+        results = [None, None]
+
+        def _attempt():
+            return advance_to_phase2(
+                ChallengeEnrollment.objects.get(pk=enrollment.pk)
+            ).pk
+
+        threads = [
+            threading.Thread(target=_run_retry_on_locked, args=(_attempt, barrier, results, i))
+            for i in range(2)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=20)
+
+        self.assertEqual(
+            TradingAccount.objects.filter(phase="Fase 2").count(), 1,
+            "the lock must prevent two concurrent advances from creating two Phase 2 accounts",
+        )
+        self.assertEqual(RiskRule.objects.filter(account__phase="Fase 2").count(), 1)
+        for r in results:
+            self.assertIsInstance(r, int, f"expected a TradingAccount pk, got {r!r}")
+        self.assertEqual(results[0], results[1])
+
+    def test_two_concurrent_advance_to_funded_of_same_enrollment_yield_one_account(self):
+        """FASE C0 item 8 — same lock pattern, same fix, repeated for
+        advance_to_funded()."""
+        enrollment, _account = _setup_phase1()
+        advance_to_phase2(enrollment)
+        enrollment.refresh_from_db()
+
+        barrier = threading.Barrier(2)
+        results = [None, None]
+
+        def _attempt():
+            return advance_to_funded(
+                ChallengeEnrollment.objects.get(pk=enrollment.pk)
+            ).pk
+
+        threads = [
+            threading.Thread(target=_run_retry_on_locked, args=(_attempt, barrier, results, i))
+            for i in range(2)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=20)
+
+        self.assertEqual(
+            TradingAccount.objects.filter(phase="Funded").count(), 1,
+            "the lock must prevent two concurrent advances from creating two Funded accounts",
+        )
+        self.assertEqual(RiskRule.objects.filter(account__phase="Funded").count(), 1)
+        self.assertEqual(FundedConfig.objects.count(), 1)
+        for r in results:
+            self.assertIsInstance(r, int, f"expected a TradingAccount pk, got {r!r}")
+        self.assertEqual(results[0], results[1])
+
+    def test_two_concurrent_evaluate_enrollment_now_yield_one_phase2_account(self):
+        """FASE C0 item 8 — evaluate_enrollment_now() doesn't return a
+        TradingAccount (it returns an EvalResult), so the technically
+        applicable form of this test is: two concurrent PASSED evaluations
+        of the same Phase 1 enrollment must still only ever create ONE
+        Phase 2 TradingAccount via the internal advance_to_phase2() call —
+        no crash, no duplicate."""
+        enrollment, account = _setup_phase1()
+        for days_ago in range(5):
+            _add_closed_trade(account, Decimal("200.00"), days_ago=days_ago)
+        TradingAccount.objects.filter(pk=account.pk).update(peak_balance=Decimal("11000"))
+
+        barrier = threading.Barrier(2)
+        results = [None, None]
+
+        def _attempt():
+            return evaluate_enrollment_now(enrollment.pk).status
+
+        threads = [
+            threading.Thread(target=_run_retry_on_locked, args=(_attempt, barrier, results, i))
+            for i in range(2)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=20)
+
+        self.assertEqual(
+            TradingAccount.objects.filter(phase="Fase 2").count(), 1,
+            "two concurrent evaluations must still only create one Phase 2 account",
+        )
+        self.assertEqual(RiskRule.objects.filter(account__phase="Fase 2").count(), 1)
+        # Whichever thread wins the lock first sees PHASE_1 with a profitable
+        # account -> PASSED -> advances it. The other, once unblocked, sees
+        # the row already flipped to PHASE_2 with a brand-new (0-trade,
+        # 0-profit) Phase 2 account -> correctly IN_PROGRESS, not a crash
+        # and not a second advance. Exactly one PASSED, one IN_PROGRESS,
+        # order depending on lock timing.
+        self.assertEqual(sorted(results), sorted([PASSED, IN_PROGRESS]))
