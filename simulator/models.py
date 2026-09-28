@@ -2272,7 +2272,15 @@ class AuditLog(models.Model):
     """
     # Event classification
     event_type  = models.CharField(max_length=80, db_index=True)   # e.g. "deposit.credited"
-    action      = models.CharField(max_length=120)                  # human-readable label
+    # BBOOK-PGFIX02 — was CharField(max_length=120). Real callers build this
+    # as free-form, interpolated prose (error reasons, amounts, references),
+    # not a bounded structured key — event_type is the queryable/filterable
+    # identifier; this field's whole purpose is human-readable narrative.
+    # Confirmed no caller, admin list_display/search_fields, form, or test
+    # depends on a fixed length. A CharField ceiling here only ever caused
+    # PostgreSQL to reject legitimate audit rows that SQLite silently
+    # accepted (StringDataRightTruncation) — see BBOOK-PGFIX02 FASE A.
+    action      = models.TextField()                                # human-readable label, unbounded
 
     # Who
     user        = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")

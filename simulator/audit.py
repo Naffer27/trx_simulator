@@ -175,6 +175,8 @@ def log_audit(
         detail:     JSON-serialisable dict with before/after state, IDs, amounts
     """
     try:
+        from django.db import transaction
+
         from .models import AuditLog
 
         user       = getattr(request, "user", None) if request else None
@@ -188,17 +190,32 @@ def log_audit(
         if user and getattr(user, "is_authenticated", False):
             user_obj = user
 
-        AuditLog.objects.create(
-            event_type=event_type,
-            action=action,
-            user=user_obj,
-            account=account,
-            ip=ip,
-            endpoint=endpoint,
-            method=method,
-            request_id=request_id,
-            detail=detail or {},
-        )
+        # BBOOK-PGFIX02 — this create() is isolated in its own
+        # transaction.atomic() (a SAVEPOINT when already nested inside a
+        # caller's own atomic() block). Proven necessary, not defensive
+        # decoration: under PostgreSQL, this except Exception below catches
+        # the Python exception from a failed INSERT exactly as documented,
+        # but WITHOUT this savepoint the surrounding connection is left in
+        # an aborted state — any subsequent statement in the caller's
+        # transaction fails, and if nothing runs after this call the
+        # caller's transaction.atomic() silently rolls back everything
+        # written earlier in it, with no exception ever raised (see
+        # BBOOK-PGFIX02 FASE A for the empirical reproduction). The
+        # savepoint here means only THIS insert is ever discarded — the
+        # caller's own transaction, and everything already written to it,
+        # is completely unaffected by any failure in this function.
+        with transaction.atomic():
+            AuditLog.objects.create(
+                event_type=event_type,
+                action=action,
+                user=user_obj,
+                account=account,
+                ip=ip,
+                endpoint=endpoint,
+                method=method,
+                request_id=request_id,
+                detail=detail or {},
+            )
         _log.info(
             "[audit] event=%s action=%r user=%s account=%s",
             event_type, action,
