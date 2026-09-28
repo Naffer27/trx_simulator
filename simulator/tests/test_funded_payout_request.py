@@ -462,3 +462,415 @@ class TestFundedPayoutRequestConstants(TestCase):
         self.assertEqual(FundedPayoutRequest.ST_REJECTED,   "rejected")
         self.assertEqual(FundedPayoutRequest.ST_FAILED,     "failed")
         self.assertEqual(FundedPayoutRequest.ST_CANCELLED,  "cancelled")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BBOOK-CLOSE-02 (F-01) — fpr_one_active_request_per_enrollment
+#
+# migration 0095 adds a partial UniqueConstraint on (enrollment) where
+# status IN (pending, approved, processing) — DB-level defense-in-depth on
+# top of the pre-existing select_for_update()+.exists() guard in
+# funded_payout_request_view. These tests prove the constraint itself,
+# independent of the view, then prove the real view-level race under real
+# threads, then prove no downstream monetary side effect ever double-fires.
+# ─────────────────────────────────────────────────────────────────────────────
+
+import random
+import threading
+import time
+
+from django.db import IntegrityError, OperationalError, connection, transaction
+from django.test import TransactionTestCase
+
+from simulator.funded_payouts import approve_sim_payout
+from simulator.models import BrokerLedger, LedgerEntry, Wallet, WalletTransaction, WithdrawalRequest
+from simulator.wallet_ledger import get_or_create_wallet
+
+_ACTIVE_STATUSES = [
+    FundedPayoutRequest.ST_PENDING,
+    FundedPayoutRequest.ST_APPROVED,
+    FundedPayoutRequest.ST_PROCESSING,
+]
+_TERMINAL_STATUSES = [
+    FundedPayoutRequest.ST_COMPLETED,
+    FundedPayoutRequest.ST_REJECTED,
+    FundedPayoutRequest.ST_CANCELLED,
+    FundedPayoutRequest.ST_FAILED,
+]
+
+
+def _make_fpr_row(enrollment, account, fc, user, status):
+    """Direct ORM creation — bypasses the view entirely, for constraint-only proofs."""
+    return FundedPayoutRequest.objects.create(
+        enrollment=enrollment,
+        funded_account=account,
+        funded_config=fc,
+        user=user,
+        cycle_profit=Decimal("100.00"),
+        trader_cut=Decimal("80.00"),
+        broker_cut=Decimal("20.00"),
+        profit_split_pct=Decimal("80.00"),
+        balance_snapshot=Decimal("10100.00"),
+        initial_balance_snapshot=Decimal("10000.00"),
+        funded_type=fc.funded_type,
+        status=status,
+    )
+
+
+class FPRConstraintDirectTests(TestCase):
+    """Items: constraint proven directly via ORM, every active×active
+    combination blocked, every terminal status allows a new request —
+    none of this goes through funded_payout_request_view."""
+
+    def setUp(self):
+        self.user = _make_user()
+        self.enrollment = _make_funded_enrollment(self.user)
+        self.account = self.enrollment.funded_account
+        self.fc = FundedConfig.objects.get(enrollment=self.enrollment)
+
+    def _assert_second_blocked(self, first_status, second_status):
+        _make_fpr_row(self.enrollment, self.account, self.fc, self.user, first_status)
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                _make_fpr_row(self.enrollment, self.account, self.fc, self.user, second_status)
+        self.assertEqual(FundedPayoutRequest.objects.filter(enrollment=self.enrollment).count(), 1)
+
+    def test_pending_plus_pending_blocked(self):
+        self._assert_second_blocked(FundedPayoutRequest.ST_PENDING, FundedPayoutRequest.ST_PENDING)
+
+    def test_pending_plus_approved_blocked(self):
+        self._assert_second_blocked(FundedPayoutRequest.ST_PENDING, FundedPayoutRequest.ST_APPROVED)
+
+    def test_pending_plus_processing_blocked(self):
+        self._assert_second_blocked(FundedPayoutRequest.ST_PENDING, FundedPayoutRequest.ST_PROCESSING)
+
+    def test_approved_plus_pending_blocked(self):
+        self._assert_second_blocked(FundedPayoutRequest.ST_APPROVED, FundedPayoutRequest.ST_PENDING)
+
+    def test_approved_plus_approved_blocked(self):
+        self._assert_second_blocked(FundedPayoutRequest.ST_APPROVED, FundedPayoutRequest.ST_APPROVED)
+
+    def test_approved_plus_processing_blocked(self):
+        self._assert_second_blocked(FundedPayoutRequest.ST_APPROVED, FundedPayoutRequest.ST_PROCESSING)
+
+    def test_processing_plus_pending_blocked(self):
+        self._assert_second_blocked(FundedPayoutRequest.ST_PROCESSING, FundedPayoutRequest.ST_PENDING)
+
+    def test_processing_plus_approved_blocked(self):
+        self._assert_second_blocked(FundedPayoutRequest.ST_PROCESSING, FundedPayoutRequest.ST_APPROVED)
+
+    def test_processing_plus_processing_blocked(self):
+        self._assert_second_blocked(FundedPayoutRequest.ST_PROCESSING, FundedPayoutRequest.ST_PROCESSING)
+
+    def _assert_new_request_allowed_after(self, terminal_status):
+        _make_fpr_row(self.enrollment, self.account, self.fc, self.user, terminal_status)
+        # Must NOT raise — a terminal-status prior request never blocks a new one.
+        _make_fpr_row(self.enrollment, self.account, self.fc, self.user, FundedPayoutRequest.ST_PENDING)
+        self.assertEqual(FundedPayoutRequest.objects.filter(enrollment=self.enrollment).count(), 2)
+
+    def test_completed_allows_new_request(self):
+        self._assert_new_request_allowed_after(FundedPayoutRequest.ST_COMPLETED)
+
+    def test_rejected_allows_new_request(self):
+        self._assert_new_request_allowed_after(FundedPayoutRequest.ST_REJECTED)
+
+    def test_cancelled_allows_new_request(self):
+        self._assert_new_request_allowed_after(FundedPayoutRequest.ST_CANCELLED)
+
+    def test_failed_allows_new_request(self):
+        # ST_FAILED is verified to exist on the model (TestFundedPayoutRequestConstants,
+        # above) before being used here.
+        self._assert_new_request_allowed_after(FundedPayoutRequest.ST_FAILED)
+
+    def test_different_enrollment_unaffected(self):
+        """Sanity: the constraint is scoped per-enrollment, not global."""
+        user2 = _make_user()
+        enrollment2 = _make_funded_enrollment(user2)
+        fc2 = FundedConfig.objects.get(enrollment=enrollment2)
+        _make_fpr_row(self.enrollment, self.account, self.fc, self.user, FundedPayoutRequest.ST_PENDING)
+        # Must NOT raise — unrelated enrollment.
+        _make_fpr_row(enrollment2, enrollment2.funded_account, fc2, user2, FundedPayoutRequest.ST_PENDING)
+        self.assertEqual(FundedPayoutRequest.objects.count(), 2)
+
+
+@override_settings(LOAD_TEST_MODE=True)
+class FPRSequentialGuardStillWorksTests(TestCase):
+    """Confirms the pre-existing app-level fast-path (select_for_update()+
+    .exists(), returning a graceful 409) still works unmodified — the new
+    DB constraint is defense-in-depth, not a replacement."""
+
+    def setUp(self):
+        self.user = _make_user()
+        _add_compliance(self.user)
+        self.enrollment = _make_funded_enrollment(self.user)
+        self.account = self.enrollment.funded_account
+        self.fc = FundedConfig.objects.get(enrollment=self.enrollment)
+        self.fc.min_payout_usd = Decimal("50.00")
+        self.fc.min_trading_days = 0
+        self.fc.save()
+        _set_profit(self.account, Decimal("100.00"))
+        self.client.login(username=self.user.username, password="testpass")
+        self.url = reverse(_URL)
+
+    @patch("simulator.two_factor.verify_totp", return_value=True)
+    def test_pending_already_exists_still_returns_409_not_500(self, _mock):
+        _make_fpr_row(self.enrollment, self.account, self.fc, self.user, FundedPayoutRequest.ST_PENDING)
+        resp = self.client.post(self.url, {"enrollment_id": self.enrollment.pk, "otp_code": "000000"})
+        self.assertEqual(resp.status_code, 409)
+        self.assertFalse(resp.json()["ok"])
+        self.assertEqual(FundedPayoutRequest.objects.filter(enrollment=self.enrollment).count(), 1)
+
+
+def _run_concurrent(fn, barrier, results, index, max_retries=60):
+    """Vendor-aware concurrency helper. BBOOK-CLOSE-02 FASE A found the
+    repo's existing PRAGMA-only retry helper (test_challenge_wallet_purchase.py,
+    test_funded_economics.py) silently vacuous under PostgreSQL: it issues
+    'PRAGMA busy_timeout' unconditionally, which PostgreSQL rejects with a
+    SyntaxError that none of that helper's except clauses catch — the
+    background thread dies uncaught, results[index] is never set, and a
+    test that only checks aggregate state passes without ever having
+    exercised the real path. This version:
+      1. only issues the SQLite PRAGMA on SQLite;
+      2. always records a definite outcome for every thread, on every
+         engine, via a catch-all fallback — no exception can leave
+         results[index] silently unset.
+    """
+    if connection.vendor == "sqlite3":
+        with connection.cursor() as cur:
+            cur.execute("PRAGMA busy_timeout = 30000;")
+    barrier.wait(timeout=5)
+    attempt = 0
+    try:
+        while True:
+            attempt += 1
+            try:
+                results[index] = ("ok", fn())
+                return
+            except IntegrityError as exc:
+                results[index] = ("integrity_error", exc)
+                return
+            except OperationalError as exc:
+                if (
+                    connection.vendor == "sqlite3"
+                    and "locked" in str(exc).lower()
+                    and attempt < max_retries
+                ):
+                    time.sleep(random.uniform(0.005, 0.03))
+                    continue
+                results[index] = ("operational_error", exc)
+                return
+            except Exception as exc:  # noqa: BLE001 — deliberate catch-all, see docstring
+                results[index] = (f"unexpected_{type(exc).__name__}", exc)
+                return
+    finally:
+        connection.close()
+
+
+def _skip_unless_postgres(fn):
+    """BBOOK-CLOSE-02 SQLITE STABILIZATION — same precedent already
+    accepted for PGFIX01SqlShapeTests (test_challenge_engine.py): a real
+    concurrent-timing race is only ever meaningfully certifiable under
+    PostgreSQL's real row-level locking. On SQLite this decorator makes
+    the test show as explicitly SKIPPED — never a silent/vacuous PASS,
+    never a crash from artificial django_session write contention."""
+    import unittest
+    return unittest.skipUnless(
+        connection.vendor == "postgresql",
+        "real concurrent HTTP race requires PostgreSQL's real row-level "
+        "locking — SQLite's own table-level write lock on django_session "
+        "makes two genuinely concurrent Client().login() calls contend "
+        "with each other independent of the FundedPayoutRequest business "
+        "logic under test (see BBOOK-CLOSE-02 SQLite Stabilization FASE A)",
+    )(fn)
+
+
+def _make_ready_fpr_user():
+    """Shared setup for both Test A (deterministic) and Test B (real
+    concurrency) — a fully compliant, eligible user ready to request a
+    funded payout."""
+    user = _make_user()
+    _add_compliance(user)
+    enrollment = _make_funded_enrollment(user)
+    account = enrollment.funded_account
+    fc = FundedConfig.objects.get(enrollment=enrollment)
+    fc.min_payout_usd = Decimal("50.00")
+    fc.min_trading_days = 0
+    fc.save()
+    _set_profit(account, Decimal("100.00"))
+    return user, enrollment, account, fc
+
+
+@override_settings(LOAD_TEST_MODE=True)
+class FPRSequentialDuplicateGuardTests(TestCase):
+    """Test A — BBOOK-CLOSE-02 SQLite Stabilization. Deterministic, single
+    client/session, no threading at all: proves the exact same economic
+    invariant FPRRealConcurrencyTests proves under real concurrency — at
+    most one active FundedPayoutRequest per enrollment — with zero
+    flakiness, on every engine. Complements, does not replace, the real
+    race in Test B below."""
+
+    @patch("simulator.two_factor.verify_totp", return_value=True)
+    def test_second_request_after_first_rejected_deterministic(self, _mock):
+        user, enrollment, account, fc = _make_ready_fpr_user()
+        balance_before = Decimal(str(account.balance))
+        self.client.login(username=user.username, password="testpass")
+        url = reverse(_URL)
+        data = {"enrollment_id": enrollment.pk, "otp_code": "000000"}
+
+        r1 = self.client.post(url, data)
+        self.assertEqual(r1.status_code, 201)
+        self.assertEqual(FundedPayoutRequest.objects.filter(enrollment=enrollment).count(), 1)
+
+        r2 = self.client.post(url, data)
+        self.assertEqual(r2.status_code, 409)
+        self.assertFalse(r2.json()["ok"])
+
+        active_qs = FundedPayoutRequest.objects.filter(
+            enrollment=enrollment, status__in=_ACTIVE_STATUSES,
+        )
+        self.assertEqual(active_qs.count(), 1, "exactly one active request must survive")
+        self.assertEqual(FundedPayoutRequest.objects.filter(enrollment=enrollment).count(), 1)
+
+        # No double economic effect from the second (rejected) request.
+        account.refresh_from_db()
+        self.assertEqual(account.balance, balance_before, "request creation must not touch the balance")
+        self.assertEqual(BrokerLedger.objects.filter(source_account=account).count(), 0)
+        self.assertEqual(WithdrawalRequest.objects.filter(user=user).count(), 0)
+        self.assertEqual(
+            LedgerEntry.objects.filter(account=account, event_type=LedgerEntry.EV_FUNDED_PAYOUT).count(), 0,
+        )
+
+        # The single survivor's full downstream approval still fires
+        # exactly once — same end-to-end proof as the real-race test,
+        # here demonstrated deterministically.
+        survivor = active_qs.get()
+        admin = User.objects.create_user(username="fpr_seq_admin", password="x", is_staff=True)
+        approve_sim_payout(survivor, admin)
+
+        self.assertEqual(
+            LedgerEntry.objects.filter(account=account, event_type=LedgerEntry.EV_FUNDED_PAYOUT).count(), 1,
+        )
+        self.assertEqual(
+            WalletTransaction.objects.filter(
+                wallet__user=user, tx_type=WalletTransaction.TX_FUNDED_PAYOUT,
+            ).count(), 1,
+        )
+        self.assertEqual(
+            BrokerLedger.objects.filter(
+                revenue_type=BrokerLedger.REV_FUNDED_PROFIT_SHARE, source_funded_payout=survivor,
+            ).count(), 1,
+        )
+        account.refresh_from_db()
+        self.assertEqual(account.balance, balance_before - survivor.trader_cut)
+
+
+@override_settings(LOAD_TEST_MODE=True)
+class FPRRealConcurrencyTests(TransactionTestCase):
+    """Test B — real threads, real DB connections, real HTTP POSTs to
+    funded_payout_request_view — the actual race the constraint defends
+    against, followed by a full approval of the survivor to prove no
+    downstream monetary effect ever double-fires. PostgreSQL-only (see
+    _skip_unless_postgres) — SQLite's own django_session write contention
+    makes this specific real-thread shape unreliable independent of the
+    business logic under test; the same invariant is proven deterministically,
+    on every engine, by FPRSequentialDuplicateGuardTests above."""
+
+    def _make_ready_user(self):
+        return _make_ready_fpr_user()
+
+    @_skip_unless_postgres
+    def test_two_concurrent_requests_same_enrollment_exactly_one_survives(self):
+        from django.test import Client
+
+        user, enrollment, account, fc = self._make_ready_user()
+        url = reverse(_URL)
+        balance_before = Decimal(str(account.balance))
+
+        barrier = threading.Barrier(2)
+        results = [None, None]
+
+        def _attempt():
+            client = Client()
+            client.login(username=user.username, password="testpass")
+            with patch("simulator.two_factor.verify_totp", return_value=True):
+                resp = client.post(url, {"enrollment_id": enrollment.pk, "otp_code": "000000"})
+            return resp.status_code
+
+        threads = [
+            threading.Thread(target=_run_concurrent, args=(_attempt, barrier, results, i))
+            for i in range(2)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=20)
+
+        # No silent vacuous pass: both threads must have recorded a real outcome.
+        for r in results:
+            self.assertIsNotNone(r, "a thread never completed — see _run_concurrent docstring")
+            self.assertNotIn("unexpected_", r[0], f"unhandled exception in a race thread: {r}")
+            # BBOOK-CLOSE-02 SQLITE STABILIZATION — this test only runs
+            # under real PostgreSQL (see _skip_unless_postgres above), where
+            # real row-level locking blocks-then-proceeds rather than
+            # raising "database is locked" the way SQLite does. An
+            # "operational_error" outcome here would mean the retry path
+            # _run_concurrent only needs for SQLite's own contention was
+            # exercised on PostgreSQL too — explicit, named, never silent.
+            self.assertNotEqual(
+                r[0], "operational_error",
+                f"real PostgreSQL should never hit SQLite's lock-retry path: {r}",
+            )
+
+        # Exactly one 201 (created) and one controlled 409 (loser) — never a 500.
+        active_qs = FundedPayoutRequest.objects.filter(
+            enrollment=enrollment, status__in=_ACTIVE_STATUSES,
+        )
+        self.assertEqual(active_qs.count(), 1, f"expected exactly 1 active FPR, results={results}")
+        self.assertEqual(FundedPayoutRequest.objects.filter(enrollment=enrollment).count(), 1)
+
+        # No 500s: every recorded HTTP result (for the "ok" outcomes) must be
+        # 201 or 409, and no thread died with an uncaught server error.
+        http_codes = [r[1] for r in results if r[0] == "ok"]
+        for code in http_codes:
+            self.assertIn(code, (201, 409), f"unexpected status code {code}, results={results}")
+
+        # Creation itself moves no money — confirmed unchanged.
+        account.refresh_from_db()
+        self.assertEqual(account.balance, balance_before, "FPR creation must not touch the balance")
+        self.assertEqual(BrokerLedger.objects.filter(source_account=account).count(), 0)
+        self.assertEqual(WithdrawalRequest.objects.filter(user=user).count(), 0)
+        self.assertEqual(LedgerEntry.objects.filter(account=account, event_type=LedgerEntry.EV_FUNDED_PAYOUT).count(), 0)
+
+        # Now actually approve the survivor and prove the full monetary
+        # cycle fires exactly once — end to end, not just at creation.
+        survivor = active_qs.get()
+        admin = User.objects.create_user(username="fpr_race_admin", password="x", is_staff=True)
+        approve_sim_payout(survivor, admin)
+
+        self.assertEqual(
+            LedgerEntry.objects.filter(account=account, event_type=LedgerEntry.EV_FUNDED_PAYOUT).count(), 1,
+        )
+        self.assertEqual(
+            WalletTransaction.objects.filter(
+                wallet__user=user, tx_type=WalletTransaction.TX_FUNDED_PAYOUT,
+            ).count(), 1,
+        )
+        self.assertEqual(
+            BrokerLedger.objects.filter(
+                revenue_type=BrokerLedger.REV_FUNDED_PROFIT_SHARE, source_funded_payout=survivor,
+            ).count(), 1,
+        )
+        account.refresh_from_db()
+        self.assertEqual(account.balance, balance_before - survivor.trader_cut)
+
+
+class FPRPostgresVendorEvidenceTests(TestCase):
+    """Cheap, always-on sanity check — fails loudly (not silently) if a
+    PostgreSQL-targeted run ever accidentally falls back to SQLite."""
+
+    def test_vendor_matches_configured_engine(self):
+        engine = connection.settings_dict["ENGINE"]
+        if "postgresql" in engine:
+            self.assertEqual(connection.vendor, "postgresql")
+        else:
+            self.assertEqual(connection.vendor, "sqlite")

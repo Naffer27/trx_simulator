@@ -3384,6 +3384,24 @@ class FundedPayoutRequest(models.Model):
             models.Index(fields=["user", "status"],  name="fpr_user_status_idx"),
             models.Index(fields=["enrollment"],       name="fpr_enrollment_idx"),
         ]
+        # BBOOK-CLOSE-02 (F-01) — DB-level defense-in-depth, on top of the
+        # existing select_for_update()+.exists() guard in
+        # funded_payout_request_view. Active = ST_PENDING/ST_APPROVED/
+        # ST_PROCESSING — the same set FASE A identified as "money not yet
+        # fully settled." ST_COMPLETED/ST_REJECTED/ST_CANCELLED/ST_FAILED
+        # are all terminal and must not block a new request.
+        # Literal strings, not ST_PENDING/ST_APPROVED/ST_PROCESSING: a nested
+        # Meta class cannot reference sibling class-body constants (Python
+        # class bodies are not closures — confirmed via the same 4-line
+        # repro used in BBOOK-CLOSE-01/ChallengeEnrollment). Values verified
+        # against the ST_* constants above at the time this was written.
+        constraints = [
+            models.UniqueConstraint(
+                fields=["enrollment"],
+                condition=models.Q(status__in=["pending", "approved", "processing"]),
+                name="fpr_one_active_request_per_enrollment",
+            ),
+        ]
 
     def __str__(self):
         return f"FundedPayoutRequest #{self.pk} {self.user} ${self.trader_cut} [{self.status}]"

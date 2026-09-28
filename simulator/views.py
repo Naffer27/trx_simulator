@@ -2598,6 +2598,14 @@ def funded_payout_request_view(request):
     broker_cut = (cycle_profit - trader_cut).quantize(_PENNY)
 
     # ── Atomic: lock funded_account + duplicate guard + create FPR ───────────
+    # BBOOK-CLOSE-02 (F-01) — fpr_one_active_request_per_enrollment (migration
+    # 0095) is the real, DB-level barrier; select_for_update()+.exists() above
+    # remains the fast, no-op-in-the-normal-case path. A legitimate race that
+    # somehow reaches .create() concurrently is a normal, expected outcome —
+    # not a server error — so it must resolve to the same graceful 409 as the
+    # application-level check, never an unhandled 500.
+    from django.db import IntegrityError
+
     try:
         with transaction.atomic():
             TradingAccount.objects.select_for_update().get(pk=funded_account.pk)
@@ -2625,7 +2633,7 @@ def funded_payout_request_view(request):
                 status=FundedPayoutRequest.ST_PENDING,
             )
 
-    except _PendingFundedPayoutExists:
+    except (_PendingFundedPayoutExists, IntegrityError):
         return JsonResponse(
             {
                 "ok":    False,
