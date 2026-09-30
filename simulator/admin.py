@@ -2330,11 +2330,28 @@ class WithdrawalRequestAdmin(admin.ModelAdmin):
         a = obj.wallet_address
         return f"{a[:10]}…{a[-6:]}" if len(a) > 18 else a
 
-    @admin.display(description="Crypto Amount")
+    @admin.display(description="Monto Solicitado (est.)")
     def crypto_col(self, obj):
+        """
+        WITHDRAWAL-E2E-02B — renamed from "Crypto Amount"/"Cripto
+        Enviado". obj.crypto_amount is written the moment NowPayments
+        accepts the POST (payout_orchestrator.py::_apply_submission_
+        success, from the pre-send /v1/estimate figure) — it has never
+        meant "confirmed sent" (WR17 proved this: crypto_amount was
+        populated, the provider later rejected the payout, and no
+        blockchain transaction ever existed). Showing the provider's
+        own raw status alongside it — populated once Bug B's JSON-level
+        fix (create_payout()) lands — gives the real, current picture
+        instead of a number that looks like a receipt.
+        """
         if not obj.crypto_amount:
             return "—"
-        return f"{obj.crypto_amount} {obj.crypto_currency.upper()}"
+        base = f"{obj.crypto_amount} {obj.crypto_currency.upper()}"
+        if obj.np_payout_status:
+            return format_html(
+                '{}<br><small style="color:#888">proveedor: {}</small>', base, obj.np_payout_status,
+            )
+        return base
 
     list_display  = (
         "id", "user_col", "amount_col", "crypto_currency", "address_short",
@@ -2443,7 +2460,8 @@ class PayoutAttemptAdmin(admin.ModelAdmin):
         "id", "withdrawal_request", "attempt_number", "provider", "status",
         "provider_reference", "provider_batch_id", "provider_request_id",
         "requested_amount_usd", "created_at", "submitted_at",
-        "reconciliation_checked_at", "reconciled_at",
+        "reconciliation_checked_at", "reconciled_at", "verified_at",
+        "confirmed_amount", "tx_hash",
     )
     list_filter = ("status", "provider", "created_at")
     search_fields = (
@@ -2451,6 +2469,119 @@ class PayoutAttemptAdmin(admin.ModelAdmin):
         "provider_request_id", "idempotency_key", "withdrawal_request__user__username",
     )
     ordering = ("-created_at",)
+
+    def change_view(self, request, object_id, form_url="", extra_context=None):
+        """
+        WITHDRAWAL-E2E-02C — same shape as TreasuryOperationRequestAdmin.
+        change_view() above: this ModelAdmin stays 100% read-only for
+        direct field editing (has_change_permission=False, unchanged) —
+        the "Verify payout" button injected here links to a SEPARATE
+        view (verify_payout_view) that calls
+        payout_orchestrator.submit_payout_verification(), never a
+        change-form field save. Eligibility is recomputed fresh on every
+        page load, straight from the DB — never trusted from a stale
+        page.
+        """
+        extra_context = extra_context or {}
+        obj = self.get_object(request, object_id)
+        if obj is not None:
+            eligible = (
+                obj.status not in PayoutAttempt.TERMINAL_STATUSES
+                and obj.verified_at is None
+                and bool(obj.provider_batch_id)
+            )
+            if eligible:
+                extra_context["show_verify_payout_button"] = True
+                extra_context["verify_payout_url"] = reverse(
+                    "admin:payoutattempt_verify", args=[obj.pk],
+                )
+        return super().change_view(request, object_id, form_url, extra_context)
+
+    def get_urls(self):
+        urls = super().get_urls()
+        custom = [
+            path(
+                "<int:pk>/verify/",
+                self.admin_site.admin_view(self.verify_payout_view),
+                name="payoutattempt_verify",
+            ),
+        ]
+        return custom + urls
+
+    def verify_payout_view(self, request, pk):
+        """
+        WITHDRAWAL-E2E-02C — staff-only screen to submit NowPayments'
+        own provider-side 2FA code (Verify Payout). GET renders the
+        form with a fresh eligibility recheck; POST calls
+        payout_orchestrator.submit_payout_verification() and redirects
+        back to the (still 100% read-only) PayoutAttempt change page.
+
+        Two-layer defense, same discipline as
+        TreasuryOperationRequestAdmin's views: self.admin_site.admin_view()
+        already enforces is_staff; is_superuser is checked again here,
+        matching every other money-moving admin action in this file
+        (approve_withdrawals/reject_withdrawals use the equivalent
+        superuser_required_action decorator — this is a custom view, not
+        a bulk action, so the same check is inlined instead of
+        decorated).
+
+        CRITICAL: the submitted code is read from request.POST, passed
+        straight into submit_payout_verification(), and never assigned
+        to any local variable that outlives this request, never logged,
+        never included in any messages.* call, and never re-rendered
+        into the response — on a failed submission the form is shown
+        again EMPTY, never pre-filled with the rejected code.
+        """
+        from django.core.exceptions import PermissionDenied
+        from django.http import Http404
+
+        from .payout_orchestrator import PayoutVerificationError, submit_payout_verification
+        from .payout_providers import ProviderError
+
+        if not request.user.is_superuser:
+            raise PermissionDenied("Verify Payout requires superuser.")
+
+        attempt = PayoutAttempt.objects.filter(pk=pk).select_related("withdrawal_request").first()
+        if attempt is None:
+            raise Http404("PayoutAttempt not found.")
+
+        change_url = reverse("admin:simulator_payoutattempt_change", args=[attempt.pk])
+        eligible = (
+            attempt.status not in PayoutAttempt.TERMINAL_STATUSES
+            and attempt.verified_at is None
+            and bool(attempt.provider_batch_id)
+        )
+        if not eligible:
+            messages.warning(
+                request,
+                f"⚠ PayoutAttempt #{attempt.pk} ya no es elegible para verificación "
+                f"(status={attempt.status}, verified_at={attempt.verified_at or '—'}).",
+            )
+            return redirect(change_url)
+
+        if request.method == "POST":
+            code = request.POST.get("verification_code", "")
+            try:
+                submit_payout_verification(attempt.pk, code, actor=request.user, request=request)
+            except PayoutVerificationError as exc:
+                messages.error(request, f"⚠ {exc}")
+            except ProviderError:
+                messages.error(
+                    request,
+                    "⚠ La verificación falló. Revisa el código recibido de NowPayments "
+                    "(puede haber expirado) e inténtalo de nuevo.",
+                )
+            else:
+                messages.success(request, f"✓ PayoutAttempt #{attempt.pk} verificado correctamente.")
+            return redirect(change_url)
+
+        context = dict(
+            self.admin_site.each_context(request),
+            title=f"Verify Payout — PayoutAttempt #{attempt.pk}",
+            attempt=attempt,
+            cancel_url=change_url,
+        )
+        return render(request, "admin/verify_payout_confirmation.html", context)
 
 
 @admin.register(PayoutWebhookEvent)

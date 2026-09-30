@@ -196,17 +196,26 @@ class ProviderRegistryTests(TestCase):
             self.assertEqual(adapter.provider_name, "fake_recon")
             self.assertTrue(adapter.capabilities["supports_lookup_by_provider_reference"])
 
-    def test_nowpayments_lookup_payout_is_unsupported(self):
+    def test_nowpayments_lookup_payout_unsupported_without_provider_reference(self):
+        """WITHDRAWAL-E2E-02B — lookup_payout() is now genuinely
+        implemented (GET /v1/payout/{id}), but an attempt that never
+        reached PROCESSING has no provider_reference (np_payout_id) to
+        look up by — UNSUPPORTED, no HTTP call attempted, same contract
+        as this specific case had before."""
         adapter = get_adapter_for_provider("nowpayments")
-        attempt_stub = type("A", (), {"pk": 1})()
+        attempt_stub = type("A", (), {"pk": 1, "provider_reference": ""})()
         result = adapter.lookup_payout(attempt_stub)
         self.assertEqual(result.outcome, PayoutLookupOutcome.UNSUPPORTED)
 
-    def test_nowpayments_capabilities_all_lookup_false_webhooks_true(self):
+    def test_nowpayments_capabilities(self):
+        # WITHDRAWAL-E2E-02B — supports_lookup_by_provider_reference is
+        # now True: GET /v1/payout/{id} confirmed real and working
+        # (WITHDRAWAL-E2E-02A). The other lookup/idempotency
+        # capabilities remain unsupported.
         from simulator.payout_providers import NowPaymentsAdapter
         caps = NowPaymentsAdapter.capabilities
         self.assertFalse(caps["supports_external_idempotency"])
-        self.assertFalse(caps["supports_lookup_by_provider_reference"])
+        self.assertTrue(caps["supports_lookup_by_provider_reference"])
         self.assertFalse(caps["supports_lookup_by_provider_request_id"])
         self.assertFalse(caps["supports_lookup_by_batch"])
         self.assertTrue(caps["supports_webhooks"])
@@ -287,15 +296,21 @@ class UnknownReconciliationTests(TestCase):
     def test_unsupported_stays_unknown(self):
         self._assert_stays_unknown(PayoutLookupOutcome.UNSUPPORTED)
 
-    def test_nowpayments_unknown_no_capability_never_calls_lookup_no_create_payout(self):
-        """The real, currently-connected provider — no fake involved.
-        capabilities are all-False, so lookup_payout() is never even
-        called; create_payout() is never called either."""
+    def test_nowpayments_now_capable_lookup_called_create_payout_never(self):
+        """WITHDRAWAL-E2E-02B — the real, currently-connected provider,
+        no fake involved. supports_lookup_by_provider_reference is now
+        True, so lookup_payout() IS called for an UNKNOWN attempt during
+        reconciliation. The separate, still-load-bearing invariant this
+        test protects — reconciliation NEVER calls create_payout(), i.e.
+        never creates a second payout attempt — continues to hold
+        unconditionally regardless of lookup capability."""
         attempt = _make_attempt(self.wr, provider="nowpayments", status=PayoutAttempt.STATUS_UNKNOWN)
-        with patch("simulator.payout_providers.NowPaymentsAdapter.lookup_payout") as lookup_mock, \
-             patch("simulator.payout_providers.NowPaymentsAdapter.create_payout") as create_mock:
+        with patch(
+            "simulator.payout_providers.NowPaymentsAdapter.lookup_payout",
+            return_value=PayoutLookupResult(outcome=PayoutLookupOutcome.NOT_FOUND),
+        ) as lookup_mock, patch("simulator.payout_providers.NowPaymentsAdapter.create_payout") as create_mock:
             reconcile_unknown_payout_attempts()
-        lookup_mock.assert_not_called()
+        lookup_mock.assert_called_once()
         create_mock.assert_not_called()
         attempt.refresh_from_db()
         self.assertEqual(attempt.status, PayoutAttempt.STATUS_UNKNOWN)

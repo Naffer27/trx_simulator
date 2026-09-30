@@ -199,27 +199,41 @@ class ParseWebhookTests(SimpleTestCase):
                 )
                 self.assertEqual(events[0].normalized_status, PayoutAttempt.STATUS_PROCESSING, raw)
 
-    def test_unknown_raw_status_discarded(self):
+    def test_unknown_raw_status_persisted_with_none_normalized_status(self):
+        """WITHDRAWAL-E2E-02B — an unrecognized raw_status is no longer
+        discarded (the old `continue`, which is exactly what silently
+        dropped WR17's two real REJECTED webhooks): the event is still
+        returned, with normalized_status=None as an honest "we don't
+        know" signal for the caller to persist and route to
+        MANUAL_REVIEW, never guessed at."""
         with patch("simulator.nowpayments.verify_ipn_signature", return_value=True):
             events = NowPaymentsAdapter().parse_webhook(
                 self._body(withdrawals=[{"id": "wd-1", "status": "SOMETHING_NEW"}]),
                 {"x-nowpayments-sig": "ok"},
             )
-        self.assertEqual(events, [])
+        self.assertEqual(len(events), 1)
+        self.assertIsNone(events[0].normalized_status)
+        self.assertEqual(events[0].raw_status, "SOMETHING_NEW")
+        self.assertEqual(events[0].provider_reference, "wd-1")
 
     def test_provider_field_is_nowpayments(self):
         with patch("simulator.nowpayments.verify_ipn_signature", return_value=True):
             events = NowPaymentsAdapter().parse_webhook(self._body(), {"x-nowpayments-sig": "ok"})
         self.assertEqual(events[0].provider, "nowpayments")
 
-    def test_capabilities_are_false(self):
-        # FIX-02A.4 — capabilities redesigned into explicit, desambiguated
-        # flags (Design Lock: no ambiguous supports_idempotency_key).
-        # NowPayments today: none of the lookup/external-idempotency
-        # capabilities exist; webhooks are the only real capability.
+    def test_capabilities(self):
+        # FIX-02A.4 — capabilities as explicit, desambiguated flags
+        # (Design Lock: no ambiguous supports_idempotency_key).
+        # WITHDRAWAL-E2E-02B — supports_lookup_by_provider_reference is
+        # now True: GET /v1/payout/{id} is a real, working endpoint
+        # (confirmed empirically, WITHDRAWAL-E2E-02A), implemented by
+        # lookup_payout() below. External idempotency and lookup by
+        # request-id/batch remain unsupported — create_payout_with_token()
+        # still sends no id/order_id/reference field the provider could
+        # later recognize.
         adapter = NowPaymentsAdapter()
         self.assertEqual(adapter.capabilities["supports_external_idempotency"], False)
-        self.assertEqual(adapter.capabilities["supports_lookup_by_provider_reference"], False)
+        self.assertEqual(adapter.capabilities["supports_lookup_by_provider_reference"], True)
         self.assertEqual(adapter.capabilities["supports_lookup_by_provider_request_id"], False)
         self.assertEqual(adapter.capabilities["supports_lookup_by_batch"], False)
         self.assertEqual(adapter.capabilities["supports_webhooks"], True)

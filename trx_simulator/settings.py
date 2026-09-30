@@ -1144,6 +1144,18 @@ PAYOUT_SUBMITTED_AGED_THRESHOLD_SECONDS = _payout_reconciliation_int_env(
     "PAYOUT_SUBMITTED_AGED_THRESHOLD_SECONDS", 300, minimum=60,
 )
 
+# WITHDRAWAL-E2E-02G FASE B — a PROCESSING PayoutAttempt with a real
+# provider_reference is eligible for active GET reconciliation once it's
+# been sitting past this age with no confirming webhook. Owner-decided
+# initial value: 600s (10 minutes) — comfortably above the real
+# CREATING->WAITING->SENDING->FINISHED cycle observed on WR18 (~3
+# minutes end to end), so this never races a payout that is still
+# legitimately in flight. Floor of 60s for the same reason
+# PAYOUT_SUBMITTED_AGED_THRESHOLD_SECONDS has one.
+PAYOUT_PROCESSING_AGED_RECONCILE_SECONDS = _payout_reconciliation_int_env(
+    "PAYOUT_PROCESSING_AGED_RECONCILE_SECONDS", 600, minimum=60,
+)
+
 # Durable webhook replay — exponential backoff base/cap and max automatic
 # retries before a still-orphan PayoutWebhookEvent moves PENDING -> MANUAL_REVIEW
 # (never deleted, never purged, never auto-replayed again — see PayoutWebhookEvent).

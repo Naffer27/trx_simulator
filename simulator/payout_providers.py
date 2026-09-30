@@ -87,7 +87,12 @@ class ProviderPayoutEvent:
     provider: str
     provider_reference: str
     provider_batch_id: str
-    normalized_status: str   # a PayoutAttempt.STATUS_* value
+    # A PayoutAttempt.STATUS_* value, or None when raw_status isn't in
+    # this adapter's recognized vocabulary (WITHDRAWAL-E2E-02B) — an
+    # honest "we don't know" signal, never guessed. Callers must persist
+    # the event regardless and must never attempt a financial transition
+    # when this is None (see payout_orchestrator.py's two dispatchers).
+    normalized_status: str | None
     raw_status: str
     provider_amount: Decimal | None
     occurred_at: datetime
@@ -127,27 +132,91 @@ class PayoutLookupResult:
 
 # Mirrors the _NP_TO_STATUS mapping already used in views.py today,
 # retargeted at PayoutAttempt statuses instead of WithdrawalRequest
-# statuses. Unrecognized raw statuses are discarded by the caller
-# (parse_webhook returns no event for them) — same as today's `continue`.
+# statuses. WITHDRAWAL-E2E-02B — a raw status NOT in this map no longer
+# means "discard the event" (see parse_webhook()): it means "the event
+# is persisted with normalized_status=None and routed to MANUAL_REVIEW
+# without any attempted financial transition" — the .get() below then
+# legitimately returns None for that case, consumed explicitly.
+# WITHDRAWAL-E2E-02C — deliberately NOT extended with the official
+# in-flight statuses (new/creating/waiting/processing/sending) despite
+# the fuller vocabulary confirmed in the 02C design report. Reason: this
+# map feeds _apply_attempt_webhook() -> transition_payout_attempt(),
+# which is called for an attempt in WHATEVER status it currently holds —
+# by the time any webhook can arrive, _apply_submission_success() has
+# already synchronously moved the attempt to PROCESSING, and
+# ALLOWED_TRANSITIONS[PROCESSING] = {COMPLETED, FAILED} has no
+# PROCESSING -> PROCESSING self-loop. A webhook redelivering an
+# in-flight status while already PROCESSING would raise
+# InvalidPayoutAttemptTransition, uncaught, all the way up to the view —
+# a real crash risk, not hypothetical (see the payout_orchestrator.py
+# comment above process_webhook_event()'s webhook-status guard). Also
+# deliberately NOT extended with "rejected_not_checked" or
+# "cancelled"/"canceled": the 02C design report flagged genuine
+# ambiguity about whether funds could have moved before either fires,
+# and this map's FAILED entries drive an AUTOMATIC refund via
+# _apply_confirmed_failure_with_refund() — mapping an ambiguous status
+# here risks exactly the double-payment the whole refund engine exists
+# to prevent. All of these safely fall through to normalized_status=None
+# (WITHDRAWAL-E2E-02B) -> MANUAL_REVIEW, zero mutation attempted, same
+# as any other genuinely unrecognized status.
 _RAW_STATUS_TO_NORMALIZED = {
     "FINISHED": PayoutAttempt.STATUS_COMPLETED,
     "FAILED":   PayoutAttempt.STATUS_FAILED,
+    # WITHDRAWAL-E2E-02B — confirmed via direct GET /v1/payout/{id}
+    # (WITHDRAWAL-E2E-02A forensic audit, WR17): NowPayments' own
+    # terminal rejection status for a payout that failed provider-side
+    # verification. No blockchain transaction exists when this fires
+    # (hash: null) — same terminal-failure semantics as "FAILED".
+    "REJECTED": PayoutAttempt.STATUS_FAILED,
     "ROLLING":  PayoutAttempt.STATUS_PROCESSING,
     "CREATED":  PayoutAttempt.STATUS_PROCESSING,
+}
+
+# WITHDRAWAL-E2E-02B/02C — separate vocabulary for the active GET
+# /v1/payout/{id} lookup (lookup_payout() below). Deliberately NOT the
+# same dict as _RAW_STATUS_TO_NORMALIZED — the two vocabularies overlap
+# but answer different questions, and critically differ in SAFETY here:
+# reconcile_unknown_payout_attempts() only ever calls lookup_payout()
+# for an attempt currently in STATUS_UNKNOWN (see that function's own
+# query filter), and UNKNOWN -> PROCESSING IS an allowed transition — so
+# the same-status-crash risk that keeps new/creating/waiting/processing/
+# sending OUT of _RAW_STATUS_TO_NORMALIZED above does NOT apply here,
+# and WITHDRAWAL-E2E-02C adds them. "rejected_not_checked" and
+# "cancelled"/"canceled" remain deliberately unmapped for the same
+# fund-movement-ambiguity reason as above — they fall through to the
+# dict's own .get(raw_status, AMBIGUOUS) default, which
+# reconcile_unknown_payout_attempts() already treats as "leave UNKNOWN,
+# mutate nothing" (Design Lock point 8/9, unchanged).
+_RAW_STATUS_TO_LOOKUP_OUTCOME = {
+    "FINISHED":   PayoutLookupOutcome.FOUND_COMPLETED,
+    "FAILED":     PayoutLookupOutcome.FOUND_FAILED,
+    "REJECTED":   PayoutLookupOutcome.FOUND_FAILED,
+    "CREATING":   PayoutLookupOutcome.FOUND_PROCESSING,
+    "SENDING":    PayoutLookupOutcome.FOUND_PROCESSING,
+    "ROLLING":    PayoutLookupOutcome.FOUND_PROCESSING,
+    "CREATED":    PayoutLookupOutcome.FOUND_PROCESSING,
+    # WITHDRAWAL-E2E-02C — official statuses confirmed in the design
+    # report, safe to add here specifically (see module comment above).
+    "NEW":        PayoutLookupOutcome.FOUND_PROCESSING,
+    "WAITING":    PayoutLookupOutcome.FOUND_PROCESSING,
+    "PROCESSING": PayoutLookupOutcome.FOUND_PROCESSING,
 }
 
 
 class NowPaymentsAdapter:
     provider_name = "nowpayments"
-    # FIX-02A.4 — explicit, desambiguated capabilities (replaces the old
-    # ambiguous status_query/cancel pair). Every flag here is backed by
-    # a demonstrated absence in nowpayments.py: no GET /v1/payout*
-    # endpoint of any kind exists in this codebase, and
-    # create_payout_with_token()'s payload never includes any
-    # id/order_id/reference field the provider could later recognize.
+    # FIX-02A.4 — explicit, desambiguated capabilities.
+    # WITHDRAWAL-E2E-02B — supports_lookup_by_provider_reference is now
+    # True: GET /v1/payout/{id} is a real, working NowPayments endpoint
+    # (confirmed empirically in WITHDRAWAL-E2E-02A against payout_id
+    # 5007958386 — HTTP 200, real status returned), implemented below in
+    # lookup_payout(). create_payout_with_token()'s payload still never
+    # includes an id/order_id/reference field the provider could later
+    # recognize, so external idempotency and lookup-by-request-id/-batch
+    # remain unsupported.
     capabilities = {
         "supports_external_idempotency":          False,
-        "supports_lookup_by_provider_reference":   False,
+        "supports_lookup_by_provider_reference":   True,
         "supports_lookup_by_provider_request_id":  False,
         "supports_lookup_by_batch":                False,
         "supports_webhooks":                       True,
@@ -212,7 +281,13 @@ class NowPaymentsAdapter:
             batch_wds = data.get("withdrawals", [])
             provider_reference = str(batch_wds[0].get("id", "")) if batch_wds else ""
             provider_batch_id = str(data.get("id", ""))
-            raw_status = str(data.get("status", ""))
+            # WITHDRAWAL-E2E-02B Bug B fix — the individual withdrawal's
+            # status lives at withdrawals[0]["status"], never at the top
+            # level of the response body (confirmed against WR17's real
+            # body in WITHDRAWAL-E2E-02A: the outer object has no "status"
+            # key at all). data.get("status", "") always returned "" here,
+            # silently losing real, available data (e.g. "CREATING").
+            raw_status = str(batch_wds[0].get("status", "")) if batch_wds else ""
         except (AttributeError, TypeError, KeyError, IndexError) as exc:
             raise ProviderResponseError(f"payout POST returned an unparseable body: {exc}") from exc
 
@@ -224,29 +299,153 @@ class NowPaymentsAdapter:
             raw_status=raw_status,
         )
 
+    def verify_payout(self, attempt, code: str) -> None:
+        """
+        WITHDRAWAL-E2E-02C — POST /v1/payout/{batch_id}/verify. Confirms
+        NowPayments' own provider-side 2FA code for a payout batch.
+
+        Uses attempt.provider_batch_id (the BATCH id NowPayments assigned
+        at creation) — NEVER attempt.provider_reference (the individual
+        payout id). Confirmed against the official NowPaymentsIO Node.js
+        SDK source (github.com/NowPaymentsIO/nowpayments-sdk-nodejs,
+        src/client.js: verifyPayout(batchId, code)) — see the
+        WITHDRAWAL-E2E-02C design report for the full contract.
+
+        Same failure classification discipline as create_payout() (Design
+        Lock Correction #5) — auth failure is pre-send-safe (the verify
+        POST was structurally never attempted); everything past that is
+        ambiguous, same as create_payout()'s own POST.
+
+        Returns None on success (no exception raised is the success
+        signal — the caller, payout_orchestrator.submit_payout_
+        verification(), sets PayoutAttempt.verified_at itself). Raises a
+        normalized ProviderError subclass on any failure.
+
+        CRITICAL: `code` is passed straight through to nowpayments.py's
+        verify_payout_with_token() and never appears in any exception
+        message, log line, or return value constructed in this method or
+        in nowpayments.py's own logging on this path.
+        """
+        try:
+            token = _np._get_jwt_token()
+        except Exception as exc:
+            raise ProviderAuthError(
+                f"NowPayments auth failed — payout verify was never attempted: {exc}"
+            ) from exc
+
+        try:
+            _np.verify_payout_with_token(attempt.provider_batch_id, code, token)
+        except requests.exceptions.Timeout as exc:
+            raise ProviderTimeoutError(f"payout verify POST timed out: {exc}") from exc
+        except requests.exceptions.ConnectionError as exc:
+            raise ProviderTimeoutError(f"payout verify POST connection error: {exc}") from exc
+        except requests.exceptions.HTTPError as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            raise ProviderUnavailableError(f"payout verify POST returned HTTP {status}: {exc}") from exc
+        except Exception as exc:
+            raise ProviderResponseError(f"payout verify POST failed unexpectedly: {exc}") from exc
+
     def lookup_payout(self, attempt) -> PayoutLookupResult:
         """
-        FIX-02A.4 — active reconciliation lookup. NowPayments, as
-        integrated in this codebase, has no GET endpoint for payout
-        status by any key (confirmed: no such function exists in
-        nowpayments.py, capabilities above are all False) — this is a
-        real, verified limitation of THIS adapter, not a limitation of
-        the reconciliation core. Always returns UNSUPPORTED, never
-        attempts any HTTP call. Do NOT invent an endpoint here — if
-        NowPayments ever adds one, implement it against real,
-        documented behavior, not a guess.
+        WITHDRAWAL-E2E-02B — FIX-02A.4's active reconciliation lookup,
+        now genuinely implemented. GET /v1/payout/{id} is a real
+        NowPayments endpoint, confirmed empirically against a live
+        payout in WITHDRAWAL-E2E-02A (HTTP 200, real status body) — it
+        is purely read-only: never mutates anything provider-side, and
+        is NOT the "Verify payout" 2FA action (out of scope — see
+        WITHDRAWAL-E2E-02B design report).
+
+        attempt.provider_reference is the individual payout id
+        NowPayments assigned at creation (np_payout_id) — populated only
+        once create_payout() succeeded, which is exactly the population
+        reconcile_unknown_payout_attempts() calls this for (UNKNOWN
+        attempts, i.e. ones that got at least as far as SUBMITTED).
         """
-        return PayoutLookupResult(outcome=PayoutLookupOutcome.UNSUPPORTED)
+        if not attempt.provider_reference:
+            return PayoutLookupResult(outcome=PayoutLookupOutcome.UNSUPPORTED)
+
+        try:
+            token = _np._get_jwt_token()
+        except Exception as exc:
+            logger.warning("[NP] lookup_payout auth failed attempt=%d: %s", attempt.pk, exc)
+            return PayoutLookupResult(outcome=PayoutLookupOutcome.UNAVAILABLE)
+
+        try:
+            resp = requests.get(
+                f"{_np._BASE}/payout/{attempt.provider_reference}",
+                headers={"x-api-key": _np._api_key(), "Authorization": f"Bearer {token}"},
+                timeout=15,
+            )
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+            logger.warning("[NP] lookup_payout network error attempt=%d: %s", attempt.pk, exc)
+            return PayoutLookupResult(outcome=PayoutLookupOutcome.UNAVAILABLE)
+
+        if resp.status_code == 404:
+            return PayoutLookupResult(outcome=PayoutLookupOutcome.NOT_FOUND)
+        if not resp.ok:
+            logger.warning("[NP] lookup_payout HTTP %d attempt=%d", resp.status_code, attempt.pk)
+            return PayoutLookupResult(outcome=PayoutLookupOutcome.UNAVAILABLE)
+
+        try:
+            body = resp.json()
+            withdrawals = body.get("withdrawals", [])
+            wd = next(
+                (w for w in withdrawals if str(w.get("id", "")) == attempt.provider_reference), None,
+            ) or (withdrawals[0] if withdrawals else None)
+            if wd is None:
+                return PayoutLookupResult(outcome=PayoutLookupOutcome.AMBIGUOUS, raw_metadata=body)
+            raw_status = str(wd.get("status", "")).upper()
+        except (ValueError, AttributeError, TypeError):
+            return PayoutLookupResult(outcome=PayoutLookupOutcome.AMBIGUOUS)
+
+        outcome = _RAW_STATUS_TO_LOOKUP_OUTCOME.get(raw_status, PayoutLookupOutcome.AMBIGUOUS)
+        return PayoutLookupResult(
+            outcome=outcome,
+            provider_reference=str(wd.get("id", "")),
+            provider_batch_id=str(body.get("id", "")),
+            raw_provider_status=raw_status,
+            raw_metadata=wd,
+        )
 
     def parse_webhook(self, raw_body: bytes, headers) -> list[ProviderPayoutEvent] | None:
         """
         Verifies the HMAC signature (nowpayments.verify_ipn_signature(),
-        unmodified) then parses the batch payload into normalized
-        events — one per withdrawals[] entry, same shape the current
-        withdraw_payout_callback already iterates. Returns None on
-        invalid signature or unparseable JSON (caller returns 400,
-        identical to today's behavior). raw_status never crosses into
-        PayoutAttempt.status directly — only normalized_status does.
+        unmodified), then parses the payload into normalized events.
+        Returns None on invalid signature or unparseable JSON (caller
+        returns 400, identical to today's behavior). raw_status never
+        crosses into PayoutAttempt.status directly — only
+        normalized_status does.
+
+        WITHDRAWAL-E2E-02G FASE B — supports BOTH real NowPayments
+        payout IPN shapes, distinguished by inspection, never guessed:
+
+          A) batch payload — {"id": batch_id, "withdrawals": [...]}.
+             One event per withdrawals[] entry. This is the shape our
+             own POST /payout *response* uses, and the shape this
+             method originally (and wrongly) assumed was also the async
+             IPN shape.
+
+          B) individual/flat payload — the withdrawal's own fields at
+             the payload's top level: {"batch_withdrawal_id": ...,
+             "status"/"payout_status": ..., "id": ..., "hash": ..., ...}
+             — confirmed CONFIRMADO against the official NowPaymentsIO
+             Node.js SDK (nowpayments-sdk-nodejs, src/ipn.js
+             normalizeWebhook()), whose own payout-webhook detection is
+             exactly `'batch_withdrawal_id' in payload and ('status' in
+             payload or 'payout_status' in payload)` with no array
+             unwrapping. WR18's four real, HMAC-valid IPN deliveries
+             were this shape — the pre-02G code's withdrawals[]-only
+             assumption silently produced zero events for every one of
+             them (WITHDRAWAL-E2E-02F/02G).
+
+        WITHDRAWAL-E2E-02B — a raw_status NOT in _RAW_STATUS_TO_NORMALIZED
+        no longer means "drop this event" (the old `continue`, which is
+        exactly what silently discarded WR17's two real REJECTED
+        webhooks — see WITHDRAWAL-E2E-02A). Every signature-valid entry
+        now produces an event, with normalized_status=None when
+        unrecognized — an honest "we don't know" the caller
+        (payout_orchestrator.py) must persist and route to MANUAL_REVIEW,
+        never guess a transition from.
         """
         sig = headers.get("x-nowpayments-sig", "")
         if not _np.verify_ipn_signature(raw_body, sig):
@@ -257,25 +456,50 @@ class NowPaymentsAdapter:
         except (json.JSONDecodeError, TypeError):
             return None
 
-        batch_id = str(data.get("id", ""))
         occurred_at = timezone.now()
-        events: list[ProviderPayoutEvent] = []
-        for wd in data.get("withdrawals", []):
-            raw_status = str(wd.get("status", "")).upper()
-            normalized = _RAW_STATUS_TO_NORMALIZED.get(raw_status)
-            if not normalized:
-                continue
-            events.append(ProviderPayoutEvent(
+
+        if isinstance(data.get("withdrawals"), list):
+            # Shape A — batch payload.
+            batch_id = str(data.get("id", ""))
+            events: list[ProviderPayoutEvent] = []
+            for wd in data["withdrawals"]:
+                raw_status = str(wd.get("status", "")).upper()
+                normalized = _RAW_STATUS_TO_NORMALIZED.get(raw_status)  # None if unrecognized — never dropped
+                events.append(ProviderPayoutEvent(
+                    provider=self.provider_name,
+                    provider_reference=str(wd.get("id", "")),
+                    provider_batch_id=batch_id,
+                    normalized_status=normalized,
+                    raw_status=raw_status,
+                    provider_amount=None,
+                    occurred_at=occurred_at,
+                    raw_event_payload=wd,
+                ))
+            return events
+
+        if "batch_withdrawal_id" in data and ("status" in data or "payout_status" in data):
+            # Shape B — individual/flat payload (the real async IPN shape).
+            raw_status = str(data.get("status") or data.get("payout_status") or "").upper()
+            normalized = _RAW_STATUS_TO_NORMALIZED.get(raw_status)  # None if unrecognized — never dropped
+            return [ProviderPayoutEvent(
                 provider=self.provider_name,
-                provider_reference=str(wd.get("id", "")),
-                provider_batch_id=batch_id,
+                provider_reference=str(data.get("id", "")),
+                provider_batch_id=str(data.get("batch_withdrawal_id", "")),
                 normalized_status=normalized,
                 raw_status=raw_status,
                 provider_amount=None,
                 occurred_at=occurred_at,
-                raw_event_payload=wd,
-            ))
-        return events
+                raw_event_payload=data,
+            )]
+
+        # Signature-valid but neither recognizable shape — do not invent
+        # a structure NowPayments didn't send. No events extracted, but
+        # (unlike a silent empty return) this is now visible in logs.
+        logger.warning(
+            "[NowPaymentsAdapter] signature-valid webhook body matched neither "
+            "the batch nor the individual/flat payout shape — 0 events extracted"
+        )
+        return []
 
 
 # ─────────────────────────────────────────────

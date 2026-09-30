@@ -28,13 +28,19 @@ def _mask(addr: str) -> str:
     return f"{addr[:6]}...{addr[-4:]}"
 
 
-def send_withdrawal_status_email(wr, event: str) -> None:
+def send_withdrawal_status_email(wr, event: str, *, confirmed_amount=None, tx_hash="") -> None:
     """
     Queue a withdrawal status notification to the withdrawal owner's email.
 
     wr    — WithdrawalRequest instance (must have .user, .amount_usd,
              .crypto_currency, .wallet_address, .id, .admin_note loaded)
     event — one of EVENT_* constants
+    confirmed_amount, tx_hash — WITHDRAWAL-E2E-02G FASE B, EVENT_COMPLETED
+             only. Both optional; when present they come from real
+             terminal provider evidence (never the pre-send estimate,
+             never a create/verify HTTP response) — see
+             payout_orchestrator._apply_result_without_refund(). Ignored
+             for every other event.
 
     Returns silently if Celery is down (caller wraps with try/except).
     """
@@ -94,14 +100,22 @@ def send_withdrawal_status_email(wr, event: str) -> None:
 
     elif event == EVENT_COMPLETED:
         subject = f"Retiro #{wr_id} completado — {_BRAND}"
+        # WITHDRAWAL-E2E-02G FASE B — confirmed_amount/tx_hash are the
+        # provider's own terminal-evidence figures, never the pre-send
+        # estimate. Lines are added only when present — an older/legacy
+        # completion with neither still gets the original message.
+        confirmed_line = f"  Cantidad enviada: {confirmed_amount} {currency}\n" if confirmed_amount is not None else ""
+        hash_line       = f"  TX hash:          {tx_hash}\n" if tx_hash else ""
         body = (
             f"Hola {username},\n\n"
             f"Tu retiro #{wr_id} fue enviado exitosamente.\n\n"
-            f"  Monto:     ${amount} USD\n"
-            f"  Moneda:    {currency}\n"
-            f"  Dirección: {addr}\n"
-            f"  Estado:    Completado\n"
-            f"  Fecha:     {now_str}\n\n"
+            f"  Monto solicitado: ${amount} USD\n"
+            f"  Moneda:           {currency}\n"
+            f"  Dirección:        {addr}\n"
+            f"{confirmed_line}"
+            f"{hash_line}"
+            f"  Estado:           Completado\n"
+            f"  Fecha:            {now_str}\n\n"
             f"— {_BRAND}"
         )
 

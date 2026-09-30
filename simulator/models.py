@@ -4233,6 +4233,30 @@ class PayoutAttempt(models.Model):
     completed_at    = models.DateTimeField(null=True, blank=True)
     failed_at       = models.DateTimeField(null=True, blank=True)
 
+    # WITHDRAWAL-E2E-02C — set the moment NowPayments' own Verify Payout
+    # endpoint (POST /v1/payout/{batch_id}/verify) confirms the provider-
+    # side 2FA code, via payout_orchestrator.submit_payout_verification().
+    # Never holds the code itself — only the fact and moment of a
+    # confirmed verification. Deliberately NOT a new PayoutAttempt.status
+    # value (see WITHDRAWAL-E2E-02C design report §F/G): status==PROCESSING
+    # already correctly represents "in flight, no terminal confirmation
+    # yet" whether or not provider-side verification is pending — this
+    # field only adds the one new, auditable fact ("did we already verify
+    # this batch") the admin UI needs to decide whether to show the
+    # Verify action, without touching ALLOWED_TRANSITIONS or
+    # derive_withdrawal_status() at all.
+    verified_at     = models.DateTimeField(null=True, blank=True)
+
+    # WITHDRAWAL-E2E-02G — set ONLY at the moment this attempt actually
+    # reaches STATUS_COMPLETED from real terminal provider evidence
+    # (webhook FINISHED or reconciliation GET FINISHED), from that same
+    # evidence's own payload — never from provider_amount (the pre-send
+    # estimate) and never from anything create_payout()/verify_payout()
+    # returned on their own. Both stay null for every other status,
+    # including a normal in-flight PROCESSING attempt.
+    confirmed_amount = models.DecimalField(max_digits=24, decimal_places=10, null=True, blank=True)
+    tx_hash          = models.CharField(max_length=128, blank=True, default="")
+
     last_error          = models.TextField(blank=True, default="")
     raw_provider_status  = models.CharField(max_length=40, blank=True, default="")
 

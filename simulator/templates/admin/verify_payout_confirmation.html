@@ -1,0 +1,94 @@
+{% extends "admin/base_site.html" %}
+{% block title %}Verify Payout — PayoutAttempt #{{ attempt.pk }}{% endblock %}
+{% block extrahead %}{{ block.super }}
+<style>
+:root{
+  --bg:#07070f;--panel:#0f0f1c;--panel2:#13131f;--border:#1e1e30;
+  --gold:#e8c84a;--bull:#27ae60;--bear:#e74c3c;--warn:#e67e22;--info:#3498db;
+  --text:#c8ccd8;--muted:#55556a;--r:8px;
+}
+#content{background:var(--bg)!important;color:var(--text);}
+#content h1{color:var(--gold);font-size:1.05rem;letter-spacing:.06em;margin:0;}
+
+.vp-header{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+  padding:14px 18px;margin-bottom:14px;}
+.vp-title{font-size:.95rem;font-weight:800;color:var(--warn);letter-spacing:.04em;}
+.vp-crumb{font-size:.65rem;color:var(--muted);margin-top:2px;text-transform:uppercase;letter-spacing:.06em;}
+
+.vp-summary{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+  padding:16px 18px;margin-bottom:16px;}
+.vp-summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px 20px;}
+.vp-summary .sm-label{font-size:.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;}
+.vp-summary .sm-val{font-size:.85rem;color:var(--text);font-weight:700;margin-top:2px;}
+
+.vp-bignotice{background:rgba(230,126,34,.08);border:2px solid var(--warn);border-radius:var(--r);
+  padding:18px 20px;margin-bottom:16px;text-align:center;}
+.vp-bignotice .line1{font-size:1.0rem;font-weight:800;color:var(--warn);letter-spacing:.01em;}
+.vp-bignotice .line2{font-size:.8rem;color:var(--text);margin-top:6px;}
+
+.vp-section{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);
+  padding:16px 18px;margin-bottom:14px;}
+.vp-field label{display:block;font-size:.72rem;font-weight:700;color:var(--text);margin-bottom:6px;}
+.vp-field input[type="text"]{
+  width:160px;background:var(--panel2);border:1px solid var(--border);color:var(--text);
+  border-radius:5px;padding:10px 12px;font-size:1.1rem;letter-spacing:.3em;text-align:center;
+  font-family:monospace;
+}
+.vp-field .vp-help{font-size:.65rem;color:var(--muted);margin-top:6px;}
+
+.vp-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:6px;}
+.vp-btn{display:inline-block;padding:8px 20px;border-radius:6px;font-size:.78rem;font-weight:700;
+  cursor:pointer;border:none;text-decoration:none;letter-spacing:.04em;transition:opacity .15s;}
+.vp-btn:hover{opacity:.85;}
+.vp-btn-warn{background:var(--warn);color:#1a0f00;}
+.vp-btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--border);}
+</style>
+{% endblock %}
+
+{% block content %}
+
+{% if messages %}{% for m in messages %}
+<div class="messagelist"><li class="{{ m.tags }}">{{ m }}</li></div>
+{% endfor %}{% endif %}
+
+<div class="vp-header">
+  <div class="vp-title">🔐 Verify Payout — PayoutAttempt #{{ attempt.pk }}</div>
+  <div class="vp-crumb">PAYOUTS › PayoutAttempt › #{{ attempt.pk }} › Verify</div>
+</div>
+
+<div class="vp-summary">
+  <div class="vp-summary-grid">
+    <div><div class="sm-label">Withdrawal</div><div class="sm-val">#{{ attempt.withdrawal_request_id }}</div></div>
+    <div><div class="sm-label">Payout ID</div><div class="sm-val">{{ attempt.provider_reference|default:"—" }}</div></div>
+    <div><div class="sm-label">Batch ID</div><div class="sm-val">{{ attempt.provider_batch_id|default:"—" }}</div></div>
+    <div><div class="sm-label">Status proveedor (crudo)</div><div class="sm-val">{{ attempt.raw_provider_status|default:"—" }}</div></div>
+    <div><div class="sm-label">Estado interno</div><div class="sm-val">{{ attempt.get_status_display }}</div></div>
+    <div><div class="sm-label">verified_at</div><div class="sm-val">{{ attempt.verified_at|default:"— (sin verificar)" }}</div></div>
+  </div>
+</div>
+
+<div class="vp-bignotice">
+  <div class="line1">Este código lo envía NowPayments por email — nunca a este sistema.</div>
+  <div class="line2">Introdúcelo exactamente como llegó. El código NUNCA se guarda ni se muestra de nuevo tras enviarlo.</div>
+</div>
+
+<form method="post" autocomplete="off">
+  {% csrf_token %}
+
+  <div class="vp-section">
+    <div class="vp-field">
+      <label for="id_verification_code">Código de verificación (6 dígitos)</label>
+      <input type="text" name="verification_code" id="id_verification_code"
+             maxlength="6" pattern="\d{6}" inputmode="numeric" autocomplete="off"
+             placeholder="______" required>
+      <div class="vp-help">Exactamente 6 dígitos, tal como lo recibiste de NowPayments por email.</div>
+    </div>
+  </div>
+
+  <div class="vp-actions">
+    <a href="{{ cancel_url }}" class="vp-btn vp-btn-ghost">Cancel</a>
+    <button type="submit" class="vp-btn vp-btn-warn">Verificar payout</button>
+  </div>
+</form>
+
+{% endblock %}

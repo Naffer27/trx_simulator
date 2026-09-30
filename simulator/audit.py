@@ -46,6 +46,16 @@ EV_WITHDRAW_AUTO_AUTHORIZED       = "withdrawal.auto_authorized"
 EV_WITHDRAW_PAYOUT_RETRY_TRIGGERED = "withdrawal.payout_retry_triggered"
 EV_WITHDRAW_REFUNDED = "withdrawal.refunded"
 
+# WITHDRAWAL-E2E-02C — NowPayments provider-side 2FA (Verify Payout).
+# EV_WITHDRAW_PAYOUT_VERIFIED is written exactly once, only after the
+# provider itself confirms the verification_code — detail NEVER includes
+# the code. EV_WITHDRAW_PAYOUT_VERIFICATION_FAILED records an attempted-
+# but-rejected verification (wrong/expired code, or a provider/network
+# error) — also never includes the code; this event alone never refunds
+# or changes PayoutAttempt.status, it is purely an audit trail entry.
+EV_WITHDRAW_PAYOUT_VERIFIED            = "withdrawal.payout_verified"
+EV_WITHDRAW_PAYOUT_VERIFICATION_FAILED = "withdrawal.payout_verification_failed"
+
 # MONEY-INTEGRITY-FIX-02 — Owner Root financial controls + Ops Admin
 # lifecycle. EV_OWNER_TRADING_ADJUSTMENT / EV_OWNER_WALLET_ADJUSTMENT are
 # written exactly once per completed owner_actions.* call (never on a

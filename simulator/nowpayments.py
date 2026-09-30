@@ -49,21 +49,31 @@ def _headers() -> dict:
 
 _PRIVATE_HOSTS = ("localhost", "127.0.0.1", "0.0.0.0", "::1")
 
-def _resolve_callback_url(generated_url: str) -> str | None:
+def _resolve_callback_url(generated_url: str, *, override_env_var: str = "NOWPAYMENTS_CALLBACK_URL") -> str | None:
     """
     Return the callback URL to send to NowPayments.
 
+    WITHDRAWAL-E2E-01B — override_env_var lets deposit and payout callers
+    configure independent overrides. Deposits (create_payment()) keep the
+    original default, NOWPAYMENTS_CALLBACK_URL, unchanged — zero behavior
+    change there. Payouts (create_payout_with_token()) pass
+    NOWPAYMENTS_PAYOUT_CALLBACK_URL instead, so a single ngrok tunnel
+    configured for deposit testing can no longer silently override the
+    correctly-generated withdrawal callback URL (see the WITHDRAWAL-E2E-01/
+    01B root-cause reports — this is exactly the bug that sent
+    WithdrawalRequest #13's payout with the deposit callback URL).
+
     Priority:
-      1. NOWPAYMENTS_CALLBACK_URL env var (set this to an ngrok/tunnel URL in dev)
+      1. `override_env_var` (set this to an ngrok/tunnel URL in dev)
       2. The Django-generated URL — but only if it's a public host.
          Localhost/127.0.0.1 URLs are silently dropped (NP rejects them with 500).
 
     Returns None when no usable URL is available, which causes the ipn_callback_url
     field to be omitted from the payload entirely.
     """
-    override = os.getenv("NOWPAYMENTS_CALLBACK_URL", "").strip()
+    override = os.getenv(override_env_var, "").strip()
     if override:
-        logger.info("[NP] using NOWPAYMENTS_CALLBACK_URL override: %s", override)
+        logger.info("[NP] using %s override: %s", override_env_var, override)
         return override
 
     host = urlparse(generated_url).hostname or ""
@@ -71,8 +81,8 @@ def _resolve_callback_url(generated_url: str) -> str | None:
         logger.warning(
             "[NP] callback URL %s is a private/localhost address — "
             "omitting ipn_callback_url from payload. "
-            "Set NOWPAYMENTS_CALLBACK_URL to an ngrok tunnel for dev testing.",
-            generated_url,
+            "Set %s to an ngrok tunnel for dev testing.",
+            generated_url, override_env_var,
         )
         return None
 
@@ -319,7 +329,12 @@ def create_payout_with_token(
       { id (batch_id), status, withdrawals: [{id, status, address, currency, amount}] }
     """
     np_code     = to_np_code(currency)
-    resolved_cb = _resolve_callback_url(callback_url)
+    # WITHDRAWAL-E2E-01B — payout callback override is independent from
+    # the deposit one (NOWPAYMENTS_CALLBACK_URL), so a tunnel configured
+    # for deposit testing can no longer silently replace the correctly
+    # generated withdrawal callback URL. See _resolve_callback_url()'s
+    # own docstring.
+    resolved_cb = _resolve_callback_url(callback_url, override_env_var="NOWPAYMENTS_PAYOUT_CALLBACK_URL")
 
     wd_entry: dict = {
         "address":  address,
@@ -349,6 +364,29 @@ def create_payout_with_token(
         timeout=30,
     )
     logger.info("[NP] ← payout HTTP %d body=%s", resp.status_code, resp.text[:500])
+    if not resp.ok:
+        # WITHDRAWAL-E2E-01B — narrow allowlist: ONLY the provider's own
+        # `code`/`message` fields, never the full body, never headers,
+        # never the JWT/api-key/payload. This is what ends up in
+        # PayoutAttempt.last_error via payout_providers.py's existing
+        # `reason=str(exc)` path — no change needed there or in
+        # payout_orchestrator.py, the exception class/classification is
+        # identical, only its message gains this detail. Body parse
+        # failure is swallowed — extracting diagnostic detail must never
+        # itself become a new failure mode.
+        detail = ""
+        try:
+            body = resp.json()
+            code = body.get("code", "") if isinstance(body, dict) else ""
+            message = body.get("message", "") if isinstance(body, dict) else ""
+            if code or message:
+                detail = f" — provider_code={code!r} provider_message={str(message)[:200]!r}"
+        except (ValueError, AttributeError):
+            pass
+        raise requests.exceptions.HTTPError(
+            f"{resp.status_code} Client/Server Error for url: {resp.url}{detail}",
+            response=resp,
+        )
     resp.raise_for_status()
     data      = resp.json()
     batch_wds = data.get("withdrawals", [])
@@ -359,6 +397,75 @@ def create_payout_with_token(
         batch_wds[0].get("id", "?") if batch_wds else "?",
         data.get("status", "?"),
     )
+    return data
+
+
+def verify_payout_with_token(batch_id: str, code: str, token: str) -> dict:
+    """
+    POST /v1/payout/{batch_id}/verify — confirm a payout batch with
+    NowPayments' own provider-side 2FA code (WITHDRAWAL-E2E-02C).
+
+    Endpoint confirmed against the official NowPaymentsIO Node.js SDK
+    (github.com/NowPaymentsIO/nowpayments-sdk-nodejs, src/client.js) —
+    see the WITHDRAWAL-E2E-02C design report for the full contract this
+    mirrors: uses the BATCH id (batch_withdrawal_id), never the
+    individual payout id; body field is exactly "verification_code".
+
+    CRITICAL — the verification code must NEVER be logged. Unlike
+    create_payout_with_token() (whose payload/response contain no
+    secret and are logged verbatim for diagnostics), this function logs
+    only method/URL/HTTP status — never the request body (which
+    contains the code) and never the response body (which could, in
+    principle, echo it back). This is the one deliberate asymmetry from
+    the create_payout_with_token() logging pattern in this file.
+
+    Never calls _get_jwt_token() itself — same "caller holds a single,
+    already-obtained token" contract as create_payout_with_token(), so
+    a caller can classify an auth failure separately from a verify-POST
+    failure (Design Lock Correction #5, same discipline).
+    """
+    resp = requests.post(
+        f"{_BASE}/payout/{batch_id}/verify",
+        headers={
+            "x-api-key":     _api_key(),
+            "Authorization": f"Bearer {token}",
+            "Content-Type":  "application/json",
+        },
+        json={"verification_code": code},
+        timeout=30,
+    )
+    # Deliberately NOT logging resp.text, and NOT extracting/logging any
+    # field from the error body here (unlike create_payout_with_token) —
+    # a "wrong code" error message from NowPayments could plausibly echo
+    # the submitted code back (e.g. "invalid code 123456"). Status code
+    # alone is enough for our own error classification; the response is
+    # still returned to the caller in memory (never logged) for the
+    # narrow case a non-secret field genuinely needs to be read there.
+    logger.info("[NP] ← payout verify HTTP %d batch_id=%s", resp.status_code, batch_id)
+    if not resp.ok:
+        raise requests.exceptions.HTTPError(
+            f"{resp.status_code} Client/Server Error for url: {resp.url}",
+            response=resp,
+        )
+    # WITHDRAWAL-E2E-02G FASE B — a 2xx here does not guarantee a JSON
+    # body: WR18's real verify call returned HTTP 200 with a body this
+    # SDK could not parse, which the pre-02G code let propagate as a
+    # generic exception — misclassified upstream as a failed
+    # verification when the provider had, in fact, accepted the code
+    # (confirmed by NowPayments' own update_history_log moving
+    # CREATING -> WAITING seconds later). We deliberately do NOT guess
+    # the real shape NowPayments didn't document — an unparseable 2xx
+    # body is reported as "accepted, response unreadable", never as an
+    # error, and never logged (same discipline as the JSON branch below).
+    try:
+        data = resp.json()
+    except ValueError:
+        logger.warning(
+            "[NP] payout verify HTTP 200 body not parseable as JSON batch_id=%s "
+            "— treating as accepted (2xx), response body discarded", batch_id,
+        )
+        return {"_unparseable_2xx_body": True}
+    logger.info("[NP] payout verify OK batch_id=%s", batch_id)
     return data
 
 

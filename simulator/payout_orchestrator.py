@@ -18,10 +18,11 @@ detected during correlation and delegated to the existing, completely
 unmodified handle_internal_payout_webhook().
 """
 import logging
+import re
 import time
 from dataclasses import dataclass
 from datetime import timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from django.db import IntegrityError, transaction
 from django.db.models import F
@@ -29,7 +30,8 @@ from django.utils import timezone
 
 from .audit import (
     EV_WITHDRAW_AGED_SUBMITTED_TO_UNKNOWN, EV_WITHDRAW_APPROVED, EV_WITHDRAW_COMPLETE,
-    EV_WITHDRAW_FAILED, EV_WITHDRAW_RECONCILIATION_RESOLVED, EV_WITHDRAW_REFUNDED,
+    EV_WITHDRAW_FAILED, EV_WITHDRAW_PAYOUT_VERIFICATION_FAILED, EV_WITHDRAW_PAYOUT_VERIFIED,
+    EV_WITHDRAW_RECONCILIATION_RESOLVED, EV_WITHDRAW_REFUNDED,
     EV_WITHDRAW_WEBHOOK_MANUAL_REVIEW, log_audit,
 )
 from .models import (
@@ -206,12 +208,134 @@ def submit_withdrawal_to_provider(withdrawal_request, *, adapter, actor, callbac
     return {"outcome": "processing", "attempt_id": attempt.pk}
 
 
+class PayoutVerificationError(Exception):
+    """WITHDRAWAL-E2E-02C — raised by submit_payout_verification() for a
+    LOCAL precondition failure (bad code format, terminal attempt,
+    already verified, missing batch id) — before the provider is ever
+    called. Distinct from ProviderError subclasses, which represent a
+    failure that DID reach (or ambiguously may have reached) NowPayments."""
+
+
+def submit_payout_verification(attempt_id, code, *, actor=None, request=None):
+    """
+    WITHDRAWAL-E2E-02C — confirms NowPayments' own provider-side 2FA
+    code (POST /v1/payout/{batch_id}/verify) for a PayoutAttempt that
+    create_payout() already submitted successfully.
+
+    Design Lock (WITHDRAWAL-E2E-02C report, §H): this function NEVER
+    touches Wallet, NEVER calls create_payout() (structurally impossible
+    — it only ever calls adapter.verify_payout()), and NEVER refunds. A
+    wrong/expired code, or any provider/network error on this call, just
+    means "nothing changed — try again, or wait for the provider's own
+    terminal webhook/reconciliation signal" (WITHDRAWAL-E2E-02B's
+    already-existing, unmodified refund engine remains the EXCLUSIVE
+    path that ever credits money back, driven only by a confirmed
+    terminal FAILED signal — never by a verification attempt failing
+    here).
+
+    Lock order: PayoutAttempt only — no Wallet, no WithdrawalRequest
+    lock, because this function writes neither of those models. The
+    provider HTTP call is deliberately made WHILE HOLDING the
+    PayoutAttempt row lock (a deliberate, narrow exception to this
+    codebase's usual "never hold atomic() open around HTTP" discipline
+    — see submit_withdrawal_to_provider() above): unlike that function,
+    there is no Wallet/WithdrawalRequest lock chain here to worry about
+    holding open, this is a single fast POST, and holding the row lock
+    for its duration is exactly what makes a concurrent double-click
+    "Verify" safe — the second caller blocks on the same row, then
+    re-reads under lock and finds verified_at already set, never
+    reaching the provider a second time.
+
+    CRITICAL: `code` is a local variable only — it is validated, passed
+    straight through to adapter.verify_payout(), and never assigned to
+    any model field, never included in any log_audit() detail, and goes
+    out of scope the moment this function returns (success or failure).
+
+    Raises PayoutVerificationError for any local precondition failure.
+    Raises a normalized ProviderError subclass (see payout_providers.py)
+    if the provider call itself fails — callers should catch broadly
+    (`except (PayoutVerificationError, ProviderError)`) and show the
+    admin a single generic message, never provider-specific detail that
+    could hint at what the correct code might be.
+    """
+    code = str(code or "").strip()
+    if not re.fullmatch(r"\d{6}", code):
+        raise PayoutVerificationError("El código de verificación debe tener exactamente 6 dígitos.")
+
+    # WITHDRAWAL-E2E-02G FASE B — the ProviderError audit write used to
+    # live inside this same transaction.atomic() block, right before the
+    # `raise` that necessarily propagates out of it. An exception leaving
+    # atomic() rolls back the ENTIRE transaction, including that audit
+    # INSERT — so a real, confirmed provider verification failure left
+    # zero AuditLog trace, even though the logger.info() line (a plain
+    # Python log call, not a DB write) made it look like it had been
+    # recorded (WITHDRAWAL-E2E-02F, observed on WR18). The audit write
+    # now happens in this outer except, strictly after the atomic block
+    # has already rolled back — nothing here touches Wallet, sets no
+    # PayoutAttempt field, and never turns this into a terminal payout
+    # failure (that remains exclusively the refund engine's call, driven
+    # only by a confirmed terminal FAILED signal from webhook/reconciliation).
+    try:
+        with transaction.atomic():
+            attempt = PayoutAttempt.objects.select_for_update().get(pk=attempt_id)
+
+            if attempt.status in PayoutAttempt.TERMINAL_STATUSES:
+                raise PayoutVerificationError(
+                    f"PayoutAttempt #{attempt.pk} ya está en estado terminal ({attempt.status}) — nada que verificar."
+                )
+            if attempt.verified_at is not None:
+                raise PayoutVerificationError(
+                    f"PayoutAttempt #{attempt.pk} ya fue verificado el {attempt.verified_at.isoformat()}."
+                )
+            if not attempt.provider_batch_id:
+                raise PayoutVerificationError(
+                    f"PayoutAttempt #{attempt.pk} no tiene provider_batch_id todavía — nada que verificar."
+                )
+
+            adapter = get_adapter_for_provider(attempt.provider)
+            adapter.verify_payout(attempt, code)  # raises ProviderError on failure
+
+            now = timezone.now()
+            PayoutAttempt.objects.filter(pk=attempt.pk).update(verified_at=now)
+            attempt.verified_at = now
+    except ProviderError as exc:
+        # Local precondition checks above already ran; a provider-side
+        # failure here leaves the attempt completely untouched (nothing
+        # was written — the transaction rolled back with nothing to
+        # lose). Audited without the code, durably, outside the rolled-
+        # back transaction — then re-raised so the caller (the admin
+        # view) can show a generic message.
+        log_audit(
+            request, EV_WITHDRAW_PAYOUT_VERIFICATION_FAILED,
+            f"PayoutAttempt #{attempt_id} provider verification failed",
+            detail={
+                "payout_attempt_id": attempt_id,
+                "withdrawal_id": getattr(attempt, "withdrawal_request_id", None),
+                "provider_batch_id": getattr(attempt, "provider_batch_id", ""),
+                "error_type": type(exc).__name__,
+            },
+        )
+        raise
+
+    log_audit(
+        request, EV_WITHDRAW_PAYOUT_VERIFIED,
+        f"PayoutAttempt #{attempt.pk} provider-side verification confirmed",
+        detail={
+            "payout_attempt_id": attempt.pk,
+            "withdrawal_id": attempt.withdrawal_request_id,
+            "provider_batch_id": attempt.provider_batch_id,
+            "verified_by": getattr(actor, "username", None) or "unknown",
+        },
+    )
+    return attempt
+
+
 # ─────────────────────────────────────────────
 # 2. TXN2 appliers — non-refund and refund paths
 # ─────────────────────────────────────────────
 
 def _apply_result_without_refund(attempt_id, new_status, *, reason="", raw_provider_status="",
-                                  actor=None, request=None):
+                                  confirmed_amount=None, tx_hash="", actor=None, request=None):
     """
     Lock order: WithdrawalRequest -> PayoutAttempt. No Wallet.
 
@@ -226,6 +350,15 @@ def _apply_result_without_refund(attempt_id, new_status, *, reason="", raw_provi
     skips the post-transaction block entirely — no email/audit on a
     no-op). reconciled_at is set only when the attempt is actually
     leaving UNKNOWN by real evidence — never touched otherwise.
+
+    WITHDRAWAL-E2E-02G FASE B — confirmed_amount/tx_hash are optional
+    and only ever meaningful when new_status == STATUS_COMPLETED; both
+    callers reaching COMPLETED (webhook FINISHED, reconciliation GET
+    FINISHED) pass them straight from that same terminal evidence's own
+    payload (never from provider_amount, the pre-send estimate, and
+    never from a create_payout()/verify_payout() return value — neither
+    of those calls this function with STATUS_COMPLETED at all). Ignored
+    for every other new_status.
     """
     with transaction.atomic():
         wr_id = PayoutAttempt.objects.values_list("withdrawal_request_id", flat=True).get(pk=attempt_id)
@@ -240,6 +373,12 @@ def _apply_result_without_refund(attempt_id, new_status, *, reason="", raw_provi
             now = timezone.now()
             PayoutAttempt.objects.filter(pk=attempt.pk).update(reconciled_at=now)
             attempt.reconciled_at = now
+        if new_status == PayoutAttempt.STATUS_COMPLETED and (confirmed_amount is not None or tx_hash):
+            PayoutAttempt.objects.filter(pk=attempt.pk).update(
+                confirmed_amount=confirmed_amount, tx_hash=tx_hash,
+            )
+            attempt.confirmed_amount = confirmed_amount
+            attempt.tx_hash = tx_hash
 
         # WITHDRAWAL-ECONOMICS-01 — the single certified call site: fires
         # exactly when a withdrawal genuinely reaches COMPLETED, inside
@@ -260,9 +399,16 @@ def _apply_result_without_refund(attempt_id, new_status, *, reason="", raw_provi
         log_audit(
             request, EV_WITHDRAW_COMPLETE,
             f"Withdrawal #{wr.id} COMPLETED — payout attempt #{attempt.pk}",
-            detail={"withdrawal_id": wr.id, "payout_attempt_id": attempt.pk, "amount_usd": str(wr.amount_usd)},
+            detail={
+                "withdrawal_id": wr.id, "payout_attempt_id": attempt.pk, "amount_usd": str(wr.amount_usd),
+                "confirmed_amount": str(confirmed_amount) if confirmed_amount is not None else None,
+                "tx_hash": tx_hash or None,
+            },
         )
-        _send_status_email_safe(wr, "completed")
+        _send_status_email_safe(
+            wr, "completed",
+            confirmed_amount=attempt.confirmed_amount, tx_hash=attempt.tx_hash,
+        )
     return attempt
 
 
@@ -349,13 +495,15 @@ def _apply_confirmed_failure_with_refund(attempt_id, *, reason, pre_send_rejecti
     return attempt
 
 
-def _send_status_email_safe(wr, event_key):
+def _send_status_email_safe(wr, event_key, *, confirmed_amount=None, tx_hash=""):
     from .withdrawal_emails import (
         EVENT_APPROVED, EVENT_COMPLETED, EVENT_FAILED, send_withdrawal_status_email,
     )
     _events = {"approved": EVENT_APPROVED, "completed": EVENT_COMPLETED, "failed": EVENT_FAILED}
     try:
-        send_withdrawal_status_email(wr, _events[event_key])
+        send_withdrawal_status_email(
+            wr, _events[event_key], confirmed_amount=confirmed_amount, tx_hash=tx_hash,
+        )
     except Exception as mail_exc:
         logger.warning("[payout_orchestrator] email queuing failed wr=%d event=%s: %s", wr.id, event_key, mail_exc)
 
@@ -463,6 +611,19 @@ def apply_provider_webhook_event(event: ProviderPayoutEvent, *, request=None):
     if isinstance(target, Orphan):
         logger.warning("[payout_orchestrator] orphan webhook — %s | event=%r", target.reason, event)
         return target
+    if event.normalized_status is None:
+        # WITHDRAWAL-E2E-02B — signature-valid, but raw_status isn't in
+        # this adapter's recognized vocabulary. Never guess a financial
+        # transition from an unknown status — this direct-path applier
+        # has no durable PayoutWebhookEvent row to route to MANUAL_REVIEW
+        # (see process_webhook_event() for that), so it simply never
+        # touches PayoutAttempt/WithdrawalRequest/Wallet and logs for
+        # visibility.
+        logger.warning(
+            "[payout_orchestrator] unrecognized raw_status=%r — no transition attempted | event=%r",
+            event.raw_status, event,
+        )
+        return target
     if isinstance(target, FundedInternalMatch):
         _apply_funded_internal_webhook(target.withdrawal_request, event)
         return target
@@ -487,11 +648,45 @@ def _apply_attempt_webhook(attempt, event: ProviderPayoutEvent, *, request=None)
             attempt.pk, reason=f"provider callback: {event.raw_status}",
             pre_send_rejection=False, raw_provider_status=event.raw_status, request=request,
         )
+    elif event.normalized_status == PayoutAttempt.STATUS_COMPLETED:
+        # WITHDRAWAL-E2E-02G FASE B — a FINISHED webhook (batch or flat
+        # shape, see parse_webhook()) carries the provider's own
+        # confirmed amount/hash in this event's own raw sub-payload.
+        # Extraction is best-effort and never raises: a missing/odd
+        # field just leaves confirmed_amount/tx_hash unset, it never
+        # blocks the actual COMPLETED transition.
+        confirmed_amount, tx_hash = _extract_confirmed_amount_and_hash(event.raw_event_payload)
+        result_attempt = _apply_result_without_refund(
+            attempt.pk, event.normalized_status, raw_provider_status=event.raw_status,
+            confirmed_amount=confirmed_amount, tx_hash=tx_hash, request=request,
+        )
     else:
         result_attempt = _apply_result_without_refund(
             attempt.pk, event.normalized_status, raw_provider_status=event.raw_status, request=request,
         )
     return result_attempt
+
+
+def _extract_confirmed_amount_and_hash(raw_payload: dict):
+    """
+    WITHDRAWAL-E2E-02G FASE B — best-effort, never-raising extraction of
+    the provider's own confirmed amount/hash from a raw payout payload
+    (a webhook's raw_event_payload or a lookup_payout()'s raw_metadata —
+    both mirror the same NowPayments payout object shape, confirmed
+    against the official SDK's normalizePayout(): "amount", "hash" at
+    the payload's own top level). Returns (None, "") on anything
+    missing or unparseable — never fabricates a value.
+    """
+    raw_payload = raw_payload or {}
+    amount = None
+    raw_amount = raw_payload.get("amount")
+    if raw_amount not in (None, ""):
+        try:
+            amount = Decimal(str(raw_amount))
+        except (InvalidOperation, ValueError, TypeError):
+            amount = None
+    tx_hash = str(raw_payload.get("hash") or "")
+    return amount, tx_hash
 
 
 def _apply_funded_internal_webhook(wr, event: ProviderPayoutEvent):
@@ -600,7 +795,13 @@ def get_or_create_webhook_event(event: ProviderPayoutEvent):
                 provider_reference=event.provider_reference,
                 provider_batch_id=event.provider_batch_id,
                 raw_status=event.raw_status,
-                normalized_status=event.normalized_status,
+                # WITHDRAWAL-E2E-02B — the model field is non-nullable
+                # (blank=True, default=""); event.normalized_status is
+                # None for an unrecognized raw_status (see
+                # payout_providers.py::parse_webhook()) — persisted as
+                # "" here, same "blank == not set" convention every
+                # other field on this model already uses.
+                normalized_status=event.normalized_status or "",
                 raw_payload=event.raw_event_payload,
             )
             return row, True
@@ -616,7 +817,11 @@ def _to_provider_event(webhook_event: PayoutWebhookEvent) -> ProviderPayoutEvent
         provider=webhook_event.provider,
         provider_reference=webhook_event.provider_reference,
         provider_batch_id=webhook_event.provider_batch_id,
-        normalized_status=webhook_event.normalized_status,
+        # WITHDRAWAL-E2E-02B — inverse of get_or_create_webhook_event()'s
+        # `or ""` on write: "" on the model means "was None" (unrecognized
+        # at persistence time), reconstructed as None here so replay sees
+        # the exact same honest signal the live path saw.
+        normalized_status=webhook_event.normalized_status or None,
         raw_status=webhook_event.raw_status,
         provider_amount=None,
         occurred_at=webhook_event.received_at,
@@ -722,17 +927,34 @@ def process_webhook_event(event_id, *, request=None):
         _mark_webhook_event_unresolved(event_id, last_error=target.reason, bump_retry=True)
         return webhook_event, target
 
+    event = _to_provider_event(webhook_event)
+    if event.normalized_status is None:
+        # WITHDRAWAL-E2E-02B — signature-valid webhook, correlated to a
+        # real target, but raw_status isn't in our recognized
+        # vocabulary (e.g. a future NowPayments status we've never seen
+        # — this exact gap silently dropped WR17's two real REJECTED
+        # webhooks before this block). Never guess a financial
+        # transition: route straight to MANUAL_REVIEW — same
+        # non-retryable path already used for Ambiguous/
+        # DataIntegrityViolation — and skip TXN2 entirely, so the event
+        # never gets marked RESOLVED while genuinely unactioned.
+        logger.warning(
+            "[payout_orchestrator] webhook event #%d has unrecognized raw_status=%r — "
+            "MANUAL_REVIEW, no transition attempted", event_id, webhook_event.raw_status,
+        )
+        _mark_webhook_event_unresolved(
+            event_id, last_error=f"unrecognized provider status: {webhook_event.raw_status!r}",
+            bump_retry=False,
+        )
+        return webhook_event, target
+
     attempt_for_fk = None
     if isinstance(target, FundedInternalMatch):
-        _apply_funded_internal_webhook(target.withdrawal_request, _to_provider_event(webhook_event))
+        _apply_funded_internal_webhook(target.withdrawal_request, event)
     elif isinstance(target, LegacyWithdrawalMatch):
-        _apply_legacy_withdrawal_webhook(
-            target.withdrawal_request, _to_provider_event(webhook_event), request=request,
-        )
+        _apply_legacy_withdrawal_webhook(target.withdrawal_request, event, request=request)
     elif isinstance(target, AttemptMatch):
-        attempt_for_fk = _apply_attempt_webhook(
-            target.attempt, _to_provider_event(webhook_event), request=request,
-        )
+        attempt_for_fk = _apply_attempt_webhook(target.attempt, event, request=request)
 
     # TXN2 — mark RESOLVED. A guarded UPDATE (WHERE on current status)
     # is itself atomic/check-and-set — no separate select_for_update
@@ -832,51 +1054,155 @@ def reconcile_unknown_payout_attempts(*, batch_size=100, actor=None, request=Non
 
         lookup_result = adapter.lookup_payout(attempt)
         PayoutAttempt.objects.filter(pk=attempt_id).update(reconciliation_checked_at=timezone.now())
-        outcome = lookup_result.outcome
 
-        if outcome == PayoutLookupOutcome.FOUND_PROCESSING:
-            _apply_result_without_refund(
-                attempt_id, PayoutAttempt.STATUS_PROCESSING,
-                raw_provider_status=lookup_result.raw_provider_status, actor=actor, request=request,
-            )
+        if _apply_lookup_outcome(attempt_id, lookup_result, from_label="UNKNOWN", actor=actor, request=request):
             result["resolved"] += 1
-            log_audit(
-                request, EV_WITHDRAW_RECONCILIATION_RESOLVED,
-                f"PayoutAttempt #{attempt_id} reconciled UNKNOWN -> PROCESSING",
-                detail={"payout_attempt_id": attempt_id, "outcome": outcome.value},
-            )
-        elif outcome == PayoutLookupOutcome.FOUND_COMPLETED:
-            _apply_result_without_refund(
-                attempt_id, PayoutAttempt.STATUS_COMPLETED,
-                raw_provider_status=lookup_result.raw_provider_status, actor=actor, request=request,
-            )
-            result["resolved"] += 1
-            log_audit(
-                request, EV_WITHDRAW_RECONCILIATION_RESOLVED,
-                f"PayoutAttempt #{attempt_id} reconciled UNKNOWN -> COMPLETED",
-                detail={"payout_attempt_id": attempt_id, "outcome": outcome.value},
-            )
-        elif outcome == PayoutLookupOutcome.FOUND_FAILED:
-            _apply_confirmed_failure_with_refund(
-                attempt_id, reason="reconciliation: provider confirms FAILED",
-                pre_send_rejection=False, raw_provider_status=lookup_result.raw_provider_status,
-                actor=actor, request=request,
-            )
-            result["resolved"] += 1
-            log_audit(
-                request, EV_WITHDRAW_RECONCILIATION_RESOLVED,
-                f"PayoutAttempt #{attempt_id} reconciled UNKNOWN -> FAILED (refunded exactly once)",
-                detail={"payout_attempt_id": attempt_id, "outcome": outcome.value},
-            )
         else:
-            # NOT_FOUND / UNAVAILABLE / AMBIGUOUS / UNSUPPORTED — stays
-            # UNKNOWN, zero mutation. Deliberately not logged via
-            # log_audit (would spam AuditLog every cycle for an
-            # unresolved attempt) — logger only.
             result["still_unknown"] += 1
+
+    return result
+
+
+def _apply_lookup_outcome(attempt_id, lookup_result, *, from_label: str, actor=None, request=None) -> bool:
+    """
+    WITHDRAWAL-E2E-02G FASE B — the outcome-dispatch logic shared by
+    both active-reconciliation callers (UNKNOWN's existing step 2, and
+    PROCESSING's new step 3 below): given a lookup_payout() result,
+    apply the matching PayoutAttempt transition through the same
+    authoritative appliers used everywhere else, or leave the attempt
+    untouched. Returns True if the attempt was resolved (moved out of
+    its prior status), False otherwise (caller decides what counter
+    that maps to). from_label only affects audit message text.
+    """
+    outcome = lookup_result.outcome
+
+    if outcome == PayoutLookupOutcome.FOUND_PROCESSING:
+        # WITHDRAWAL-E2E-02G FASE B — ALLOWED_TRANSITIONS[PROCESSING] has
+        # no PROCESSING -> PROCESSING self-loop (deliberate — see
+        # WITHDRAWAL-E2E-02C's design report). UNKNOWN -> PROCESSING is a
+        # real, allowed transition (this branch's original purpose); but
+        # this same branch is now also reached from
+        # reconcile_processing_payout_attempts(), where "provider still
+        # says processing" for an attempt ALREADY processing is not a
+        # transition at all — it's confirmation that nothing changed.
+        # Skip the transition call entirely in that case rather than
+        # crash on an invalid same-status transition.
+        current_status = PayoutAttempt.objects.filter(pk=attempt_id).values_list("status", flat=True).first()
+        if current_status == PayoutAttempt.STATUS_PROCESSING:
             logger.info(
-                "[payout_orchestrator] UNKNOWN attempt #%d reconciliation outcome=%s — staying UNKNOWN",
-                attempt_id, outcome.value,
+                "[payout_orchestrator] %s attempt #%d still PROCESSING per provider — no change",
+                from_label, attempt_id,
             )
+            return False
+        _apply_result_without_refund(
+            attempt_id, PayoutAttempt.STATUS_PROCESSING,
+            raw_provider_status=lookup_result.raw_provider_status, actor=actor, request=request,
+        )
+        log_audit(
+            request, EV_WITHDRAW_RECONCILIATION_RESOLVED,
+            f"PayoutAttempt #{attempt_id} reconciled {from_label} -> PROCESSING",
+            detail={"payout_attempt_id": attempt_id, "outcome": outcome.value},
+        )
+        return True
+
+    if outcome == PayoutLookupOutcome.FOUND_COMPLETED:
+        confirmed_amount, tx_hash = _extract_confirmed_amount_and_hash(lookup_result.raw_metadata)
+        _apply_result_without_refund(
+            attempt_id, PayoutAttempt.STATUS_COMPLETED,
+            raw_provider_status=lookup_result.raw_provider_status,
+            confirmed_amount=confirmed_amount, tx_hash=tx_hash, actor=actor, request=request,
+        )
+        log_audit(
+            request, EV_WITHDRAW_RECONCILIATION_RESOLVED,
+            f"PayoutAttempt #{attempt_id} reconciled {from_label} -> COMPLETED",
+            detail={"payout_attempt_id": attempt_id, "outcome": outcome.value},
+        )
+        return True
+
+    if outcome == PayoutLookupOutcome.FOUND_FAILED:
+        _apply_confirmed_failure_with_refund(
+            attempt_id, reason="reconciliation: provider confirms FAILED",
+            pre_send_rejection=False, raw_provider_status=lookup_result.raw_provider_status,
+            actor=actor, request=request,
+        )
+        log_audit(
+            request, EV_WITHDRAW_RECONCILIATION_RESOLVED,
+            f"PayoutAttempt #{attempt_id} reconciled {from_label} -> FAILED (refunded exactly once)",
+            detail={"payout_attempt_id": attempt_id, "outcome": outcome.value},
+        )
+        return True
+
+    # NOT_FOUND / UNAVAILABLE / AMBIGUOUS / UNSUPPORTED — stays as-is,
+    # zero mutation. Deliberately not logged via log_audit (would spam
+    # AuditLog every cycle for an unresolved attempt) — logger only.
+    logger.info(
+        "[payout_orchestrator] %s attempt #%d reconciliation outcome=%s — no change",
+        from_label, attempt_id, outcome.value,
+    )
+    return False
+
+
+def reconcile_processing_payout_attempts(*, batch_size=100, actor=None, request=None):
+    """
+    WITHDRAWAL-E2E-02G FASE B — active GET reconciliation for
+    PayoutAttempts already in PROCESSING (item 3 of the FASE A design).
+    Distinct from reconcile_unknown_payout_attempts(): that function
+    only ever rescues STATUS_UNKNOWN, which left a genuinely-in-flight,
+    genuinely-successful attempt like WR18's (webhook never correlated,
+    reconciliation never eligible) with no automatic path back to
+    COMPLETED at all.
+
+    Eligibility, all three required: status == PROCESSING,
+    provider_reference is set (nothing to look up otherwise), and
+    updated_at is older than PAYOUT_PROCESSING_AGED_RECONCILE_SECONDS —
+    the same "never race a payout that might still be legitimately in
+    flight" discipline as the SUBMITTED->UNKNOWN aging step, sized well
+    above WR18's real end-to-end cycle (~3 minutes).
+
+    NEVER creates a PayoutAttempt. NEVER calls adapter.create_payout().
+    NEVER refunds except through _apply_confirmed_failure_with_refund's
+    own confirmed-FAILED path. Reuses the exact same lookup_payout() /
+    outcome dispatch as UNKNOWN reconciliation (_apply_lookup_outcome) —
+    same idempotent TERMINAL_STATUSES guard, so a webhook and this
+    reconciliation racing on the same attempt can never double-apply.
+    """
+    from django.conf import settings as _settings
+
+    now = timezone.now()
+    threshold = _settings.PAYOUT_PROCESSING_AGED_RECONCILE_SECONDS
+    result = {"checked": 0, "resolved": 0, "still_processing": 0}
+
+    processing_ids = list(
+        PayoutAttempt.objects.filter(
+            status=PayoutAttempt.STATUS_PROCESSING,
+        ).exclude(provider_reference="").filter(
+            updated_at__lte=now - timedelta(seconds=threshold),
+        ).order_by(F("reconciliation_checked_at").asc(nulls_first=True))
+        .values_list("pk", flat=True)[:batch_size]
+    )
+    for attempt_id in processing_ids:
+        attempt = PayoutAttempt.objects.get(pk=attempt_id)
+        adapter = get_adapter_for_provider(attempt.provider)
+        capable = any(
+            adapter.capabilities.get(k, False)
+            for k in (
+                "supports_lookup_by_provider_reference",
+                "supports_lookup_by_provider_request_id",
+                "supports_lookup_by_batch",
+            )
+        )
+        result["checked"] += 1
+        if not capable:
+            PayoutAttempt.objects.filter(pk=attempt_id).update(reconciliation_checked_at=timezone.now())
+            result["still_processing"] += 1
+            continue
+
+        lookup_result = adapter.lookup_payout(attempt)
+        PayoutAttempt.objects.filter(pk=attempt_id).update(reconciliation_checked_at=timezone.now())
+
+        if _apply_lookup_outcome(attempt_id, lookup_result, from_label="PROCESSING", actor=actor, request=request):
+            result["resolved"] += 1
+        else:
+            result["still_processing"] += 1
 
     return result

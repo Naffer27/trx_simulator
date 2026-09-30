@@ -3124,7 +3124,10 @@ def withdraw_otp_verify_view(request):
 @login_required
 def withdraw_history_view(request):
     wallet, _   = get_or_create_wallet(request.user)
-    withdrawals = WithdrawalRequest.objects.filter(user=request.user)
+    # WITHDRAWAL-E2E-02G FASE B — prefetch so the template can read each
+    # withdrawal's PayoutAttempt (confirmed_amount/tx_hash) without an
+    # extra query per row.
+    withdrawals = WithdrawalRequest.objects.filter(user=request.user).prefetch_related("payout_attempts")
     return render(request, "simulator/withdraw_history.html", {
         "wallet":         wallet,
         "withdrawals":    withdrawals,

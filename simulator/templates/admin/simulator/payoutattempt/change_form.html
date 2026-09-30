@@ -1,0 +1,48 @@
+{% extends "admin/change_form.html" %}
+{% block object-tools-items %}
+  {% if show_verify_payout_button %}
+  <li>
+    <a href="{{ verify_payout_url }}" class="historylink"
+       style="background:rgba(230,126,34,.15);color:#e67e22;border:2px solid rgba(230,126,34,.5);
+              border-radius:4px;padding:5px 14px;font-size:.75rem;font-weight:800;
+              text-decoration:none;letter-spacing:.04em;">
+      🔐 Verify Payout →
+    </a>
+  </li>
+  {% endif %}
+  {{ block.super }}
+{% endblock %}
+
+{% block object-tools %}
+{{ block.super }}
+{% if change and show_verify_payout_button %}
+  <div style="background:#0f0f1c;border:1px solid rgba(230,126,34,.4);border-radius:8px;
+              padding:14px 18px;margin:0 0 14px 0;">
+    <div style="font-size:.85rem;font-weight:800;color:#e67e22;letter-spacing:.04em;margin-bottom:8px;">
+      ⏱ AWAITING PROVIDER VERIFICATION
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px 20px;">
+      <div>
+        <div style="font-size:.62rem;color:#55556a;text-transform:uppercase;letter-spacing:.06em;">Payout ID</div>
+        <div style="font-size:.85rem;color:#c8ccd8;font-weight:700;margin-top:2px;">{{ original.provider_reference|default:"—" }}</div>
+      </div>
+      <div>
+        <div style="font-size:.62rem;color:#55556a;text-transform:uppercase;letter-spacing:.06em;">Batch ID</div>
+        <div style="font-size:.85rem;color:#c8ccd8;font-weight:700;margin-top:2px;">{{ original.provider_batch_id|default:"—" }}</div>
+      </div>
+      <div>
+        <div style="font-size:.62rem;color:#55556a;text-transform:uppercase;letter-spacing:.06em;">Status proveedor</div>
+        <div style="font-size:.85rem;color:#c8ccd8;font-weight:700;margin-top:2px;">{{ original.raw_provider_status|default:"—" }}</div>
+      </div>
+    </div>
+    <div style="margin-top:12px;text-align:right;">
+      <a href="{{ verify_payout_url }}"
+         style="display:inline-block;background:rgba(230,126,34,.15);color:#e67e22;
+                border:2px solid rgba(230,126,34,.5);border-radius:6px;padding:6px 16px;
+                font-size:.75rem;font-weight:800;text-decoration:none;letter-spacing:.04em;">
+        Introducir código de verificación
+      </a>
+    </div>
+  </div>
+{% endif %}
+{% endblock %}

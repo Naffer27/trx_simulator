@@ -228,13 +228,28 @@ def reconcile_unknown_payouts_task(self, batch_size: int = 100) -> dict:
     through the same confirmed-FAILED path already used everywhere
     else. See payout_orchestrator.reconcile_unknown_payout_attempts().
     """
-    from .payout_orchestrator import reconcile_unknown_payout_attempts
+    from .payout_orchestrator import (
+        reconcile_processing_payout_attempts, reconcile_unknown_payout_attempts,
+    )
 
     result = reconcile_unknown_payout_attempts(batch_size=batch_size)
     logger.info(
         "[reconcile_unknown_payouts] aged_to_unknown=%d checked=%d resolved=%d still_unknown=%d",
         result["aged_to_unknown"], result["checked"], result["resolved"], result["still_unknown"],
     )
+
+    # WITHDRAWAL-E2E-02G FASE B — same task, second independent step:
+    # active GET reconciliation for attempts stuck in PROCESSING past
+    # PAYOUT_PROCESSING_AGED_RECONCILE_SECONDS (WR18's real defect — a
+    # genuinely-FINISHED payout with no webhook ever correlated had no
+    # automatic path back to COMPLETED before this). Reported as its own
+    # sub-dict so the two reconciliation surfaces stay distinguishable.
+    processing_result = reconcile_processing_payout_attempts(batch_size=batch_size)
+    logger.info(
+        "[reconcile_unknown_payouts] processing: checked=%d resolved=%d still_processing=%d",
+        processing_result["checked"], processing_result["resolved"], processing_result["still_processing"],
+    )
+    result["processing"] = processing_result
     return result
 
 

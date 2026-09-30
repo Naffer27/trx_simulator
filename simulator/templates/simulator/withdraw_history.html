@@ -146,7 +146,7 @@
           <th>Monto</th>
           <th>Cripto</th>
           <th>Dirección</th>
-          <th>Cripto enviado</th>
+          <th>Cripto</th>
           <th>Status</th>
         </tr>
       </thead>
@@ -166,9 +166,17 @@
           </td>
           <td class="addr-cell" title="{{ wr.wallet_address }}">{{ wr.wallet_address }}</td>
           <td style="font-size:.78rem;color:#787b86;">
-            {% if wr.crypto_amount %}
-              {{ wr.crypto_amount }} {{ wr.crypto_currency|upper }}
-            {% else %}—{% endif %}
+            {% with attempt=wr.payout_attempts.all|first %}
+              {% if wr.status == "completed" and attempt.confirmed_amount %}
+                <span style="color:#00e676;font-weight:600;">{{ attempt.confirmed_amount }} {{ wr.crypto_currency|upper }}</span>
+                {% if attempt.tx_hash %}
+                <br><span style="font-family:monospace;font-size:.66rem;color:#55556a;" title="{{ attempt.tx_hash }}">{{ attempt.tx_hash|truncatechars:18 }}</span>
+                {% endif %}
+              {% elif wr.crypto_amount %}
+                {{ wr.crypto_amount }} {{ wr.crypto_currency|upper }}
+                <br><span style="font-size:.62rem;color:#55556a;text-transform:uppercase;letter-spacing:.05em;">Estimado</span>
+              {% else %}—{% endif %}
+            {% endwith %}
           </td>
           <td>
             {% if wr.status == "pending" %}
