@@ -6,8 +6,8 @@
 {% block extra_head %}
 <style>
   .wd-wrap { min-height: calc(100vh - 56px); padding: 40px 16px; display: flex; justify-content: center; }
-  .wd-card { background: #0d0d14; border: 1px solid rgba(255,215,0,.15); border-radius: 16px; padding: 32px; width: 100%; max-width: 620px; box-shadow: 0 8px 40px rgba(0,0,0,.6); }
-  .wd-card h2 { font-family: 'Orbitron', sans-serif; font-size: 1.3rem; font-weight: 700; color: #FFD700; letter-spacing: .06em; margin-bottom: 20px; }
+  .wd-card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 32px; width: 100%; max-width: 620px; box-shadow: 0 8px 40px rgba(0,0,0,.6); }
+  .wd-card h2 { font-family: 'Orbitron', sans-serif; font-size: 1.3rem; font-weight: 700; color: var(--gold); letter-spacing: .06em; margin-bottom: 20px; }
   .wallet-row { display: flex; justify-content: space-between; align-items: center; padding: 14px 0; border-bottom: 1px solid rgba(255,215,0,.08); font-size: .85rem; }
   .wallet-row:last-child { border-bottom: none; }
   .badge { font-size: .68rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; padding: 3px 8px; border-radius: 6px; }
@@ -30,14 +30,14 @@
         <div>
           <strong>{{ w.asset }}/{{ w.network }}</strong> — {{ w.address|slice:":6" }}…{{ w.address|slice:"-4:" }}
           {% if w.status == "pending_cooldown" and w.cooldown_until %}
-            <div style="color:#787b86;font-size:.72rem;margin-top:2px;">Disponible desde {{ w.cooldown_until }}</div>
+            <div style="color:var(--text-muted);font-size:.72rem;margin-top:2px;">Disponible desde {{ w.cooldown_until }}</div>
           {% endif %}
         </div>
         <span class="badge {{ w.status }}">{{ w.get_status_display }}</span>
       </div>
       {% endfor %}
     {% else %}
-      <p style="color:#787b86;font-size:.85rem;">No tienes wallets registradas todavía.</p>
+      <p style="color:var(--text-muted);font-size:.85rem;">No tienes wallets registradas todavía.</p>
     {% endif %}
 
     <a href="{% url 'simulator:withdraw_wallet_register' %}" class="submit-btn">REGISTRAR NUEVA WALLET</a>

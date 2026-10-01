@@ -2,7 +2,23 @@
 {% load static %}
 
 {% block title %}Dashboard — TRX Simulator{% endblock %}
-{% block navbar_brand %}TRX SIMULATOR{% endblock %}
+{% block navbar_brand %}MONEY BROKER CHARTS{% endblock %}
+
+{% block navbar_extra %}
+<!-- UI-THEME-01 FASE D2 — terminal-only theme switch. Reuses the exact
+     mb_theme/data-theme/mb:themechange mechanism base_app.html already
+     uses — no second theme system. Plain text label on purpose: this
+     page loads no Font Awesome stylesheet (pre-existing, unrelated —
+     its many fa-solid icons already render without one), so an icon
+     font glyph here would be invisible too; text guarantees visibility
+     regardless. -->
+<li class="nav-item">
+  <button id="termThemeToggle" type="button" class="nav-link term-theme-btn"
+          title="Cambiar tema" aria-pressed="false" aria-label="Cambiar a modo claro">
+    <span id="termThemeToggleLabel">Dark</span>
+  </button>
+</li>
+{% endblock %}
 
 {% block extra_head %}
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -21,10 +37,20 @@
     --cyan:    #00b4d8;
     --gold-dim:rgba(0,180,216,.08);
     --nav-h:   56px;
+    /* UI-THEME-01 FASE D4.6 (1) — deliberately NOT reusing --nav-h for
+       this: --nav-h is also the height baked into .bottom-nav/
+       .quickbar/#panelTabsBar/#execToast, all mobile-only elements —
+       changing it would have shrunk the mobile bottom nav bar too.
+       This is desktop-only, feeding only .wrap's height calc below. */
+    --topbar-h: 40px;
     --bull:    #26a69a;
     --bear:    #ef5350;
     --dim:     .28;
-    --opsbar-w:96px;
+    /* UI-THEME-01 FASE D4.5 (2) — compact rail is now the CSS default
+       (was 96px/expanded); the toggle's "expand" state sets the wider
+       width explicitly via inline style instead. Avoids a flash of
+       the old wide sidebar before the toggle script runs. */
+    --opsbar-w:50px;
     /* ── Mobile layout measurements (single source of truth) ── */
     --mob-hdr:    44px;
     --mob-bar:    0px;
@@ -32,6 +58,228 @@
     --mob-nav-h:  calc(56px + env(safe-area-inset-bottom, 0px));
     --mob-bottom: calc(56px + env(safe-area-inset-bottom, 0px));
     --mob-chart:  calc(100dvh - 44px - 56px - env(safe-area-inset-bottom, 0px));
+    /* UI-THEME-01 FASE D3 — new tokens for the near-black "rail" surface
+       (rgba(3,4,14,X)) that the later "polish" rules in this same file
+       use for sidebars/toolbars/metric-bar/right column — these are
+       distinct literals from --bg/--panel/--panel2 (different exact
+       values), so they get their own tokens rather than being forced
+       onto an existing one (which would shift Dark by a hair). Dark
+       values below are copy-pasted from the literals they replace —
+       zero visual change. */
+    --rail-bg:      rgba(3,4,14,.97);
+    --metric-bg:    rgba(3,4,14,.92);
+    --rightcol-bg:  rgba(3,4,14,.96);
+    --rail-border:  rgba(0,180,216,.05);
+    /* UI-THEME-01 FASE D4.7C — unified border system. Replaces the
+       scattered cyan-tinted (rgba(0,180,216,*)) and slightly-
+       inconsistent neutral (.03/.04/.05/.06) literals that had
+       accumulated across D2-D4.7B on .panel-unit/.rightcol/.btm-panel/
+       .panel-toolbar/.rc-section/.rc-input/.rc-wl-row with ONE idle and
+       ONE active value, applied consistently. Semantic colors (bull/
+       bear/P&L/risk/SL-TP) never used these tokens and are untouched. */
+    --edge-idle:    rgba(255,255,255,.06);
+    --edge-active:  rgba(255,255,255,.12);
+  }
+
+  /* UI-THEME-01 FASE D2 — Light Mode foundation, Option 1 (GO'd by
+     Owner): cyan stays the terminal's brand in both themes — darkened
+     here for on-white contrast, same technique base_app.html already
+     uses for --gold (#FFD700 -> #B8860B). Only the tokens that drive
+     backgrounds/text/structural surfaces are redefined here; --bull/
+     --bear/--dim are semantic trading colors (Category C, FASE D1
+     report) and are deliberately NOT touched in either theme. The
+     ~90 rgba(0,180,216,*) / rgba(255,255,255,*) literals used
+     throughout the rest of this file's CSS are NOT converted to these
+     tokens yet — that is FASE D3's job. Until D3 lands, toggling to
+     Light here is expected to look partially themed (foundation only,
+     not a finished Light terminal) — by design, not a defect. */
+  [data-theme="light"] {
+    --bg:      #FAFAF7;
+    --panel:   #FFFFFF;
+    --panel2:  #F4F2EC;
+    --text:    #14141a;
+    --accent:  rgba(0,119,166,.14);
+    --accent2: rgba(0,119,166,.22);
+    --muted:   #5a5d70;
+    --gold:    #0077a6;
+    --cyan:    #0077a6;
+    --gold-dim:rgba(0,119,166,.10);
+    /* FASE D3 additions */
+    --rail-bg:      #FFFFFF;
+    --metric-bg:    #F4F2EC;
+    --rightcol-bg:  #FFFFFF;
+    /* FASE D4.1 — structural dividers move to a plain neutral gray
+       hairline (was cyan-tinted); cyan/gold stay reserved for actual
+       brand surfaces and selective emphasis (see the FASE D4.1 rules
+       below), not generic borders. */
+    --rail-border:  rgba(0,0,0,.08);
+    /* UI-THEME-01 FASE D4.7C — unified idle/active border, Light.
+       Gold stays reserved for active/selected emphasis (.panel-unit.
+       p-active, nav-active, etc. — all set explicitly elsewhere and
+       unaffected by this token); --edge-active here is only used
+       where Dark's neutral "active panel" marker has no Light
+       override at all (there is none — every such case already has
+       an explicit gold override that wins). */
+    --edge-idle:    rgba(0,0,0,.07);
+    --edge-active:  rgba(0,0,0,.07);
+  }
+
+  /* UI-THEME-01 FASE D3 — terminal chrome (non-chart), Light overrides.
+     Additive only: every rule below targets a specific property on a
+     selector whose Dark declaration (elsewhere in this file) is left
+     completely untouched. Scope is exactly the Owner's D3 list —
+     surfaces, panels/cards, sidebars, navbar, dividers, inputs,
+     toolbars, dropdowns, toasts, neutral badges, mobile chrome,
+     structural hover/focus. Explicitly excluded (left intact, see
+     FASE D3 report): modals, order ticket, trading tables, BUY/SELL,
+     SL/TP, quickbar/edit-sheet, mobile exec bar, WS status pills,
+     risk-panel/badge severity colors, chart/oscillator-adjacent chrome
+     — all either D5 scope or semantic/functional per the FASE D1 map. */
+  /* Navbar (dashboard.html-local override of base.html's shared
+     navbar — scoped here only, landing.html never sees these rules
+     since it doesn't load this <style> block). */
+  [data-theme="light"] .navbar,[data-theme="light"] .bg-dark{border-bottom-color:rgba(0,119,166,.18)!important;}
+  [data-theme="light"] .navbar .nav-cta{background:rgba(0,119,166,.12)!important;border-color:rgba(0,119,166,.32);}
+  [data-theme="light"] .navbar .nav-cta:hover{background:rgba(0,119,166,.22)!important;}
+
+  /* Tools sidebar (drawing tools rail) + Ops sidebar (account rail) */
+  [data-theme="light"] .tool-btn{color:#8a8f9e;}
+  [data-theme="light"] .tool-sep{background:rgba(0,0,0,.08);}
+  [data-theme="light"] .ops-item{color:#9a9fae;}
+  [data-theme="light"] .ops-sep{background:rgba(0,0,0,.08);}
+  [data-theme="light"] .ops-toggle-btn{color:#b8bcc8;}
+  [data-theme="light"] .ops-toggle-btn:hover{background:var(--gold-dim);color:rgba(0,119,166,.85);}
+  [data-theme="light"] .ops-ws-status{border-top-color:rgba(0,0,0,.06);}
+  [data-theme="light"] .ops-ws-lbl{color:#9a9fae;}
+
+  /* Metric bar labels */
+  [data-theme="light"] .mb-item{border-right-color:rgba(0,119,166,.10);}
+  [data-theme="light"] .mb-label{color:#8a8f9e;}
+
+  /* Indicator dropdown */
+  [data-theme="light"] .ind-drop{background:#FFFFFF;border-color:rgba(0,119,166,.28);box-shadow:0 8px 24px rgba(0,0,0,.18);}
+  [data-theme="light"] .ind-item{color:#55596a;}
+  [data-theme="light"] .ind-item:hover{background:rgba(0,119,166,.08);color:#14141a;}
+  [data-theme="light"] .ind-item.on{color:#14141a;}
+  [data-theme="light"] .ind-sep,[data-theme="light"] .ind-item.ind-sep-before{border-color:rgba(0,0,0,.08);background:rgba(0,0,0,.08);}
+
+  /* TF toast (cyan-branded — not a semantic alert) */
+  [data-theme="light"] #tfToast{background:#FFFFFF;border-color:rgba(0,119,166,.4);color:#0077a6;box-shadow:0 4px 18px rgba(0,0,0,.12);}
+
+  /* Exec toast — only the cyan (et-close) and neutral (et-send)
+     variants; et-buy/et-sell are semantic BUY/SELL, left untouched */
+  [data-theme="light"] #execToast.et-close{background:rgba(0,119,166,.10);border-color:rgba(0,119,166,.35);color:#0077a6;}
+  [data-theme="light"] #execToast.et-send{background:rgba(0,0,0,.05);border-color:rgba(0,0,0,.12);color:#14141a;}
+
+  /* Neutral badges (closed / pending — not bull/bear/warning) */
+  [data-theme="light"] .acc-badge-closed{background:rgba(0,0,0,.06);color:#6b6f80;border-color:rgba(0,0,0,.16);}
+  [data-theme="light"] .fd-pending{background:rgba(0,0,0,.04);color:#6b7280;border-color:rgba(0,0,0,.12);}
+
+  /* Quotes panel search input */
+  [data-theme="light"] #quotesSearch{border-bottom-color:rgba(0,0,0,.12);color:#14141a;}
+  [data-theme="light"] #quotesSearch::placeholder{color:rgba(0,0,0,.28);}
+
+  /* Bottom nav (mobile) + mobile header chips — structural chrome
+     only; .tabbtn.active's cyan and .tab-badge's red (alert count)
+     are brand/semantic and left as-is */
+  [data-theme="light"] .bottom-nav .tabs{background:#FFFFFF;border-color:rgba(0,0,0,.1);box-shadow:inset 0 1px 0 rgba(0,0,0,.04),0 4px 20px rgba(0,0,0,.1);}
+  [data-theme="light"] .tabbtn{color:rgba(0,0,0,.45);}
+  [data-theme="light"] #mobileHeader{background:#FFFFFF;border-bottom-color:rgba(0,0,0,.08);}
+  [data-theme="light"] .mhdr-chip{background:rgba(0,0,0,.04);border-color:rgba(0,0,0,.1);color:rgba(0,0,0,.72);}
+  [data-theme="light"] .mhdr-chip-bal{color:rgba(0,0,0,.5);}
+
+  /* UI-THEME-01 FASE D4.1 — Light visual polish. Dark untouched by
+     every rule below (all scoped under [data-theme="light"]). Three
+     things only: (1) navbar text contrast fix, (2) heavy Dark-tuned
+     box-shadows reduced to a light hairline-elevation look, (3) a
+     handful of structural borders that were still cyan-tinted moved
+     to plain neutral gray, with real Money Broker gold (#B8860B, the
+     same darkened value base_app.html already uses) applied ONLY as a
+     contained accent line on three hierarchy markers: the active nav
+     link, the active sidebar rail item, and the focused chart frame —
+     never as a fill, never on BUY/SELL/SL/TP/P&L/risk/indicator
+     colors, never on generic dividers. */
+
+  /* Navbar — dashboard-local override of base.html's shared .nav-link
+     (base.html's rgba(255,255,255,.65)/#fff are white-on-white in
+     Light on this page); landing.html never sees these rules. */
+  [data-theme="light"] .navbar .nav-link{color:#3a3d46!important;}
+  [data-theme="light"] .navbar .nav-link.nav-active{color:#14141a!important;border-bottom:2px solid #B8860B;}
+  [data-theme="light"] .navbar,[data-theme="light"] .bg-dark{border-bottom-color:rgba(0,0,0,.08)!important;}
+
+  /* Sidebars, panels, right column, bottom panel — shadows reduced to
+     a light hairline-elevation look (Dark's heavy 20-32px/.5 shadows
+     were tuned for a near-black background and read as "floating
+     boxes" on white). */
+  [data-theme="light"] .ops-sidebar{box-shadow:0 1px 3px rgba(0,0,0,.08);}
+  [data-theme="light"] .tools-sidebar{box-shadow:0 1px 3px rgba(0,0,0,.08);}
+  [data-theme="light"] .rightcol{border-color:var(--edge-idle);box-shadow:0 1px 3px rgba(0,0,0,.08);}
+  [data-theme="light"] .btm-panel{box-shadow:0 1px 3px rgba(0,0,0,.08);}
+
+  /* Chart frame — idle: plain neutral hairline, no shadow (FASE D4.5
+     seamless workspace, Light side). Active/focused: the one
+     deliberate gold accent border (contained to this single hierarchy
+     marker), thin ring instead of Dark's soft glow. */
+  [data-theme="light"] .panel-unit{border-color:var(--edge-idle);box-shadow:none;}
+  [data-theme="light"] .panel-unit.p-active{border-color:#B8860B;box-shadow:0 0 0 1px rgba(184,134,11,.35);}
+  [data-theme="light"] .btm-panel{border-color:var(--edge-idle);}
+
+  /* Remaining structural dividers still carrying the pre-D4.1 cyan
+     tint — moved to the same plain neutral gray as the rest. FASE
+     D4.7C: unified onto var(--edge-idle) (same .06-.08 range, now one
+     source of truth instead of several nearby-but-different literals). */
+  [data-theme="light"] .mb-item{border-right-color:var(--edge-idle);}
+  [data-theme="light"] .ind-drop{border-color:rgba(0,0,0,.14);}
+  [data-theme="light"] .panel-toolbar{border-bottom-color:var(--edge-idle);}
+  [data-theme="light"] .btm-tabs-bar{border-bottom-color:var(--edge-idle);}
+
+  /* Ops sidebar active-item indicator — the second contained gold
+     accent line (active navigation marker); icon color is untouched
+     (stays var(--gold), the terminal's cyan-derived brand color). */
+  [data-theme="light"] .ops-item.active::before{background:#B8860B;box-shadow:0 0 4px rgba(184,134,11,.4);}
+
+  /* UI-THEME-01 FASE D4.2 — final Light polish, four scoped items.
+     Dark untouched by every rule below. */
+
+  /* (1) Right-side Watchlist — symbols/prices/rows/dividers/section
+     label. .rc-wl-px.up/.dn (bull/bear) are semantic and untouched. */
+  [data-theme="light"] .rc-section{border-top-color:var(--edge-idle);}
+  [data-theme="light"] .rc-section-lbl{color:#6b7280;}
+  [data-theme="light"] .rc-wl-row{border-bottom-color:var(--edge-idle);}
+  [data-theme="light"] .rc-wl-row:hover{background:rgba(0,119,166,.06);}
+  [data-theme="light"] .rc-wl-sym{color:#14141a;}
+  [data-theme="light"] .rc-wl-px{color:#5a5d70;}
+
+  /* (2) "MONEY BROKER CHARTS" brand text — official Money Broker gold
+     in Light (#B8860B, same contrast-darkened value used throughout
+     UI-THEME-01), not the terminal's cyan-derived --gold. Higher
+     specificity than the existing .navbar-brand{color:var(--gold)}
+     rule above, so it wins without touching that rule or the token. */
+  [data-theme="light"] .navbar-brand{color:#B8860B!important;}
+
+  /* (3) Positions/Orders table header (SYMBOL/SIDE/QTY/.../ACTIONS) —
+     header cells only, never touching row/data colors (td, P&L,
+     BUY/SELL, semantic badges — all untouched, D5 scope). */
+  [data-theme="light"] .btm-pos-table th{background:rgba(184,134,11,.08);color:#3a3d46;border-bottom-color:rgba(184,134,11,.25);}
+
+  /* UI-THEME-01 FASE D4.3 — global layout bar (×1/×2/×3/×4). Light:
+     clear surface (already var(--bg) = #FAFAF7), subtle neutral
+     border, selected state in real Money Broker gold. Dark untouched
+     — .ls-btn's existing var(--bg)/var(--accent)/var(--gold-dim)/
+     var(--gold) rules already render Dark exactly as before. */
+  [data-theme="light"] .ls-btn{border-color:rgba(0,0,0,.1);}
+  [data-theme="light"] .ls-btn.active{background:rgba(184,134,11,.12);color:#B8860B;border-color:#B8860B;}
+
+  /* UI-THEME-01 FASE D2 — toggle button reset. Inherits .nav-link's
+     existing color rules from base.html (both themes) unchanged;
+     this only strips default <button> chrome so it reads as a nav
+     link, not a native button. */
+  .term-theme-btn {
+    background: transparent;
+    border: none;
+    font: inherit;
+    cursor: pointer;
+    padding: .5rem 1rem;
   }
   html,body{height:100%;margin:0;overflow:hidden;background:var(--bg)!important;color:var(--text);font-family:'Inter',system-ui,sans-serif;}
   .navbar,.bg-dark{background:var(--bg)!important;border-bottom:1px solid rgba(0,180,216,.12)!important;}
@@ -39,12 +287,25 @@
   .navbar .nav-link:hover{color:var(--gold)!important;}
   .navbar .nav-cta{background:rgba(0,180,216,.15)!important;color:var(--gold)!important;border:1px solid rgba(0,180,216,.3);}
   .navbar .nav-cta:hover{background:rgba(0,180,216,.28)!important;}
+
+  /* UI-THEME-01 FASE D4.6 (1) — terminal topbar compaction. Scoped to
+     dashboard.html's own stylesheet only (same pattern as every prior
+     dashboard-local navbar override) — base.html's rule (height:56px)
+     is untouched, so landing.html is completely unaffected. Every
+     function preserved: Dashboard/History/Deposit/theme-toggle/Logout
+     links, all still the same elements with the same hrefs/handlers —
+     only padding/font-size/height reduced. */
+  .navbar{height:40px!important;padding:0 16px!important;}
+  .navbar-brand{font-size:.72rem!important;}
+  .navbar .nav-link{padding:.3rem .65rem!important;font-size:.76rem!important;}
+  .navbar .nav-cta{padding:.3rem .65rem!important;}
+  .term-theme-btn{padding:.3rem .65rem!important;}
   main.container-fluid,main.container,.container{background:transparent!important;padding:0!important;margin:0!important;}
   *,*::before,*::after{box-sizing:border-box;}
 
   #dash-canvas{position:fixed;inset:0;z-index:0;pointer-events:none;}
 
-  .wrap{position:relative;z-index:1;max-width:none;margin:0;padding:3px 6px 3px;display:flex;flex-direction:column;height:calc(100vh - var(--nav-h));overflow:hidden;}
+  .wrap{position:relative;z-index:1;max-width:none;margin:0;padding:3px 6px 3px;display:flex;flex-direction:column;height:calc(100vh - var(--topbar-h));overflow:hidden;}
 
   /* ── Mobile trade bar ── */
   .toptrade{position:sticky;top:0;z-index:6;display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:8px;background:rgba(5,5,10,.92);backdrop-filter:saturate(140%) blur(10px);border:1px solid var(--accent);border-radius:10px;padding:8px 10px;margin-bottom:10px;align-items:center;justify-items:center;}
@@ -127,8 +388,41 @@
   .ls-btn:hover{border-color:var(--gold);color:var(--gold);}
   .ls-btn.active{background:var(--gold-dim);color:var(--gold);border-color:var(--gold);}
 
+  /* UI-THEME-01 FASE D4.3 — global layout bar, immediately above the
+     charts area. Holds the SAME .layout-switcher/.ls-btn markup that
+     used to be injected only into panel p0's toolbar (competing for
+     width there at ×3/×4) — no new buttons, IDs, or handlers; the
+     existing document-level click delegation (`e.target.closest(
+     '.ls-btn')`) and setLayout()/document.querySelectorAll('.ls-btn')
+     already operate on the whole document, so relocating this
+     container required zero JS changes. */
+  /* UI-THEME-01 FASE D4.6 (3) — trimmed to a slim strip: the "Charts"
+     label is gone (per your instruction — it added no function), and
+     padding is cut so this row sits almost flush against the panel
+     toolbar below it. NOT literally merged into .panel-toolbar: that
+     would put the ×1-×4 switcher back inside a per-panel toolbar,
+     which is exactly the bug D4.3 fixed (control competing for width
+     at ×3/×4, getting clipped in narrow columns). Kept as two thin,
+     visually adjacent rows instead — same ×1-×4 functionality
+     guaranteed never to clip, per your "no sacrificar funcionalidad
+     para ahorrar espacio" instruction. */
+  /* UI-THEME-01 FASE D4.7C — consistent divider under the global
+     toolbar, same unified idle border used everywhere else. */
+  .layout-bar{display:flex;align-items:center;padding:1px 4px 4px;min-height:18px;flex-shrink:0;border-bottom:1px solid var(--edge-idle);}
+
+  /* UI-THEME-01 FASE D4.7 — global chart toolbar controls (symbol/
+     timeframe/indicators/WS dot, proxies over the active panel — see
+     the HTML comment above the markup). .p-ind-btn and .ops-ws-dot
+     are bare class selectors already styled elsewhere (reused as-is);
+     only the select appearance needs a rule here, since the existing
+     one is scoped to ".panel-toolbar select". */
+  .chart-toolbar-global{display:flex;align-items:center;gap:6px;}
+  .chart-toolbar-global select{background:var(--bg);border:1px solid var(--accent);color:var(--text);padding:2px 6px;border-radius:4px;font-size:.72rem;font-weight:600;appearance:none;cursor:pointer;}
+  .chart-toolbar-global select:focus{outline:none;border-color:var(--gold);}
+  .chart-toolbar-global .ops-ws-dot{width:7px;height:7px;}
+
   /* ── Main layout ── */
-  .layout{display:grid;grid-template-columns:var(--opsbar-w,96px) 32px 1fr 240px;grid-template-rows:1fr;gap:6px;flex:1;min-height:0;}
+  .layout{display:grid;grid-template-columns:var(--opsbar-w,96px) 32px 1fr 240px;grid-template-rows:1fr;gap:4px;flex:1;min-height:0;}
 
   /* ── Panels grid ── */
   .left-col{display:flex;flex-direction:column;gap:4px;min-height:0;overflow:hidden;}
@@ -151,8 +445,29 @@
   .panel-unit{display:flex;flex-direction:column;border:1px solid var(--accent);border-radius:10px;overflow:hidden;min-height:0;background:var(--panel);transition:border-color .2s,box-shadow .2s;}
   .panel-unit.p-active{border-color:rgba(0,180,216,.5);box-shadow:0 0 0 1px rgba(0,180,216,.15);}
 
-  .panel-toolbar{display:flex;gap:4px;align-items:center;padding:3px 6px;background:var(--panel2);border-bottom:1px solid var(--accent);flex-shrink:0;}
-  .panel-toolbar .p-hdr-sym{font-family:'Orbitron',sans-serif;font-size:.66rem;font-weight:700;color:var(--gold);letter-spacing:.06em;}
+  /* UI-THEME-01 FASE D4.7 (8) — the per-panel toolbar is reduced to a
+     minimal symbol LABEL only (re-showing .p-hdr-sym, which D4.4 had
+     hidden as redundant back when .p-sym/.p-px-tag/.p-tf/.p-status
+     were the visible ones here). Now that the GLOBAL toolbar carries
+     the actual interactive symbol/timeframe/indicator/status controls
+     for whichever panel is active, this per-panel strip exists only
+     so ×2/×3/×4 still show which symbol each non-active panel has —
+     a plain, non-interactive text label, not a second control system.
+     Every element below is confirmed scoped under .panel-toolbar
+     specifically (never bare .p-sym/.p-tf/.p-ind-btn/.last-price),
+     so none of this touches the new global toolbar's identically-
+     classed elements, which live outside .panel-toolbar entirely.
+     Nothing is deleted — this.symSel/this.tfSel/indBtn/this.statusEl
+     all still exist in the DOM, inside this.wrapper, exactly where
+     the constructor's querySelector calls expect them; only hidden. */
+  .panel-toolbar{display:flex;gap:4px;align-items:center;padding:2px 6px;background:var(--panel2);border-bottom:1px solid var(--accent);flex-shrink:0;}
+  .panel-toolbar .p-hdr-sym{display:inline;}
+  .panel-toolbar .p-sym-tag{display:none;}
+  .panel-toolbar .p-sym{display:none;}
+  .panel-toolbar .p-tf{display:none;}
+  .panel-toolbar .p-ind-btn{display:none;}
+  .panel-toolbar .last-price{display:none;}
+  .panel-toolbar .panel-status{display:none;}
   .panel-toolbar select{background:var(--bg);border:1px solid var(--accent);color:var(--text);padding:2px 5px;border-radius:4px;font-size:.69rem;appearance:none;cursor:pointer;}
   .panel-toolbar select:focus{outline:none;border-color:var(--gold);}
   .panel-status{margin-left:auto;font-size:.62rem;color:var(--muted);}
@@ -170,6 +485,28 @@
   .p-glow-canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:2;}
   /* RR badge */
   .p-rr{position:absolute;right:68px;display:none;background:rgba(5,5,10,.88);border:1px solid rgba(0,180,216,.3);border-radius:6px;padding:3px 9px;font-size:.7rem;font-weight:700;color:#00b4d8;z-index:4;pointer-events:none;font-family:'Orbitron',sans-serif;letter-spacing:.04em;}
+
+  /* UI-THEME-01 FASE D4.8 — compact in-chart position/TP/SL badges.
+     Same absolute-over-.panel-chart pattern as .p-rr/.drag-badge above
+     (not a new overlay mechanism). Positioned via the same
+     candleSeries.priceToCoordinate() already used by _updateRR()/
+     _showDragBadge() — no new coordinate math. Semantic colors
+     (bull/bear) are the SAME literals already used for plTP/plSL
+     price lines elsewhere in this file — never reinterpreted. */
+  /* UI-THEME-01 FASE D4.8C — right:78px is just the pre-JS-sync
+     fallback (matches this chart's typical price-scale width so there's
+     no flash under the axis before the first sync); _syncPositionBadges()
+     always overrides it via inline style with the real, per-panel
+     chart.priceScale('right').width() once the chart is ready. */
+  .pos-line-badge{position:absolute;right:78px;transform:translateY(-50%);z-index:5;display:flex;align-items:center;gap:5px;padding:2px 7px;border-radius:3px;border:1px solid;font-size:.66rem;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none;line-height:1.5;}
+  .pos-line-badge.tp{background:rgba(38,166,154,.14);border-color:rgba(38,166,154,.3);color:#26a69a;}
+  .pos-line-badge.sl{background:rgba(239,83,80,.14);border-color:rgba(239,83,80,.3);color:#ef5350;}
+  .pos-line-badge.entry{background:rgba(255,255,255,.06);border-color:var(--edge-idle);color:#9098a8;}
+  .pos-line-badge.entry.pos{color:#26a69a;}
+  .pos-line-badge.entry.neg{color:#ef5350;}
+  .pos-line-badge .plb-close{pointer-events:auto;cursor:pointer;opacity:.55;font-weight:900;padding:0 1px;}
+  .pos-line-badge .plb-close:hover{opacity:1;}
+  [data-theme="light"] .pos-line-badge.entry{background:rgba(0,0,0,.04);border-color:var(--edge-idle);color:#5a5d70;}
   /* TF change toast */
   #tfToast{position:fixed;top:68px;left:50%;transform:translateX(-50%);background:rgba(5,5,10,.92);border:1px solid rgba(0,180,216,.5);color:#00b4d8;padding:5px 18px;border-radius:8px;font-size:.78rem;font-weight:700;z-index:60;pointer-events:none;opacity:0;transition:opacity .25s;font-family:'Orbitron',sans-serif;letter-spacing:.08em;}
   /* Risk / violation alert toast */
@@ -278,13 +615,30 @@
   .ccm-btn-close-pos{background:rgba(239,83,80,.14);border:1px solid rgba(239,83,80,.4);color:#ef5350;border-radius:8px;padding:10px;font-size:.78rem;font-weight:700;cursor:pointer;transition:background .15s;}
   .ccm-btn-close-pos:hover{background:rgba(239,83,80,.26);}
 
-  .last-price{position:absolute;right:12px;top:10px;display:flex;gap:6px;z-index:2;}
-  .pill{background:var(--panel);border:1px solid var(--accent);padding:4px 10px;border-radius:999px;font-size:.78rem;font-weight:700;}
+  /* UI-THEME-01 FASE D4.2 (4) — relocated from an absolute overlay on
+     .panel-chart (where it covered chart area) into the toolbar flex
+     row, next to the symbol and before the timeframe select. Pure
+     DOM/CSS move: .p-sym-tag/.p-px-tag are still read exclusively via
+     querySelector()+textContent/classList (see initChart()/price
+     update code) with zero positional coupling, so relocating them
+     changes nothing about the price feed, WebSocket, or chart. */
+  .last-price{display:flex;align-items:center;gap:6px;}
+  /* UI-THEME-01 FASE D4.6 (3) — the price/symbol pills inside
+     .last-price (toolbar context) get tighter padding; same classes,
+     same elements used elsewhere (.last-price on .panel-chart is gone
+     since D4.2 moved it into the toolbar, so this now only affects
+     the toolbar pills). */
+  .pill{background:var(--panel);border:1px solid var(--accent);padding:2px 8px;border-radius:999px;font-size:.74rem;font-weight:700;}
   .pill.green{color:var(--bull);border-color:rgba(38,166,154,.3);}
   .pill.red{color:var(--bear);border-color:rgba(239,83,80,.3);}
 
   /* ── Right column ── */
-  .rightcol{display:flex;flex-direction:column;gap:0;overflow-y:auto;overflow-x:hidden;min-height:0;scrollbar-width:thin;scrollbar-color:rgba(0,180,216,.14) transparent;background:rgba(3,4,14,.96);border:1px solid rgba(0,180,216,.07);border-radius:10px;box-shadow:0 4px 28px rgba(0,0,0,.5),0 0 0 1px rgba(0,180,216,.03);}
+  /* UI-THEME-01 FASE D4.7C — this was the one component the D4.5/D4.6
+     seamless-workspace cleanup missed in Dark: still had the old cyan
+     border, a heavy 28px drop shadow, and 10px radius. Unified to the
+     same idle border/no-shadow/2px-radius treatment as .panel-unit
+     and .btm-panel. */
+  .rightcol{display:flex;flex-direction:column;gap:0;overflow-y:auto;overflow-x:hidden;min-height:0;scrollbar-width:thin;scrollbar-color:rgba(0,180,216,.14) transparent;background:var(--rightcol-bg);border:1px solid var(--edge-idle);border-radius:2px;box-shadow:none;}
   .rightcol::-webkit-scrollbar{width:4px;}
   .rightcol::-webkit-scrollbar-track{background:transparent;}
   .rightcol::-webkit-scrollbar-thumb{background:rgba(0,180,216,.2);border-radius:2px;}
@@ -314,7 +668,12 @@
   .wl:hover{border-color:var(--gold);color:var(--gold);}
 
   /* ── Bottom panel (positions/orders/history/journal) ── */
-  .btm-panel{flex-shrink:0;height:180px;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--accent);border-radius:10px;overflow:hidden;position:relative;}
+  /* UI-THEME-01 FASE D4.6 (5) — +30px vs the pre-D4.6 180px so the new
+     metric strip doesn't eat into the table's viewing area (net effect:
+     the table keeps roughly its old height; the strip is "new" space,
+     not stolen from the table). The resize handle's clamp (90-550px,
+     unchanged JS) still applies on top of this default. */
+  .btm-panel{flex-shrink:0;height:210px;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--accent);border-radius:10px;overflow:hidden;position:relative;}
   table{width:100%;border-collapse:collapse;font-size:.78rem;}
   thead tr{background:rgba(0,180,216,.04);}
   th{padding:5px 8px;color:var(--muted);font-size:.64rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;border-bottom:1px solid var(--accent);text-align:left;}
@@ -404,9 +763,9 @@
   .cta-section{background:var(--panel2);border:1px solid var(--accent);border-radius:16px;overflow:hidden;}
 
   /* Each row */
-  .cta-row{display:flex;align-items:center;gap:12px;padding:13px 16px;border-bottom:1px solid rgba(0,180,216,.05);text-decoration:none;color:inherit;transition:background .12s;cursor:pointer;width:100%;background:transparent;text-align:left;font-family:'Inter',sans-serif;}
+  .cta-row{display:flex;align-items:center;gap:12px;padding:13px 16px;border-bottom:1px solid var(--rail-border);text-decoration:none;color:inherit;transition:background .12s;cursor:pointer;width:100%;background:transparent;text-align:left;font-family:'Inter',sans-serif;}
   .cta-row:last-child{border-bottom:none;}
-  .cta-row:active{background:rgba(0,180,216,.05);}
+  .cta-row:active{background:var(--rail-border);}
   .cta-icon{width:40px;height:40px;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:19px;flex-shrink:0;}
   .cta-text{flex:1;min-width:0;}
   .cta-row-title{font-size:.88rem;font-weight:600;color:#e8e8e8;line-height:1.3;}
@@ -543,6 +902,7 @@
     .topbar{display:none;}
     .toptrade{display:none;}
     .layout-switcher{display:none;}
+    .layout-bar{display:none;}
     .bottom-nav{display:block;}
     #mobileHeader{display:flex;}
     #panelTabsBar{display:none!important;}
@@ -630,10 +990,10 @@
   .btn-sending{opacity:.5!important;pointer-events:none!important;transition:opacity .15s;}
 
   /* ── Ops sidebar (terminal rail) ── */
-  .ops-sidebar{display:flex;flex-direction:column;gap:0;padding:8px 0 6px;background:rgba(3,4,14,.97);border:1px solid rgba(0,180,216,.05);border-radius:10px;overflow:hidden;flex-shrink:0;box-shadow:0 4px 24px rgba(0,0,0,.5),0 0 0 1px rgba(0,180,216,.02);}
+  .ops-sidebar{display:flex;flex-direction:column;gap:0;padding:8px 0 6px;background:var(--rail-bg);border:1px solid var(--rail-border);border-radius:10px;overflow:hidden;flex-shrink:0;box-shadow:0 4px 24px rgba(0,0,0,.5),0 0 0 1px rgba(0,180,216,.02);}
   .ops-item{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:10px 4px 9px;margin:1px 5px;border-radius:7px;cursor:pointer;text-align:center;color:rgba(255,255,255,.28);transition:background .18s,color .18s,box-shadow .18s;text-decoration:none;border:none;background:transparent;font-family:'Inter',sans-serif;position:relative;}
-  .ops-item:hover{background:rgba(0,180,216,.08);color:rgba(255,255,255,.78);box-shadow:0 0 14px rgba(0,180,216,.06);}
-  .ops-item.active{background:rgba(0,180,216,.13);color:var(--gold);box-shadow:0 0 18px rgba(0,180,216,.1);}
+  .ops-item:hover{background:var(--gold-dim);color:rgba(255,255,255,.78);box-shadow:0 0 14px rgba(0,180,216,.06);}
+  .ops-item.active{background:var(--accent);color:var(--gold);box-shadow:0 0 18px rgba(0,180,216,.1);}
   .ops-item.active::before{content:'';position:absolute;left:0;top:18%;bottom:18%;width:2px;border-radius:0 2px 2px 0;background:var(--gold);box-shadow:0 0 8px rgba(0,180,216,.8);}
   .ops-icon{font-size:1rem;line-height:1;flex-shrink:0;}
   .ops-label{font-size:.52rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase;line-height:1;white-space:nowrap;opacity:.6;max-width:none;}
@@ -661,6 +1021,18 @@
   .btm-tab:hover{color:var(--text);}
   .btm-tab.active{color:var(--gold);border-bottom-color:var(--gold);}
   .btm-count{display:inline-flex;align-items:center;justify-content:center;min-width:15px;height:15px;border-radius:8px;padding:0 4px;background:rgba(0,180,216,.12);color:var(--gold);font-size:.6rem;font-weight:800;}
+
+  /* UI-THEME-01 FASE D4.6 (2) — compact horizontal strip for the
+     relocated account metrics, sitting between the tabs bar and the
+     table body inside #btmPanel. Reuses .mb-item/.mb-label/.mb-value
+     (same classes, same IDs, same JS, same semantic colors) — only
+     the parent's own layout (flex row, thin height, subtle divider)
+     is new. flex-shrink:0 so it never eats into .btm-body's space
+     beyond its own natural height. */
+  .btm-metric-strip{display:flex;align-items:stretch;flex-shrink:0;background:var(--panel2);border-bottom:1px solid var(--accent);overflow-x:auto;}
+  .btm-metric-strip .mb-item{padding:3px 10px;border-right:1px solid rgba(0,180,216,.05);}
+  .btm-metric-strip .mb-label{font-size:.56rem;margin-bottom:0;}
+  .btm-metric-strip .mb-value{font-size:.74rem;}
   .btm-body{flex:1;min-height:0;position:relative;overflow:hidden;}
   .btm-pane{position:absolute;inset:0;overflow-y:auto;display:none;scrollbar-width:thin;scrollbar-color:rgba(0,180,216,.14) transparent;}
   .btm-pane.active{display:block;}
@@ -695,16 +1067,17 @@
   .rc-id-name{font-family:'Orbitron',sans-serif;font-size:.6rem;font-weight:700;color:var(--gold);letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .rc-id-sub{font-size:.58rem;color:rgba(255,255,255,.3);margin-top:2px;letter-spacing:.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .rc-id-num{color:rgba(0,180,216,.4);}
-  .rc-section{background:transparent;border:none;border-top:1px solid rgba(255,255,255,.04);border-radius:0;padding:9px 12px 8px;flex-shrink:0;}
+  /* UI-THEME-01 FASE D4.7C — unified idle divider. */
+  .rc-section{background:transparent;border:none;border-top:1px solid var(--edge-idle);border-radius:0;padding:9px 12px 8px;flex-shrink:0;}
   .rc-section-lbl{font-family:'Orbitron',sans-serif;font-size:.55rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(0,180,216,.55);margin-bottom:8px;}
-  .rc-select-full{width:100%;background:rgba(255,255,255,.04);border:1px solid rgba(0,180,216,.12);border-radius:6px;color:var(--text);padding:7px 10px;font-family:'Inter',sans-serif;font-size:.78rem;appearance:none;cursor:pointer;outline:none;}
+  .rc-select-full{width:100%;background:rgba(255,255,255,.04);border:1px solid var(--edge-idle);border-radius:6px;color:var(--text);padding:7px 10px;font-family:'Inter',sans-serif;font-size:.78rem;appearance:none;cursor:pointer;outline:none;}
   .rc-select-full:focus{border-color:rgba(0,180,216,.35);}
   .rc-field-row{margin-bottom:8px;}
   .rc-field-lbl{display:block;font-size:.6rem;font-weight:600;color:rgba(255,255,255,.32);letter-spacing:.06em;text-transform:uppercase;margin-bottom:4px;}
-  .rc-input{width:100%;background:rgba(255,255,255,.04);border:1px solid rgba(0,180,216,.1);border-radius:6px;color:var(--text);padding:7px 10px;font-family:'Inter',sans-serif;font-size:.8rem;transition:border-color .15s;appearance:none;outline:none;box-sizing:border-box;}
+  .rc-input{width:100%;background:rgba(255,255,255,.04);border:1px solid var(--edge-idle);border-radius:6px;color:var(--text);padding:7px 10px;font-family:'Inter',sans-serif;font-size:.8rem;transition:border-color .15s;appearance:none;outline:none;box-sizing:border-box;}
   .rc-input:focus{border-color:rgba(0,180,216,.35);}
   .rc-input::placeholder{color:rgba(255,255,255,.18);}
-  .rc-stepper{display:flex;align-items:center;background:rgba(255,255,255,.04);border:1px solid rgba(0,180,216,.1);border-radius:6px;overflow:hidden;}
+  .rc-stepper{display:flex;align-items:center;background:rgba(255,255,255,.04);border:1px solid var(--edge-idle);border-radius:6px;overflow:hidden;}
   .rc-step-btn{background:transparent;border:none;color:rgba(0,180,216,.7);padding:7px 10px;cursor:pointer;font-size:1rem;font-weight:700;line-height:1;transition:background .12s;flex-shrink:0;}
   .rc-step-btn:hover{background:rgba(0,180,216,.1);}
   .rc-stepper-val{flex:1;background:transparent;border:none;color:var(--text);text-align:center;font-family:'Inter',sans-serif;font-size:.82rem;font-weight:700;font-variant-numeric:tabular-nums;padding:7px 4px;outline:none;min-width:0;appearance:none;}
@@ -726,7 +1099,7 @@
   .rc-qa-muted:hover{background:rgba(255,255,255,.1);color:rgba(255,255,255,.7);}
   /* Watchlist rows */
   .rc-wl-list{display:flex;flex-direction:column;gap:0;margin:0;}
-  .rc-wl-row{display:flex;align-items:center;justify-content:space-between;padding:7px 4px;border-bottom:1px solid rgba(255,255,255,.03);background:transparent;border-left:none;border-right:none;border-top:none;border-radius:0;color:inherit;font-family:'Inter',sans-serif;cursor:pointer;transition:background .14s;width:100%;text-align:left;}
+  .rc-wl-row{display:flex;align-items:center;justify-content:space-between;padding:7px 4px;border-bottom:1px solid var(--edge-idle);background:transparent;border-left:none;border-right:none;border-top:none;border-radius:0;color:inherit;font-family:'Inter',sans-serif;cursor:pointer;transition:background .14s;width:100%;text-align:left;}
   .rc-wl-row:last-child{border-bottom:none;}
   .rc-wl-row:hover{background:rgba(0,180,216,.06);}
   .rc-wl-sym{font-size:.76rem;font-weight:700;color:rgba(255,255,255,.78);letter-spacing:.01em;}
@@ -735,27 +1108,76 @@
   /* Override old watchlist styles for new structure */
   .rc-wl-section.watchlist{display:flex;flex-direction:column;}
 
+  /* UI-THEME-01 FASE D4.9 — collapsible Account info section. No card,
+     no shadow: same seamless/unified-border language as the rest of the
+     right column. Collapsed by default on desktop so Watchlist flows up
+     via normal flex column flow (no absolute positioning involved). */
+  .rc-collapsible{padding:0;}
+  .rc-collapsible-toggle{display:flex;align-items:center;gap:8px;width:100%;background:transparent;border:none;cursor:pointer;padding:9px 12px;font:inherit;color:inherit;text-align:left;}
+  .rc-collapsible-toggle:hover{background:rgba(255,255,255,.03);}
+  .rc-collapsible-toggle:focus-visible{outline:1px solid rgba(0,180,216,.4);outline-offset:-1px;}
+  .rc-collapsible-toggle .rc-section-lbl{margin-bottom:0;}
+  .rc-collapsible-summary{flex:1;min-width:0;font-size:.68rem;color:rgba(255,255,255,.32);font-weight:600;letter-spacing:.02em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .rc-collapsible-chevron{font-size:.6rem;color:rgba(255,255,255,.3);flex-shrink:0;transition:transform .15s;}
+  .rc-collapsible.open .rc-collapsible-chevron{transform:rotate(180deg);}
+  .rc-collapsible-body{display:none;padding:0 12px 8px;}
+  .rc-collapsible.open .rc-collapsible-body{display:block;}
+  [data-theme="light"] .rc-collapsible-toggle:hover{background:rgba(0,119,166,.05);}
+  [data-theme="light"] .rc-collapsible-summary{color:#8a8d9c;}
+  [data-theme="light"] .rc-collapsible-chevron{color:#8a8d9c;}
+  [data-theme="light"] .rc-collapsible-toggle:focus-visible{outline-color:#B8860B;}
+
   /* ── Drawing tools sidebar polish ── */
-  .tools-sidebar{background:rgba(3,4,14,.97);border:1px solid rgba(0,180,216,.05);box-shadow:0 4px 20px rgba(0,0,0,.5);}
+  .tools-sidebar{background:var(--rail-bg);border:1px solid var(--rail-border);box-shadow:0 4px 20px rgba(0,0,0,.5);}
   .tool-btn{color:rgba(255,255,255,.24);}
-  .tool-btn:hover{background:rgba(0,180,216,.08);color:rgba(0,180,216,.88);}
+  .tool-btn:hover{background:var(--gold-dim);color:rgba(0,180,216,.88);}
   .tool-btn.active{background:rgba(0,180,216,.12);color:rgba(0,180,216,.95);}
   .tool-sep{background:rgba(255,255,255,.04);}
 
   /* ── Metric bar polish ── */
-  .metric-bar{border-color:rgba(0,180,216,.05);margin-bottom:3px;background:rgba(3,4,14,.92);}
+  .metric-bar{border-color:var(--rail-border);margin-bottom:3px;background:var(--metric-bg);}
   .mb-item{padding:3px 8px;border-right-color:rgba(0,180,216,.04);}
   .mb-label{font-size:.55rem;color:rgba(255,255,255,.26);letter-spacing:.07em;}
   .mb-value{font-size:.8rem;}
 
+  /* UI-THEME-01 FASE D4.5 (3) — information strip: tighter vertical
+     rhythm on top of the existing compaction above. Same IDs (mbBalance/
+     mbEquity/mbPnL/mbMarginUsed/mbFreeMargin/mbMarginLevel), same JS
+     writes, same semantic .pos/.neg/.warn/.danger colors — padding and
+     label/value spacing only. */
+  .mb-item{padding:2px 8px;}
+  .mb-label{margin-bottom:1px;}
+  .mb-value{font-size:.76rem;}
+
   /* ── Panel unit polish ── */
-  .panel-unit{border-color:rgba(0,180,216,.07);box-shadow:0 8px 32px rgba(0,0,0,.55),0 0 0 1px rgba(0,180,216,.03);}
-  .panel-unit.p-active{border-color:rgba(0,180,216,.35);box-shadow:0 8px 32px rgba(0,0,0,.55),0 0 0 1px rgba(0,180,216,.1),0 0 40px rgba(0,180,216,.04);}
-  .panel-toolbar{background:rgba(3,4,14,.97);border-bottom-color:rgba(0,180,216,.06);}
+  /* UI-THEME-01 FASE D4.5 (1) — seamless chart workspace, Dark. This is
+     a deliberate Dark visual change (explicitly requested this block,
+     unlike prior phases): the cyan border + heavy 32px glow made the
+     chart read as "a card containing a chart" rather than "the chart
+     IS the workspace." Border drops to a barely-there neutral hairline
+     (matching the chart's own internal grid-line opacity, so the
+     wrapper doesn't compete with what Lightweight Charts already
+     draws), the glow is gone, and border-radius shrinks from 10px to
+     2px. Nothing inside the canvas (grid/price-lines/SL/TP/entry/
+     crosshair/candles/volume/axis) is touched by this — those are
+     drawn by Lightweight Charts itself, entirely independent of this
+     wrapper's CSS. The active-panel indicator is kept (still needed
+     functionally — the user must be able to tell which panel is
+     focused for trade actions) as a slightly brighter neutral border,
+     no glow. */
+  /* UI-THEME-01 FASE D4.7C — unified border tokens (see :root). */
+  .panel-unit{border-color:var(--edge-idle);border-radius:2px;box-shadow:none;}
+  .panel-unit.p-active{border-color:var(--edge-active);box-shadow:none;}
+  .panel-toolbar{background:var(--rail-bg);border-bottom-color:var(--edge-idle);}
 
   /* ── Btm panel polish ── */
-  .btm-panel{box-shadow:0 -2px 20px rgba(0,0,0,.5),0 0 0 1px rgba(0,180,216,.04);}
-  .btm-tabs-bar{border-bottom-color:rgba(0,180,216,.06);background:rgba(3,4,14,.97);}
+  /* UI-THEME-01 FASE D4.5 (6) — bottom panel (Positions/Orders/History/
+     Journal) gets the same seamless treatment as the chart frame: no
+     glow, a thin neutral divider instead of a floating-card shadow,
+     minimal radius. Table logic/rows/data untouched — only the outer
+     wrapper's border/shadow/radius. */
+  .btm-panel{border-color:var(--edge-idle);border-radius:2px;box-shadow:none;}
+  .btm-tabs-bar{border-bottom-color:rgba(0,180,216,.06);background:var(--rail-bg);}
   .btm-tab{font-size:.67rem;letter-spacing:.04em;text-transform:uppercase;}
   .btm-pos-table td{padding:6px 10px;}
   .btm-pos-table tr:hover td{background:rgba(0,180,216,.04);}
@@ -918,72 +1340,60 @@
     <button id="btnTopBuy" class="deal buy" aria-label="Buy"><span class="lab">BUY</span><span id="pxBuy" class="px">—</span></button>
   </div>
 
-  <!-- ── Metric bar (TradeLocker-style) ── -->
-  <div class="metric-bar" id="metricBar">
-    <div class="mb-item">
-      <div class="mb-label">Balance</div>
-      <div class="mb-value" id="mbBalance">—</div>
-    </div>
-    <div class="mb-item">
-      <div class="mb-label">Equity</div>
-      <div class="mb-value" id="mbEquity">—</div>
-    </div>
-    <div class="mb-item">
-      <div class="mb-label">Profit &amp; Loss</div>
-      <div class="mb-value" id="mbPnL">—</div>
-    </div>
-    <div class="mb-item">
-      <div class="mb-label">Margin Used</div>
-      <div class="mb-value" id="mbMarginUsed">—</div>
-    </div>
-    <div class="mb-item">
-      <div class="mb-label">Margin Available</div>
-      <div class="mb-value" id="mbFreeMargin">—</div>
-    </div>
-    <div class="mb-item">
-      <div class="mb-label">Margin Level</div>
-      <div class="mb-value" id="mbMarginLevel">—</div>
-    </div>
-    <div id="wsStatusPill" class="wss-disconnected" style="margin-left:auto;flex-shrink:0;">
-      <span class="wss-dot"></span>
-      <span class="wss-label">OFFLINE</span>
-    </div>
-  </div>
+  <!-- UI-THEME-01 FASE D4.6 (2) — the metric bar that used to render
+       here (id="metricBar", a full independent row) has been MOVED
+       (not cloned/duplicated) into the bottom panel's new #btmMetricBar
+       strip, right after the Positions/Orders/History/Journal tabs
+       bar below. Same 6 IDs (mbBalance/mbEquity/mbPnL/mbMarginUsed/
+       mbFreeMargin/mbMarginLevel) plus wsStatusPill — each exists
+       exactly once, just relocated. Freed up this whole row's height
+       for the chart. -->
 
   <div class="layout">
     <!-- ── Ops sidebar (desktop only) — col 1 (96px) ── -->
+    <!-- UI-THEME-01 FASE D4.5 (2) — compact icon rail. The fa-solid
+         classes previously here rendered as nothing at all: this page
+         loads no Font Awesome stylesheet anywhere in its chain
+         (confirmed by grep — zero matches for font-awesome in this
+         file or base.html), so every icon was already invisible in
+         production. Replaced with minimal self-contained inline SVGs
+         (currentColor, so they inherit .ops-icon's existing idle/
+         hover/active color rules automatically in both themes) rather
+         than loading the full Font Awesome library as a new heavy
+         dependency. title= added for the native tooltip. Same
+         data-ops/href/IDs/classes — zero navigation/handler changes. -->
     <nav class="ops-sidebar" id="opsSidebar">
-      <div class="ops-item active" data-ops="trading">
-        <span class="ops-icon"><i class="fa-solid fa-chart-line"></i></span>
+      <div class="ops-item active" data-ops="trading" title="Trading">
+        <span class="ops-icon"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-6 4 4 5-8"/></svg></span>
         <span class="ops-label">Trading</span>
       </div>
-      <div class="ops-item" data-ops="positions">
-        <span class="ops-icon"><i class="fa-solid fa-layer-group"></i></span>
+      <div class="ops-item" data-ops="positions" title="Positions">
+        <span class="ops-icon"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg></span>
         <span class="ops-label">Positions</span>
       </div>
-      <div class="ops-item" data-ops="orders">
-        <span class="ops-icon"><i class="fa-solid fa-list-check"></i></span>
+      <div class="ops-item" data-ops="orders" title="Orders">
+        <span class="ops-icon"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span>
         <span class="ops-label">Orders</span>
       </div>
-      <div class="ops-item" data-ops="history">
-        <span class="ops-icon"><i class="fa-solid fa-clock-rotate-left"></i></span>
+      <div class="ops-item" data-ops="history" title="History">
+        <span class="ops-icon"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg></span>
         <span class="ops-label">History</span>
       </div>
-      <div class="ops-item" data-ops="analytics">
-        <span class="ops-icon"><i class="fa-solid fa-chart-pie"></i></span>
+      <div class="ops-item" data-ops="analytics" title="Analytics">
+        <span class="ops-icon"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg></span>
         <span class="ops-label">Analytics</span>
       </div>
       <div class="ops-sep"></div>
-      <a class="ops-item" href="{% url 'simulator:calendar' %}" data-ops="calendar">
-        <span class="ops-icon"><i class="fa-solid fa-calendar-days"></i></span>
+      <a class="ops-item" href="{% url 'simulator:calendar' %}" data-ops="calendar" title="Calendar">
+        <span class="ops-icon"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>
         <span class="ops-label">Calendar</span>
       </a>
-      <a class="ops-item" href="{% url 'simulator:accounts' %}" data-ops="settings">
-        <span class="ops-icon"><i class="fa-solid fa-gear"></i></span>
+      <a class="ops-item" href="{% url 'simulator:accounts' %}" data-ops="settings" title="Settings">
+        <span class="ops-icon"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
         <span class="ops-label">Settings</span>
       </a>
-      <div class="ops-item" data-ops="help" style="opacity:.6">
-        <span class="ops-icon"><i class="fa-solid fa-circle-question"></i></span>
+      <div class="ops-item" data-ops="help" style="opacity:.6" title="Help">
+        <span class="ops-icon"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 1.5-2.5 2-2.5 3.5"/><line x1="12" y1="17" x2="12" y2="17"/></svg></span>
         <span class="ops-label">Help</span>
       </div>
       <div style="flex:1"></div>
@@ -991,8 +1401,8 @@
         <div class="ops-ws-dot" id="opsWsDot"></div>
         <span class="ops-ws-lbl" id="opsWsLbl">OFFLINE</span>
       </div>
-      <button class="ops-toggle-btn" id="opsToggleBtn" title="Collapse sidebar">
-        <i class="fa-solid fa-chevron-left" id="opsToggleIcon"></i>
+      <button class="ops-toggle-btn" id="opsToggleBtn" title="Expand sidebar">
+        <span id="opsToggleIcon">›</span>
       </button>
     </nav>
 
@@ -1019,6 +1429,41 @@
     </nav>
 
     <div class="left-col">
+      <!-- UI-THEME-01 FASE D4.7 — global chart toolbar. Controls here
+           are proxies over the active panel's own (still fully live,
+           just visually hidden) .p-sym/.p-tf/.p-ind-btn — exactly the
+           same activePanel.symSel.value=...;dispatchEvent('change')
+           pattern already used by the watchlist and mobile symbol/TF
+           chips (see setActive()/the watchlist click handler). No
+           second symbol/timeframe/indicator system: these forward to
+           the one that already exists. ×1-×4 stays exactly where
+           D4.3 put it — global, outside any per-panel toolbar, so it
+           can never clip at ×3/×4. -->
+      <div class="layout-bar">
+        <div class="chart-toolbar-global">
+          <select id="gSymSel" class="p-sym" title="Symbol (active panel)">
+            <option value="EUR/USD">EURUSD</option>
+            <option value="GBP/USD">GBPUSD</option>
+            <option value="USD/JPY">USDJPY</option>
+            <option value="AUD/USD">AUDUSD</option>
+            <option value="BTCUSD" selected>BTCUSD</option>
+            <option value="ETHUSD">ETHUSD</option>
+          </select>
+          <select id="gTfSel" class="p-tf" title="Timeframe (active panel)">
+            <option value="1s">1s</option><option value="1m">1m</option>
+            <option value="5m">5m</option><option value="15m" selected>15m</option>
+            <option value="1h">1h</option><option value="1d">1d</option>
+          </select>
+          <button id="gIndBtn" class="p-ind-btn" title="Technical Indicators (active panel)">Indicadores</button>
+          <span id="gWsDot" class="ops-ws-dot" title="WebSocket status"></span>
+        </div>
+        <div class="layout-switcher" style="margin-left:auto;">
+          <button class="ls-btn active" data-layout="1" title="1 panel">▣ ×1</button>
+          <button class="ls-btn" data-layout="2" title="2 panels">⊟ ×2</button>
+          <button class="ls-btn" data-layout="3" title="3 panels">⊞ ×3</button>
+          <button class="ls-btn" data-layout="4" title="4 panels">⊟⊟ ×4</button>
+        </div>
+      </div>
       <div id="panelsGrid" class="panels-grid layout-1"></div>
 
       <!-- ── Professional bottom panel (TraderLocker-style) ── -->
@@ -1029,6 +1474,40 @@
           <button class="btm-tab" data-btm="orders">Orders <span class="btm-count" id="btmOrdCount"></span></button>
           <button class="btm-tab" data-btm="history">History</button>
           <button class="btm-tab" data-btm="journal">Journal</button>
+        </div>
+        <!-- UI-THEME-01 FASE D4.6 (2) — relocated metric strip (moved
+             from the old top-level #metricBar, not duplicated). Same
+             6 IDs + wsStatusPill, same JS writers, same semantic
+             .pos/.neg colors — untouched. -->
+        <div class="btm-metric-strip" id="metricBar">
+          <div class="mb-item">
+            <div class="mb-label">Balance</div>
+            <div class="mb-value" id="mbBalance">—</div>
+          </div>
+          <div class="mb-item">
+            <div class="mb-label">Equity</div>
+            <div class="mb-value" id="mbEquity">—</div>
+          </div>
+          <div class="mb-item">
+            <div class="mb-label">Profit &amp; Loss</div>
+            <div class="mb-value" id="mbPnL">—</div>
+          </div>
+          <div class="mb-item">
+            <div class="mb-label">Margin Used</div>
+            <div class="mb-value" id="mbMarginUsed">—</div>
+          </div>
+          <div class="mb-item">
+            <div class="mb-label">Margin Available</div>
+            <div class="mb-value" id="mbFreeMargin">—</div>
+          </div>
+          <div class="mb-item">
+            <div class="mb-label">Margin Level</div>
+            <div class="mb-value" id="mbMarginLevel">—</div>
+          </div>
+          <div id="wsStatusPill" class="wss-disconnected" style="margin-left:auto;flex-shrink:0;">
+            <span class="wss-dot"></span>
+            <span class="wss-label">OFFLINE</span>
+          </div>
         </div>
         <div class="btm-body">
           <div class="btm-pane active" id="btmPanePositions">
@@ -1156,92 +1635,13 @@
       </div>
       {% endif %}
 
-      <!-- Account Rules — DEMO / RETAIL / STANDARD / ECN / CRYPTO accounts only -->
-      {% if show_account_rules_panel %}
-      {% if acct_rules.account_type == "DEMO" %}
-      <!-- Demo Account panel -->
-      <div class="rc-section" id="accountRulesCard">
-        <div class="rc-section-lbl">Demo Account</div>
-        <div style="font-size:.65rem;color:rgba(255,255,255,.38);margin-bottom:8px;letter-spacing:.03em;">Practice environment</div>
-
-        <div class="chal-row">
-          <span class="chal-k">Currency</span>
-          <span class="chal-v" id="arCurrency">{{ acct_rules.currency }}</span>
-        </div>
-        {% if acct_rules.leverage %}
-        <div class="chal-row">
-          <span class="chal-k">Leverage</span>
-          <span class="chal-v">1:{{ acct_rules.leverage }}</span>
-        </div>
-        {% endif %}
-
-        <div style="border-top:1px solid rgba(255,255,255,.06);margin:7px 0 5px;"></div>
-        <div class="rc-section-lbl" style="margin-bottom:5px;">Account Health</div>
-
-        <div class="chal-row">
-          <span class="chal-k">Balance</span>
-          <span class="chal-v" id="arBalance">—</span>
-        </div>
-        <div class="chal-row">
-          <span class="chal-k">Equity</span>
-          <span class="chal-v" id="arEquity">—</span>
-        </div>
-        <div class="chal-row">
-          <span class="chal-k">Margin Used</span>
-          <span class="chal-v" id="arMarginUsed">—</span>
-        </div>
-        <div class="chal-row">
-          <span class="chal-k">Free Margin</span>
-          <span class="chal-v" id="arFreeMargin">—</span>
-        </div>
-        <div class="chal-row">
-          <span class="chal-k">Margin Level</span>
-          <span class="chal-v" id="arMarginLevel">—</span>
-        </div>
-      </div>
-      {% else %}
-      <!-- Real Account panel (RETAIL / ECN / STANDARD / CRYPTO) -->
-      <div class="rc-section" id="accountRulesCard">
-        <div class="rc-section-lbl">Real Account</div>
-        <div style="font-size:.65rem;color:rgba(255,255,255,.38);margin-bottom:8px;letter-spacing:.03em;">Live trading account</div>
-
-        <div class="chal-row">
-          <span class="chal-k">Currency</span>
-          <span class="chal-v" id="arCurrency">{{ acct_rules.currency }}</span>
-        </div>
-        {% if acct_rules.leverage %}
-        <div class="chal-row">
-          <span class="chal-k">Leverage</span>
-          <span class="chal-v">1:{{ acct_rules.leverage }}</span>
-        </div>
-        {% endif %}
-
-        <div style="border-top:1px solid rgba(255,255,255,.06);margin:7px 0 5px;"></div>
-        <div class="rc-section-lbl" style="margin-bottom:5px;">Account Health</div>
-
-        <div class="chal-row">
-          <span class="chal-k">Balance</span>
-          <span class="chal-v" id="arBalance">—</span>
-        </div>
-        <div class="chal-row">
-          <span class="chal-k">Equity</span>
-          <span class="chal-v" id="arEquity">—</span>
-        </div>
-        <div class="chal-row">
-          <span class="chal-k">Margin Used</span>
-          <span class="chal-v" id="arMarginUsed">—</span>
-        </div>
-        <div class="chal-row">
-          <span class="chal-k">Free Margin</span>
-          <span class="chal-v" id="arFreeMargin">—</span>
-        </div>
-        <div class="chal-row">
-          <span class="chal-k">Margin Level</span>
-          <span class="chal-v" id="arMarginLevel">—</span>
-        </div>
-      </div>
-      {% endif %}
-      {% endif %}
+      <!-- UI-THEME-01 FASE D4.4 — Account Rules (Demo/Real Account +
+           Account Health) moved from here to after Quick Actions/before
+           Watchlist, so it no longer pushes BUY/SELL down. Same
+           {% templatetag openblock %} show_account_rules_panel {% templatetag closeblock %} conditional, same IDs
+           (accountRulesCard/arCurrency/arBalance/arEquity/arMarginUsed/
+           arFreeMargin/arMarginLevel) — all confirmed getElementById-only,
+           zero positional coupling, before moving. -->
 
       <!-- Funded Account Payout Section -->
       {% if funded_section %}
@@ -1372,6 +1772,25 @@
           <input id="trigPrice" type="number" step="0.00001" placeholder="Precio de disparo" class="rc-input">
         </div>
 
+        <!-- UI-THEME-01 FASE D4.4 (D4.4 order-ticket priority) — BUY/SELL
+             moved here, immediately after Market Order/Trigger Price and
+             before Volume/SL/TP, so they're visible without scroll on
+             desktop. Same buttons, same IDs (btnBuy/btnSell), same
+             addEventListener('click', ()=>sendActiveOrder(...)) wiring —
+             those listeners are attached by getElementById(), confirmed
+             position-independent before this move. Zero order-submission
+             logic touched. -->
+        <div class="rc-trade-btns">
+          <button id="btnSell" class="rc-sell-btn">
+            <span class="rc-btn-lab">SELL</span>
+            <span id="pxSell2" class="rc-btn-px">—</span>
+          </button>
+          <button id="btnBuy" class="rc-buy-btn">
+            <span class="rc-btn-lab">BUY</span>
+            <span id="pxBuy2" class="rc-btn-px">—</span>
+          </button>
+        </div>
+
         <!-- Volume -->
         <div class="rc-field-row">
           <label class="rc-field-lbl" id="qtyLabel">Volume (lots)</label>
@@ -1411,18 +1830,6 @@
           </div>
           <div class="rp-rec">Suggested: <strong id="rpRec" title="Use suggested lot">—</strong></div>
         </div>
-
-        <!-- BUY / SELL -->
-        <div class="rc-trade-btns">
-          <button id="btnSell" class="rc-sell-btn">
-            <span class="rc-btn-lab">SELL</span>
-            <span id="pxSell2" class="rc-btn-px">—</span>
-          </button>
-          <button id="btnBuy" class="rc-buy-btn">
-            <span class="rc-btn-lab">BUY</span>
-            <span id="pxBuy2" class="rc-btn-px">—</span>
-          </button>
-        </div>
       </div>
 
       <!-- Quick Actions -->
@@ -1433,6 +1840,113 @@
           <button class="rc-qa-btn rc-qa-muted" onclick="cancelAllPendingOrders()">Cancel All</button>
         </div>
       </div>
+
+      <!-- Account Rules — DEMO / RETAIL / STANDARD / ECN / CRYPTO accounts
+           only. UI-THEME-01 FASE D4.4 relocated this after Quick Actions/
+           before Watchlist. FASE D4.9 — now wrapped in a collapsible
+           container (collapsed by default on desktop) so Watchlist can
+           flow up and use the freed space when it's closed. Same
+           conditional, same IDs (accountRulesCard/arCurrency/arBalance/
+           arEquity/arMarginUsed/arFreeMargin/arMarginLevel), same JS
+           writers, same data — nothing cloned, nothing deleted. Only the
+           inner .rc-section class was removed from the two branches
+           below (the new outer wrapper now provides that border/padding
+           instead, avoiding doubling it). -->
+      {% if show_account_rules_panel %}
+      <div class="rc-section rc-collapsible" id="accountInfoCollapsible">
+        <button class="rc-collapsible-toggle" id="accountInfoToggleBtn" type="button"
+                aria-expanded="false" aria-controls="accountInfoBody">
+          <span class="rc-section-lbl" style="margin-bottom:0;">Account info</span>
+          <span class="rc-collapsible-summary" id="accountInfoSummary"></span>
+          <span class="rc-collapsible-chevron" id="accountInfoChevron">▾</span>
+        </button>
+        <div class="rc-collapsible-body" id="accountInfoBody">
+      {% if acct_rules.account_type == "DEMO" %}
+      <!-- Demo Account panel -->
+      <div id="accountRulesCard">
+        <div class="rc-section-lbl">Demo Account</div>
+        <div style="font-size:.65rem;color:rgba(255,255,255,.38);margin-bottom:8px;letter-spacing:.03em;">Practice environment</div>
+
+        <div class="chal-row">
+          <span class="chal-k">Currency</span>
+          <span class="chal-v" id="arCurrency">{{ acct_rules.currency }}</span>
+        </div>
+        {% if acct_rules.leverage %}
+        <div class="chal-row">
+          <span class="chal-k">Leverage</span>
+          <span class="chal-v" id="arLeverage">1:{{ acct_rules.leverage }}</span>
+        </div>
+        {% endif %}
+
+        <div style="border-top:1px solid rgba(255,255,255,.06);margin:7px 0 5px;"></div>
+        <div class="rc-section-lbl" style="margin-bottom:5px;">Account Health</div>
+
+        <div class="chal-row">
+          <span class="chal-k">Balance</span>
+          <span class="chal-v" id="arBalance">—</span>
+        </div>
+        <div class="chal-row">
+          <span class="chal-k">Equity</span>
+          <span class="chal-v" id="arEquity">—</span>
+        </div>
+        <div class="chal-row">
+          <span class="chal-k">Margin Used</span>
+          <span class="chal-v" id="arMarginUsed">—</span>
+        </div>
+        <div class="chal-row">
+          <span class="chal-k">Free Margin</span>
+          <span class="chal-v" id="arFreeMargin">—</span>
+        </div>
+        <div class="chal-row">
+          <span class="chal-k">Margin Level</span>
+          <span class="chal-v" id="arMarginLevel">—</span>
+        </div>
+      </div>
+      {% else %}
+      <!-- Real Account panel (RETAIL / ECN / STANDARD / CRYPTO) -->
+      <div id="accountRulesCard">
+        <div class="rc-section-lbl">Real Account</div>
+        <div style="font-size:.65rem;color:rgba(255,255,255,.38);margin-bottom:8px;letter-spacing:.03em;">Live trading account</div>
+
+        <div class="chal-row">
+          <span class="chal-k">Currency</span>
+          <span class="chal-v" id="arCurrency">{{ acct_rules.currency }}</span>
+        </div>
+        {% if acct_rules.leverage %}
+        <div class="chal-row">
+          <span class="chal-k">Leverage</span>
+          <span class="chal-v" id="arLeverage">1:{{ acct_rules.leverage }}</span>
+        </div>
+        {% endif %}
+
+        <div style="border-top:1px solid rgba(255,255,255,.06);margin:7px 0 5px;"></div>
+        <div class="rc-section-lbl" style="margin-bottom:5px;">Account Health</div>
+
+        <div class="chal-row">
+          <span class="chal-k">Balance</span>
+          <span class="chal-v" id="arBalance">—</span>
+        </div>
+        <div class="chal-row">
+          <span class="chal-k">Equity</span>
+          <span class="chal-v" id="arEquity">—</span>
+        </div>
+        <div class="chal-row">
+          <span class="chal-k">Margin Used</span>
+          <span class="chal-v" id="arMarginUsed">—</span>
+        </div>
+        <div class="chal-row">
+          <span class="chal-k">Free Margin</span>
+          <span class="chal-v" id="arFreeMargin">—</span>
+        </div>
+        <div class="chal-row">
+          <span class="chal-k">Margin Level</span>
+          <span class="chal-v" id="arMarginLevel">—</span>
+        </div>
+      </div>
+      {% endif %}
+        </div>
+      </div>
+      {% endif %}
 
       <!-- Watchlist -->
       <div class="rc-section rc-wl-section watchlist">
@@ -1755,6 +2269,115 @@
 {% endblock %}
 
 {% block extra_scripts %}
+<script>
+/* UI-THEME-01 FASE D2 — terminal theme switch. Self-contained, zero
+   dependency on and zero reference to anything below this block
+   (chart engine, WebSocket, orders, positions). Only reads/writes
+   data-theme + localStorage['mb_theme'] and dispatches the SAME
+   mb:themechange event base_app.html's switch already uses — no
+   second theme system, no chart/series/WS code touched here. */
+(function () {
+  var btn = document.getElementById('termThemeToggle');
+  var label = document.getElementById('termThemeToggleLabel');
+  if (!btn || !label) { return; }
+
+  function current() {
+    return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+  }
+  function sync(theme) {
+    label.textContent = theme === 'light' ? 'Light' : 'Dark';
+    btn.setAttribute('aria-pressed', theme === 'light' ? 'true' : 'false');
+    btn.setAttribute('aria-label', theme === 'light' ? 'Cambiar a modo oscuro' : 'Cambiar a modo claro');
+  }
+
+  sync(current());
+
+  btn.addEventListener('click', function () {
+    var next = current() === 'light' ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem('mb_theme', next); } catch (e) { /* private mode / storage disabled — theme still applies for this load */ }
+    sync(next);
+    document.dispatchEvent(new CustomEvent('mb:themechange', { detail: { theme: next } }));
+  });
+})();
+</script>
+
+<script>
+/* UI-THEME-01 FASE D4.9 — collapsible Account info toggle. Self-contained:
+   only toggles a CSS class + aria-expanded on the existing wrapper and
+   reads localStorage['mb_account_panel_open']. Does not touch, clone, or
+   recreate #accountRulesCard/arCurrency/arBalance/arEquity/arMarginUsed/
+   arFreeMargin/arMarginLevel — those keep being written by the existing
+   WS tick handler regardless of collapsed/expanded state, since a
+   display:none element can still be updated via textContent. The
+   collapsed summary line is built by READING the already-rendered DOM
+   (account type label, currency, leverage) — no new data source, no new
+   calculation. */
+(function () {
+  var wrap = document.getElementById('accountInfoCollapsible');
+  var btn = document.getElementById('accountInfoToggleBtn');
+  var chevron = document.getElementById('accountInfoChevron');
+  var summary = document.getElementById('accountInfoSummary');
+  var body = document.getElementById('accountInfoBody');
+  if (!wrap || !btn || !body) { return; }
+  var STORAGE_KEY = 'mb_account_panel_open';
+
+  function buildSummary() {
+    if (!summary) { return; }
+    var parts = [];
+    var typeLbl = body.querySelector('.rc-section-lbl');
+    if (typeLbl && typeLbl.textContent) { parts.push(typeLbl.textContent.replace(' Account', '')); }
+    var cur = document.getElementById('arCurrency');
+    if (cur && cur.textContent) { parts.push(cur.textContent.trim()); }
+    var lev = document.getElementById('arLeverage');
+    if (lev && lev.textContent) { parts.push(lev.textContent.trim()); }
+    summary.textContent = parts.join(' · ');
+  }
+
+  function applyState(open) {
+    wrap.classList.toggle('open', open);
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (chevron) { chevron.textContent = open ? '▴' : '▾'; }
+  }
+
+  var stored = null;
+  try { stored = localStorage.getItem(STORAGE_KEY); } catch (e) { /* private mode / storage disabled — defaults to collapsed */ }
+  applyState(stored === '1');
+  buildSummary();
+
+  btn.addEventListener('click', function () {
+    var next = !wrap.classList.contains('open');
+    applyState(next);
+    try { localStorage.setItem(STORAGE_KEY, next ? '1' : '0'); } catch (e) { /* private mode / storage disabled — state just won't persist across reloads */ }
+  });
+})();
+</script>
+
+<script>
+/* UI-THEME-01 FASE D4 — main chart + oscillator retheme dispatcher.
+   Self-contained: reads data-theme, listens for mb:themechange, and
+   calls each live panel's own applyChartTheme(theme) method (defined
+   on the TradingPanel class further below, chrome-only, applyOptions()
+   only — no chart/series recreation). Zero reference to WebSocket,
+   order, indicator-calculation, or any other trading/data code — this
+   script only ever touches allPanels[i].applyChartTheme, never
+   allPanels[i]'s trading state directly. currentTheme() is declared
+   here, at global (non-module) script scope, so it is also visible to
+   the TradingPanel class body later in this block (same realm, later
+   scripts always run after earlier ones finish parsing — see FASE D4
+   report for why this is safe regardless of physical script order). */
+function currentTheme() {
+  return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+}
+document.addEventListener('mb:themechange', function (e) {
+  var theme = (e.detail && e.detail.theme) || currentTheme();
+  if (typeof allPanels === 'undefined') { return; }
+  allPanels.forEach(function (p) {
+    try { p.applyChartTheme(theme); } catch (err) { /* panel not fully initialized yet — safe to skip */ }
+  });
+});
+</script>
+
 <script>
 /* ── Particle background ── */
 (function(){
@@ -2136,6 +2759,12 @@ class TradingPanel {
     this._buildDOM();
     this.symSel.addEventListener('change',()=>this._onSymChange());
     this.tfSel.addEventListener('change',()=>this._onTFChange());
+    // UI-THEME-01 FASE D4.7 — additive only, does not touch _onSymChange/
+    // _onTFChange: keeps the new global toolbar's displayed symbol/
+    // timeframe in sync whenever THIS panel's own (now-hidden but still
+    // live) select changes, but only if this panel is the active one.
+    this.symSel.addEventListener('change',()=>{if(this===activePanel)syncGlobalChartToolbar();});
+    this.tfSel.addEventListener('change',()=>{if(this===activePanel)syncGlobalChartToolbar();});
     this.wrapper.addEventListener('pointerdown',()=>setActive(this),{passive:true});
   }
 
@@ -2146,6 +2775,10 @@ class TradingPanel {
       <div class="panel-toolbar">
         <span class="p-hdr-sym">${this.currentSymbol.replace('/','')}</span>
         <select class="p-sym">${opts}</select>
+        <div class="last-price">
+          <span class="pill p-sym-tag">${this.currentSymbol.replace('/','')}</span>
+          <span class="pill green p-px-tag">—</span>
+        </div>
         <select class="p-tf">
           <option value="1s">1s</option><option value="1m">1m</option>
           <option value="5m">5m</option><option value="15m" selected>15m</option>
@@ -2153,25 +2786,23 @@ class TradingPanel {
         </select>
         <span class="panel-status p-status">connecting…</span>
         <button class="p-ind-btn" title="Technical Indicators">Ind</button>
-        ${this.id==='p0'?`<div class="layout-switcher" style="margin-left:auto;">
-          <button class="ls-btn active" data-layout="1" title="1 panel">▣ ×1</button>
-          <button class="ls-btn" data-layout="2" title="2 panels">⊟ ×2</button>
-          <button class="ls-btn" data-layout="3" title="3 panels">⊞ ×3</button>
-          <button class="ls-btn" data-layout="4" title="4 panels">⊟⊟ ×4</button>
-        </div>`:''}
+        <!-- UI-THEME-01 FASE D4.3 — the ×1/×2/×3/×4 layout-switcher
+             (previously injected here for panel p0 only) now lives in
+             the global .layout-bar above #panelsGrid instead, so it
+             no longer competes for toolbar width at ×3/×4. Same
+             buttons/IDs/handlers, just relocated. -->
       </div>
       <div class="panel-chart">
         <div class="p-chart"></div>
         <canvas class="p-glow-canvas"></canvas>
         <div class="p-rr"></div>
         <div class="drag-badge p-drag-badge">—</div>
-        <div class="last-price">
-          <span class="pill p-sym-tag">${this.currentSymbol.replace('/','')}</span>
-          <span class="pill green p-px-tag">—</span>
-        </div>
       </div>
       <div class="p-osc-panels"></div>`;
     this.chartEl=this.wrapper.querySelector('.p-chart');
+    // UI-THEME-01 FASE D4.8 — container for the new position/TP/SL
+    // badges; same element .p-rr/.drag-badge already use.
+    this.chartOverlayEl=this.wrapper.querySelector('.panel-chart');
     this.statusEl=this.wrapper.querySelector('.p-status');
     this.symSel=this.wrapper.querySelector('.p-sym');
     this.tfSel=this.wrapper.querySelector('.p-tf');
@@ -2315,6 +2946,10 @@ class TradingPanel {
   setPrice(px,prev){
     this._updatePnLTitles();
     this._updateRR();
+    // UI-THEME-01 FASE D4.8 — same per-tick hook _updateRR() already
+    // uses to keep its badge positioned; keeps the new position/TP/SL
+    // badges' Y-coordinates and live P&L text in sync on every tick.
+    this._syncPositionBadges();
     if(this===activePanel&&isMobile()&&_currentTab==='trading')_patchTradingPanelPnL();
   }
 
@@ -3150,42 +3785,178 @@ class TradingPanel {
     this._applyLineStyles();
   }
   _clearLines(){Array.from(this.linesById.keys()).forEach(id=>this._removeLines(id));this.linesById.clear();this.pendingTmp=[];}
-  _removeLines(id){const rec=this.linesById.get(String(id));if(!rec)return;[rec.plEntry,rec.plSL,rec.plTP].forEach(l=>l&&this.candleSeries?.removePriceLine(l));this.linesById.delete(String(id));}
+  _removeLines(id){
+    const rec=this.linesById.get(String(id));if(!rec)return;
+    [rec.plEntry,rec.plSL,rec.plTP].forEach(l=>l&&this.candleSeries?.removePriceLine(l));
+    // UI-THEME-01 FASE D4.8 — remove the badge DOM nodes alongside the
+    // price lines they track; nothing else in this method changed.
+    [rec.badgeEntry,rec.badgeSL,rec.badgeTP].forEach(b=>b&&b.remove());
+    this.linesById.delete(String(id));
+  }
   _drawLines(id,pos){
     if(!this.candleSeries)return;
     const bull='#26a69a',bear='#ef5350';
     const entry=Number(pos.avg??pos.entry??pos.price??this.lastClose);
     const side=String(pos.side||'buy').toLowerCase();
     let rec=this.linesById.get(String(id));
-    const title=side==='buy'?'BUY':'SELL';
+    // UI-THEME-01 FASE D4.8B — was 'BUY'/'SELL'; the compact entry
+    // badge now carries that information (plus live P&L). Price/
+    // lineStyle/color/axisLabelVisible below are all unchanged.
+    const title='';
     if(!rec){
-      rec={id:String(id),side,entry,qty:Number(pos.qty??1),sl:pos.sl??null,tp:pos.tp??null,plEntry:null,plSL:null,plTP:null};
+      rec={id:String(id),side,entry,qty:Number(pos.qty??1),sl:pos.sl??null,tp:pos.tp??null,plEntry:null,plSL:null,plTP:null,
+        // UI-THEME-01 FASE D4.8 — badge DOM refs, created once below.
+        badgeEntry:null,badgeSL:null,badgeTP:null};
       this.linesById.set(rec.id,rec);
-      rec.plEntry=this.candleSeries.createPriceLine({price:entry,color:side==='buy'?bull:bear,lineWidth:1,lineStyle:2,axisLabelVisible:true,title});
+      // UI-THEME-01 FASE D4.8D — lineStyle 2 (Dashed) -> 0 (Solid);
+      // synchronously corrected to the translucent color scheme by
+      // _applyLineStyles() right after (called from _renderLines()
+      // in the same tick, before any paint) — this initial color/
+      // style value is never actually visible on screen.
+      rec.plEntry=this.candleSeries.createPriceLine({price:entry,color:side==='buy'?bull:bear,lineWidth:1,lineStyle:0,axisLabelVisible:true,title});
+      this._createPositionBadges(rec);
     }else{rec.side=side;rec.entry=entry;rec.qty=Number(pos.qty??rec.qty??1);rec.plEntry?.applyOptions({price:entry,color:side==='buy'?bull:bear,title});}
-    if(pos.sl!=null){rec.sl=Number(pos.sl);rec.plSL?rec.plSL.applyOptions({price:rec.sl}):(rec.plSL=this.candleSeries.createPriceLine({price:rec.sl,color:bear,lineWidth:1,lineStyle:1,axisLabelVisible:true,title:'SL'}));}
-    if(pos.tp!=null){rec.tp=Number(pos.tp);rec.plTP?rec.plTP.applyOptions({price:rec.tp}):(rec.plTP=this.candleSeries.createPriceLine({price:rec.tp,color:bull,lineWidth:1,lineStyle:1,axisLabelVisible:true,title:'TP'}));}
+    /* UI-THEME-01 FASE D4.8B — title:'' (was 'SL'/'TP'/'BUY ±$X'): the
+       new compact badge (_syncPositionBadges) now shows that text;
+       the native on-line label was redundant with it. axisLabelVisible
+       stays true so the exact price still shows on the right axis —
+       price/lineStyle/color/drag untouched. */
+    if(pos.sl!=null){rec.sl=Number(pos.sl);rec.plSL?rec.plSL.applyOptions({price:rec.sl}):(rec.plSL=this.candleSeries.createPriceLine({price:rec.sl,color:bear,lineWidth:1,lineStyle:0,axisLabelVisible:true,title:''}));}
+    if(pos.tp!=null){rec.tp=Number(pos.tp);rec.plTP?rec.plTP.applyOptions({price:rec.tp}):(rec.plTP=this.candleSeries.createPriceLine({price:rec.tp,color:bull,lineWidth:1,lineStyle:0,axisLabelVisible:true,title:''}));}
+    this._syncPositionBadges();
   }
+
+  /* UI-THEME-01 FASE D4.8 — compact in-chart position/TP/SL badges.
+     Pure presentation: no new price/risk/P&L formula. qty comes from
+     rec.qty (already set from pos.qty above, same source the table
+     uses). Live P&L reuses computePositionPnLSafe(pos) — the exact
+     function _updatePnLTitles() already calls for this same position,
+     same safety guarantees (backend pos.pnl first, else a verified
+     live quote for pos.symbol, else null -> safe placeholder, never a
+     fabricated number). Potential P&L at TP/SL reuses computeRawPnL()
+     — the same core formula computePositionPnL() is built on — called
+     with the TP/SL price substituted for the live price, which is
+     exactly what that function's generic (symbol,side,entry,qty,px)
+     signature was already designed to accept; not a new formula. */
+  _createPositionBadges(rec){
+    if(!this.chartOverlayEl||String(rec.id).startsWith('tmp-'))return;
+    const mk=(cls)=>{const el=document.createElement('div');el.className='pos-line-badge '+cls;el.style.display='none';this.chartOverlayEl.appendChild(el);return el;};
+    rec.badgeTP=mk('tp');
+    rec.badgeSL=mk('sl');
+    rec.badgeEntry=mk('entry');
+    // Content (qty/P&L text + close button) is built by
+    // _syncPositionBadges(), called right after this on every draw/
+    // tick — not duplicated here.
+  }
+  _syncPositionBadges(){
+    if(!this.candleSeries||!this.chartOverlayEl)return;
+    // UI-THEME-01 FASE D4.8C — horizontal clipping fix. The right price
+    // scale is drawn ON the same canvas .panel-chart hosts, so a fixed
+    // CSS right:6px put badges UNDER/inside that scale's own ~78px-wide
+    // zone (confirmed live). chart.priceScale('right').width() is the
+    // library's own, already-computed value for that width — reading
+    // it, not touching any chart/coordinate math. Badges now sit just
+    // left of the price scale with an 8-12px margin, inside the candle
+    // area, at ×1-×4. No change to Y (priceToCoordinate) or to the
+    // nudge/overlap logic below.
+    let rightPx=16;
+    try{
+      const scaleW=this.chart?.priceScale('right')?.width();
+      if(typeof scaleW==='number'&&scaleW>0)rightPx=scaleW+10;
+    }catch(_){/* fall back to the default above */}
+    const placed=[]; // {el,y} for simple overlap nudging, this panel only
+    const nudge=(el,y)=>{
+      for(const p of placed){
+        if(Math.abs(p.y-y)<16){ y=p.y+16; }
+      }
+      placed.push({el,y});
+      el.style.top=Math.round(y)+'px';
+      el.style.right=rightPx+'px';
+    };
+    for(const [id,rec] of this.linesById.entries()){
+      if(String(id).startsWith('tmp-')||!rec.badgeEntry)continue;
+      const pos=this.positionsCache.find(p=>String(p.id)===String(id));
+      // Entry badge: qty | live P&L | ×
+      const yEntry=this.candleSeries.priceToCoordinate(rec.entry);
+      if(yEntry==null){rec.badgeEntry.style.display='none';}
+      else{
+        const raw=pos?computePositionPnLSafe(pos):null;
+        rec.badgeEntry.classList.toggle('pos',raw!=null&&raw>=0);
+        rec.badgeEntry.classList.toggle('neg',raw!=null&&raw<0);
+        const pnlTxt=raw!=null?`${raw>=0?'+':'-'}$${Math.abs(raw).toFixed(2)}`:'—';
+        rec.badgeEntry.textContent='';
+        const span=document.createElement('span');
+        span.textContent=`${rec.qty} | ${pnlTxt}`;
+        rec.badgeEntry.appendChild(span);
+        const closeBtn=document.createElement('span');
+        closeBtn.className='plb-close';closeBtn.textContent='×';closeBtn.title='Cerrar posición';
+        const panel=this,posId=rec.id,maxQty=rec.qty;
+        closeBtn.addEventListener('pointerdown',e=>e.stopPropagation());
+        closeBtn.addEventListener('click',e=>{
+          e.stopPropagation();
+          _showCloseConfirm('¿Confirmas el cierre de esta posición?',(qtyVal)=>{
+            const payload={action:'order:close',id:String(posId)};
+            if(qtyVal!=null&&maxQty!=null&&qtyVal<maxQty)payload.qty=qtyVal;
+            panel.ws?.send(JSON.stringify(payload));
+          },{allowPartial:true,maxQty});
+        });
+        rec.badgeEntry.appendChild(closeBtn);
+        rec.badgeEntry.style.display='flex';
+        nudge(rec.badgeEntry,yEntry);
+      }
+      // TP badge: potential profit if TP fills
+      if(rec.tp!=null&&rec.badgeTP){
+        const yTP=this.candleSeries.priceToCoordinate(rec.tp);
+        if(yTP==null){rec.badgeTP.style.display='none';}
+        else{
+          const potential=computeRawPnL(this.currentSymbol,rec.side,rec.entry,rec.qty,rec.tp);
+          rec.badgeTP.textContent=`${rec.qty} | +$${Math.abs(potential).toFixed(2)}`;
+          rec.badgeTP.style.display='flex';
+          nudge(rec.badgeTP,yTP);
+        }
+      }else if(rec.badgeTP){rec.badgeTP.style.display='none';}
+      // SL badge: potential loss if SL fills
+      if(rec.sl!=null&&rec.badgeSL){
+        const ySL=this.candleSeries.priceToCoordinate(rec.sl);
+        if(ySL==null){rec.badgeSL.style.display='none';}
+        else{
+          const potential=computeRawPnL(this.currentSymbol,rec.side,rec.entry,rec.qty,rec.sl);
+          rec.badgeSL.textContent=`${rec.qty} | -$${Math.abs(potential).toFixed(2)}`;
+          rec.badgeSL.style.display='flex';
+          nudge(rec.badgeSL,ySL);
+        }
+      }else if(rec.badgeSL){rec.badgeSL.style.display='none';}
+    }
+  }
+  /* UI-THEME-01 FASE D4.8D — presentation only: solid instead of
+     dashed/dotted, capped at 1px (was 2px when selected/dragging),
+     and the "selected" color is now a ~65% translucent version of the
+     exact same bull/bear hex (was 100% opaque) — same semantic colors,
+     same hexToRgba() helper already used for the dim state, just less
+     visually aggressive. Unselected/dim stays at its existing .20
+     opacity (not flagged as a problem) and entryDim is unchanged.
+     Selection logic (selectedPosIds/dragging) and everything else in
+     this function is untouched. */
   _applyLineStyles(){
-    const dim=0.20,bull='#26a69a',bear='#ef5350';
+    const dim=0.20,sel_op=0.65,bull='#26a69a',bear='#ef5350';
     const entryDim='rgba(148,163,184,0.28)';
     for(const [id,rec]of this.linesById.entries()){
       const sel=this.selectedPosIds.has(id);
       const dragSL=this.dragging?.id===id&&this.dragging?.which==='sl';
       const dragTP=this.dragging?.id===id&&this.dragging?.which==='tp';
-      rec.plEntry?.applyOptions({color:sel?(rec.side==='buy'?bull:bear):entryDim,lineWidth:sel?2:1,lineStyle:2});
-      rec.plSL?.applyOptions({color:(sel||dragSL)?bear:hexToRgba(bear,dim),lineWidth:(sel||dragSL)?2:1});
-      rec.plTP?.applyOptions({color:(sel||dragTP)?bull:hexToRgba(bull,dim),lineWidth:(sel||dragTP)?2:1});
+      rec.plEntry?.applyOptions({color:sel?hexToRgba(rec.side==='buy'?bull:bear,sel_op):entryDim,lineWidth:1,lineStyle:0});
+      rec.plSL?.applyOptions({color:(sel||dragSL)?hexToRgba(bear,sel_op):hexToRgba(bear,dim),lineWidth:1,lineStyle:0});
+      rec.plTP?.applyOptions({color:(sel||dragTP)?hexToRgba(bull,sel_op):hexToRgba(bull,dim),lineWidth:1,lineStyle:0});
     }
     this._updateRR();
   }
   ensureSL(id){
     const rec=this.linesById.get(String(id));if(!rec||rec.entry==null)return;
-    if(rec.sl==null){const step=priceFormatFor(this.currentSymbol).minMove||0.00001;rec.sl=roundToTick((rec.entry??this.lastClose)-(step*8),this.currentSymbol);rec.plSL=this.candleSeries.createPriceLine({price:rec.sl,color:'#ef5350',lineWidth:1,lineStyle:1,axisLabelVisible:true,title:'SL'});}
+    if(rec.sl==null){const step=priceFormatFor(this.currentSymbol).minMove||0.00001;rec.sl=roundToTick((rec.entry??this.lastClose)-(step*8),this.currentSymbol);rec.plSL=this.candleSeries.createPriceLine({price:rec.sl,color:'#ef5350',lineWidth:1,lineStyle:0,axisLabelVisible:true,title:''});}
   }
   ensureTP(id){
     const rec=this.linesById.get(String(id));if(!rec||rec.entry==null)return;
-    if(rec.tp==null){const step=priceFormatFor(this.currentSymbol).minMove||0.00001;rec.tp=roundToTick((rec.entry??this.lastClose)+(step*8),this.currentSymbol);rec.plTP=this.candleSeries.createPriceLine({price:rec.tp,color:'#26a69a',lineWidth:1,lineStyle:1,axisLabelVisible:true,title:'TP'});}
+    if(rec.tp==null){const step=priceFormatFor(this.currentSymbol).minMove||0.00001;rec.tp=roundToTick((rec.entry??this.lastClose)+(step*8),this.currentSymbol);rec.plTP=this.candleSeries.createPriceLine({price:rec.tp,color:'#26a69a',lineWidth:1,lineStyle:0,axisLabelVisible:true,title:''});}
   }
   _reconcilePending(items){
     if(!this.pendingTmp.length||!Array.isArray(items)||!items.length)return;
@@ -3211,14 +3982,17 @@ class TradingPanel {
      outlier next to the O.6c-1x-safe table/quickbar/1.5s-updater paths.
      Now uses the SAME computePositionPnLSafe(pos) they use — backend
      pos.pnl first, quotesLivePx fallback, else null. Never lastClose. */
+  /* UI-THEME-01 FASE D4.8B — this used to set the native price-line's
+     title to e.g. "BUY +$0.13" every tick (the redundant on-chart text
+     the Owner flagged). The compact entry badge (_syncPositionBadges,
+     synced from the same setPrice() tick right alongside this call)
+     now shows that exact information instead, so this just blanks the
+     title. Left the rest of the function's shape untouched (iteration/
+     lookup logic unchanged, nothing deleted) — minimal, reversible. */
   _updatePnLTitles(){
     for(const [id,rec] of this.linesById.entries()){
       if(!rec.plEntry||String(id).startsWith('tmp-'))continue;
-      const pos=this.positionsCache.find(p=>String(p.id)===String(id));
-      const raw=pos?computePositionPnLSafe(pos):null;
-      const side=rec.side==='buy'?'BUY':'SELL';
-      const label=raw!=null?`${side} ${raw>=0?'+':''}$${Math.abs(raw).toFixed(2)}`:`${side} —`;
-      rec.plEntry.applyOptions({title:label});
+      rec.plEntry.applyOptions({title:''});
     }
   }
 
@@ -3274,6 +4048,10 @@ class TradingPanel {
         if(!isMobile()){
           requestAnimationFrame(()=>{try{this.chart.timeScale().fitContent();}catch(_){}});
         }
+        // UI-THEME-01 FASE D4.8 — a resize/zoom can shift the price
+        // scale (hence every price's pixel Y) without a new tick;
+        // reposition the badges so they don't drift off their lines.
+        this._syncPositionBadges();
       }
     });
   }
@@ -3305,6 +4083,46 @@ class TradingPanel {
     this._resizeObs.observe(this.chartEl);
     this._initDrag();
     this._fixChartHeight();
+    this.applyChartTheme(currentTheme());
+  }
+
+  /* UI-THEME-01 FASE D4 — chrome-only retheme for this panel's main
+     chart + any active oscillator sub-charts, via applyOptions() only.
+     Never recreates the chart/series. Never touches candle/volume/
+     SMA/EMA/RSI series colors, SL/TP/entry price-lines, or the RSI
+     70/30 reference lines (all semantic/data — untouched). The RSI
+     midline (price 50) reference line has no stored handle — it is
+     created fire-and-forget inside _applyOscillator(), a function
+     that also drives indicator calculation/data; per instruction,
+     that function is not modified to add one, so the midline's color
+     is not re-themed this phase (see FASE D4 report). */
+  applyChartTheme(theme){
+    if(!this.chart)return;
+    const light=theme==='light';
+    this.chart.applyOptions({
+      layout:{background:{type:'solid',color:light?'#FFFFFF':'#020209'},textColor:light?'#5a5d70':'#9098a8'},
+      grid:{vertLines:{color:light?'rgba(0,0,0,.05)':'rgba(255,255,255,.03)'},horzLines:{color:light?'rgba(0,0,0,.05)':'rgba(255,255,255,.03)'}},
+      crosshair:{
+        vertLine:{color:light?'rgba(0,0,0,.25)':'rgba(255,255,255,.2)',labelBackgroundColor:light?'#14141a':'#080810'},
+        horzLine:{color:light?'rgba(0,0,0,.2)':'rgba(255,255,255,.16)',labelBackgroundColor:light?'#14141a':'#080810'}
+      },
+      timeScale:{borderColor:light?'rgba(0,0,0,.12)':'rgba(255,255,255,.06)'},
+      rightPriceScale:{borderColor:light?'rgba(0,0,0,.12)':'rgba(255,255,255,.06)'},
+    });
+    this.volumeSeries?.applyOptions({color:light?'rgba(0,0,0,.08)':'rgba(255,255,255,0.07)'});
+    this.priceLine?.applyOptions({color:light?'rgba(0,0,0,.4)':'rgba(255,255,255,.4)'});
+    for(const key of Object.keys(this._oscChart)){
+      this._oscChart[key]?.applyOptions({
+        layout:{background:{type:'solid',color:light?'#FFFFFF':'#020209'},textColor:light?'#5a5d70':'#6b7280'},
+        grid:{vertLines:{color:light?'rgba(0,119,166,.05)':'rgba(0,180,216,.03)'},horzLines:{color:light?'rgba(0,119,166,.05)':'rgba(0,180,216,.03)'}},
+        crosshair:{
+          vertLine:{color:light?'rgba(0,119,166,.3)':'rgba(0,180,216,.25)'},
+          horzLine:{color:light?'rgba(0,119,166,.25)':'rgba(0,180,216,.2)',labelBackgroundColor:light?'#14141a':'#060714'}
+        },
+        timeScale:{borderColor:light?'rgba(0,119,166,.14)':'rgba(0,180,216,.08)'},
+        rightPriceScale:{borderColor:light?'rgba(0,119,166,.14)':'rgba(0,180,216,.08)'},
+      });
+    }
   }
 
   _initDrag(){
@@ -3325,8 +4143,8 @@ class TradingPanel {
         const rec=this.linesById.get(tid);if(!rec)return;
         const raw=this.candleSeries.coordinateToPrice(y);if(raw==null)return;
         const price=roundToTick(raw,this.currentSymbol);
-        if(price<rec.entry&&rec.plSL==null){rec.sl=price;rec.plSL=this.candleSeries.createPriceLine({price,color:'#ef5350',lineWidth:1,lineStyle:1,axisLabelVisible:true,title:'SL'});this.dragging={id:tid,which:'sl'};}
-        else if(price>rec.entry&&rec.plTP==null){rec.tp=price;rec.plTP=this.candleSeries.createPriceLine({price,color:'#26a69a',lineWidth:1,lineStyle:1,axisLabelVisible:true,title:'TP'});this.dragging={id:tid,which:'tp'};}
+        if(price<rec.entry&&rec.plSL==null){rec.sl=price;rec.plSL=this.candleSeries.createPriceLine({price,color:'#ef5350',lineWidth:1,lineStyle:0,axisLabelVisible:true,title:''});this.dragging={id:tid,which:'sl'};}
+        else if(price>rec.entry&&rec.plTP==null){rec.tp=price;rec.plTP=this.candleSeries.createPriceLine({price,color:'#26a69a',lineWidth:1,lineStyle:0,axisLabelVisible:true,title:''});this.dragging={id:tid,which:'tp'};}
       }
       if(this.dragging){e.preventDefault();this.chart.applyOptions({handleScroll:false,handleScale:false});this._applyLineStyles();}
     },{passive:false});
@@ -3338,6 +4156,10 @@ class TradingPanel {
       if(this.dragging.which==='sl'){rec.sl=price;rec.plSL?.applyOptions({price});}
       else{rec.tp=price;rec.plTP?.applyOptions({price});}
       this._showDragBadge(this.dragging.which,rec,price);
+      // UI-THEME-01 FASE D4.8 — minimal addition: keeps the new TP/SL
+      // badge (position + potential P&L text) tracking live while
+      // dragging. Coordinate->price math above is untouched.
+      this._syncPositionBadges();
     });
     const endDrag=()=>{
       const scrollOpts=true;
@@ -3503,7 +4325,40 @@ function setActive(panel){
   const mhdrSymSel=document.getElementById('mhdrSymSel');
   if(mhdrSymSel)mhdrSymSel.value=panel.currentSymbol;
   _syncMhdrTFBadge(panel.currentTF||'15m');
+  // UI-THEME-01 FASE D4.7 — same pattern as the mhdrSymSel/TF-badge
+  // sync just above (mobile's own global toolbar already does this),
+  // now also syncing the new desktop global chart toolbar.
+  syncGlobalChartToolbar();
 }
+
+/* UI-THEME-01 FASE D4.7 — global chart toolbar: reads/writes only
+   DISPLAY state here (select .value, dot class/title). All actual
+   symbol/timeframe/indicator CHANGES still go through the exact same
+   per-panel .p-sym/.p-tf/.p-ind-btn + _onSymChange()/_onTFChange()/
+   _openIndicatorMenu() that already existed — this never bypasses or
+   duplicates them. */
+function syncGlobalChartToolbar(){
+  if(!activePanel)return;
+  const gs=document.getElementById('gSymSel'), gt=document.getElementById('gTfSel');
+  if(gs)gs.value=activePanel.currentSymbol;
+  if(gt)gt.value=activePanel.currentTF;
+}
+(function(){
+  const gSymSel=document.getElementById('gSymSel');
+  const gTfSel=document.getElementById('gTfSel');
+  const gIndBtn=document.getElementById('gIndBtn');
+  if(gSymSel)gSymSel.addEventListener('change',()=>{
+    if(!activePanel)return;
+    activePanel.symSel.value=gSymSel.value;
+    activePanel.symSel.dispatchEvent(new Event('change'));
+  });
+  if(gTfSel)gTfSel.addEventListener('change',()=>{
+    if(!activePanel)return;
+    activePanel.tfSel.value=gTfSel.value;
+    activePanel.tfSel.dispatchEvent(new Event('change'));
+  });
+  if(gIndBtn)gIndBtn.addEventListener('click',e=>{e.stopPropagation();_openIndicatorMenu(gIndBtn);});
+})();
 
 /* ── Mobile execution bar wiring ── */
 function _initMobExecBar(){
@@ -3533,6 +4388,13 @@ async function setLayout(n){
     createPanel(`p${idx}`,DEFAULT_SYMBOLS[idx%DEFAULT_SYMBOLS.length]);
   }
   allPanels.forEach((p,i)=>{p.wrapper.style.display=i<n?'':'none';});
+  // UI-THEME-01 FASE D4.7B — forensic fix (D4.7A): activePanel was never
+  // reassigned when a layout shrink hid the panel it pointed to, leaving
+  // the global toolbar (D4.7) bound to an invisible panel. Reuses the
+  // existing setActive() as-is — no new logic.
+  if(activePanel && allPanels.indexOf(activePanel)>=n){
+    setActive(allPanels[0]);
+  }
   // Reset inline columns so the CSS class takes effect first
   grid.style.gridTemplateColumns='';
   grid.className=`panels-grid layout-${n}`;
@@ -3957,9 +4819,14 @@ sheetSave.addEventListener('click',()=>{
   const slV=sheetSL.value===''?null:Number(sheetSL.value),tpV=sheetTP.value===''?null:Number(sheetTP.value);
   rec.sl=slV;rec.tp=tpV;
   if(rec.plSL){if(slV==null){qbPanel.candleSeries.removePriceLine(rec.plSL);rec.plSL=null;}else rec.plSL.applyOptions({price:slV});}
-  else if(slV!=null)rec.plSL=qbPanel.candleSeries.createPriceLine({price:slV,color:'#ef5350',lineWidth:1,lineStyle:1,axisLabelVisible:true,title:'SL'});
+  else if(slV!=null)rec.plSL=qbPanel.candleSeries.createPriceLine({price:slV,color:'#ef5350',lineWidth:1,lineStyle:0,axisLabelVisible:true,title:''});
   if(rec.plTP){if(tpV==null){qbPanel.candleSeries.removePriceLine(rec.plTP);rec.plTP=null;}else rec.plTP.applyOptions({price:tpV});}
-  else if(tpV!=null)rec.plTP=qbPanel.candleSeries.createPriceLine({price:tpV,color:'#26a69a',lineWidth:1,lineStyle:1,axisLabelVisible:true,title:'TP'});
+  else if(tpV!=null)rec.plTP=qbPanel.candleSeries.createPriceLine({price:tpV,color:'#26a69a',lineWidth:1,lineStyle:0,axisLabelVisible:true,title:''});
+  // UI-THEME-01 FASE D4.8D — same correction ensureSL()/ensureTP()'s
+  // own callers already apply right after creating a line, so a newly
+  // created SL/TP here doesn't sit at full opacity until the next
+  // backend position refresh arrives.
+  qbPanel._applyLineStyles();
   qbPanel.ws.send(JSON.stringify({action:'order:update',id:String(qbPosId),symbol:qbPanel.currentSymbol,sl:slV,tp:tpV}));
   closeSheet();
 });
@@ -4412,6 +5279,15 @@ function updateGlobalWSStatus(statusText){
   if(dot){dot.className='ops-ws-dot'+(cls==='wss-live'?' live':cls==='wss-reconnecting'?' reconn':'');}
   if(lbl)lbl.textContent=cls==='wss-live'?'LIVE':cls==='wss-reconnecting'?'RECONN':'OFFLINE';
   if(tsbWs){tsbWs.textContent=cls==='wss-live'?'CONNECTED':cls==='wss-reconnecting'?'RECONNECTING':'OFFLINE';tsbWs.style.color=cls==='wss-live'?'#26a69a':cls==='wss-reconnecting'?'#ff9800':'rgba(255,255,255,.22)';}
+  // UI-THEME-01 FASE D4.7 — one more mirror, same pattern as the four
+  // above: the global chart toolbar's tiny WS dot. Real monitoring is
+  // unchanged — this function is only ever called with the real
+  // status text, never invented here.
+  const gDot=document.getElementById('gWsDot');
+  if(gDot){
+    gDot.className='ops-ws-dot'+(cls==='wss-live'?' live':cls==='wss-reconnecting'?' reconn':'');
+    gDot.title=cls==='wss-live'?'Connected':cls==='wss-reconnecting'?'Reconnecting':'Offline';
+  }
 }
 let _riskAlertTimer=null;
 function showRiskAlert(msg,persist){
@@ -4686,19 +5562,34 @@ document.getElementById('trdAddBtn')?.addEventListener('click',()=>{
   }
 })();
 
-/* ── Ops sidebar (TraderLocker-style, labels always visible by default) ── */
+/* ── Ops sidebar — UI-THEME-01 FASE D4.5 (2): compact icon rail is now
+     the DEFAULT (was: labels visible by default, collapse optional).
+     Same toggle mechanism, same class/inline-style approach that
+     already existed — only the initial state and the compact width
+     (44px -> 50px, inside the requested 48-52px range) changed. No
+     destinations/handlers/permissions touched: data-ops click routing
+     below is unmodified. */
 (function(){
   const sidebar=document.getElementById('opsSidebar');
   const toggleBtn=document.getElementById('opsToggleBtn');
   const toggleIcon=document.getElementById('opsToggleIcon');
   if(!sidebar||!toggleBtn)return;
-  let collapsed=false;
+  const EXPANDED_COLS='96px 32px 1fr 240px';
+  let collapsed=true;
+  function applyState(){
+    sidebar.classList.toggle('collapsed',collapsed);
+    if(toggleIcon)toggleIcon.textContent=collapsed?'›':'‹';
+    toggleBtn.title=collapsed?'Expand sidebar':'Collapse sidebar';
+    // Compact (default) uses the CSS default (--opsbar-w:50px) — no
+    // inline override needed, so there is no flash of the wide layout
+    // before this script runs. Expanded sets the wider width explicitly.
+    document.querySelector('.layout').style.gridTemplateColumns=
+      collapsed?``:EXPANDED_COLS;
+  }
+  applyState();
   toggleBtn.addEventListener('click',()=>{
     collapsed=!collapsed;
-    sidebar.classList.toggle('collapsed',collapsed);
-    if(toggleIcon){toggleIcon.className=collapsed?'fa-solid fa-chevron-right':'fa-solid fa-chevron-left';}
-    document.querySelector('.layout').style.gridTemplateColumns=
-      collapsed?`44px 32px 1fr 240px`:``;
+    applyState();
     requestAnimationFrame(()=>allPanels.forEach(p=>p._fixChartHeight()));
   });
   document.querySelectorAll('.ops-item[data-ops]').forEach(item=>{

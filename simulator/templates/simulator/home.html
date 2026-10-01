@@ -51,7 +51,7 @@
   text-transform: uppercase; color: var(--muted-2); margin-bottom: 6px;
 }
 .stat-value {
-  font-size: 1.45rem; font-weight: 700; color: #fff;
+  font-size: 1.45rem; font-weight: 700; color: var(--text-primary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .stat-value.positive { color: var(--bull); }
@@ -125,7 +125,7 @@
   font-size: .72rem; color: var(--muted); margin-bottom: 6px;
 }
 .acc-progress-bar {
-  height: 4px; background: rgba(255,255,255,.06);
+  height: 4px; background: var(--border);
   border-radius: 2px; overflow: hidden;
 }
 .acc-progress-fill {
@@ -147,7 +147,7 @@
   transition: background .12s;
 }
 .mov-table tbody tr:last-child { border-bottom: none; }
-.mov-table tbody tr:hover { background: rgba(255,255,255,.015); }
+.mov-table tbody tr:hover { background: var(--surface-hover); }
 .mov-table td { padding: 11px 12px; font-size: .78rem; color: var(--text); }
 
 .ev-pill {
@@ -285,7 +285,7 @@
   gap: 16px; flex-wrap: wrap; margin-bottom: 20px;
 }
 .dash-welcome h1 {
-  font-size: 1.3rem; font-weight: 700; color: #fff; margin-bottom: 4px;
+  font-size: 1.3rem; font-weight: 700; color: var(--text-primary); margin-bottom: 4px;
 }
 .dash-welcome h1 .gold { color: var(--gold); }
 .dash-welcome p { font-size: .8rem; color: var(--muted); }
@@ -318,7 +318,7 @@
 .progress-item-lbl { color: var(--muted-2); font-weight: 600; }
 .progress-item-val { color: var(--text); font-weight: 700; }
 .progress-track {
-  height: 10px; background: rgba(255,255,255,.05); border-radius: 6px; overflow: hidden;
+  height: 10px; background: var(--border); border-radius: 6px; overflow: hidden;
 }
 .progress-fill {
   height: 100%; border-radius: 6px;
@@ -333,7 +333,7 @@
 .goal-ring {
   width: 150px; height: 150px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  background: conic-gradient(var(--gold) calc(var(--pct,0) * 1%), rgba(255,255,255,.06) 0);
+  background: conic-gradient(var(--gold) calc(var(--pct,0) * 1%), var(--border) 0);
   position: relative;
 }
 .goal-ring::before {
@@ -341,7 +341,7 @@
   background: var(--bg-card-2);
 }
 .goal-ring-inner { position: relative; z-index: 1; text-align: center; }
-.goal-ring-pct { font-size: 1.5rem; font-weight: 800; color: #fff; }
+.goal-ring-pct { font-size: 1.5rem; font-weight: 800; color: var(--text-primary); }
 .goal-ring-lbl { font-size: .68rem; color: var(--muted); margin-top: 2px; }
 .goal-meta { text-align: center; margin-top: 14px; font-size: .78rem; color: var(--muted-2); }
 .goal-meta b { color: var(--gold); }
@@ -366,7 +366,7 @@
 }
 .fin-card-head { display: flex; align-items: center; gap: 8px; font-size: .74rem; color: var(--muted-2); font-weight: 600; margin-bottom: 10px; }
 .fin-card-head i { color: var(--gold); }
-.fin-card-val { font-size: 1.35rem; font-weight: 700; color: #fff; }
+.fin-card-val { font-size: 1.35rem; font-weight: 700; color: var(--text-primary); }
 
 /* ─── Performance metrics + Top Instruments row ─── */
 .metrics-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
@@ -380,7 +380,7 @@
 }
 .winrate-ring::before { content:''; position:absolute; inset:8px; border-radius:50%; background: var(--bg-card-2); }
 .winrate-ring-inner { position: relative; z-index: 1; text-align: center; }
-.winrate-ring-pct { font-size: 1.3rem; font-weight: 800; color: #fff; }
+.winrate-ring-pct { font-size: 1.3rem; font-weight: 800; color: var(--text-primary); }
 .winrate-stats { display: flex; flex-direction: column; gap: 10px; flex: 1; min-width: 140px; }
 .winrate-stat-row { display: flex; justify-content: space-between; font-size: .78rem; }
 .winrate-stat-lbl { color: var(--muted-2); }
@@ -389,7 +389,7 @@
 .instr-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .instr-row:last-child { margin-bottom: 0; }
 .instr-sym { width: 76px; flex-shrink: 0; font-size: .78rem; font-weight: 700; color: var(--text); }
-.instr-track { flex: 1; height: 8px; background: rgba(255,255,255,.05); border-radius: 5px; overflow: hidden; }
+.instr-track { flex: 1; height: 8px; background: var(--border); border-radius: 5px; overflow: hidden; }
 .instr-fill { height: 100%; border-radius: 5px; background: linear-gradient(90deg, #FFD700, #FFA500); }
 .instr-meta { width: 92px; flex-shrink: 0; text-align: right; font-size: .72rem; color: var(--muted-2); }
 .empty-mini { text-align: center; padding: 24px 10px; color: var(--muted); font-size: .8rem; }
@@ -963,7 +963,7 @@
         <i class="fa-solid fa-calendar-days"></i>
       </div>
       <div>
-        <div style="font-size:.78rem;font-weight:700;color:#fff;margin-bottom:3px">Calendario</div>
+        <div style="font-size:.78rem;font-weight:700;color:var(--text-primary);margin-bottom:3px">Calendario</div>
         {% if upcoming_events %}
         <div style="font-size:.7rem;color:var(--muted-2)">{{ upcoming_events|length }} evento{{ upcoming_events|length|pluralize }} próximo{{ upcoming_events|length|pluralize }}</div>
         <div style="font-size:.68rem;color:var(--muted);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px">{{ upcoming_events.0.title|truncatechars:28 }}</div>
@@ -981,7 +981,7 @@
         <i class="fa-solid fa-handshake"></i>
       </div>
       <div>
-        <div style="font-size:.78rem;font-weight:700;color:#fff;margin-bottom:3px">Asociados</div>
+        <div style="font-size:.78rem;font-weight:700;color:var(--text-primary);margin-bottom:3px">Asociados</div>
         {% if referral %}
         <div style="font-size:.7rem;color:var(--muted-2)">{{ referral.clicks }} click{{ referral.clicks|pluralize }} · {{ referral.attributions.count }} registro{{ referral.attributions.count|pluralize }}</div>
         <div style="font-size:.68rem;color:var(--muted);margin-top:3px">Comisión: ${{ referral.estimated_commission|floatformat:2 }}</div>
@@ -999,7 +999,7 @@
         <i class="fa-solid fa-gift"></i>
       </div>
       <div>
-        <div style="font-size:.78rem;font-weight:700;color:#fff;margin-bottom:3px">Bonos</div>
+        <div style="font-size:.78rem;font-weight:700;color:var(--text-primary);margin-bottom:3px">Bonos</div>
         {% if active_bonuses_ct %}
         <div style="font-size:.7rem;color:#26a69a;font-weight:600">{{ active_bonuses_ct }} bono{{ active_bonuses_ct|pluralize }} activo{{ active_bonuses_ct|pluralize }}</div>
         {% else %}
@@ -1016,7 +1016,7 @@
         <i class="fa-solid fa-folder-open"></i>
       </div>
       <div>
-        <div style="font-size:.78rem;font-weight:700;color:#fff;margin-bottom:3px">Archivos</div>
+        <div style="font-size:.78rem;font-weight:700;color:var(--text-primary);margin-bottom:3px">Archivos</div>
         {% if recent_docs %}
         <div style="font-size:.7rem;color:var(--muted-2)">{{ recent_docs|length }} archivo{{ recent_docs|length|pluralize }} reciente{{ recent_docs|length|pluralize }}</div>
         {% else %}
@@ -1033,7 +1033,7 @@
         <i class="fa-solid fa-robot"></i>
       </div>
       <div>
-        <div style="font-size:.78rem;font-weight:700;color:#fff;margin-bottom:3px">Expertos (EAs)</div>
+        <div style="font-size:.78rem;font-weight:700;color:var(--text-primary);margin-bottom:3px">Expertos (EAs)</div>
         {% if ea_count %}
         <div style="font-size:.7rem;color:var(--muted-2)">{{ ea_count }} EA{{ ea_count|pluralize }} disponible{{ ea_count|pluralize }}</div>
         {% else %}
@@ -1059,10 +1059,49 @@
 <script>
 (function () {
   var eqData = {{ equity_curve_json|safe }};
+  var chart = null;
+
+  /* UI-THEME-01 FASE C — chrome-only retheme (background stays
+     'transparent' in both themes, so it never needs touching). Dark
+     values are the exact literals this chart already used pre-FASE C
+     (pixel-identical, never read from a token). Light values come
+     from the semantic tokens base_app.html defines for [data-theme=
+     "light"] — --border-subtle/--border happen to already equal this
+     chart's grid/axis opacities (.04/.08) in the neutral light palette,
+     so the mapping is exact, not approximate. Series color (gold) is
+     brand/data color, not chrome — left untouched in both themes. */
+  function chartThemeVars(theme) {
+    if (theme === 'light') {
+      var cs = getComputedStyle(document.documentElement);
+      return {
+        text: cs.getPropertyValue('--text-secondary').trim() || '#6b6f80',
+        grid: cs.getPropertyValue('--border-subtle').trim() || 'rgba(17,17,17,.04)',
+        axis: cs.getPropertyValue('--border').trim() || 'rgba(17,17,17,.08)',
+      };
+    }
+    return { text: '#787b86', grid: 'rgba(255,255,255,.04)', axis: 'rgba(255,255,255,.08)' };
+  }
+  function applyChartTheme(theme) {
+    if (!chart) { return; }
+    var t = chartThemeVars(theme);
+    chart.applyOptions({
+      layout: { textColor: t.text },
+      grid: {
+        vertLines: { color: t.grid },
+        horzLines: { color: t.grid },
+      },
+      rightPriceScale: { borderColor: t.axis },
+      timeScale: { borderColor: t.axis },
+    });
+  }
+  function currentTheme() {
+    return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+  }
+
   function renderPerfChart() {
     var el = document.getElementById('perfOverviewChart');
     if (!el || !window.LightweightCharts || !eqData.length) { return; }
-    var chart = LightweightCharts.createChart(el, {
+    chart = LightweightCharts.createChart(el, {
       width: el.clientWidth,
       height: 260,
       layout: { background: { color: 'transparent' }, textColor: '#787b86' },
@@ -1082,6 +1121,7 @@
     });
     series.setData(eqData);
     chart.timeScale().fitContent();
+    applyChartTheme(currentTheme());
     window.addEventListener('resize', function () {
       chart.applyOptions({ width: el.clientWidth });
     });
@@ -1094,6 +1134,10 @@
     s.onload = renderPerfChart;
     document.head.appendChild(s);
   }
+
+  document.addEventListener('mb:themechange', function (e) {
+    applyChartTheme(e.detail && e.detail.theme);
+  });
 })();
 </script>
 {% endif %}

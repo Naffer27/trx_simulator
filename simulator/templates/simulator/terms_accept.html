@@ -4,10 +4,10 @@
 
 {% block content %}
 <div style="max-width:560px;margin:60px auto;padding:0 16px;">
-  <div style="background:#0d0d14;border:1px solid rgba(255,215,0,.15);border-radius:16px;padding:36px 32px;">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:36px 32px;">
 
-    <h2 style="color:#ffd700;margin-top:0;">Términos y Aviso de Riesgo</h2>
-    <p style="color:#aaa;font-size:14px;">
+    <h2 style="color:var(--gold);margin-top:0;">Términos y Aviso de Riesgo</h2>
+    <p style="color:var(--text-muted);font-size:14px;">
       Versión términos: <code>{{ terms_version }}</code> &nbsp;|&nbsp;
       Versión riesgo: <code>{{ risk_version }}</code>
     </p>
@@ -25,28 +25,28 @@
 
       <label style="display:flex;gap:12px;align-items:flex-start;margin-bottom:16px;cursor:pointer;">
         <input type="checkbox" name="accept_terms" style="margin-top:3px;flex-shrink:0;">
-        <span style="color:#ddd;font-size:14px;">
+        <span style="color:var(--text-secondary);font-size:14px;">
           He leído y acepto los <strong>Términos y Condiciones</strong> del servicio.
         </span>
       </label>
 
       <label style="display:flex;gap:12px;align-items:flex-start;margin-bottom:16px;cursor:pointer;">
         <input type="checkbox" name="accept_risk" style="margin-top:3px;flex-shrink:0;">
-        <span style="color:#ddd;font-size:14px;">
+        <span style="color:var(--text-secondary);font-size:14px;">
           He leído y acepto la <strong>Política de Divulgación de Riesgo</strong>.
         </span>
       </label>
 
       <label style="display:flex;gap:12px;align-items:flex-start;margin-bottom:16px;cursor:pointer;">
         <input type="checkbox" name="accept_withdrawal_policy" style="margin-top:3px;flex-shrink:0;">
-        <span style="color:#ddd;font-size:14px;">
+        <span style="color:var(--text-secondary);font-size:14px;">
           He leído y acepto la <strong>Política de Retiros</strong>.
         </span>
       </label>
 
       <label style="display:flex;gap:12px;align-items:flex-start;margin-bottom:28px;cursor:pointer;">
         <input type="checkbox" name="understand_risk" style="margin-top:3px;flex-shrink:0;">
-        <span style="color:#ddd;font-size:14px;">
+        <span style="color:var(--text-secondary);font-size:14px;">
           <strong>Entiendo</strong> que el trading de instrumentos financieros implica
           un riesgo significativo de pérdida de capital y podría no ser adecuado para todos los inversores.
         </span>

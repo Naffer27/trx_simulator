@@ -22,7 +22,7 @@
     font-family: 'Orbitron', sans-serif;
     font-size: 1.2rem;
     font-weight: 700;
-    color: #FFD700;
+    color: var(--gold);
     letter-spacing: .05em;
     margin: 0;
   }
@@ -55,15 +55,15 @@
   }
 
   .wh-table-wrap {
-    background: #0d0d14;
-    border: 1px solid rgba(255,215,0,.1);
+    background: var(--surface);
+    border: 1px solid var(--border);
     border-radius: 12px;
     overflow: hidden;
   }
   table { width: 100%; border-collapse: collapse; }
   th {
     background: rgba(255,215,0,.05);
-    color: rgba(255,255,255,.45);
+    color: var(--text-secondary);
     font-size: .7rem;
     font-weight: 700;
     letter-spacing: .07em;
@@ -76,8 +76,8 @@
   td {
     padding: 14px 16px;
     font-size: .83rem;
-    color: rgba(255,255,255,.8);
-    border-bottom: 1px solid rgba(255,255,255,.04);
+    color: var(--text-primary);
+    border-bottom: 1px solid var(--border-subtle);
     vertical-align: middle;
   }
   tr:last-child td { border-bottom: none; }
@@ -92,17 +92,23 @@
     letter-spacing: .04em;
     white-space: nowrap;
   }
-  .s-pending    { background:#1a1a2a; color:#7986cb; }
-  .s-approved   { background:#0a2a1a; color:#27ae60; }
-  .s-processing { background:#2a1a00; color:#f1c40f; }
-  .s-completed  { background:#0a2a1a; color:#00e676; }
-  .s-rejected   { background:#2a0000; color:#e74c3c; }
-  .s-failed     { background:#2a0000; color:#ef5350; }
+  /* UI-THEME-01 FASE B2 — was a solid near-black chip per status
+     (e.g. background:#1a1a2a), self-consistent but jarring floating on
+     a light table row. Switched to the same low-opacity-tint-of-the-
+     semantic-hue pattern already used by deposit_history.html's
+     .badge-status and accounts.html's .type-*/.status-* chips — reads
+     correctly on both Dark and Light without changing the text hue. */
+  .s-pending    { background:rgba(121,134,203,.15); color:#7986cb; }
+  .s-approved   { background:rgba(39,174,96,.15);   color:#27ae60; }
+  .s-processing { background:rgba(241,196,15,.15);  color:#f1c40f; }
+  .s-completed  { background:rgba(0,230,118,.15);   color:#00e676; }
+  .s-rejected   { background:rgba(231,76,60,.15);   color:#e74c3c; }
+  .s-failed     { background:rgba(239,83,80,.15);   color:#ef5350; }
 
   .addr-cell {
     font-family: monospace;
     font-size: .75rem;
-    color: rgba(255,255,255,.5);
+    color: var(--text-muted);
     max-width: 160px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -111,7 +117,7 @@
   .empty-state {
     padding: 60px 20px;
     text-align: center;
-    color: #555;
+    color: var(--text-muted);
   }
   .empty-state p { margin: 12px 0 20px; font-size: .85rem; }
 </style>
@@ -127,10 +133,10 @@
   <!-- Wallet summary -->
   <div class="wallet-pill">
     <i class="fa-solid fa-wallet" style="color:var(--gold)"></i>
-    <span style="color:rgba(255,255,255,.55);">Balance disponible:</span>
+    <span style="color:var(--text-secondary);">Balance disponible:</span>
     <strong style="color:var(--gold);">${{ wallet.available_balance|floatformat:2 }}</strong>
     {% if wallet.pending_balance > 0 %}
-    <span style="color:#787b86;font-size:.77rem;margin-left:8px;">
+    <span style="color:var(--text-muted);font-size:.77rem;margin-left:8px;">
       · Pendiente: ${{ wallet.pending_balance|floatformat:2 }}
     </span>
     {% endif %}
@@ -153,28 +159,28 @@
       <tbody>
         {% for wr in withdrawals %}
         <tr>
-          <td style="color:rgba(255,215,0,.5);font-weight:600;">{{ wr.id }}</td>
-          <td style="color:#787b86;font-size:.77rem;white-space:nowrap;">
+          <td style="color:var(--text-muted);font-weight:600;">{{ wr.id }}</td>
+          <td style="color:var(--text-muted);font-size:.77rem;white-space:nowrap;">
             {{ wr.created_at|date:"d/m/Y" }}<br>
-            <span style="color:#55556a;">{{ wr.created_at|time:"H:i" }}</span>
+            <span style="color:var(--text-muted);">{{ wr.created_at|time:"H:i" }}</span>
           </td>
-          <td><strong style="color:#fff;">${{ wr.amount_usd|floatformat:2 }}</strong></td>
+          <td><strong style="color:var(--text-primary);">${{ wr.amount_usd|floatformat:2 }}</strong></td>
           <td>
-            <span style="color:rgba(255,215,0,.8);font-weight:600;font-size:.8rem;">
+            <span style="color:var(--gold);font-weight:600;font-size:.8rem;">
               {{ wr.get_crypto_currency_display }}
             </span>
           </td>
           <td class="addr-cell" title="{{ wr.wallet_address }}">{{ wr.wallet_address }}</td>
-          <td style="font-size:.78rem;color:#787b86;">
+          <td style="font-size:.78rem;color:var(--text-muted);">
             {% with attempt=wr.payout_attempts.all|first %}
               {% if wr.status == "completed" and attempt.confirmed_amount %}
                 <span style="color:#00e676;font-weight:600;">{{ attempt.confirmed_amount }} {{ wr.crypto_currency|upper }}</span>
                 {% if attempt.tx_hash %}
-                <br><span style="font-family:monospace;font-size:.66rem;color:#55556a;" title="{{ attempt.tx_hash }}">{{ attempt.tx_hash|truncatechars:18 }}</span>
+                <br><span style="font-family:monospace;font-size:.66rem;color:var(--text-muted);" title="{{ attempt.tx_hash }}">{{ attempt.tx_hash|truncatechars:18 }}</span>
                 {% endif %}
               {% elif wr.crypto_amount %}
                 {{ wr.crypto_amount }} {{ wr.crypto_currency|upper }}
-                <br><span style="font-size:.62rem;color:#55556a;text-transform:uppercase;letter-spacing:.05em;">Estimado</span>
+                <br><span style="font-size:.62rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;">Estimado</span>
               {% else %}—{% endif %}
             {% endwith %}
           </td>
@@ -192,7 +198,7 @@
             {% elif wr.status == "failed" %}
               <span class="badge s-failed">Fallido</span>
             {% else %}
-              <span class="badge" style="background:#1a1a2a;color:#aaa;">{{ wr.status }}</span>
+              <span class="badge" style="background:var(--bg-card-2);color:var(--text-muted);">{{ wr.status }}</span>
             {% endif %}
           </td>
         </tr>

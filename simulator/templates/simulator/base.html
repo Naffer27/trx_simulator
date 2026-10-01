@@ -2,6 +2,29 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <!-- UI-THEME-01 FASE D2 — anti-flash theme bootstrap, identical
+       mechanism to base_app.html: localStorage['mb_theme'] ->
+       prefers-color-scheme -> dark fallback, data-theme on <html>
+       before first paint. Shared by every page extending this base
+       (dashboard.html AND landing.html) — inert here on purpose: this
+       file defines no [data-theme="light"] rule of its own, so setting
+       the attribute has zero visual effect on landing.html or on the
+       terminal's navbar. Only dashboard.html's own <style> (FASE D2)
+       reacts to it. Never touches User/Profile/DB. -->
+  <script>
+  (function () {
+    try {
+      var t = localStorage.getItem('mb_theme');
+      if (t !== 'light' && t !== 'dark') {
+        t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches)
+          ? 'light' : 'dark';
+      }
+      document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {
+      document.documentElement.setAttribute('data-theme', 'dark');
+    }
+  })();
+  </script>
   {% now "U" as ts %}
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -62,6 +85,7 @@
           <li class="nav-item"><a class="nav-link{% if request.resolver_match.url_name == 'dashboard' or request.resolver_match.url_name == 'dashboard_alt' %} nav-active{% endif %}" href="{% url 'simulator:home' %}">Dashboard</a></li>
           <li class="nav-item"><a class="nav-link{% if request.resolver_match.url_name == 'history' %} nav-active{% endif %}" href="{% url 'simulator:history' %}">History</a></li>
           <li class="nav-item"><a class="nav-link nav-cta{% if request.resolver_match.url_name == 'deposit' or request.resolver_match.url_name == 'deposit_history' %} nav-active{% endif %}" href="{% url 'simulator:deposit' %}">Deposit</a></li>
+          {% block navbar_extra %}{% endblock %}
           <li class="nav-item"><a class="nav-link" href="{% url 'simulator:logout' %}">Logout</a></li>
         {% else %}
           <li class="nav-item"><a class="nav-link" href="{% url 'simulator:login' %}">Login</a></li>

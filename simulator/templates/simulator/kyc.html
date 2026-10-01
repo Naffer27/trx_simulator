@@ -29,7 +29,7 @@
 .kyc-title {
   font-family: 'Orbitron', sans-serif;
   font-size: .88rem; font-weight: 900;
-  letter-spacing: .06em; color: #fff;
+  letter-spacing: .06em; color: var(--text-primary);
   margin-bottom: 6px;
 }
 .kyc-sub  { font-size: .78rem; color: var(--muted); line-height: 1.6; margin-bottom: 28px; }
@@ -54,11 +54,11 @@
 .field input[type="text"],
 .field select {
   width: 100%;
-  background: rgba(255,255,255,.04);
+  background: var(--bg-app);
   border: 1px solid rgba(255,215,0,.12);
   border-radius: 8px;
   padding: 11px 14px;
-  color: #fff;
+  color: var(--text-primary);
   font-family: 'Inter', sans-serif;
   font-size: .88rem;
   transition: border-color .18s, box-shadow .18s;
@@ -69,10 +69,10 @@
   border-color: var(--gold);
   box-shadow: 0 0 0 3px rgba(255,215,0,.08);
 }
-.field select option { background: #0d0d1a; color: #fff; }
+.field select option { background: var(--surface); color: var(--text-primary); }
 .field input[type="file"] {
   width: 100%;
-  background: rgba(255,255,255,.03);
+  background: var(--bg-app);
   border: 1px dashed rgba(255,215,0,.2);
   border-radius: 8px;
   padding: 10px 14px;

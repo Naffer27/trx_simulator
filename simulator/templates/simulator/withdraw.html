@@ -13,8 +13,8 @@
     padding: 40px 16px;
   }
   .wd-card {
-    background: #0d0d14;
-    border: 1px solid rgba(255,215,0,.15);
+    background: var(--surface);
+    border: 1px solid var(--border);
     border-radius: 16px;
     padding: 40px 36px;
     width: 100%;
@@ -25,29 +25,29 @@
     font-family: 'Orbitron', sans-serif;
     font-size: 1.3rem;
     font-weight: 700;
-    color: #FFD700;
+    color: var(--gold);
     letter-spacing: .06em;
     margin-bottom: 6px;
   }
   .wd-card .subtitle {
-    color: #787b86;
+    color: var(--text-muted);
     font-size: .82rem;
     margin-bottom: 28px;
   }
   .field-label {
     font-size: .78rem;
     font-weight: 600;
-    color: rgba(255,255,255,.55);
+    color: var(--text-secondary);
     letter-spacing: .05em;
     text-transform: uppercase;
     margin-bottom: 8px;
   }
   .deposit-input {
     width: 100%;
-    background: #05050a;
+    background: var(--bg-app);
     border: 1px solid rgba(255,215,0,.2);
     border-radius: 8px;
-    color: #fff;
+    color: var(--text-primary);
     font-size: .95rem;
     padding: 12px 14px;
     outline: none;
@@ -57,10 +57,10 @@
     box-sizing: border-box;
   }
   .deposit-input:focus {
-    border-color: #FFD700;
+    border-color: var(--gold);
     box-shadow: 0 0 0 2px rgba(255,215,0,.12);
   }
-  .deposit-input option { background: #0d0d14; }
+  .deposit-input option { background: var(--surface); color: var(--text-primary); }
   .preset-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -71,7 +71,7 @@
     background: rgba(255,215,0,.07);
     border: 1px solid rgba(255,215,0,.18);
     border-radius: 8px;
-    color: #FFD700;
+    color: var(--gold);
     font-size: .85rem;
     font-weight: 600;
     padding: 10px 0;
@@ -80,7 +80,7 @@
   }
   .preset-btn:hover, .preset-btn.active {
     background: rgba(255,215,0,.18);
-    border-color: #FFD700;
+    border-color: var(--gold);
   }
   .submit-btn {
     width: 100%;
@@ -123,11 +123,11 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    color: #787b86;
+    color: var(--text-muted);
     font-size: .76rem;
     margin-top: 14px;
   }
-  .info-row span { color: rgba(255,215,0,.7); }
+  .info-row span { color: var(--gold); }
   .divider {
     border: none;
     border-top: 1px solid rgba(255,215,0,.08);
@@ -147,7 +147,7 @@
   }
   .addr-check {
     font-size: .72rem;
-    color: #787b86;
+    color: var(--text-muted);
     margin-top: 6px;
     display: flex;
     align-items: center;
@@ -168,7 +168,7 @@
     align-items: flex-start;
     gap: 10px;
   }
-  .kyc-banner a { color: #FFD700; font-weight: 700; text-decoration: none; }
+  .kyc-banner a { color: var(--gold); font-weight: 700; text-decoration: none; }
   .kyc-banner a:hover { text-decoration: underline; }
   .daily-limit-box {
     background: rgba(255,215,0,.05);
@@ -177,7 +177,7 @@
     padding: 12px 16px;
     margin-bottom: 20px;
     font-size: .78rem;
-    color: rgba(255,255,255,.6);
+    color: var(--text-secondary);
     display: flex;
     flex-direction: column;
     gap: 4px;
@@ -185,12 +185,12 @@
   .daily-limit-box .dl-title {
     font-size: .68rem; font-weight: 700;
     letter-spacing: .07em; text-transform: uppercase;
-    color: rgba(255,215,0,.7); margin-bottom: 4px;
+    color: var(--gold); margin-bottom: 4px;
   }
   .daily-limit-row {
     display: flex; justify-content: space-between; align-items: center;
   }
-  .daily-limit-row .dl-val { color: #fff; font-weight: 600; }
+  .daily-limit-row .dl-val { color: var(--text-primary); font-weight: 600; }
   .daily-limit-row .dl-val.avail { color: #27ae60; }
   .daily-limit-row .dl-val.used { color: #FFA500; }
 </style>
@@ -205,7 +205,7 @@
     <!-- Wallet balance -->
     <div class="balance-pill">
       <i class="fa-solid fa-wallet" style="color:var(--gold)"></i>
-      <span style="color:rgba(255,255,255,.55);">Balance disponible:</span>
+      <span style="color:var(--text-secondary);">Balance disponible:</span>
       <strong style="color:var(--gold);margin-left:auto;">${{ wallet.available_balance|floatformat:2 }}</strong>
     </div>
 
@@ -216,7 +216,7 @@
         <span>Retirado hoy</span>
         <span class="dl-val used">${{ daily_used|floatformat:2 }}</span>
       </div>
-      <div class="daily-limit-row" style="font-style:italic;color:#aaa;font-size:0.85em;grid-column:1/-1;">
+      <div class="daily-limit-row" style="font-style:italic;color:var(--text-muted);font-size:0.85em;grid-column:1/-1;">
         <span>Los retiros pueden estar sujetos a revisión manual por seguridad.</span>
       </div>
     </div>
@@ -303,7 +303,7 @@
         {% if form.amount_usd.errors %}
           <div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{{ form.amount_usd.errors|join:", " }}</div>
         {% endif %}
-        <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:.83rem;color:rgba(255,255,255,.75);">
+        <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:.83rem;color:var(--text-secondary);">
           {{ form.withdraw_all }} Retirar todo el balance disponible (${{ wallet.available_balance|floatformat:2 }})
         </label>
         {% if form.withdraw_all.errors %}
@@ -392,7 +392,7 @@
 
     <hr class="divider">
     <div style="text-align:center;">
-      <a href="{% url 'simulator:withdraw_history' %}" style="color:rgba(255,215,0,.6);font-size:.78rem;text-decoration:none;">
+      <a href="{% url 'simulator:withdraw_history' %}" style="color:var(--gold);font-size:.78rem;text-decoration:none;">
         Ver historial de retiros →
       </a>
     </div>

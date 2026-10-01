@@ -30,7 +30,7 @@
   letter-spacing: .07em; text-transform: uppercase;
   color: var(--muted-2); flex-shrink: 0;
 }
-.info-value { color: #fff; }
+.info-value { color: var(--text-primary); }
 .field { margin-bottom: 18px; }
 .field label {
   display: block; font-size: .68rem; font-weight: 600;
@@ -39,10 +39,10 @@
 }
 .field input[type="text"] {
   width: 100%;
-  background: rgba(255,255,255,.04);
+  background: var(--bg-app);
   border: 1px solid rgba(255,215,0,.12);
   border-radius: 8px; padding: 11px 14px;
-  color: #fff; font-family: 'Inter', sans-serif;
+  color: var(--text-primary); font-family: 'Inter', sans-serif;
   font-size: .88rem;
   transition: border-color .18s, box-shadow .18s;
   box-sizing: border-box;
@@ -72,7 +72,7 @@
 .status-row {
   display: flex; align-items: center; justify-content: space-between;
   padding: 13px 0;
-  border-bottom: 1px solid rgba(255,255,255,.04);
+  border-bottom: 1px solid var(--border-subtle);
   font-size: .84rem;
 }
 .status-row:last-child { border-bottom: none; }

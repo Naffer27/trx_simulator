@@ -6,14 +6,19 @@
 
 {% block extra_head %}
 <style>
-  :root {
-    --bg:#131722; --panel:#1e222d; --border:rgba(255,215,0,.08);
-    --gold:#FFD700; --amber:#FFA500;
-    --bull:#26a69a; --bear:#ef5350;
-    --txt:#d1d4dc; --muted:#787b86;
-  }
+  /* UI-THEME-01 FASE B2 — this file used to shadow a PARALLEL :root
+     (--bg/--panel/--txt/--muted/--gold/--amber/--bull/--bear) that
+     partially collided in name with base_app.html's shared tokens and
+     partially bypassed them (--bg/--panel/--txt had no equivalent in
+     the shell, so Light Mode never reached this page's cards/table at
+     all). Removed entirely — every rule below now reads directly from
+     base_app.html's shared :root / [data-theme="light"] tokens, which
+     already cascade to this template with no redeclaration needed.
+     --gold/--amber/--bull/--bear/--border/--muted already shared the
+     same names, so most rules below needed no rewrite beyond removing
+     the shadow declaration. */
 
-  body { background: var(--bg) !important; }
+  body { background: var(--bg-app) !important; }
 
   .hist-wrap { max-width:1200px; margin:0 auto; padding:24px 16px 48px; }
 
@@ -25,13 +30,13 @@
     margin-bottom:28px;
   }
   .stat-card {
-    background:var(--panel);
+    background:var(--surface);
     border:1px solid var(--border);
     border-radius:8px;
     padding:16px;
   }
   .stat-card .lbl { font-size:.7rem; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin-bottom:6px; }
-  .stat-card .val { font-size:1.35rem; font-weight:700; color:#fff; }
+  .stat-card .val { font-size:1.35rem; font-weight:700; color:var(--text-primary); }
   .stat-card .val.pos { color:var(--bull); }
   .stat-card .val.neg { color:var(--bear); }
   .stat-card .val.gold { color:var(--gold); }
@@ -46,11 +51,11 @@
   /* ── table ── */
   .tbl-wrap { overflow-x:auto; border-radius:8px; border:1px solid var(--border); margin-bottom:36px; }
   table { width:100%; border-collapse:collapse; font-size:.8rem; }
-  thead tr { background:#161b27; }
+  thead tr { background:var(--bg-card-2); }
   thead th { padding:10px 12px; text-align:left; color:var(--muted); font-weight:600; font-size:.7rem; text-transform:uppercase; letter-spacing:.06em; white-space:nowrap; }
   tbody tr { border-top:1px solid var(--border); transition:background .12s; }
-  tbody tr:hover { background:rgba(255,255,255,.03); }
-  tbody td { padding:9px 12px; color:var(--txt); white-space:nowrap; }
+  tbody tr:hover { background:var(--surface-hover); }
+  tbody td { padding:9px 12px; color:var(--text-primary); white-space:nowrap; }
 
   .side-buy  { color:var(--bull); font-weight:700; }
   .side-sell { color:var(--bear); font-weight:700; }

@@ -2,6 +2,26 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
+  <!-- UI-THEME-01 — anti-flash theme bootstrap. Must run before any CSS
+       paints: localStorage -> prefers-color-scheme -> dark fallback.
+       Sets data-theme on <html> synchronously so the correct palette
+       (see :root / [data-theme="light"] below) applies on first paint,
+       never a flash of the wrong theme. Never touches User/Profile/DB —
+       purely a client-side, per-browser preference. -->
+  <script>
+  (function () {
+    try {
+      var t = localStorage.getItem('mb_theme');
+      if (t !== 'light' && t !== 'dark') {
+        t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches)
+          ? 'light' : 'dark';
+      }
+      document.documentElement.setAttribute('data-theme', t);
+    } catch (e) {
+      document.documentElement.setAttribute('data-theme', 'dark');
+    }
+  })();
+  </script>
   {% now "U" as ts %}
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -34,6 +54,80 @@
       --bull: #26a69a;
       --bear: #ef5350;
       --tr: .22s cubic-bezier(.4,0,.2,1);
+
+      /* UI-THEME-01 FASE B1 — semantic token layer, additive only.
+         Dark values alias the existing tokens above verbatim (zero
+         visual change) — this is the vocabulary future blocks migrate
+         individual literals onto; nothing in this file was rewired to
+         use these names yet except where explicitly noted below. */
+      --bg-primary: var(--bg-app);
+      --bg-secondary: var(--bg-sidebar);
+      --surface: var(--bg-card);
+      --surface-hover: rgba(255,255,255,.03);
+      --border-subtle: var(--border-dim);
+      --text-primary: var(--text);
+      --text-secondary: var(--muted-2);
+      --text-muted: var(--muted);
+      --brand: var(--gold);
+      --brand-hover: var(--amber);
+      --brand-dim: rgba(255,215,0,.12);
+      --brand-contrast: #000000;
+      --success: var(--bull);
+      --danger: var(--bear);
+      --warning: var(--amber);
+      --info: #3498db;
+    }
+
+    /* UI-THEME-01 FASE B1 — Light Mode. Only the tokens that actually
+       drive backgrounds/text/structural borders are redefined; the
+       low-opacity gold rgba(255,215,0,*) accent washes used throughout
+       (hover/active states, badges) are left untouched on purpose —
+       they read fine on white and keep the brand identity consistent
+       across both themes, per the FASE A design report. --gold itself
+       IS redefined (to the darkened "old gold" #B8860B) because it also
+       drives on-surface TEXT/icon color in this file (sidebar active
+       link, logo text, chip text, notif dot) — the literal #FFD700/
+       #FFA500 gradients used for self-contained fills (logo mark,
+       avatars, support-widget launcher button) are NOT touched: they
+       carry their own black text and don't depend on page background. */
+    [data-theme="light"] {
+      --bg-app: #FAFAF7;
+      --bg-sidebar: #FFFFFF;
+      --bg-card: #FFFFFF;
+      --bg-card-2: #F4F2EC;
+      --border: rgba(17,17,17,.08);
+      --border-dim: rgba(17,17,17,.04);
+      --gold: #B8860B;
+      --amber: #9a6a00;
+      --text: #14141a;
+      --muted: #5a5d70;
+      --muted-2: #6b6f80;
+
+      --bg-primary: var(--bg-app);
+      --bg-secondary: var(--bg-sidebar);
+      --surface: var(--bg-card);
+      --surface-hover: #F4F2EC;
+      --border-subtle: var(--border-dim);
+      --text-primary: var(--text);
+      --text-secondary: var(--muted-2);
+      --text-muted: var(--muted);
+      --brand: var(--gold);
+      --brand-hover: var(--amber);
+      --brand-dim: rgba(184,134,11,.14);
+      --brand-contrast: #ffffff;
+    }
+
+    /* UI-THEME-01 FASE B1 — the support-widget textarea/inputs use
+       hardcoded dark literals (#05050a / #e0e0e0) rather than tokens
+       today; left exactly as-is for Dark (pixel-identical), with a
+       targeted Light override here rather than converting them to
+       vars, to keep this diff's blast radius minimal and auditable. */
+    [data-theme="light"] .sw-footer textarea,
+    [data-theme="light"] .sw-new-form select,
+    [data-theme="light"] .sw-new-form input[type="text"] {
+      background: #ffffff;
+      color: #14141a;
+      border-color: rgba(17,17,17,.14);
     }
 
     html, body {
@@ -756,6 +850,14 @@
         </div>
       </div>
       <div class="tb-right">
+        <!-- UI-THEME-01 FASE B1 — Dark/Light switch. Icon shows what
+             clicking it switches TO (sun while dark, moon while light).
+             Preference is localStorage-only (see anti-flash script in
+             <head>) — never written to User/Profile/DB. -->
+        <button class="tb-icon-btn" id="themeToggle" type="button" title="Cambiar tema"
+                aria-label="Cambiar a modo claro" aria-pressed="false">
+          <i class="fa-solid fa-sun" id="themeToggleIcon"></i>
+        </button>
         <button class="tb-icon-btn" title="Notificaciones">
           <i class="fa-solid fa-bell"></i>
           <span class="tb-notif-dot"></span>
@@ -825,6 +927,42 @@
       var g = hd.closest('.sb-group');
       g.classList.toggle('open');
     });
+  });
+})();
+</script>
+
+<!-- UI-THEME-01 FASE B1 — Dark/Light switch behavior. The anti-flash
+     script in <head> already set data-theme before first paint; this
+     only wires the click handler and keeps the button's icon/aria in
+     sync with the current theme. localStorage only — no User/Profile/DB
+     write, no server round-trip. -->
+<script>
+(function () {
+  var btn  = document.getElementById('themeToggle');
+  var icon = document.getElementById('themeToggleIcon');
+  if (!btn || !icon) { return; }
+
+  function current() {
+    return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+  }
+  function sync(theme) {
+    icon.className = theme === 'light' ? 'fa-solid fa-moon' : 'fa-solid fa-sun';
+    btn.setAttribute('aria-pressed', theme === 'light' ? 'true' : 'false');
+    btn.setAttribute('aria-label', theme === 'light' ? 'Cambiar a modo oscuro' : 'Cambiar a modo claro');
+  }
+
+  sync(current());
+
+  btn.addEventListener('click', function () {
+    var next = current() === 'light' ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem('mb_theme', next); } catch (e) { /* private mode / storage disabled — theme still applies for this load */ }
+    sync(next);
+    /* UI-THEME-01 FASE C — minimal global signal so independent
+       Lightweight Charts instances (home.html, associates.html) can
+       re-theme live via chart.applyOptions() without a second switch
+       or polling. No other listeners exist yet; this is additive. */
+    document.dispatchEvent(new CustomEvent('mb:themechange', { detail: { theme: next } }));
   });
 })();
 </script>

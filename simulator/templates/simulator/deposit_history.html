@@ -21,7 +21,7 @@
     font-family: 'Orbitron', sans-serif;
     font-size: 1.2rem;
     font-weight: 700;
-    color: #FFD700;
+    color: var(--gold);
     letter-spacing: .06em;
   }
   .dh-new-btn {
@@ -40,8 +40,8 @@
   .dh-new-btn:hover { opacity: .85; color: #000; }
 
   .dh-table-wrap {
-    background: #0d0d14;
-    border: 1px solid rgba(255,215,0,.1);
+    background: var(--surface);
+    border: 1px solid var(--border);
     border-radius: 12px;
     overflow: hidden;
   }
@@ -52,7 +52,7 @@
   }
   .dh-table thead th {
     background: rgba(255,215,0,.06);
-    color: rgba(255,255,255,.45);
+    color: var(--text-secondary);
     font-weight: 600;
     font-size: .72rem;
     letter-spacing: .06em;
@@ -62,22 +62,22 @@
     border-bottom: 1px solid rgba(255,215,0,.08);
   }
   .dh-table tbody tr {
-    border-bottom: 1px solid rgba(255,255,255,.04);
+    border-bottom: 1px solid var(--border-subtle);
     transition: background .15s;
   }
   .dh-table tbody tr:last-child { border-bottom: none; }
   .dh-table tbody tr:hover { background: rgba(255,215,0,.03); }
   .dh-table td {
     padding: 13px 16px;
-    color: #d1d4dc;
+    color: var(--text-primary);
     vertical-align: middle;
   }
-  .dh-amount { color: #FFD700; font-weight: 600; }
+  .dh-amount { color: var(--gold); font-weight: 600; }
   .dh-crypto {
     background: rgba(255,215,0,.08);
     border: 1px solid rgba(255,215,0,.15);
     border-radius: 4px;
-    color: rgba(255,215,0,.8);
+    color: var(--gold);
     font-size: .7rem;
     font-weight: 600;
     padding: 2px 8px;
@@ -122,7 +122,7 @@
   .dh-empty {
     text-align: center;
     padding: 60px 20px;
-    color: #787b86;
+    color: var(--text-muted);
   }
   .dh-empty .icon { font-size: 2.5rem; margin-bottom: 12px; }
   .dh-empty p { margin-bottom: 20px; font-size: .88rem; }
@@ -130,7 +130,7 @@
   .pid-cell {
     font-family: monospace;
     font-size: .75rem;
-    color: #787b86;
+    color: var(--text-muted);
   }
 </style>
 {% endblock %}
@@ -141,9 +141,9 @@
     <div>
       <div class="dh-title">Historial de Depósitos</div>
       {% if wallet %}
-      <div style="font-size:.78rem;color:#787b86;margin-top:4px;">
-        <i class="fa-solid fa-wallet" style="color:rgba(255,215,0,.6);margin-right:5px;"></i>
-        Wallet disponible: <strong style="color:#FFD700;">${{ wallet.available_balance|floatformat:2 }}</strong>
+      <div style="font-size:.78rem;color:var(--text-muted);margin-top:4px;">
+        <i class="fa-solid fa-wallet" style="color:var(--gold);margin-right:5px;"></i>
+        Wallet disponible: <strong style="color:var(--gold);">${{ wallet.available_balance|floatformat:2 }}</strong>
       </div>
       {% endif %}
     </div>
@@ -168,7 +168,7 @@
       <tbody>
         {% for dep in deposits %}
         <tr>
-          <td style="color:#787b86;">{{ dep.id }}</td>
+          <td style="color:var(--text-muted);">{{ dep.id }}</td>
           <td class="dh-amount">${{ dep.amount_usd }}</td>
           <td><span class="dh-crypto">{{ dep.crypto_currency }}</span></td>
           <td>
@@ -180,23 +180,23 @@
             {% if dep.nowpayments_payment_id %}
               {{ dep.nowpayments_payment_id|truncatechars:16 }}
             {% else %}
-              <span style="color:#3a3a4a;">—</span>
+              <span style="color:var(--text-muted);">—</span>
             {% endif %}
           </td>
-          <td style="color:#787b86;">{{ dep.created_at|date:"d/m/Y H:i" }}</td>
-          <td style="color:#787b86;">
+          <td style="color:var(--text-muted);">{{ dep.created_at|date:"d/m/Y H:i" }}</td>
+          <td style="color:var(--text-muted);">
             {% if dep.credited_at %}
               {{ dep.credited_at|date:"d/m/Y H:i" }}
             {% elif dep.confirmed_at %}
               {{ dep.confirmed_at|date:"d/m/Y H:i" }}
             {% else %}
-              <span style="color:#3a3a4a;">—</span>
+              <span style="color:var(--text-muted);">—</span>
             {% endif %}
           </td>
           <td>
             {% if not dep.credited and dep.status not in "failed,expired,refunded" %}
             <a href="{% url 'simulator:deposit_status' dep.id %}"
-               style="font-size:.72rem;font-weight:600;color:rgba(255,215,0,.7);text-decoration:none;white-space:nowrap;">
+               style="font-size:.72rem;font-weight:600;color:var(--gold);text-decoration:none;white-space:nowrap;">
               Ver pago →
             </a>
             {% endif %}
