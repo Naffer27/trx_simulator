@@ -51,6 +51,12 @@
        width explicitly via inline style instead. Avoids a flash of
        the old wide sidebar before the toggle script runs. */
     --opsbar-w:50px;
+    /* UI-THEME-01 FASE D4.11 — resizable right panel. Default (240px)
+       matches the pre-existing hardcoded right-column width exactly —
+       zero layout shift for anyone who never touches the new resize
+       handle. Only a user drag or a valid persisted localStorage value
+       ever changes this. */
+    --rightcol-w:240px;
     /* ── Mobile layout measurements (single source of truth) ── */
     --mob-hdr:    44px;
     --mob-bar:    0px;
@@ -216,12 +222,12 @@
   [data-theme="light"] .rightcol{border-color:var(--edge-idle);box-shadow:0 1px 3px rgba(0,0,0,.08);}
   [data-theme="light"] .btm-panel{box-shadow:0 1px 3px rgba(0,0,0,.08);}
 
-  /* Chart frame — idle: plain neutral hairline, no shadow (FASE D4.5
-     seamless workspace, Light side). Active/focused: the one
-     deliberate gold accent border (contained to this single hierarchy
-     marker), thin ring instead of Dark's soft glow. */
-  [data-theme="light"] .panel-unit{border-color:var(--edge-idle);box-shadow:none;}
-  [data-theme="light"] .panel-unit.p-active{border-color:#B8860B;box-shadow:0 0 0 1px rgba(184,134,11,.35);}
+  /* Chart frame — MICRO VISUAL FIX: fully borderless/seamless in Light
+     too now, idle AND active. The old gold ring (#B8860B border + 0 0 0
+     1px gold shadow) on the active panel is gone — active indication
+     moves to a subtle .panel-toolbar background tint instead (below). */
+  [data-theme="light"] .panel-unit{border:none;box-shadow:none;}
+  [data-theme="light"] .panel-unit.p-active{border:none;box-shadow:none;}
   [data-theme="light"] .btm-panel{border-color:var(--edge-idle);}
 
   /* Remaining structural dividers still carrying the pre-D4.1 cyan
@@ -242,13 +248,20 @@
      Dark untouched by every rule below. */
 
   /* (1) Right-side Watchlist — symbols/prices/rows/dividers/section
-     label. .rc-wl-px.up/.dn (bull/bear) are semantic and untouched. */
+     label. UI-THEME-01 FASE D4.11 — bid/ask/spread/header/icon/flags
+     added; bid=red/ask=teal stay the same semantic hex, just slightly
+     more opaque for Light contrast. */
   [data-theme="light"] .rc-section{border-top-color:var(--edge-idle);}
   [data-theme="light"] .rc-section-lbl{color:#6b7280;}
+  [data-theme="light"] .rc-wl-header{color:#8a8d9c;}
   [data-theme="light"] .rc-wl-row{border-bottom-color:var(--edge-idle);}
   [data-theme="light"] .rc-wl-row:hover{background:rgba(0,119,166,.06);}
+  [data-theme="light"] .rc-wl-row.active{background:rgba(184,134,11,.1);}
+  [data-theme="light"] .rc-wl-icon{color:#6b7280;}
   [data-theme="light"] .rc-wl-sym{color:#14141a;}
-  [data-theme="light"] .rc-wl-px{color:#5a5d70;}
+  [data-theme="light"] .rc-wl-bid{color:#c0392b;}
+  [data-theme="light"] .rc-wl-ask{color:#128a72;}
+  [data-theme="light"] .rc-wl-spread{color:#8a8d9c;}
 
   /* (2) "MONEY BROKER CHARTS" brand text — official Money Broker gold
      in Light (#B8860B, same contrast-darkened value used throughout
@@ -263,11 +276,11 @@
   [data-theme="light"] .btm-pos-table th{background:rgba(184,134,11,.08);color:#3a3d46;border-bottom-color:rgba(184,134,11,.25);}
 
   /* UI-THEME-01 FASE D4.3 — global layout bar (×1/×2/×3/×4). Light:
-     clear surface (already var(--bg) = #FAFAF7), subtle neutral
-     border, selected state in real Money Broker gold. Dark untouched
-     — .ls-btn's existing var(--bg)/var(--accent)/var(--gold-dim)/
-     var(--gold) rules already render Dark exactly as before. */
-  [data-theme="light"] .ls-btn{border-color:rgba(0,0,0,.1);}
+     selected state in real Money Broker gold. FASE D4.10 — idle state
+     is borderless (no permanent box) in both themes now; only the
+     hover/active accents differ by theme. */
+  [data-theme="light"] .ls-btn{border-color:transparent;}
+  [data-theme="light"] .ls-btn:hover{background:rgba(0,0,0,.04);color:#14141a;}
   [data-theme="light"] .ls-btn.active{background:rgba(184,134,11,.12);color:#B8860B;border-color:#B8860B;}
 
   /* UI-THEME-01 FASE D2 — toggle button reset. Inherits .nav-link's
@@ -363,9 +376,14 @@
     .metric-bar{display:none;}
   }
 
-  /* ── Indicator button + dropdown ── */
-  .p-ind-btn{background:var(--bg);border:1px solid var(--accent);color:var(--muted);border-radius:4px;padding:2px 8px;font-size:.68rem;cursor:pointer;transition:border-color .15s,color .15s;line-height:1.5;white-space:nowrap;}
-  .p-ind-btn:hover,.p-ind-btn.active{border-color:var(--gold);color:var(--gold);background:var(--gold-dim);}
+  /* ── Indicator button + dropdown ──
+     UI-THEME-01 FASE D4.10 — borderless by default (no permanent box);
+     only .p-ind-btn in .panel-toolbar is display:none anyway (D4.7),
+     so the only visible instance is #gIndBtn in .chart-toolbar-global. */
+  .p-ind-btn{background:transparent;border:1px solid transparent;color:var(--muted);border-radius:5px;padding:0 10px;height:26px;line-height:24px;font-size:.68rem;cursor:pointer;transition:background .15s,border-color .15s,color .15s;white-space:nowrap;}
+  .p-ind-btn:hover{background:rgba(255,255,255,.05);color:var(--text);}
+  .p-ind-btn.active{border-color:var(--gold);color:var(--gold);background:var(--gold-dim);}
+  [data-theme="light"] .p-ind-btn:hover{background:rgba(0,0,0,.04);color:#14141a;}
   .ind-drop{position:fixed;z-index:9999;background:#0d1117;border:1px solid rgba(0,180,216,.3);border-radius:8px;padding:6px 0;min-width:160px;box-shadow:0 8px 24px rgba(0,0,0,.6);}
   .ind-drop.hidden{display:none;}
   .ind-item{display:flex;align-items:center;gap:8px;padding:5px 14px;cursor:pointer;transition:background .1s;font-size:.75rem;color:#8a93a8;user-select:none;}
@@ -382,10 +400,13 @@
   .p-osc-label{position:absolute;top:3px;left:6px;font-size:.58rem;font-weight:600;color:rgba(0,180,216,.45);z-index:2;letter-spacing:.04em;pointer-events:none;font-family:'Orbitron',sans-serif;}
   .p-osc-chart{position:absolute;inset:0;}
 
-  /* ── Layout switcher ── */
-  .layout-switcher{display:flex;gap:3px;margin-left:5px;}
-  .ls-btn{background:var(--bg);border:1px solid var(--accent);color:var(--muted);border-radius:4px;padding:2px 8px;font-size:.68rem;cursor:pointer;transition:border-color .15s,color .15s;line-height:1.5;}
-  .ls-btn:hover{border-color:var(--gold);color:var(--gold);}
+  /* ── Layout switcher ──
+     UI-THEME-01 FASE D4.10 — borderless default (no permanent box per
+     button); active state keeps a single discreet accent border, no
+     glow/shadow. */
+  .layout-switcher{display:flex;gap:2px;margin-left:5px;align-items:center;height:30px;}
+  .ls-btn{background:transparent;border:1px solid transparent;color:var(--muted);border-radius:5px;padding:0 8px;height:26px;line-height:24px;font-size:.68rem;cursor:pointer;transition:background .15s,border-color .15s,color .15s;}
+  .ls-btn:hover{background:rgba(255,255,255,.05);color:var(--text);}
   .ls-btn.active{background:var(--gold-dim);color:var(--gold);border-color:var(--gold);}
 
   /* UI-THEME-01 FASE D4.3 — global layout bar, immediately above the
@@ -408,21 +429,44 @@
      para ahorrar espacio" instruction. */
   /* UI-THEME-01 FASE D4.7C — consistent divider under the global
      toolbar, same unified idle border used everywhere else. */
-  .layout-bar{display:flex;align-items:center;padding:1px 4px 4px;min-height:18px;flex-shrink:0;border-bottom:1px solid var(--edge-idle);}
+  .layout-bar{display:flex;align-items:center;padding:0 6px;min-height:30px;flex-shrink:0;border-bottom:1px solid var(--edge-idle);}
 
   /* UI-THEME-01 FASE D4.7 — global chart toolbar controls (symbol/
      timeframe/indicators/WS dot, proxies over the active panel — see
      the HTML comment above the markup). .p-ind-btn and .ops-ws-dot
      are bare class selectors already styled elsewhere (reused as-is);
      only the select appearance needs a rule here, since the existing
-     one is scoped to ".panel-toolbar select". */
-  .chart-toolbar-global{display:flex;align-items:center;gap:6px;}
-  .chart-toolbar-global select{background:var(--bg);border:1px solid var(--accent);color:var(--text);padding:2px 6px;border-radius:4px;font-size:.72rem;font-weight:600;appearance:none;cursor:pointer;}
+     one is scoped to ".panel-toolbar select".
+     FASE D4.10 — borderless controls, unified ~26px control height so
+     symbol/timeframe/indicators/status dot share one baseline/vertical
+     center (section C). Default transparent, subtle hover, no glow.
+     MICRO FIX — root cause of the real-browser misalignment found via
+     getComputedStyle(): <select> inherits margin-bottom:16px (1rem)
+     from Bootstrap's global reboot stylesheet, which #gIndBtn (a plain
+     button, never a form control) never had. align-items:center centers
+     each flex item's MARGIN box, so that lone bottom margin pushed the
+     select's visible border-box 8px above the row's true center —
+     confirmed by measurement (select center=50px vs row/button
+     center=58px, an exact 16÷2=8px shift). margin:0 here is the fix;
+     no other property changed. */
+  .chart-toolbar-global{display:flex;align-items:center;gap:2px;height:30px;}
+  .chart-toolbar-global select{background:transparent;border:1px solid transparent;color:var(--text);padding:0 8px;height:26px;line-height:24px;border-radius:5px;font-size:.72rem;font-weight:600;appearance:none;cursor:pointer;transition:background .15s,border-color .15s;margin:0;}
+  .chart-toolbar-global select:hover{background:rgba(255,255,255,.05);}
   .chart-toolbar-global select:focus{outline:none;border-color:var(--gold);}
-  .chart-toolbar-global .ops-ws-dot{width:7px;height:7px;}
+  .chart-toolbar-global .ops-ws-dot{width:7px;height:7px;margin:0 3px;flex-shrink:0;}
+  [data-theme="light"] .chart-toolbar-global select:hover{background:rgba(0,0,0,.04);}
 
-  /* ── Main layout ── */
-  .layout{display:grid;grid-template-columns:var(--opsbar-w,96px) 32px 1fr 240px;grid-template-rows:1fr;gap:4px;flex:1;min-height:0;}
+  /* ── Main layout ──
+     UI-THEME-01 FASE D4.11 — added a 5th track (6px) for the new
+     rightcol-resizer handle, and the right column's width now comes
+     from --rightcol-w (default 240px, identical to the old hardcoded
+     value) instead of a literal. Everything else (opsbar/tools/chart
+     1fr track) is untouched. */
+  .layout{display:grid;grid-template-columns:var(--opsbar-w,96px) 32px 1fr 6px var(--rightcol-w,240px);grid-template-rows:1fr;gap:4px;flex:1;min-height:0;}
+  .rightcol-resizer{position:relative;cursor:col-resize;flex-shrink:0;touch-action:none;}
+  .rightcol-resizer::after{content:'';position:absolute;top:0;bottom:0;left:2px;width:2px;border-radius:1px;background:var(--edge-idle);transition:background .15s;}
+  .rightcol-resizer:hover::after,.rightcol-resizer.dragging::after{background:rgba(0,180,216,.45);}
+  [data-theme="light"] .rightcol-resizer:hover::after,[data-theme="light"] .rightcol-resizer.dragging::after{background:rgba(184,134,11,.5);}
 
   /* ── Panels grid ── */
   .left-col{display:flex;flex-direction:column;gap:4px;min-height:0;overflow:hidden;}
@@ -442,8 +486,15 @@
   .p-resizer:hover::after,.p-resizer.dragging::after{background:rgba(0,180,216,.6);}
   .p-resizer.dragging{background:rgba(0,180,216,.10);}
 
-  .panel-unit{display:flex;flex-direction:column;border:1px solid var(--accent);border-radius:10px;overflow:hidden;min-height:0;background:var(--panel);transition:border-color .2s,box-shadow .2s;}
-  .panel-unit.p-active{border-color:rgba(0,180,216,.5);box-shadow:0 0 0 1px rgba(0,180,216,.15);}
+  /* MICRO VISUAL FIX — borderless/seamless chart frame, same flat
+     language as symbol/timeframe/Indicadores/×1-×4. No outer border or
+     shadow on either idle or active state, in either theme (see the two
+     override blocks below for Dark's old cyan ring and Light's old gold
+     ring — both removed there). Active panel in ×2/×3/×4 is now
+     indicated by a subtle .panel-toolbar background tint instead (see
+     further down), never a rectangle around the whole chart. */
+  .panel-unit{display:flex;flex-direction:column;border:none;border-radius:2px;overflow:hidden;min-height:0;background:var(--panel);transition:background .2s;}
+  .panel-unit.p-active{border:none;box-shadow:none;}
 
   /* UI-THEME-01 FASE D4.7 (8) — the per-panel toolbar is reduced to a
      minimal symbol LABEL only (re-showing .p-hdr-sym, which D4.4 had
@@ -477,6 +528,23 @@
   .panel-chart{position:relative;flex:1;min-height:0;overflow:hidden;}
   .p-chart{position:absolute;inset:0;}
 
+  /* UI-THEME-01 FASE D4.10 — range/history bar, pegada al borde inferior
+     del chart (sibling flex item after .panel-chart, before any
+     oscillator sub-panes — flex-shrink:0 so .panel-chart's flex:1 share
+     shrinks to make room, same mechanism .p-osc-panels already uses).
+     Compact, no card, no shadow. Horizontal scroll (no visible
+     scrollbar) instead of overflow if too many buttons fit a narrow
+     panel (×3/×4) or a narrow mobile viewport. */
+  .p-range-bar{display:flex;align-items:center;gap:1px;padding:0 6px;height:26px;flex-shrink:0;border-top:1px solid var(--edge-idle);overflow-x:auto;overflow-y:hidden;white-space:nowrap;scrollbar-width:none;}
+  .p-range-bar::-webkit-scrollbar{display:none;}
+  .p-range-btn{flex-shrink:0;background:transparent;border:1px solid transparent;color:rgba(255,255,255,.34);font-size:.64rem;font-weight:600;letter-spacing:.02em;padding:3px 7px;border-radius:4px;cursor:pointer;transition:color .15s,background .15s;font-family:'Inter',sans-serif;}
+  .p-range-btn:hover{color:rgba(255,255,255,.68);background:rgba(255,255,255,.05);}
+  .p-range-btn.active{color:rgba(0,180,216,.95);background:rgba(0,180,216,.1);}
+  [data-theme="light"] .p-range-bar{border-top-color:var(--edge-idle);}
+  [data-theme="light"] .p-range-btn{color:#8a8d9c;}
+  [data-theme="light"] .p-range-btn:hover{color:#14141a;background:rgba(0,0,0,.04);}
+  [data-theme="light"] .p-range-btn.active{color:#B8860B;background:rgba(184,134,11,.12);}
+
   .drag-badge{position:absolute;right:12px;transform:translateY(-50%);display:none;z-index:6;background:var(--panel);border:1px solid var(--accent);border-radius:6px;padding:4px 10px;font-weight:700;font-size:.78rem;pointer-events:none;}
   .drag-badge.up{color:var(--bull);border-color:rgba(38,166,154,.35);}
   .drag-badge.down{color:var(--bear);border-color:rgba(239,83,80,.35);}
@@ -498,15 +566,38 @@
      no flash under the axis before the first sync); _syncPositionBadges()
      always overrides it via inline style with the real, per-panel
      chart.priceScale('right').width() once the chart is ready. */
-  .pos-line-badge{position:absolute;right:78px;transform:translateY(-50%);z-index:5;display:flex;align-items:center;gap:5px;padding:2px 7px;border-radius:3px;border:1px solid;font-size:.66rem;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none;line-height:1.5;}
-  .pos-line-badge.tp{background:rgba(38,166,154,.14);border-color:rgba(38,166,154,.3);color:#26a69a;}
-  .pos-line-badge.sl{background:rgba(239,83,80,.14);border-color:rgba(239,83,80,.3);color:#ef5350;}
-  .pos-line-badge.entry{background:rgba(255,255,255,.06);border-color:var(--edge-idle);color:#9098a8;}
-  .pos-line-badge.entry.pos{color:#26a69a;}
-  .pos-line-badge.entry.neg{color:#ef5350;}
-  .pos-line-badge .plb-close{pointer-events:auto;cursor:pointer;opacity:.55;font-weight:900;padding:0 1px;}
+  /* STEP FINAL — line+badge as one visual unit: solid saturated fill
+     (same semantic hue the line itself uses) with white text, instead
+     of the old pale/translucent floating-label look — the badge now
+     reads as the line's own price tag rather than a separate box next
+     to it. No border (nothing to visually detach it), no shadow/glow.
+     Same classes, same DOM, same _syncPositionBadges() positioning —
+     purely the fill/text colors changed. */
+  .pos-line-badge{position:absolute;right:78px;transform:translateY(-50%);z-index:5;display:flex;align-items:center;gap:5px;padding:2px 7px;border-radius:3px;border:none;font-size:.66rem;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none;line-height:1.5;}
+  /* FIX FUNCIONAL — TP/SL badges are themselves a drag handle (grab the
+     badge directly, not just the 1px line) — see _createPositionBadges()'s
+     pointerdown wiring. Entry's own badge stays pointer-events:none at
+     the container level; only its own buttons (.plb-tp-btn/.plb-sl-btn/
+     .plb-close) are interactive, unchanged. */
+  .pos-line-badge.tp{background:rgba(38,166,154,.92);color:#fff;pointer-events:auto;cursor:ns-resize;}
+  .pos-line-badge.sl{background:rgba(239,83,80,.92);color:#fff;pointer-events:auto;cursor:ns-resize;}
+  .pos-line-badge.entry{background:rgba(120,130,150,.9);color:#fff;}
+  .pos-line-badge.entry.pos{background:rgba(38,166,154,.92);color:#fff;}
+  .pos-line-badge.entry.neg{background:rgba(239,83,80,.92);color:#fff;}
+  .pos-line-badge .plb-close{pointer-events:auto;cursor:pointer;opacity:.75;font-weight:900;padding:0 1px;color:#fff;}
   .pos-line-badge .plb-close:hover{opacity:1;}
-  [data-theme="light"] .pos-line-badge.entry{background:rgba(0,0,0,.04);border-color:var(--edge-idle);color:#5a5d70;}
+  /* POSITION CHART UX — inline TP/SL proxy chips inside the Entry
+     badge. Borderless (solid fill only, no border line), compact,
+     always legible regardless of the parent pill's own dynamic color
+     (neutral/teal/red depending on live P&L) since each chip carries
+     its own small opaque teal/red fill — same semantic hues as the
+     TP/SL lines themselves. Not a second system: click just proxies
+     into ensureTP()/ensureSL() + showQB()/openSheet(), same as the
+     existing bottom sheet's own TP/SL buttons. */
+  .pos-line-badge .plb-tp-btn,.pos-line-badge .plb-sl-btn{pointer-events:auto;cursor:pointer;font-weight:800;font-size:.6rem;letter-spacing:.02em;padding:1px 4px;border-radius:2px;opacity:.92;transition:opacity .15s,background .15s;}
+  .pos-line-badge .plb-tp-btn{background:rgba(38,166,154,.95);color:#04231e;}
+  .pos-line-badge .plb-sl-btn{background:rgba(239,83,80,.95);color:#2a0a09;}
+  .pos-line-badge .plb-tp-btn:hover,.pos-line-badge .plb-sl-btn:hover{opacity:1;}
   /* TF change toast */
   #tfToast{position:fixed;top:68px;left:50%;transform:translateX(-50%);background:rgba(5,5,10,.92);border:1px solid rgba(0,180,216,.5);color:#00b4d8;padding:5px 18px;border-radius:8px;font-size:.78rem;font-weight:700;z-index:60;pointer-events:none;opacity:0;transition:opacity .25s;font-family:'Orbitron',sans-serif;letter-spacing:.08em;}
   /* Risk / violation alert toast */
@@ -899,6 +990,7 @@
     .panel-unit{height:100%;border-radius:0;border:none;}
     .panel-toolbar{display:none;}
     .rightcol{display:none;}
+    .rightcol-resizer{display:none;}
     .topbar{display:none;}
     .toptrade{display:none;}
     .layout-switcher{display:none;}
@@ -1090,21 +1182,49 @@
   .rc-buy-btn:active{transform:scale(.97);}
   .rc-btn-lab{font-size:.86rem;font-weight:900;line-height:1;letter-spacing:.1em;font-family:'Orbitron',sans-serif;}
   .rc-btn-px{font-size:.72rem;font-variant-numeric:tabular-nums;opacity:.75;line-height:1;}
-  /* Quick Actions */
+  /* Quick Actions —
+     UI-THEME-01 FASE D4.12 (A) — Close All/Cancel All already shared
+     .rc-qa-btn (same height/padding/radius/baseline) and an equal-width
+     1fr/1fr grid; the only real problem was .rc-qa-muted's low contrast
+     (.45 text / .05 bg / .1 border) reading as disabled even though the
+     button is fully enabled, and it had NO Light-theme override at all
+     (raw white-opacity values on a white background were nearly
+     invisible). Now a proper secondary/neutral style, same contrast
+     weight as the danger button, in both themes. Handler (onclick=
+     cancelAllPendingOrders()) and .rc-qa-danger are untouched. */
   .rc-qa-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;}
-  .rc-qa-btn{border-radius:6px;padding:8px 6px;font-size:.72rem;font-weight:700;cursor:pointer;transition:background .15s;letter-spacing:.03em;font-family:'Inter',sans-serif;border:1px solid transparent;}
+  .rc-qa-btn{border-radius:6px;padding:8px 6px;font-size:.72rem;font-weight:700;cursor:pointer;transition:background .15s,color .15s,border-color .15s;letter-spacing:.03em;font-family:'Inter',sans-serif;border:1px solid transparent;}
   .rc-qa-danger{background:rgba(239,83,80,.09);border-color:rgba(239,83,80,.25);color:#ef5350;}
   .rc-qa-danger:hover{background:rgba(239,83,80,.2);}
-  .rc-qa-muted{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.1);color:rgba(255,255,255,.45);}
-  .rc-qa-muted:hover{background:rgba(255,255,255,.1);color:rgba(255,255,255,.7);}
-  /* Watchlist rows */
+  .rc-qa-muted{background:rgba(255,255,255,.07);border-color:rgba(255,255,255,.16);color:rgba(255,255,255,.78);}
+  .rc-qa-muted:hover{background:rgba(255,255,255,.13);color:rgba(255,255,255,.95);}
+  [data-theme="light"] .rc-qa-danger{background:rgba(239,83,80,.08);border-color:rgba(239,83,80,.28);color:#c0392b;}
+  [data-theme="light"] .rc-qa-danger:hover{background:rgba(239,83,80,.16);}
+  [data-theme="light"] .rc-qa-muted{background:rgba(0,0,0,.045);border-color:rgba(0,0,0,.16);color:#3a3d46;}
+  [data-theme="light"] .rc-qa-muted:hover{background:rgba(0,0,0,.08);color:#14141a;}
+  /* Watchlist —
+     UI-THEME-01 FASE D4.11 — professional terminal columns (instrument/
+     bid/ask/spread). Same 4-column grid on the header and every row so
+     values line up. Bid=red/ask=teal are the semantic BASE color for
+     their whole column (muted opacity, no text-shadow/glow) rather than
+     the old transient up/dn tick-flash — simpler, matches "sin excesivo
+     brillo". Active row = subtle background only, no border/glow. */
+  .rc-wl-header{display:grid;grid-template-columns:1fr 56px 56px 42px;gap:4px;padding:2px 4px 6px;font-size:.56rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:rgba(255,255,255,.26);}
+  .rc-wl-h-inst{text-align:left;}
+  .rc-wl-h-bid,.rc-wl-h-ask,.rc-wl-h-spread{text-align:right;}
   .rc-wl-list{display:flex;flex-direction:column;gap:0;margin:0;}
-  .rc-wl-row{display:flex;align-items:center;justify-content:space-between;padding:7px 4px;border-bottom:1px solid var(--edge-idle);background:transparent;border-left:none;border-right:none;border-top:none;border-radius:0;color:inherit;font-family:'Inter',sans-serif;cursor:pointer;transition:background .14s;width:100%;text-align:left;}
+  .rc-wl-row{display:grid;grid-template-columns:1fr 56px 56px 42px;gap:4px;align-items:center;padding:6px 4px;border-bottom:1px solid var(--edge-idle);background:transparent;border-left:none;border-right:none;border-top:none;border-radius:0;color:inherit;font-family:'Inter',sans-serif;cursor:pointer;transition:background .14s;width:100%;text-align:left;}
   .rc-wl-row:last-child{border-bottom:none;}
   .rc-wl-row:hover{background:rgba(0,180,216,.06);}
-  .rc-wl-sym{font-size:.76rem;font-weight:700;color:rgba(255,255,255,.78);letter-spacing:.01em;}
-  .rc-wl-px{font-size:.75rem;font-variant-numeric:tabular-nums;color:rgba(255,255,255,.36);font-weight:600;transition:color .3s;}
-  .rc-wl-px.up{color:#26a69a;text-shadow:0 0 8px rgba(38,166,154,.35);}.rc-wl-px.dn{color:#ef5350;text-shadow:0 0 8px rgba(239,83,80,.35);}
+  .rc-wl-row.active{background:rgba(0,180,216,.1);}
+  .rc-wl-inst{display:flex;align-items:center;gap:5px;min-width:0;}
+  .rc-wl-icon{font-size:.76rem;width:14px;flex-shrink:0;text-align:center;color:rgba(255,255,255,.5);font-weight:700;}
+  .rc-wl-sym{font-size:.76rem;font-weight:700;color:rgba(255,255,255,.78);letter-spacing:.01em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .rc-wl-flags{font-size:.6rem;flex-shrink:0;opacity:.85;}
+  .rc-wl-bid,.rc-wl-ask,.rc-wl-spread{font-size:.7rem;font-variant-numeric:tabular-nums;font-weight:600;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:color .3s;}
+  .rc-wl-bid{color:rgba(239,83,80,.82);}
+  .rc-wl-ask{color:rgba(38,166,154,.82);}
+  .rc-wl-spread{color:rgba(255,255,255,.32);font-weight:500;}
   /* Override old watchlist styles for new structure */
   .rc-wl-section.watchlist{display:flex;flex-direction:column;}
 
@@ -1150,25 +1270,22 @@
   .mb-value{font-size:.76rem;}
 
   /* ── Panel unit polish ── */
-  /* UI-THEME-01 FASE D4.5 (1) — seamless chart workspace, Dark. This is
-     a deliberate Dark visual change (explicitly requested this block,
-     unlike prior phases): the cyan border + heavy 32px glow made the
-     chart read as "a card containing a chart" rather than "the chart
-     IS the workspace." Border drops to a barely-there neutral hairline
-     (matching the chart's own internal grid-line opacity, so the
-     wrapper doesn't compete with what Lightweight Charts already
-     draws), the glow is gone, and border-radius shrinks from 10px to
-     2px. Nothing inside the canvas (grid/price-lines/SL/TP/entry/
-     crosshair/candles/volume/axis) is touched by this — those are
-     drawn by Lightweight Charts itself, entirely independent of this
-     wrapper's CSS. The active-panel indicator is kept (still needed
-     functionally — the user must be able to tell which panel is
-     focused for trade actions) as a slightly brighter neutral border,
-     no glow. */
-  /* UI-THEME-01 FASE D4.7C — unified border tokens (see :root). */
-  .panel-unit{border-color:var(--edge-idle);border-radius:2px;box-shadow:none;}
-  .panel-unit.p-active{border-color:var(--edge-active);box-shadow:none;}
+  /* UI-THEME-01 FASE D4.5 (1) — seamless chart workspace, Dark.
+     MICRO VISUAL FIX — taken the rest of the way: the barely-there
+     hairline border D4.5/D4.7C left on both idle and active states is
+     now gone entirely (border:none), matching the fully borderless/flat
+     language symbol/timeframe/Indicadores/×1-×4 already use. Nothing
+     inside the canvas (grid/price-lines/SL/TP/entry/crosshair/candles/
+     volume/axis) is touched — those are drawn by Lightweight Charts
+     itself, independent of this wrapper's CSS. The active-panel
+     indicator (still functionally needed in ×2/×3/×4) moves to a
+     subtle .panel-toolbar background tint below instead of any
+     border/ring/rectangle around the chart. */
+  .panel-unit{border:none;border-radius:2px;box-shadow:none;}
+  .panel-unit.p-active{border:none;box-shadow:none;}
   .panel-toolbar{background:var(--rail-bg);border-bottom-color:var(--edge-idle);}
+  .panel-unit.p-active .panel-toolbar{background:rgba(0,180,216,.05);}
+  [data-theme="light"] .panel-unit.p-active .panel-toolbar{background:rgba(184,134,11,.07);}
 
   /* ── Btm panel polish ── */
   /* UI-THEME-01 FASE D4.5 (6) — bottom panel (Positions/Orders/History/
@@ -1211,6 +1328,7 @@
     .ops-sidebar{display:none!important;width:0!important;pointer-events:none!important;}
     .tools-sidebar{display:none!important;width:0!important;pointer-events:none!important;}
     .rightcol{display:none!important;width:0!important;pointer-events:none!important;}
+    .rightcol-resizer{display:none!important;width:0!important;pointer-events:none!important;}
     /* Chart immersive: remove active glow, soften osc separator */
     .panel-unit.p-active{box-shadow:none!important;border:none!important;}
     .p-osc-panel{border-top-color:rgba(255,255,255,.04)!important;}
@@ -1423,6 +1541,20 @@
       </button>
       <button class="tool-btn" data-tool="text" title="Text" style="font-size:.72rem;font-weight:700;font-family:'Inter',sans-serif;">T</button>
       <div class="tool-sep"></div>
+      <!-- UI-THEME-01 FASE D4.12 — navigation group. Both buttons call
+           an EXISTING chart.timeScale() method already used elsewhere
+           in this file (fitContent(): D4.10 range bar's "ALL", history
+           load, initChart(); scrollToRealTime(): the stayLive mechanism)
+           on activePanel — same global-toolbar-proxies-to-activePanel
+           pattern D4.7 already established for #gSymSel/#gTfSel/
+           #gIndBtn. No new drawing/trading logic, no new chart state. -->
+      <button class="tool-btn" data-tool="fit" title="Fit chart / Reset zoom">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V5h4"/><path d="M20 9V5h-4"/><path d="M4 15v4h4"/><path d="M20 15v4h-4"/></svg>
+      </button>
+      <button class="tool-btn" data-tool="golive" title="Jump to live">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 4 13 12 5 20"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
+      </button>
+      <div class="tool-sep"></div>
       <button class="tool-btn" data-tool="erase" title="Delete All" style="color:rgba(239,83,80,.5);">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
       </button>
@@ -1535,6 +1667,12 @@
       </div>
     </div>
 
+    <!-- UI-THEME-01 FASE D4.11 — right panel resize handle. Pure grid
+         track + drag JS (see the IIFE near the bottom of the file);
+         touches nothing inside .rightcol or .left-col. Hidden on
+         mobile (see the two @media(max-width:900px) blocks above). -->
+    <div class="rightcol-resizer" id="rightcolResizer" title="Drag to resize"></div>
+
     <aside class="rightcol">
       <!-- hidden spans: JS reads/writes these — do not remove -->
       <div id="accountCard" style="display:none">
@@ -1549,6 +1687,71 @@
         <span id="accDailyDD">—</span>
         <span id="accTotalDD">—</span>
         <span id="accBidAsk">—</span>
+      </div>
+
+      <!-- Watchlist —
+           UI-THEME-01 MICRO LAYOUT FIX — moved to the top of .rightcol
+           (was previously last, after Account Info) so it uses the full
+           panel width right away and reads first. Pure relocation: same
+           node, same IDs, same classes, same JS handlers (click → symbol
+           switch, live bid/ask updater, active-row highlight) — nothing
+           inside this block was touched.
+           UI-THEME-01 FASE D4.11 — professional terminal-style columns
+           (instrument/bid/ask/spread). Same .wl/data-sym contract the
+           existing click handler (`.watchlist .wl` → activePanel.symSel)
+           already reads — untouched, not rewritten. Bid/ask come from
+           quotesLivePx[sym].bid/.ask, populated alongside the EXISTING
+           .price field at the exact point real ticks already land (see
+           the panel WS message handler) — no new price source, no fake
+           values. Spread is computed purely for display as
+           round((ask-bid) * 10**priceFormatFor(sym).precision), the
+           same precision table the rest of the app already uses. -->
+      <div class="rc-section rc-wl-section watchlist">
+        <div class="rc-section-lbl">Watchlist</div>
+        <div class="rc-wl-header" aria-hidden="true">
+          <span class="rc-wl-h-inst">Instrument</span>
+          <span class="rc-wl-h-bid">Bid</span>
+          <span class="rc-wl-h-ask">Ask</span>
+          <span class="rc-wl-h-spread">Spread</span>
+        </div>
+        <div class="rc-wl-list" id="rcWatchlist">
+          <button class="wl rc-wl-row" data-sym="EUR/USD">
+            <span class="rc-wl-inst"><span class="rc-wl-icon" aria-hidden="true">€</span><span class="rc-wl-sym">EURUSD</span><span class="rc-wl-flags" aria-hidden="true">🇪🇺🇺🇸</span></span>
+            <span class="rc-wl-bid" data-wsym="EUR/USD">—</span>
+            <span class="rc-wl-ask" data-wsym="EUR/USD">—</span>
+            <span class="rc-wl-spread" data-wsym="EUR/USD">—</span>
+          </button>
+          <button class="wl rc-wl-row" data-sym="GBP/USD">
+            <span class="rc-wl-inst"><span class="rc-wl-icon" aria-hidden="true">£</span><span class="rc-wl-sym">GBPUSD</span><span class="rc-wl-flags" aria-hidden="true">🇬🇧🇺🇸</span></span>
+            <span class="rc-wl-bid" data-wsym="GBP/USD">—</span>
+            <span class="rc-wl-ask" data-wsym="GBP/USD">—</span>
+            <span class="rc-wl-spread" data-wsym="GBP/USD">—</span>
+          </button>
+          <button class="wl rc-wl-row" data-sym="USD/JPY">
+            <span class="rc-wl-inst"><span class="rc-wl-icon" aria-hidden="true">¥</span><span class="rc-wl-sym">USDJPY</span><span class="rc-wl-flags" aria-hidden="true">🇺🇸🇯🇵</span></span>
+            <span class="rc-wl-bid" data-wsym="USD/JPY">—</span>
+            <span class="rc-wl-ask" data-wsym="USD/JPY">—</span>
+            <span class="rc-wl-spread" data-wsym="USD/JPY">—</span>
+          </button>
+          <button class="wl rc-wl-row" data-sym="AUD/USD">
+            <span class="rc-wl-inst"><span class="rc-wl-icon" aria-hidden="true">A$</span><span class="rc-wl-sym">AUDUSD</span><span class="rc-wl-flags" aria-hidden="true">🇦🇺🇺🇸</span></span>
+            <span class="rc-wl-bid" data-wsym="AUD/USD">—</span>
+            <span class="rc-wl-ask" data-wsym="AUD/USD">—</span>
+            <span class="rc-wl-spread" data-wsym="AUD/USD">—</span>
+          </button>
+          <button class="wl rc-wl-row" data-sym="BTCUSD">
+            <span class="rc-wl-inst"><span class="rc-wl-icon" aria-hidden="true">₿</span><span class="rc-wl-sym">BTCUSD</span><span class="rc-wl-flags" aria-hidden="true">🇺🇸</span></span>
+            <span class="rc-wl-bid" data-wsym="BTCUSD">—</span>
+            <span class="rc-wl-ask" data-wsym="BTCUSD">—</span>
+            <span class="rc-wl-spread" data-wsym="BTCUSD">—</span>
+          </button>
+          <button class="wl rc-wl-row" data-sym="ETHUSD">
+            <span class="rc-wl-inst"><span class="rc-wl-icon" aria-hidden="true">Ξ</span><span class="rc-wl-sym">ETHUSD</span><span class="rc-wl-flags" aria-hidden="true">🇺🇸</span></span>
+            <span class="rc-wl-bid" data-wsym="ETHUSD">—</span>
+            <span class="rc-wl-ask" data-wsym="ETHUSD">—</span>
+            <span class="rc-wl-spread" data-wsym="ETHUSD">—</span>
+          </button>
+        </div>
       </div>
 
       <!-- Challenge Progress (compact) — CHALLENGE / FUNDED accounts only -->
@@ -1947,19 +2150,6 @@
         </div>
       </div>
       {% endif %}
-
-      <!-- Watchlist -->
-      <div class="rc-section rc-wl-section watchlist">
-        <div class="rc-section-lbl">Watchlist</div>
-        <div class="rc-wl-list" id="rcWatchlist">
-          <button class="wl rc-wl-row" data-sym="EUR/USD"><span class="rc-wl-sym">EURUSD</span><span class="rc-wl-px" data-wsym="EUR/USD">—</span></button>
-          <button class="wl rc-wl-row" data-sym="GBP/USD"><span class="rc-wl-sym">GBPUSD</span><span class="rc-wl-px" data-wsym="GBP/USD">—</span></button>
-          <button class="wl rc-wl-row" data-sym="USD/JPY"><span class="rc-wl-sym">USDJPY</span><span class="rc-wl-px" data-wsym="USD/JPY">—</span></button>
-          <button class="wl rc-wl-row" data-sym="AUD/USD"><span class="rc-wl-sym">AUDUSD</span><span class="rc-wl-px" data-wsym="AUD/USD">—</span></button>
-          <button class="wl rc-wl-row" data-sym="BTCUSD"><span class="rc-wl-sym">BTCUSD</span><span class="rc-wl-px" data-wsym="BTCUSD">—</span></button>
-          <button class="wl rc-wl-row" data-sym="ETHUSD"><span class="rc-wl-sym">ETHUSD</span><span class="rc-wl-px" data-wsym="ETHUSD">—</span></button>
-        </div>
-      </div>
     </aside>
   </div>
 
@@ -2415,7 +2605,27 @@ const normTime=secOrMs=>{const t=Number(secOrMs||0);if(!t)return null;return(t>1
 // dollar-scale movements — is now ONLY a fallback for the live tick path
 // (candle_new/candle_update), whose bars carry no volume field at all
 // (Massive quotes have no per-tick trade volume, same as before this fix).
-const volPointForBar=b=>{const up=(b.close??0)>=(b.open??0);let val;if(b.volume!=null&&Number.isFinite(b.volume)&&b.volume>0){val=b.volume;}else{const span=Math.max((b.high??b.close)-(b.low??b.close),Math.abs((b.close??0)-(b.open??0)));val=Math.max(1,Math.floor(span*1e6));}return{time:b.time,value:val,color:up?'rgba(38,166,154,.45)':'rgba(239,83,80,.45)'};};
+// UI-THEME-01 FASE D4.10 — opacity raised .45→.62 (same bull/bear hex,
+// same value/color computation, zero data change) so volume bars are
+// clearly visible against the chart background instead of washing out;
+// the histogram's own pane allocation (scaleMargins top:0.82, ~18% of
+// pane height — see initChart()) was already within the requested
+// 12-18% target and is untouched.
+const volPointForBar=b=>{const up=(b.close??0)>=(b.open??0);let val;if(b.volume!=null&&Number.isFinite(b.volume)&&b.volume>0){val=b.volume;}else{const span=Math.max((b.high??b.close)-(b.low??b.close),Math.abs((b.close??0)-(b.open??0)));val=Math.max(1,Math.floor(span*1e6));}return{time:b.time,value:val,color:up?'rgba(38,166,154,.62)':'rgba(239,83,80,.62)'};};
+
+// UI-THEME-01 FASE D4.10 — RANGE (history visible) definitions, distinct
+// from TIMEFRAME (candle size, tfToSec above). Each entry's `days` is
+// calendar time, applied via setVisibleRange() over whatever is already
+// loaded in a panel's own this._bars — never a new fetch/infra. See
+// TradingPanel._updateRangeBar()/_applyRange().
+const RANGE_DEFS=[
+  {key:'1D',label:'1D',days:1},
+  {key:'5D',label:'5D',days:5},
+  {key:'1M',label:'1M',days:30},
+  {key:'3M',label:'3M',days:90},
+  {key:'6M',label:'6M',days:182},
+  {key:'1Y',label:'1Y',days:365},
+];
 const isMobile=()=>matchMedia('(max-width:900px)').matches;
 const usd=v=>v==null?'—':('$'+Number(v).toLocaleString(undefined,{maximumFractionDigits:2}));
 
@@ -2798,8 +3008,17 @@ class TradingPanel {
         <div class="p-rr"></div>
         <div class="drag-badge p-drag-badge">—</div>
       </div>
+      <div class="p-range-bar"></div>
       <div class="p-osc-panels"></div>`;
     this.chartEl=this.wrapper.querySelector('.p-chart');
+    // UI-THEME-01 FASE D4.10 — range/history bar for this panel's own
+    // chart (its own this._bars/this.chart, never a shared/global one).
+    this.rangeBarEl=this.wrapper.querySelector('.p-range-bar');
+    this._rangeBarKeys=null;
+    this.rangeBarEl.addEventListener('click',e=>{
+      const b=e.target.closest('.p-range-btn');
+      if(b)this._applyRange(b.dataset.range);
+    });
     // UI-THEME-01 FASE D4.8 — container for the new position/TP/SL
     // badges; same element .p-rr/.drag-badge already use.
     this.chartOverlayEl=this.wrapper.querySelector('.panel-chart');
@@ -2855,6 +3074,7 @@ class TradingPanel {
     // never shows a foreign symbol's data while the new history is in
     // flight.
     this.candleSeries?.setData([]); this.volumeSeries?.setData([]);
+    this._updateRangeBar();
     this._clearOscillatorData();
     if(isMobile())updatePanelTabs();
     this.lastClose=null; this.prevClose=null; this.prevCandleClose=null; this.bid=this.ask=null; this._resetAgg();
@@ -2924,6 +3144,7 @@ class TradingPanel {
     this._cancelPendingCandleRender();
     this._bars=[];
     this.candleSeries?.setData([]); this.volumeSeries?.setData([]);
+    this._updateRangeBar();
     this.lastClose=null; this.prevClose=null; this.prevCandleClose=null;
     if(this.ws?.readyState===WebSocket.OPEN){
       this.ws.send(JSON.stringify({action:'change_timeframe',timeframe:this.currentTF}));
@@ -3455,7 +3676,13 @@ class TradingPanel {
         // paint is coalesced (see _scheduleVisualRender()).
         this._scheduleVisualRender('quote');
         const _qs=msg.symbol||this.currentSymbol;
-        if(_qs){const _qe=quotesLivePx[_qs];quotesLivePx[_qs]={price:this.liveMid,prev:_qe?_qe.price:null};}
+        // UI-THEME-01 FASE D4.11 — bid/ask cached alongside the
+        // pre-existing price/prev fields, from the SAME _b/_a already
+        // computed above on this real tick (no new price source, no
+        // second subscription). Used by the new watchlist bid/ask/
+        // spread columns; .price/.prev stay exactly as before for
+        // every other existing reader of quotesLivePx.
+        if(_qs){const _qe=quotesLivePx[_qs];quotesLivePx[_qs]={price:this.liveMid,prev:_qe?_qe.price:null,bid:_b,ask:_a};}
         if(document.getElementById('quotesPanel')?.style.display!=='none')renderQuotes(quotesSearch?.value||'');
       }
       return;
@@ -3488,12 +3715,14 @@ class TradingPanel {
         if(older.length){
           this._bars=older.concat(this._bars);
           this.candleSeries.setData(this._bars);this.volumeSeries.setData(this._bars.map(volPointForBar));
+          this._updateRangeBar();
           this._applyIndicators();
         }
         return;
       }
       this._bars=bars;  // canonical store — full replace on every history load
       this.candleSeries.setData(bars);this.volumeSeries.setData(bars.map(volPointForBar));
+      this._updateRangeBar();
       this.chart.timeScale().fitContent();if(this.stayLive)this.chart.timeScale().scrollToRealTime();
       if(bars.length){this.prevClose=bars.at(-2)?.close??bars.at(-1).open;this.lastClose=bars.at(-1).close;this.setPrice(this.lastClose,this.prevClose);}
       this._resetAgg();this._updateBidAsk();
@@ -3847,6 +4076,24 @@ class TradingPanel {
     // Content (qty/P&L text + close button) is built by
     // _syncPositionBadges(), called right after this on every draw/
     // tick — not duplicated here.
+    // FIX FUNCIONAL — TP/SL INLINE DRAGGABLE — "El badge TP/SL también
+    // debe poder iniciar el drag." Wired ONCE here (not in
+    // _syncPositionBadges(), which only rewrites .textContent on these
+    // two every tick — a fresh listener each sync would leak/duplicate).
+    // Sets this.dragging to the EXACT same {id,which} shape the chart's
+    // own pointerdown handler already produces, then lets the existing,
+    // untouched chartEl pointermove/pointerup listeners (coordinateToPrice/
+    // roundToTick/order:update) take over — zero new math, zero new send.
+    const panel=this,posId=rec.id;
+    const armDrag=(which)=>e=>{
+      e.stopPropagation();
+      panel.selectedPosIds.add(posId);panel.lastSelectedId=posId;
+      panel.dragging={id:posId,which};
+      panel.chart.applyOptions({handleScroll:false,handleScale:false});
+      panel._applyLineStyles();
+    };
+    rec.badgeTP.addEventListener('pointerdown',armDrag('tp'));
+    rec.badgeSL.addEventListener('pointerdown',armDrag('sl'));
   }
   _syncPositionBadges(){
     if(!this.candleSeries||!this.chartOverlayEl)return;
@@ -3885,12 +4132,72 @@ class TradingPanel {
         rec.badgeEntry.classList.toggle('neg',raw!=null&&raw<0);
         const pnlTxt=raw!=null?`${raw>=0?'+':'-'}$${Math.abs(raw).toFixed(2)}`:'—';
         rec.badgeEntry.textContent='';
+        const panel=this,posId=rec.id,maxQty=rec.qty;
+        // POSITION CHART UX — inline TP/SL proxy buttons. Pure visual
+        // entry points into the EXACT same handlers the bottom "Modificar
+        // posición" sheet's own TP/SL buttons already use (ensureSL()/
+        // ensureTP() — idempotent, a no-op if that line already exists —
+        // then _applyLineStyles(), showQB(), openSheet()). Scoped to
+        // `panel`=this TradingPanel and `posId`=rec.id (never a global
+        // selector, never qbPanel/activePanel as the SOURCE of truth —
+        // those are only SET here, mirroring the exact same pattern the
+        // existing Positions-table "Edit" button already uses at
+        // tbody.querySelectorAll('.btm-btn-edit') above). Selecting also
+        // adds posId to selectedPosIds, which is what already gates drag
+        // pickup in _initDrag() — so an existing TP/SL line becomes
+        // draggable the same way clicking the entry line already does.
+        // Zero new WS send, zero new calculation, zero new order flow —
+        // order:update only ever fires from the existing drag-end/sheet-
+        // save code paths, untouched here.
+        const tpBtn=document.createElement('span');
+        tpBtn.className='plb-tp-btn';tpBtn.textContent='TP';
+        tpBtn.title=rec.tp==null?'Añadir Take Profit':'Modificar Take Profit';
+        tpBtn.addEventListener('pointerdown',e=>e.stopPropagation());
+        tpBtn.addEventListener('click',e=>{
+          e.stopPropagation();
+          setActive(panel);
+          panel.selectedPosIds.clear();panel.selectedPosIds.add(posId);panel.lastSelectedId=posId;
+          const isNewTP=rec.tp==null;
+          panel.ensureTP(posId);
+          panel._applyLineStyles();
+          showQB(panel,posId);
+          openSheet('tp');
+          // FIX FUNCIONAL — "activar inmediatamente modo drag/placement"
+          // for a brand-new line, so the user doesn't need a second click
+          // on the (pixel-close-to-entry) line to start moving it. Same
+          // {id,which} shape _initDrag()'s own pointerdown already uses;
+          // the existing, untouched pointermove/pointerup/order:update
+          // on chartEl take over from here.
+          if(isNewTP){
+            panel.dragging={id:posId,which:'tp'};
+            panel.chart.applyOptions({handleScroll:false,handleScale:false});
+          }
+        });
+        rec.badgeEntry.appendChild(tpBtn);
+        const slBtn=document.createElement('span');
+        slBtn.className='plb-sl-btn';slBtn.textContent='SL';
+        slBtn.title=rec.sl==null?'Añadir Stop Loss':'Modificar Stop Loss';
+        slBtn.addEventListener('pointerdown',e=>e.stopPropagation());
+        slBtn.addEventListener('click',e=>{
+          e.stopPropagation();
+          setActive(panel);
+          panel.selectedPosIds.clear();panel.selectedPosIds.add(posId);panel.lastSelectedId=posId;
+          const isNewSL=rec.sl==null;
+          panel.ensureSL(posId);
+          panel._applyLineStyles();
+          showQB(panel,posId);
+          openSheet('sl');
+          if(isNewSL){
+            panel.dragging={id:posId,which:'sl'};
+            panel.chart.applyOptions({handleScroll:false,handleScale:false});
+          }
+        });
+        rec.badgeEntry.appendChild(slBtn);
         const span=document.createElement('span');
         span.textContent=`${rec.qty} | ${pnlTxt}`;
         rec.badgeEntry.appendChild(span);
         const closeBtn=document.createElement('span');
         closeBtn.className='plb-close';closeBtn.textContent='×';closeBtn.title='Cerrar posición';
-        const panel=this,posId=rec.id,maxQty=rec.qty;
         closeBtn.addEventListener('pointerdown',e=>e.stopPropagation());
         closeBtn.addEventListener('click',e=>{
           e.stopPropagation();
@@ -3937,16 +4244,31 @@ class TradingPanel {
      opacity (not flagged as a problem) and entryDim is unchanged.
      Selection logic (selectedPosIds/dragging) and everything else in
      this function is untouched. */
+  /* STEP 1 — POSITION LINES VISUAL CONSISTENCY — root cause fix. Color/
+     opacity used to branch on this.selectedPosIds.has(id) (a per-panel,
+     click-driven UI focus flag — true only in whichever panel the user
+     last clicked that position's entry line in, or that originated its
+     order): selected -> sel_op (.65, vivid, correct bull/bear color);
+     NOT selected -> dim (.20, SL/TP nearly invisible) and a flat gray
+     entryDim for Entry regardless of side. Since selection state is
+     never synced across panels, the SAME real position showed solid/
+     correct lines in whichever panel happened to have it selected and
+     washed-out/gray lines in every other panel showing it — exactly
+     the "only the first panel looks right" symptom. Fix: a single
+     uniform opacity/color for every real position's lines in every
+     panel, independent of selection — matches the requested reference
+     (solid, discreet, consistent, bull/bear TP/SL, side-tinted Entry).
+     Selection/dragging state itself (this.selectedPosIds/this.dragging)
+     is untouched — still drives badge close-button hit-testing, drag
+     pickup, and _updateRR()'s RR badge exactly as before; only the
+     color constants applied to plEntry/plSL/plTP stopped depending on
+     it. lineWidth/lineStyle/title/axisLabelVisible unchanged. */
   _applyLineStyles(){
-    const dim=0.20,sel_op=0.65,bull='#26a69a',bear='#ef5350';
-    const entryDim='rgba(148,163,184,0.28)';
+    const op=0.65,bull='#26a69a',bear='#ef5350';
     for(const [id,rec]of this.linesById.entries()){
-      const sel=this.selectedPosIds.has(id);
-      const dragSL=this.dragging?.id===id&&this.dragging?.which==='sl';
-      const dragTP=this.dragging?.id===id&&this.dragging?.which==='tp';
-      rec.plEntry?.applyOptions({color:sel?hexToRgba(rec.side==='buy'?bull:bear,sel_op):entryDim,lineWidth:1,lineStyle:0});
-      rec.plSL?.applyOptions({color:(sel||dragSL)?hexToRgba(bear,sel_op):hexToRgba(bear,dim),lineWidth:1,lineStyle:0});
-      rec.plTP?.applyOptions({color:(sel||dragTP)?hexToRgba(bull,sel_op):hexToRgba(bull,dim),lineWidth:1,lineStyle:0});
+      rec.plEntry?.applyOptions({color:hexToRgba(rec.side==='buy'?bull:bear,op),lineWidth:1,lineStyle:0});
+      rec.plSL?.applyOptions({color:hexToRgba(bear,op),lineWidth:1,lineStyle:0});
+      rec.plTP?.applyOptions({color:hexToRgba(bull,op),lineWidth:1,lineStyle:0});
     }
     this._updateRR();
   }
@@ -4056,6 +4378,53 @@ class TradingPanel {
     });
   }
 
+  /* UI-THEME-01 FASE D4.10 — rebuilds this panel's own range-bar button
+     set from whatever is ACTUALLY loaded in this._bars right now (never
+     a fixed/fake list). A candidate range is shown only if (a) the
+     loaded span covers it and (b) it would contain at least 2 bars of
+     the CURRENT timeframe (tfToSec) — avoids a degenerate single-candle
+     button (e.g. "1D" on a 1d-timeframe chart). "ALL" is always shown:
+     it only ever calls fitContent(), already safe with zero bars. Cheap
+     no-op guard (_rangeBarKeys) skips the rebuild when the shown set
+     hasn't actually changed, so this can be called on every history
+     load without needless DOM churn. */
+  _updateRangeBar(){
+    if(!this.rangeBarEl)return;
+    if(!this._bars.length){
+      if(this._rangeBarKeys!==''){this.rangeBarEl.innerHTML='';this._rangeBarKeys='';}
+      return;
+    }
+    const first=this._bars[0].time,last=this._bars[this._bars.length-1].time;
+    const span=last-first,tfSec=tfToSec(this.currentTF);
+    const shown=RANGE_DEFS.filter(r=>span>=r.days*86400&&r.days*86400>=tfSec*2);
+    const keys=shown.map(r=>r.key).join(',')+'|ALL';
+    if(this._rangeBarKeys===keys)return;
+    this._rangeBarKeys=keys;
+    const btns=shown.map(r=>`<button class="p-range-btn" data-range="${r.key}">${r.label}</button>`).join('');
+    this.rangeBarEl.innerHTML=btns+'<button class="p-range-btn" data-range="ALL">ALL</button>';
+  }
+
+  /* UI-THEME-01 FASE D4.10 — zooms the ALREADY-LOADED this._bars via the
+     chart's own existing timeScale APIs (setVisibleRange/fitContent) —
+     no WS send, no history fetch, no candle/series mutation, no symbol/
+     timeframe change. Oscillator sub-panes stay in sync automatically
+     via the existing bidirectional subscribeVisibleLogicalRangeChange
+     wiring in _applyOscillator() (onMain/onOsc) — nothing new needed
+     here for that. */
+  _applyRange(key){
+    if(!this.chart||!this._bars.length)return;
+    if(key==='ALL'){
+      try{this.chart.timeScale().fitContent();}catch(_){}
+    }else{
+      const def=RANGE_DEFS.find(r=>r.key===key);
+      if(!def)return;
+      const last=this._bars[this._bars.length-1].time,first=this._bars[0].time;
+      const from=Math.max(first,last-def.days*86400);
+      try{this.chart.timeScale().setVisibleRange({from,to:last});}catch(_){}
+    }
+    this.rangeBarEl?.querySelectorAll('.p-range-btn').forEach(b=>b.classList.toggle('active',b.dataset.range===key));
+  }
+
   async initChart(){
     if(this.chart)return;
     if(!window.LightweightCharts){await new Promise(res=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js';s.onload=res;s.onerror=res;document.head.appendChild(s);});}
@@ -4134,7 +4503,28 @@ class TradingPanel {
       setActive(this);
       const y=yOf(e);
       let clickId=null;
-      for(const [id,rec]of this.linesById.entries()){if(rec?.entry!=null&&nearY(rec.entry,y)){clickId=id;break;}}
+      // FIX FUNCIONAL — TP/SL INLINE DRAGGABLE — root cause of "can't grab
+      // a just-created TP/SL": ensureSL()/ensureTP()'s default offset is
+      // tiny (price ± minMove*8), so the new line's Y lands pixel-close
+      // to its own entry line — well inside TOL. The entry-match loop ran
+      // unconditionally first, so it always won, re-selecting entry
+      // instead of ever reaching the SL/TP branch below. Fix: within the
+      // SAME position, only treat it as an entry click if entry is
+      // genuinely the CLOSEST of entry/SL/TP to the pointer — same
+      // nearY()/TOL/priceToCoordinate already used here, no new math,
+      // just a closer-wins tie-break.
+      for(const [id,rec]of this.linesById.entries()){
+        if(rec?.entry==null)continue;
+        const yEntry=this.candleSeries.priceToCoordinate(rec.entry);
+        if(yEntry==null)continue;
+        const dEntry=Math.abs(yEntry-y);
+        if(dEntry>TOL)continue;
+        const ySL=rec.sl!=null?this.candleSeries.priceToCoordinate(rec.sl):null;
+        const yTP=rec.tp!=null?this.candleSeries.priceToCoordinate(rec.tp):null;
+        if(ySL!=null&&Math.abs(ySL-y)<=TOL&&Math.abs(ySL-y)<dEntry)continue;
+        if(yTP!=null&&Math.abs(yTP-y)<=TOL&&Math.abs(yTP-y)<dEntry)continue;
+        clickId=id;break;
+      }
       if(clickId){this.selectedPosIds.clear();this.selectedPosIds.add(clickId);this.lastSelectedId=clickId;this._applyLineStyles();showQB(this,clickId);return;}
       if(!this.selectedPosIds.size)return;
       for(const id of this.selectedPosIds){const rec=this.linesById.get(id);if(!rec)continue;if(rec.sl!=null&&nearY(rec.sl,y)){this.dragging={id,which:'sl'};break;}if(rec.tp!=null&&nearY(rec.tp,y)){this.dragging={id,which:'tp'};break;}}
@@ -4912,9 +5302,23 @@ if(fhTokenInput)fhTokenInput.addEventListener('change',()=>{localStorage.finnhub
 document.addEventListener('click',e=>{
   const b=e.target.closest('.ls-btn');if(b)setLayout(Number(b.dataset.layout));
   const t=e.target.closest('.tool-btn[data-tool]');
-  if(t&&t.dataset.tool!=='erase'){
-    document.querySelectorAll('.tool-btn').forEach(x=>x.classList.remove('active'));
-    t.classList.add('active');
+  if(t){
+    // UI-THEME-01 FASE D4.12 — fit/golive are momentary actions (like
+    // the pre-existing erase), never a persistent selected mode, so
+    // they're excluded from the active-toggle exactly like erase
+    // already was. Real behavior: activePanel.chart.timeScale()'s own
+    // existing fitContent()/scrollToRealTime() — the same two methods
+    // already called elsewhere in this file (D4.10 range bar's "ALL",
+    // history load, the stayLive live-edge mechanism) — no new chart
+    // state, no new drawing/trading logic.
+    if(t.dataset.tool==='fit'){
+      activePanel?.chart?.timeScale().fitContent();
+    }else if(t.dataset.tool==='golive'){
+      activePanel?.chart?.timeScale().scrollToRealTime();
+    }else if(t.dataset.tool!=='erase'){
+      document.querySelectorAll('.tool-btn').forEach(x=>x.classList.remove('active'));
+      t.classList.add('active');
+    }
   }
 });
 
@@ -5574,7 +5978,11 @@ document.getElementById('trdAddBtn')?.addEventListener('click',()=>{
   const toggleBtn=document.getElementById('opsToggleBtn');
   const toggleIcon=document.getElementById('opsToggleIcon');
   if(!sidebar||!toggleBtn)return;
-  const EXPANDED_COLS='96px 32px 1fr 240px';
+  // UI-THEME-01 FASE D4.11 — references var(--rightcol-w,240px) instead
+  // of a literal 240px, so expanding the ops sidebar never resets a
+  // user's resized right panel back to the default. The 6px track
+  // between 1fr and the right column is the new rightcol-resizer.
+  const EXPANDED_COLS='96px 32px 1fr 6px var(--rightcol-w,240px)';
   let collapsed=true;
   function applyState(){
     sidebar.classList.toggle('collapsed',collapsed);
@@ -5603,6 +6011,67 @@ document.getElementById('trdAddBtn')?.addEventListener('click',()=>{
       if(tab)_switchBtmTab(tab);
     });
   });
+})();
+
+/* UI-THEME-01 FASE D4.11 — resizable right panel. Pure CSS custom
+   property (--rightcol-w) + grid track drag; never touches
+   activePanel/symbol/timeframe/order/position/WS code. Chart width
+   reflow is handled by the SAME ResizeObserver already watching each
+   panel's .p-chart (initChart() — unchanged), so no manual chart.resize()
+   call is needed during the drag itself; one _fixChartHeight() nudge on
+   pointerup mirrors the same defensive pattern the ops-sidebar toggle
+   above already uses, in case a browser's ResizeObserver batching lags
+   the live drag. Disabled entirely on mobile — see the two
+   @media(max-width:900px){.rightcol-resizer{display:none}} rules. */
+(function(){
+  const resizer=document.getElementById('rightcolResizer');
+  const layoutEl=document.querySelector('.layout');
+  const rightcolEl=document.querySelector('.rightcol');
+  if(!resizer||!layoutEl||!rightcolEl)return;
+  const STORAGE_KEY='mb_right_panel_width';
+  const MIN_W=260;
+  function maxW(){return Math.round(layoutEl.getBoundingClientRect().width*0.45);}
+  function clamp(w){return Math.max(MIN_W,Math.min(maxW(),w));}
+  function setWidth(px){document.documentElement.style.setProperty('--rightcol-w',px+'px');}
+
+  // Restore persisted width ONLY if it's a valid number within today's
+  // bounds — an invalid/out-of-range value silently falls back to the
+  // CSS default (240px, untouched) instead of being clamped/forced.
+  (function restore(){
+    let stored=null;
+    try{stored=parseInt(localStorage.getItem(STORAGE_KEY),10);}catch(_){}
+    if(Number.isFinite(stored)&&stored>=MIN_W&&stored<=maxW())setWidth(stored);
+  })();
+
+  let dragging=false,startX=0,startW=0;
+  resizer.addEventListener('pointerdown',e=>{
+    dragging=true;
+    startX=e.clientX;
+    startW=rightcolEl.getBoundingClientRect().width;
+    resizer.classList.add('dragging');
+    try{resizer.setPointerCapture(e.pointerId);}catch(_){}
+    document.body.style.userSelect='none';
+    e.preventDefault();
+  });
+  resizer.addEventListener('pointermove',e=>{
+    if(!dragging)return;
+    // Dragging the handle LEFT (negative clientX delta) widens the
+    // right panel — startX-e.clientX is positive in that direction.
+    const dx=startX-e.clientX;
+    setWidth(clamp(Math.round(startW+dx)));
+  });
+  function endDrag(e){
+    if(!dragging)return;
+    dragging=false;
+    resizer.classList.remove('dragging');
+    document.body.style.userSelect='';
+    try{resizer.releasePointerCapture(e.pointerId);}catch(_){}
+    const finalW=Math.round(rightcolEl.getBoundingClientRect().width);
+    try{localStorage.setItem(STORAGE_KEY,String(finalW));}catch(_){}
+    requestAnimationFrame(()=>allPanels.forEach(p=>p._fixChartHeight()));
+  }
+  resizer.addEventListener('pointerup',endDrag);
+  resizer.addEventListener('pointercancel',endDrag);
 })();
 
 /* ── Analytics panel toggle + equity sparkline (Paso 3) ── */
@@ -5654,17 +6123,30 @@ document.getElementById('trdAddBtn')?.addEventListener('click',()=>{
   }
 })();
 
-/* ── Watchlist live price updater ── */
+/* ── Watchlist live price updater ──
+   UI-THEME-01 FASE D4.11 — now drives bid/ask/spread columns instead of
+   a single last-price span, plus the active-row highlight. Reads ONLY
+   quotesLivePx[sym].bid/.ask (cached straight from the real tick — see
+   the panel message handler above) and activePanel.currentSymbol (the
+   existing, untouched active-panel state) — no new price source, no
+   fake values. A symbol with no live tick yet (never subscribed by any
+   open panel this session) correctly shows "—", never a guessed value. */
 setInterval(()=>{
-  document.querySelectorAll('.rc-wl-px[data-wsym]').forEach(el=>{
-    const sym=el.getAttribute('data-wsym');
+  document.querySelectorAll('.rc-wl-row[data-sym]').forEach(row=>{
+    const sym=row.dataset.sym;
     const qe=quotesLivePx[sym]||quotesLivePx[sym.replace('/','')]||null;
-    if(!qe?.price)return;
-    const p=String(sym).includes('JPY')||sym==='US30'||sym==='US500'||sym==='NAS100'?2:sym==='BTCUSD'||sym==='ETHUSD'?2:sym.includes('XAU')||sym.includes('XAG')?2:5;
-    const px=Number(qe.price).toFixed(p);
-    el.textContent=px;
-    const up=qe.prev==null||qe.price>=qe.prev;
-    el.className='rc-wl-px '+(qe.prev!=null?(up?'up':'dn'):'');
+    const bidEl=row.querySelector('.rc-wl-bid'),askEl=row.querySelector('.rc-wl-ask'),spreadEl=row.querySelector('.rc-wl-spread');
+    row.classList.toggle('active',!!activePanel&&activePanel.currentSymbol===sym);
+    if(!qe||qe.bid==null||qe.ask==null){
+      if(bidEl)bidEl.textContent='—';
+      if(askEl)askEl.textContent='—';
+      if(spreadEl)spreadEl.textContent='—';
+      return;
+    }
+    const prec=priceFormatFor(sym).precision;
+    if(bidEl)bidEl.textContent=qe.bid.toFixed(prec);
+    if(askEl)askEl.textContent=qe.ask.toFixed(prec);
+    if(spreadEl)spreadEl.textContent=String(Math.round((qe.ask-qe.bid)*Math.pow(10,prec)));
   });
   // Sync the rc-btn prices with the active panel
   if(activePanel){
