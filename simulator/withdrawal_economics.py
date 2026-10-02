@@ -89,6 +89,7 @@ deduction (Owner Decision, FASE B authorization).
 from decimal import ROUND_HALF_EVEN, Decimal
 
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 
 from .models import BrokerLedger, WithdrawalFeeConfig, WithdrawalRequest
 
@@ -175,6 +176,7 @@ def record_withdrawal_fee_revenue(wr: WithdrawalRequest) -> "BrokerLedger | None
                 revenue_type=BrokerLedger.REV_WITHDRAW_FEE,
                 amount=wr.fee_amount,
                 source_withdrawal=wr,
+                economic_date=timezone.now().date(),
                 meta={
                     "withdrawal_id": wr.pk,
                     "user_id": wr.user_id,

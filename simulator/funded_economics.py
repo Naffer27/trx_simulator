@@ -106,6 +106,7 @@ distribution — this module never touches it and never re-books it.
 from decimal import Decimal
 
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 
 from .models import BrokerLedger, FundedPayoutRequest
 
@@ -157,6 +158,7 @@ def record_funded_broker_cut_revenue(fpr: FundedPayoutRequest) -> "BrokerLedger 
                 amount=fpr.broker_cut,
                 source_account=fpr.funded_account,
                 source_funded_payout=fpr,
+                economic_date=timezone.now().date(),
                 meta={
                     "funded_payout_request_id": fpr.pk,
                     "funded_type": fpr.funded_type,

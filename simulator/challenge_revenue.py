@@ -68,6 +68,7 @@ this module ever creates is stamped with the real time it was created,
 never a historical timestamp.
 """
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 
 from .models import BrokerLedger, ChallengeEnrollment
 
@@ -110,6 +111,7 @@ def record_challenge_fee_revenue(enrollment: ChallengeEnrollment) -> BrokerLedge
                 revenue_type=BrokerLedger.REV_CHALLENGE_FEE,
                 amount=amount,
                 source_challenge_enrollment=enrollment,
+                economic_date=timezone.now().date(),
                 meta={
                     "enrollment_id": enrollment.pk,
                     "product_id": enrollment.product_id,

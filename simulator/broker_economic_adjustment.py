@@ -41,6 +41,7 @@ import uuid
 from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
+from django.utils import timezone
 
 from .models import BrokerEconomicAdjustment, BrokerLedger, TradingAccount
 
@@ -177,6 +178,7 @@ def create_broker_economic_adjustment(
             amount=amount,
             source_account=source_account,
             symbol=symbol,
+            economic_date=timezone.now().date(),
             meta={
                 "adjustment_reference": reference,
                 "source_ledger_id": source_ledger.pk if source_ledger else None,

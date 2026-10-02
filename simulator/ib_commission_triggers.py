@@ -188,10 +188,19 @@ def sweep_trading_commission_revenue_share(cutoff, batch_size=500):
     engine that writes it. Never consumes REV_SPREAD (excluded by the
     revenue_type filter below) — that is sweep_spread_revenue_share()'s
     own, separate domain (IB-COMMISSION-PARITY-09C.1).
+
+    BROKER-ECONOMICS-05 — Backfill Safety Guard. Both created_at AND
+    economic_date must be inside the window. economic_date=NULL (every
+    pre-05 legacy row, or any future row a writer failed to set it on)
+    never satisfies economic_date__gte=... — ordinary SQL NULL
+    comparison semantics, identical on SQLite and PostgreSQL — so such
+    rows are permanently excluded here, never swept.
     """
     rows = list(
         BrokerLedger.objects.filter(
-            revenue_type=BrokerLedger.REV_COMMISSION, created_at__gte=cutoff,
+            revenue_type=BrokerLedger.REV_COMMISSION,
+            created_at__gte=cutoff,
+            economic_date__gte=cutoff.date(),
         ).order_by("id")[:batch_size]
     )
     generated = 0
@@ -238,10 +247,16 @@ def sweep_spread_revenue_share(cutoff, batch_size=500):
     executions where one was actually written, exactly mirroring the
     (already-shipped, already-certified) commission sweep's own
     "scan what's durable, never synthesize" discipline.
+
+    BROKER-ECONOMICS-05 — Backfill Safety Guard. Same double-filter
+    discipline as sweep_trading_commission_revenue_share() above — see
+    its docstring for the NULL-exclusion rationale.
     """
     rows = list(
         BrokerLedger.objects.filter(
-            revenue_type=BrokerLedger.REV_SPREAD, created_at__gte=cutoff,
+            revenue_type=BrokerLedger.REV_SPREAD,
+            created_at__gte=cutoff,
+            economic_date__gte=cutoff.date(),
         ).order_by("id")[:batch_size]
     )
     generated = 0

@@ -18,6 +18,8 @@ margin, leverage, or TraderScore — those are all unchanged.
 
 from decimal import Decimal
 
+from django.utils import timezone
+
 from .models import BrokerLedger
 
 BOOK_MODE_B_BOOK = "B_BOOK"
@@ -104,6 +106,7 @@ def create_broker_counterparty_entry(trade, account, trader_pnl, reason, *, book
             "amount": counterparty_pnl,
             "source_account": account,
             "symbol": trade.symbol,
+            "economic_date": timezone.now().date(),
             "meta": {
                 "trader_pnl": float(trader_pnl_d),
                 "broker_counterparty_pnl": float(counterparty_pnl),

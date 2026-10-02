@@ -13,6 +13,7 @@ import uuid
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 
 from simulator.models import (
     AccountProduct, BrokerLedger, ChallengeEnrollment, ChallengeProduct, Deposit,
@@ -211,6 +212,9 @@ def make_ledger_entry(
     )
 
 
+_UNSET = object()
+
+
 def make_broker_ledger(
     revenue_type: str = BrokerLedger.REV_SPREAD,
     amount: Decimal = Decimal("1.00"),
@@ -219,8 +223,16 @@ def make_broker_ledger(
     source_ledger: LedgerEntry | None = None,
     symbol: str | None = "EUR/USD",
     meta: dict | None = None,
+    economic_date=_UNSET,
 ) -> BrokerLedger:
-    """Create a BrokerLedger revenue entry."""
+    """Create a BrokerLedger revenue entry.
+
+    BROKER-ECONOMICS-05: mirrors every real production writer by setting
+    economic_date=today by default (real writers never leave it unset).
+    Pass economic_date=None explicitly to simulate a legacy/pre-05 row
+    for a safety-guard test — that is the only way to get NULL here,
+    exactly like a real writer would have to deliberately skip it.
+    """
     return BrokerLedger.objects.create(
         revenue_type=revenue_type,
         amount=Decimal(str(amount)),
@@ -229,6 +241,7 @@ def make_broker_ledger(
         source_ledger=source_ledger,
         symbol=symbol,
         meta=meta if meta is not None else {},
+        economic_date=timezone.now().date() if economic_date is _UNSET else economic_date,
     )
 
 

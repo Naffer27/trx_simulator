@@ -683,6 +683,20 @@ class BrokerLedger(models.Model):
     symbol         = models.CharField(max_length=12, null=True, blank=True)
     meta           = models.JSONField(default=dict, blank=True)
     created_at     = models.DateTimeField(auto_now_add=True, db_index=True)
+    # BROKER-ECONOMICS-05 — Backfill Safety Guard. The economic date this
+    # revenue/cost actually belongs to, set explicitly by every writer at
+    # creation time (never auto-derived from created_at). NULL means "no
+    # economic date decision was ever made for this row" — which the IB
+    # sweeps (ib_commission_triggers.py) treat as permanently ineligible,
+    # by ordinary SQL NULL-comparison semantics (NULL >= x is never true).
+    # This is what lets a future historical-data correction insert a
+    # BrokerLedger row without it being silently swept as new IB-eligible
+    # revenue: a correction script that does not explicitly set this field
+    # produces a row the sweep can never pick up. Existing (pre-05) rows
+    # are intentionally NOT backfilled — see BROKER-ECONOMICS-05A preflight,
+    # Option B: a decision to leave legacy data untouched rather than
+    # write to historical financial records for no safety benefit.
+    economic_date  = models.DateField(null=True, blank=True)
 
     class Meta:
         ordering = ['-created_at', '-id']

@@ -459,6 +459,16 @@ def generate_trading_commission_revenue_share_obligation(broker_ledger: BrokerLe
     if broker_ledger.revenue_type != BrokerLedger.REV_COMMISSION:
         return None
 
+    # BROKER-ECONOMICS-05 — Backfill Safety Guard. A row with no
+    # economic_date (every pre-05 legacy row, or any row a writer
+    # somehow failed to set it on) never reaches this function in
+    # practice — the sweep's own economic_date__gte filter already
+    # excludes it. This is a second, independent guard for any other
+    # caller of this generator, so a missing economic date can never
+    # silently resolve a commission rule by any other timestamp.
+    if broker_ledger.economic_date is None:
+        return None
+
     if broker_ledger.amount is None or broker_ledger.amount <= 0:
         return None
 
@@ -481,6 +491,17 @@ def generate_trading_commission_revenue_share_obligation(broker_ledger: BrokerLe
         return None
 
     try:
+        # BROKER-ECONOMICS-05 note: rule resolution deliberately still
+        # uses created_at, NOT economic_date, here. effective_from/
+        # effective_until are DateTimeFields; economic_date is a bare
+        # DateField, so using it would silently compare against midnight
+        # of that date instead of the row's real moment, breaking
+        # same-day rate-versioning precision (confirmed against
+        # test_ib_commission_parity_09b.py's own same-day rate-change
+        # test). Since economic_date is always set to created_at.date()
+        # by every current writer (no backfill tool exists — see
+        # BROKER-ECONOMICS-05A), the two never diverge today, so this
+        # loses nothing while avoiding a real precision regression.
         rule = resolve_applicable_rule(
             referral, IBCommissionRule.RULE_TRADING_COMMISSION_REVENUE_SHARE,
             at_time=broker_ledger.created_at,
@@ -582,6 +603,12 @@ def generate_spread_revenue_share_obligation(broker_ledger: BrokerLedger):
     if broker_ledger.revenue_type != BrokerLedger.REV_SPREAD:
         return None
 
+    # BROKER-ECONOMICS-05 — Backfill Safety Guard. See the identical
+    # guard in generate_trading_commission_revenue_share_obligation()
+    # above.
+    if broker_ledger.economic_date is None:
+        return None
+
     if broker_ledger.amount is None or broker_ledger.amount <= 0:
         return None
 
@@ -604,6 +631,11 @@ def generate_spread_revenue_share_obligation(broker_ledger: BrokerLedger):
         return None
 
     try:
+        # BROKER-ECONOMICS-05 note: see the identical rationale in
+        # generate_trading_commission_revenue_share_obligation() above —
+        # rule resolution deliberately keeps using created_at (full
+        # datetime precision), not economic_date (date-only), to avoid
+        # a same-day rate-versioning regression.
         rule = resolve_applicable_rule(
             referral, IBCommissionRule.RULE_SPREAD_REVENUE_SHARE,
             at_time=broker_ledger.created_at,

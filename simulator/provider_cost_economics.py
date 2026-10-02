@@ -74,6 +74,7 @@ IBCommissionObligation row.
 from decimal import Decimal
 
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 
 from .models import BrokerLedger, ProviderCostRecord
 
@@ -172,6 +173,7 @@ def record_provider_cost_revenue(record: ProviderCostRecord) -> "BrokerLedger | 
                 revenue_type=BrokerLedger.REV_PROVIDER_COST,
                 amount=amount_to_post,
                 source_provider_cost=record,
+                economic_date=timezone.now().date(),
                 meta=meta,
             )
     except IntegrityError as exc:

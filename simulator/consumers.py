@@ -894,7 +894,8 @@ def _trigger_pending_order_core(pending_order_id: int, execution_price: float) -
                     BrokerLedger.objects.create(
                         revenue_type=BrokerLedger.REV_COMMISSION, amount=_commission_d,
                         source_account_id=po.account_id, source_ledger=trader_ledger,
-                        symbol=symbol, meta={"side": side, "db_pos_id": position_id, "pending_order_id": po.id},
+                        symbol=symbol, economic_date=timezone.now().date(),
+                        meta={"side": side, "db_pos_id": position_id, "pending_order_id": po.id},
                     )
             except Exception as _bl_exc:
                 log.warning("[pending_trigger] broker_ledger commission insert failed pos=%s: %s", position_id, _bl_exc)
@@ -5278,6 +5279,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
                             source_account_id=self._db_account_id,
                             source_ledger=trader_ledger,
                             symbol=symbol,
+                            economic_date=timezone.now().date(),
                             meta={"side": side, "db_pos_id": position_id},
                         )
                 except Exception as _bl_exc:
@@ -5348,6 +5350,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
                             source_account_id=self._db_account_id,
                             source_ledger=spread_fee_ledger,
                             symbol=symbol,
+                            economic_date=timezone.now().date(),
                             meta={
                                 "side": side,
                                 "db_pos_id": position_id,

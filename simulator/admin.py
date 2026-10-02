@@ -4482,12 +4482,15 @@ class BrokerLedgerAdmin(admin.ModelAdmin):
         return format_html('<a href="{}">→ Revenue Dashboard</a>', url)
 
     list_display   = ('id', 'revenue_type', 'amount', 'source_account', 'source_trade', 'symbol', 'created_at',
-                       'revenue_dashboard_link')
+                       'economic_date', 'revenue_dashboard_link')
     list_filter    = ('revenue_type', 'created_at')
     search_fields  = ('symbol', 'source_account__id')
     readonly_fields = (
         'id', 'revenue_type', 'amount', 'source_account', 'source_trade',
         'source_ledger', 'symbol', 'meta', 'created_at',
+        # BROKER-ECONOMICS-05 — read-only information only, per design:
+        # no manual control to set/change economic_date is provided here.
+        'economic_date',
     )
     ordering       = ('-created_at',)
     date_hierarchy = 'created_at'

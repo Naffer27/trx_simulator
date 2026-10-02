@@ -273,6 +273,7 @@ class HistoricalSnapshotUnaffectedByPercentageVersioningTests(TestCase):
         row = BrokerLedger.objects.create(
             revenue_type=BrokerLedger.REV_COMMISSION, amount=Decimal("8.00"),
             source_account=account, symbol="EUR/USD",
+            economic_date=timezone.now().date(),
         )
         obligation = generate_trading_commission_revenue_share_obligation(row)
         self.assertEqual(obligation.applied_percentage_rate, Decimal("20.00"))
@@ -299,6 +300,7 @@ class HistoricalSnapshotUnaffectedByPercentageVersioningTests(TestCase):
         row2 = BrokerLedger.objects.create(
             revenue_type=BrokerLedger.REV_COMMISSION, amount=Decimal("8.00"),
             source_account=account, symbol="EUR/USD",
+            economic_date=timezone.now().date(),
         )
         obligation2 = generate_trading_commission_revenue_share_obligation(row2)
         self.assertEqual(obligation2.applied_percentage_rate, Decimal("50.00"))
