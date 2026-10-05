@@ -280,6 +280,26 @@ def logout_view(request):
 # -----------------------
 # DASHBOARD
 # -----------------------
+# PRE-VPS-POLISH-03C.1 — presentation routing foundation. Conservative,
+# dependency-free mobile detection: a false negative (-> Desktop) is
+# preferred over a false positive (-> Mobile), so Desktop stays the
+# fallback for any unrecognized/ambiguous User-Agent. iPhone/iPod always
+# match; Android only matches alongside the "Mobile" token real Android
+# phones' UA strings carry (tablets typically omit it) — no iPad/tablet
+# detection. Same URL, same account resolution, same trading_dashboard()
+# — only the final render target varies.
+_MOBILE_UA_MARKERS = ("iphone", "ipod")
+
+
+def _is_mobile_request(request) -> bool:
+    ua = request.META.get('HTTP_USER_AGENT', '').lower()
+    if any(marker in ua for marker in _MOBILE_UA_MARKERS):
+        return True
+    if 'android' in ua and 'mobile' in ua:
+        return True
+    return False
+
+
 @login_required
 def trading_dashboard(request, account_id=None):
     if account_id:
@@ -620,7 +640,11 @@ def trading_dashboard(request, account_id=None):
         # History panel seed
         'closed_trades_json':        closed_trades_json,
     }
-    return render(request, 'simulator/trade/shell.html', context)
+    template_name = (
+        'simulator/trade/mobile.html' if _is_mobile_request(request)
+        else 'simulator/trade/shell.html'
+    )
+    return render(request, template_name, context)
 
 
 # -----------------------
