@@ -2774,7 +2774,7 @@ class TradingPanel {
     // purely for audit/debugging — no code path branches on its value
     // beyond the fail-closed check made at write time.
     this.liveMid=null; this.liveSource=null; this.prevLiveMid=null;
-    this.positionsCache=[]; this.linesById=new Map(); this.selectedPosIds=new Set();
+    this.linesById=new Map(); this.selectedPosIds=new Set();
     this.lastSelectedId=null; this.pendingTmp=[]; this.dragging=null;
     this._bars=[];       // canonical OHLCV bar store — source of truth for indicators
     // LIVE-CHART-RENDER-STABILITY-01 — visual coalescing/throttle state.
@@ -3618,8 +3618,7 @@ class TradingPanel {
       // (prevents reconnect race where undefined items wipes good local cache)
       const _freshItems=msg.items;
       if(Array.isArray(_freshItems)){
-        this.positionsCache=_freshItems;
-        for(const p of allPanels){if(p===this)continue;p.positionsCache=_freshItems;}
+        replaceCanonicalPositions(_freshItems);
       }
       this._reconcilePending(this.positionsCache);
       this._renderLines(this.positionsCache);
@@ -3727,8 +3726,8 @@ class TradingPanel {
         for(const p of allPanels){if(p===this)continue;p._removeLines(cid);p.selectedPosIds.delete(cid);if(p.lastSelectedId===cid)p.lastSelectedId=null;}
       }
       if(msg.items){
-        this.positionsCache=msg.items;this._renderLines(this.positionsCache);
-        for(const p of allPanels){if(p===this)continue;p.positionsCache=msg.items;p._renderLines(msg.items);}
+        replaceCanonicalPositions(msg.items);this._renderLines(this.positionsCache);
+        for(const p of allPanels){if(p===this)continue;p._renderLines(msg.items);}
         renderGlobalPositions();
       }
       return;
@@ -4497,6 +4496,23 @@ class TradingPanel {
     setTimeout(()=>showQB(this,tmpId),50);
   }
 }
+
+// PRE-VPS-POLISH-03B.2C.2B.2 — positionsCache is now a thin read-only
+// compatibility view over the canonical positions store (trading_core.js):
+// every existing READ call-site (panel.positionsCache.find(...), for(pos
+// of panel.positionsCache), etc.) keeps working unchanged. No setter —
+// any future direct assignment (panel.positionsCache=...) fails loudly
+// under strict mode instead of silently creating an independent copy.
+Object.defineProperty(
+  TradingPanel.prototype,
+  'positionsCache',
+  {
+    get(){
+      return getCanonicalPositions();
+    },
+    configurable:true
+  }
+);
 
 /* ── PANEL-04 — Order ticket state machine ───────────────────────────
    States: idle, sending, accepted, rejected, disconnected, timeout.

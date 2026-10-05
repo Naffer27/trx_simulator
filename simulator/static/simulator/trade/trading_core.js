@@ -191,3 +191,13 @@ function applyPriceTickState(currentLiveMid, bid, ask, source){
   }
   return null;
 }
+
+/* ── PRE-VPS-POLISH-03B.2C.2B.2 — canonical positions store ──
+   One account-wide snapshot, shared by every TradingPanel on the page
+   (all panels on one page render always belong to the same
+   TradingAccount — see the 03B.2C.2B.1 preflight's account-scope proof).
+   Frontend-only: holds whatever snapshot the backend last sent, never
+   computes P&L, never touches chart/DOM/WebSocket state. */
+let _canonicalPositions = [];
+function getCanonicalPositions(){ return _canonicalPositions; }
+function replaceCanonicalPositions(items){ _canonicalPositions = Array.isArray(items) ? items : []; }
