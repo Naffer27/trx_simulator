@@ -942,6 +942,15 @@ class FrontendVolumeContractTests(SimpleTestCase):
         with open(path, encoding="utf-8") as f:
             return f.read()
 
+    def _core_source(self):
+        # PRE-VPS-POLISH-03B.2A — volPointForBar()/priceFormatFor() now
+        # live in the shared trading core (simulator/static/simulator/
+        # trade/trading_core.js), not inline in desktop.html.
+        with open(
+            "simulator/static/simulator/trade/trading_core.js", encoding="utf-8"
+        ) as f:
+            return f.read()
+
     def test_history_bars_mapping_includes_real_volume(self):
         src = self._template_source()
         self.assertIn(
@@ -951,7 +960,7 @@ class FrontendVolumeContractTests(SimpleTestCase):
         )
 
     def test_vol_point_for_bar_prefers_real_volume(self):
-        src = self._template_source()
+        src = self._core_source()
         i = src.index("const volPointForBar=")
         snippet = src[i:i + 600]
         self.assertIn("b.volume!=null&&Number.isFinite(b.volume)&&b.volume>0", snippet)
@@ -961,7 +970,7 @@ class FrontendVolumeContractTests(SimpleTestCase):
         # The old proxy formula must still exist (live-tick path has no
         # volume field to use instead) but only reachable in the `else`
         # branch, never as the primary/unconditional calculation.
-        src = self._template_source()
+        src = self._core_source()
         i = src.index("const volPointForBar=")
         snippet = src[i:i + 600]
         self.assertIn("span*1e6", snippet)
@@ -1003,7 +1012,11 @@ class FrontendVolumeContractTests(SimpleTestCase):
         # Symbol-switch scale correctness (BTC->EUR->BTC) relies entirely
         # on this pre-existing, untouched branching — never on anything
         # this volume fix changed.
-        src = self._template_source()
+        # PRE-VPS-POLISH-03B.2A — priceFormatFor()'s definition now lives
+        # in the shared trading core, but its call site (inside
+        # TradingPanel, below) stays in desktop.html — compose both
+        # sources, in real execution order, to cover this one test.
+        src = self._core_source() + self._template_source()
         self.assertIn(
             "const priceFormatFor=sym=>(sym.includes('BTC')||sym.includes('ETH'))"
             "?{precision:2,minMove:0.01}:sym.endsWith('/JPY')?{precision:3,minMove:0.001}"

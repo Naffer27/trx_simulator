@@ -49,6 +49,18 @@ class DashboardPnLContractSizeTests(TestCase):
         end = html.index("};", start)
         return html[start:end]
 
+    def _core_source(self):
+        # PRE-VPS-POLISH-03B.2A — getContractSize()/computeRawPnL() now
+        # live in the shared trading core (simulator/static/simulator/
+        # trade/trading_core.js), not inline in the rendered page.
+        # CONTRACT_SIZE itself (Django-templated data) stays in
+        # desktop.html — see _contract_size_block()/self._html() above,
+        # unchanged.
+        with open(
+            "simulator/static/simulator/trade/trading_core.js", encoding="utf-8"
+        ) as f:
+            return f.read()
+
     # ── CONTRACT_SIZE map ────────────────────────────────────────────────
 
     def test_contract_size_map_present(self):
@@ -83,7 +95,7 @@ class DashboardPnLContractSizeTests(TestCase):
         self.assertIn('"ETHUSD": 1.0', block)
 
     def test_get_contract_size_helper_present(self):
-        self.assertIn("function getContractSize(sym)", self._html())
+        self.assertIn("function getContractSize(sym)", self._core_source())
 
     # ── XAU/USD: metadata-only, never a visible selector option ─────────
 
@@ -132,10 +144,10 @@ class DashboardPnLContractSizeTests(TestCase):
     # inherits that guarantee without repeating the formula.
 
     def test_shared_pnl_helpers_use_contract_size(self):
-        html = self._html()
-        start = html.index("function computeRawPnL")
-        end = html.index("\n}", start)
-        block = html[start:end]
+        src = self._core_source()
+        start = src.index("function computeRawPnL")
+        end = src.index("\n}", start)
+        block = src[start:end]
         self.assertIn("getContractSize(", block)
         self.assertIn("*cs", block)
 

@@ -121,9 +121,16 @@ class GetContractSizeConsumesInjectedMappingTests(TestCase):
         self.client.force_login(self.user)
 
     def test_get_contract_size_function_present_and_reads_the_constant(self):
-        resp = self.client.get(_url(self.account.pk))
-        html = resp.content.decode()
+        # PRE-VPS-POLISH-03B.2A — getContractSize() now lives in the shared
+        # trading core (simulator/static/simulator/trade/trading_core.js),
+        # not inline in desktop.html/the rendered page. CONTRACT_SIZE
+        # itself (the Django-templated data it reads) stays in
+        # desktop.html — see OldHardcodedTableRemovedTests above, unchanged.
+        with open(
+            "simulator/static/simulator/trade/trading_core.js", encoding="utf-8"
+        ) as f:
+            core_src = f.read()
         self.assertIn(
             "function getContractSize(sym){ return CONTRACT_SIZE[sym] ?? 1; }",
-            html,
+            core_src,
         )

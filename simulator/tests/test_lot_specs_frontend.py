@@ -44,32 +44,45 @@ class LotSpecsEmbedTests(TestCase):
         self.assertEqual(r.status_code, 200)
         return r.content.decode()
 
+    def _core_source(self):
+        # PRE-VPS-POLISH-03B.2A — the LOT_SPECS object literal itself now
+        # lives in the shared trading core (simulator/static/simulator/
+        # trade/trading_core.js), not inline in the rendered page. The
+        # call-site helpers (getLotStep/getLotMin/getLotDecimals/
+        # normalizeLot/_adjustLot/_updateQtyInputAttrs) are still exercised
+        # against self._html() below — those identifiers remain present as
+        # call sites in desktop.html's own remaining inline JS.
+        with open(
+            "simulator/static/simulator/trade/trading_core.js", encoding="utf-8"
+        ) as f:
+            return f.read()
+
     def test_lot_specs_object_present(self):
-        self.assertIn("LOT_SPECS", self._html())
+        self.assertIn("LOT_SPECS", self._core_source())
 
     def test_btcusd_step_0001(self):
-        html = self._html()
-        self.assertIn('"BTCUSD"', html)
+        src = self._core_source()
+        self.assertIn('"BTCUSD"', src)
         # The exact entry in the LOT_SPECS literal
-        self.assertIn("step:0.001", html)
+        self.assertIn("step:0.001", src)
 
     def test_btcusd_min_0001(self):
-        html = self._html()
-        self.assertIn("min:0.001", html)
+        src = self._core_source()
+        self.assertIn("min:0.001", src)
 
     def test_btcusd_dec_3(self):
-        html = self._html()
-        self.assertIn("dec:3", html)
+        src = self._core_source()
+        self.assertIn("dec:3", src)
 
     def test_eurusd_step_001(self):
-        html = self._html()
-        self.assertIn('"EUR/USD"', html)
+        src = self._core_source()
+        self.assertIn('"EUR/USD"', src)
         # step:0.01 present (many symbols share this; just verify it exists)
-        self.assertIn("step:0.01", html)
+        self.assertIn("step:0.01", src)
 
     def test_nas100_step_01(self):
         # Index contracts use step:0.1
-        self.assertIn("step:0.1", self._html())
+        self.assertIn("step:0.1", self._core_source())
 
     def test_adjust_lot_helper_present(self):
         self.assertIn("_adjustLot", self._html())

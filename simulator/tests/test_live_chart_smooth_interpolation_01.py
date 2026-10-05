@@ -43,6 +43,18 @@ def _template_source() -> str:
         return f.read()
 
 
+def _core_source() -> str:
+    # PRE-VPS-POLISH-03B.2A — volPointForBar()/pipSizeFor() now live in the
+    # shared trading core (simulator/static/simulator/trade/
+    # trading_core.js), loaded before desktop.html's own inline <script>
+    # in the real page — the harness below composes both sources in that
+    # same execution order.
+    with open(
+        "simulator/static/simulator/trade/trading_core.js", encoding="utf-8"
+    ) as f:
+        return f.read()
+
+
 def _method_body(src: str, method_signature: str, max_len=None) -> str:
     i = src.index(method_signature)
     start = i + len(method_signature)
@@ -248,9 +260,10 @@ class SmoothInterpolationBehaviorTests(SimpleTestCase):
                            "structural coverage above still applies")
 
     def _harness_source(self) -> str:
+        core_src = _core_source()
         src = _template_source()
-        vol_point_for_bar = re.search(r"const volPointForBar=.*?;\n", src).group(0)
-        pip_size_for = re.search(r"const pipSizeFor=.*?;", src).group(0)
+        vol_point_for_bar = re.search(r"const volPointForBar=.*?;\n", core_src).group(0)
+        pip_size_for = re.search(r"const pipSizeFor=.*?;", core_src).group(0)
         threshold = _method_body(src, "_visualMagnitudeThreshold(symbol, anchorPrice){")
         max_age = _method_body(src, "_maxVisualAgeMs(symbol){")
         schedule = _method_body(src, "_scheduleVisualRender(kind, isNew){")

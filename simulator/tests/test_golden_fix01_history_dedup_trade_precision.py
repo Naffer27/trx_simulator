@@ -78,6 +78,16 @@ def _template_source():
         return f.read()
 
 
+def _core_source():
+    # PRE-VPS-POLISH-03B.2A — LOT_SPECS now lives in the shared trading
+    # core (simulator/static/simulator/trade/trading_core.js), not inline
+    # in desktop.html.
+    with open(
+        "simulator/static/simulator/trade/trading_core.js", encoding="utf-8"
+    ) as f:
+        return f.read()
+
+
 def _order_close_block(src):
     i = src.index("if(msg.type==='order_close'){")
     j = src.index("/* ── Indicator rendering ── */", i)
@@ -260,11 +270,11 @@ class BtmHistoryQtySymbolAwareRenderTests(SimpleTestCase):
         # assumption — BTCUSD's own dec:3 entry is what makes 0.001 render
         # correctly, so assert that entry exists rather than just trusting
         # the call-site wiring in isolation.
-        src = _template_source()
+        src = _core_source()
         self.assertIn('"BTCUSD":  {step:0.001, min:0.001, dec:3}', src)
 
     def test_eth_qty_contract_keeps_two_decimals(self):
-        src = _template_source()
+        src = _core_source()
         self.assertIn('"ETHUSD":  {step:0.01,  min:0.01,  dec:2}', src)
 
     def test_pnl_formatting_in_btm_history_unchanged(self):

@@ -71,6 +71,18 @@ def _template_source() -> str:
         return f.read()
 
 
+def _core_source() -> str:
+    # PRE-VPS-POLISH-03B.2A — pipSizeFor()/volPointForBar() now live in the
+    # shared trading core (simulator/static/simulator/trade/
+    # trading_core.js), loaded before desktop.html's own inline <script>
+    # in the real page — the harness below composes both sources in that
+    # same execution order.
+    with open(
+        "simulator/static/simulator/trade/trading_core.js", encoding="utf-8"
+    ) as f:
+        return f.read()
+
+
 def _method_body(src: str, method_signature: str, max_len=None) -> str:
     i = src.index(method_signature)
     start = i + len(method_signature)
@@ -88,7 +100,7 @@ class PipSizeSourceTests(SimpleTestCase):
     helper must never fall back to priceFormatFor().minMove."""
 
     def test_pip_size_for_defined_with_real_pip_convention(self):
-        src = _template_source()
+        src = _core_source()
         self.assertIn(
             "const pipSizeFor=sym=>sym.endsWith('/JPY')?0.01:0.0001;", src,
         )
@@ -259,10 +271,11 @@ class MagnitudeFilterBehaviorTests(SimpleTestCase):
                            "structural coverage above still applies")
 
     def _harness_source(self) -> str:
+        core_src = _core_source()
         src = _template_source()
-        m = re.search(r"const pipSizeFor=.*?;", src)
+        m = re.search(r"const pipSizeFor=.*?;", core_src)
         pip_size_for = m.group(0)
-        vol_point_for_bar = re.search(r"const volPointForBar=.*?;\n", src).group(0)
+        vol_point_for_bar = re.search(r"const volPointForBar=.*?;\n", core_src).group(0)
         schedule = _method_body(src, "_scheduleVisualRender(kind, isNew){")
         threshold = _method_body(src, "_visualMagnitudeThreshold(symbol, anchorPrice){")
         max_age = _method_body(src, "_maxVisualAgeMs(symbol){")
