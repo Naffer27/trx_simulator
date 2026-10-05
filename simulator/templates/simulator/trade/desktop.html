@@ -3521,9 +3521,15 @@ class TradingPanel {
       const _b=n(msg.bid??msg.best_bid??null);
       const _a=n(msg.ask??msg.best_ask??null);
       const _src=msg.source;
-      if(_src!=null&&_src!=='sim'&&_b!=null&&_a!=null&&_a>_b){
-        this.prevLiveMid=this.liveMid;
-        this.bid=_b;this.ask=_a;this.liveMid=(_a+_b)/2;this.liveSource=_src;
+      // PRE-VPS-POLISH-03B.2C.2A — the authoritative FIX-05C gate and
+      // bid/ask/liveMid/liveSource/prevLiveMid calculation now live once,
+      // in trading_core.js's applyPriceTickState() (shared seam for a
+      // future Mobile presentation). This branch stays exactly in place
+      // and keeps its own side effects inline, unchanged.
+      const _priceState=applyPriceTickState(this.liveMid,_b,_a,_src);
+      if(_priceState){
+        this.prevLiveMid=_priceState.prevLiveMid;
+        this.bid=_priceState.bid;this.ask=_priceState.ask;this.liveMid=_priceState.liveMid;this.liveSource=_priceState.liveSource;
         // LIVE-CHART-RENDER-STABILITY-01 — state above is unconditional/
         // immediate on every tick; only the priceLine/badge/bid-ask
         // paint is coalesced (see _scheduleVisualRender()).

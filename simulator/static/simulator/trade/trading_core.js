@@ -167,3 +167,27 @@ function _calcRSI(bars, period){
 }
 
 const n=v=>v===null||v===undefined||v===''?null:Number(v);
+
+/* ── PRE-VPS-POLISH-03B.2C.2A — shared price/tick quote-state seam ──
+   Pure, authoritative-state-only mirror of the FIX-05C fail-closed gate
+   inside TradingPanel._handleMsg()'s price/tick branch (desktop.html).
+   Takes explicit scalar inputs only — no DOM, no chart API, no mutable
+   globals, no quotesLivePx, no renderQuotes, no TradingPanel lookup, no
+   WebSocket, no localStorage. The price/tick branch itself stays in
+   place in desktop.html (10+ source-contract tests depend on its exact
+   position/adjacency, per the 03B.2C.2 preflight) and calls this
+   function for the authoritative calculation only; its own side effects
+   (_scheduleVisualRender, quotesLivePx, renderQuotes) remain inline,
+   unchanged.
+   FIX-05C invariant, preserved verbatim: a tick only becomes REAL LIVE
+   QUOTE authority (bid/ask/liveMid) when its source is explicit and
+   trusted — source==null (missing) or source==="sim" must NEVER
+   establish a tradeable quote. Returns null when the gate rejects the
+   tick (caller must apply no state change); otherwise returns the exact
+   {bid,ask,liveMid,liveSource,prevLiveMid} the caller assigns verbatim. */
+function applyPriceTickState(currentLiveMid, bid, ask, source){
+  if(source!=null&&source!=='sim'&&bid!=null&&ask!=null&&ask>bid){
+    return {bid:bid,ask:ask,liveMid:(ask+bid)/2,liveSource:source,prevLiveMid:currentLiveMid};
+  }
+  return null;
+}

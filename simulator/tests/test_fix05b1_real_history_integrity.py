@@ -497,13 +497,26 @@ class Fix05cContractRegressionTests(SimpleTestCase):
         with open(path, encoding="utf-8") as f:
             return f.read()
 
+    def _core_source(self):
+        # PRE-VPS-POLISH-03B.2C.2A — the liveMid=(bid+ask)/2 calculation
+        # now lives once, in trading_core.js's applyPriceTickState(); the
+        # constructor's initial-state line below stays in desktop.html,
+        # unchanged, and the branch still calls the shared function.
+        with open(
+            "simulator/static/simulator/trade/trading_core.js", encoding="utf-8"
+        ) as f:
+            return f.read()
+
     def test_live_mid_state_still_only_source_of_truth(self):
         src = self._template_source()
         self.assertIn(
             "this.liveMid=null; this.liveSource=null; this.prevLiveMid=null;",
             src,
         )
-        self.assertIn("this.liveMid=(_a+_b)/2", src)
+        core = self._core_source()
+        self.assertIn("liveMid:(ask+bid)/2", core)
+        self.assertIn("applyPriceTickState(this.liveMid,_b,_a,_src)", src)
+        self.assertIn("this.liveMid=_priceState.liveMid", src)
 
     def test_history_handler_still_does_not_write_live_mid(self):
         src = self._template_source()

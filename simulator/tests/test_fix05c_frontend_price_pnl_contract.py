@@ -37,6 +37,23 @@ def _slice(src, start_marker, end_marker):
     return src[i:j]
 
 
+def _core_source():
+    # PRE-VPS-POLISH-03B.2C.2A — the authoritative bid/ask/liveMid/
+    # liveSource/prevLiveMid calculation (the FIX-05C fail-closed gate)
+    # now lives once, in trading_core.js's applyPriceTickState(). The
+    # price/tick branch in desktop.html stays exactly in place and still
+    # calls it, assigning the result — see RealTickLiveAuthorityTests
+    # below, which composes both sources instead of duplicating either.
+    with open(
+        "simulator/static/simulator/trade/trading_core.js", encoding="utf-8"
+    ) as f:
+        return f.read()
+
+
+def _price_tick_gate_body():
+    return _slice(_core_source(), "function applyPriceTickState(", "\n}")
+
+
 class LiveQuoteStateTests(SimpleTestCase):
     """1. liveMid state exists, distinct from lastClose."""
 
@@ -132,9 +149,20 @@ class RealTickLiveAuthorityTests(SimpleTestCase):
         )
 
     def test_real_tick_sets_live_mid_bid_ask(self):
+        # PRE-VPS-POLISH-03B.2C.2A — composes CORE (the real gate +
+        # liveMid calculation, now in trading_core.js) with DESKTOP (the
+        # call-site/assignment, still in desktop.html) rather than
+        # duplicating either side's implementation.
+        gate = _price_tick_gate_body()
+        self.assertIn("liveMid:(ask+bid)/2", gate)
+        self.assertIn("bid:bid,ask:ask,", gate)
         block = self._tick_block()
-        self.assertIn("this.liveMid=(_a+_b)/2", block)
-        self.assertIn("this.bid=_b;this.ask=_a;", block)
+        self.assertIn("applyPriceTickState(this.liveMid,_b,_a,_src)", block)
+        self.assertIn(
+            "this.bid=_priceState.bid;this.ask=_priceState.ask;"
+            "this.liveMid=_priceState.liveMid;this.liveSource=_priceState.liveSource;",
+            block,
+        )
         # LIVE-CHART-RENDER-STABILITY-01 — the tick handler now schedules
         # the live-quote paint (coalesced to ~100ms) instead of calling it
         # inline. LIVE-CHART-SMOOTH-INTERPOLATION-01 — the actual paint,
@@ -150,12 +178,14 @@ class RealTickLiveAuthorityTests(SimpleTestCase):
         self.assertIn("this._retargetPriceLineAnimation(current);", flush_block)
 
     def test_sim_tick_does_not_establish_live_quote(self):
-        block = self._tick_block()
-        self.assertIn("_src!=='sim'", block)
+        # PRE-VPS-POLISH-03B.2C.2A — gate now lives in trading_core.js's
+        # applyPriceTickState(); same rule, same real source, new location.
+        gate = _price_tick_gate_body()
+        self.assertIn("source!=='sim'", gate)
 
     def test_missing_source_fails_closed(self):
-        block = self._tick_block()
-        self.assertIn("_src!=null", block)
+        gate = _price_tick_gate_body()
+        self.assertIn("source!=null", gate)
 
     def test_quotes_live_px_fed_from_live_mid_not_last_close(self):
         block = self._tick_block()

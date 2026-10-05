@@ -134,12 +134,19 @@ class UnconditionalStateWriteTests(SimpleTestCase):
         self.assertNotIn("setPrice(", body)
 
     def test_tick_state_written_before_schedule_call(self):
+        # PRE-VPS-POLISH-03B.2C.2A — the authoritative calculation now
+        # happens inside applyPriceTickState() (trading_core.js); this
+        # branch still calls it and assigns this.liveMid from the result
+        # BEFORE scheduling the paint — same real ordering invariant,
+        # adapted to the new call shape (call -> assign -> schedule).
         src = _template_source()
         i = src.index("if(msg.type==='price'||msg.type==='tick'){")
         j = src.index("if(msg.type==='history'&&Array.isArray(msg.data)){", i)
         body = src[i:j]
-        i_state = body.index("this.liveMid=(_a+_b)/2")
+        i_call = body.index("applyPriceTickState(")
+        i_state = body.index("this.liveMid=_priceState.liveMid")
         i_schedule = body.index("_scheduleVisualRender(")
+        self.assertLess(i_call, i_state)
         self.assertLess(i_state, i_schedule)
 
 
