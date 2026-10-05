@@ -2571,6 +2571,13 @@ document.addEventListener('mb:themechange', function (e) {
 <!-- PRE-VPS-POLISH-03B.2A — shared trading core (pure helpers/constants) -->
 <script src="{% static 'simulator/trade/trading_core.js' %}"></script>
 
+<!-- PRE-VPS-POLISH-03B.2B — boot config bridge: server-rendered accountId for wsUrl() -->
+<script>
+window.__TRADE_CONFIG__ = {
+  accountId: {% if account_id %}{{ account_id }}{% else %}null{% endif %}
+};
+</script>
+
 <script>
 /* ── Particle background ── */
 (function(){
@@ -3357,12 +3364,8 @@ class TradingPanel {
   }
 
   wsUrl(){
-    {% if account_id %}
-    const u=new URL('/ws/trading/{{ account_id }}/',window.location.href);
-    {% else %}
-    const u=new URL('/ws/trading/',window.location.href);
-    {% if account %}u.searchParams.set('account','{{ account.id }}');{% endif %}
-    {% endif %}
+    const accountId=window.__TRADE_CONFIG__.accountId;
+    const u=accountId?new URL('/ws/trading/'+accountId+'/',window.location.href):new URL('/ws/trading/',window.location.href);
     u.protocol=(u.protocol==='https:')?'wss:':'ws:';
     u.searchParams.set('provider',globalProvider);
     if(globalProvider==='finnhub'){const t=(document.getElementById('fhToken')?.value||localStorage.finnhubToken||'').trim();if(t)u.searchParams.set('token',t);}
