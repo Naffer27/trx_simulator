@@ -334,7 +334,7 @@ class RuntimeFilesNotConnectedTests(unittest.TestCase):
         "simulator/spread_engine.py",
         "simulator/exposure_engine.py",
         "simulator/tasks.py",
-        "simulator/templates/simulator/dashboard.html",
+        "simulator/templates/simulator/trade/desktop.html",
     )
 
     def test_no_runtime_file_references_the_instruments_bridge(self):

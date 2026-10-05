@@ -598,7 +598,7 @@ class MassiveFix05cLiveMidRegressionTests(SimpleTestCase):
 
     def test_history_handler_still_does_not_write_live_mid(self):
         from django.template.loader import get_template
-        path = get_template("simulator/dashboard.html").origin.name
+        path = get_template("simulator/trade/desktop.html").origin.name
         with open(path, encoding="utf-8") as f:
             src = f.read()
         i = src.index("if(msg.type==='history'&&Array.isArray(msg.data)){")

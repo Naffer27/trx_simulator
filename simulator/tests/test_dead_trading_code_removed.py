@@ -73,7 +73,7 @@ class OrderEngineFileRemovedTests(TestCase):
 class RecomputeSpreadRemovedTests(TestCase):
     def _template_source(self):
         path = os.path.join(
-            os.path.dirname(__file__), "..", "templates", "simulator", "dashboard.html",
+            os.path.dirname(__file__), "..", "templates", "simulator", "trade", "desktop.html",
         )
         with open(path, encoding="utf-8") as f:
             return f.read()

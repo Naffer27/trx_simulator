@@ -620,7 +620,7 @@ def trading_dashboard(request, account_id=None):
         # History panel seed
         'closed_trades_json':        closed_trades_json,
     }
-    return render(request, 'simulator/dashboard.html', context)
+    return render(request, 'simulator/trade/shell.html', context)
 
 
 # -----------------------

@@ -610,7 +610,7 @@ class AdminSnapshotVisibilityTests(TestCase):
 class DashboardTemplateContractTests(TestCase):
     def _template_source(self):
         from django.template.loader import get_template
-        path = get_template("simulator/dashboard.html").origin.name
+        path = get_template("simulator/trade/desktop.html").origin.name
         with open(path, encoding="utf-8") as f:
             return f.read()
 

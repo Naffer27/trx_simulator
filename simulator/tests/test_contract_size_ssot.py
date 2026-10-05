@@ -99,7 +99,7 @@ class OldHardcodedTableRemovedTests(TestCase):
 
     def test_template_source_has_no_manual_per_symbol_lines(self):
         with open(
-            "simulator/templates/simulator/dashboard.html", encoding="utf-8"
+            "simulator/templates/simulator/trade/desktop.html", encoding="utf-8"
         ) as f:
             src = f.read()
         self.assertNotIn('"EUR/USD": 100000,\n', src)

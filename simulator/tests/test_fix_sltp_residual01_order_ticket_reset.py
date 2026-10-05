@@ -26,7 +26,7 @@ from django.test import SimpleTestCase
 
 
 def _template_source():
-    path = get_template("simulator/dashboard.html").origin.name
+    path = get_template("simulator/trade/desktop.html").origin.name
     with open(path, encoding="utf-8") as f:
         return f.read()
 

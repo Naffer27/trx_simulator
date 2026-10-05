@@ -938,7 +938,7 @@ class NoBinanceKrakenCoinGeckoRuntimeTests(_MassiveCryptoLiveTestsBase):
 class FrontendVolumeContractTests(SimpleTestCase):
     def _template_source(self):
         from django.template.loader import get_template
-        path = get_template("simulator/dashboard.html").origin.name
+        path = get_template("simulator/trade/desktop.html").origin.name
         with open(path, encoding="utf-8") as f:
             return f.read()
 
@@ -1080,7 +1080,7 @@ class HistoryTimeframeContractTests(SimpleTestCase):
 class SymbolTimeframeVisualResetTests(SimpleTestCase):
     def _template_source(self):
         from django.template.loader import get_template
-        path = get_template("simulator/dashboard.html").origin.name
+        path = get_template("simulator/trade/desktop.html").origin.name
         with open(path, encoding="utf-8") as f:
             return f.read()
 
@@ -1230,7 +1230,7 @@ class SymbolTimeframeVisualResetTests(SimpleTestCase):
 class PriceLineLifecycleTests(SimpleTestCase):
     def _template_source(self):
         from django.template.loader import get_template
-        path = get_template("simulator/dashboard.html").origin.name
+        path = get_template("simulator/trade/desktop.html").origin.name
         with open(path, encoding="utf-8") as f:
             return f.read()
 
