@@ -57,10 +57,19 @@ class PresentationRoutingTests(TestCase):
 
     # B. iPhone UA -> Mobile presentation
     def test_iphone_ua_gets_mobile_presentation(self):
+        # PRE-VPS-POLISH-03C.2.1A — 03C.2.1 intentionally replaced the
+        # placeholder text this test used to check ("03C Mobile
+        # Presentation Foundation") with the real Mobile foundation
+        # (MobileTradingSession, connection status, account summary).
+        # The stable, real marker now is the connection-status element
+        # id that foundation actually renders — still proves routing
+        # really delivered Mobile (not just a 200), not merely
+        # presence-of-template-name.
         r = self.client.get(_url(self.account.pk), HTTP_USER_AGENT=IPHONE_UA)
         self.assertEqual(r.status_code, 200)
         self.assertIn("simulator/trade/mobile.html", _template_names(r))
-        self.assertIn("03C Mobile Presentation Foundation", r.content.decode())
+        self.assertNotIn("simulator/trade/desktop.html", _template_names(r))
+        self.assertIn('id="mobConnStatus"', r.content.decode())
 
     # C. Android phone UA -> Mobile presentation
     def test_android_phone_ua_gets_mobile_presentation(self):
