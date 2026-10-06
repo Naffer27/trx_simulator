@@ -405,6 +405,23 @@ def trading_dashboard(request, account_id=None):
         {sp.symbol: sp.contract_size for sp in _get_all_specs()}
     )
 
+    # PRE-VPS-POLISH-03C.2.3 — Mobile's symbol watchlist/selector needs a
+    # real catalog, not a second hardcoded list (Desktop's own SYMS/
+    # ALL_SYMBOLS duplicate backend _ALLOWED_SYMBOLS already — not
+    # repeating that here). Reuses the exact same authority the backend's
+    # own change_symbol WS handler enforces (_ALLOWED_SYMBOLS =
+    # allowed_symbols()) — only symbol + asset_class, both real
+    # SymbolSpec fields, nothing invented. No daily %/sparkline/high-low/
+    # market-status/fake-quote fields exist on SymbolSpec, so none are
+    # exposed here.
+    mobile_allowed_symbols_json = json.dumps(
+        [
+            {"symbol": sp.symbol, "asset_class": sp.asset_class}
+            for sp in _get_all_specs()
+            if sp.symbol in _allowed_symbols()
+        ]
+    )
+
     try:
         trader_score = account.trader_score
     except Exception:
@@ -607,6 +624,7 @@ def trading_dashboard(request, account_id=None):
         'equity_curve':          equity_curve,
         'equity_curve_json':     equity_curve_json,
         'contract_size_json':    contract_size_json,
+        'mobile_allowed_symbols_json': mobile_allowed_symbols_json,
         'trader_score':          trader_score,
         'recent_violations':     recent_violations,
         'win_rate_pct':          win_rate_pct,

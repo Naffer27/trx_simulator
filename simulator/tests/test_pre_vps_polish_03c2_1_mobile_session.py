@@ -195,6 +195,11 @@ class MobileSessionSourceContractTests(SimpleTestCase):
         # misread as the action itself. The contract under test is
         # unchanged and, if anything, pinned more precisely: Mobile must
         # never construct any of these as an outbound action.
+        # PRE-VPS-POLISH-03C.2.3 — change_symbol is now an authorized
+        # Mobile action (symbol selector/watchlist), sent ONLY from
+        # selectSymbol() and from onopen's reconnect-restoration resend
+        # — removed from this forbidden list for that reason alone.
+        # Every other action remains fully forbidden, unweakened.
         src = _session_source()
         for forbidden in (
             "action:'order:new'", "action: 'order:new'",
@@ -204,7 +209,6 @@ class MobileSessionSourceContractTests(SimpleTestCase):
             "'BUY'", "'SELL'",
             "action:'get_positions'", "action: 'get_positions'",
             "action:'get_closed_trades'", "action: 'get_closed_trades'",
-            "action:'change_symbol'", "action: 'change_symbol'",
             "action:'change_timeframe'", "action: 'change_timeframe'",
         ):
             self.assertNotIn(forbidden, src)

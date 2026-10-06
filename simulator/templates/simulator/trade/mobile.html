@@ -43,6 +43,14 @@
   .mob-quote .row{display:flex;justify-content:space-between;min-height:44px;align-items:center;font-size:.85rem;}
   .mob-quote .row .label{color:#4a5270;font-size:.65rem;letter-spacing:.06em;text-transform:uppercase;}
   .mob-quote .row .value{color:#c8cfe0;}
+  /* PRE-VPS-POLISH-03C.2.3 — watchlist/selector foundation only; NOT the
+     final visual design. */
+  .mob-watchlist{width:100%;max-width:360px;background:#08091c;border-radius:8px;overflow:hidden;}
+  .mob-watchlist-item{display:flex;justify-content:space-between;align-items:center;min-height:44px;padding:0 12px;box-sizing:border-box;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.05);}
+  .mob-watchlist-item:last-child{border-bottom:none;}
+  .mob-watchlist-item.is-selected{background:rgba(0,180,216,.12);}
+  .mob-watchlist-item .wl-sym{font-size:.85rem;color:#c8cfe0;}
+  .mob-watchlist-item .wl-asset{font-size:.65rem;letter-spacing:.06em;text-transform:uppercase;color:#4a5270;}
 </style>
 {% endblock %}
 
@@ -72,6 +80,8 @@
     <div class="row"><span class="label">Mid</span><span class="value" id="mobQuoteMid">—</span></div>
     <div class="row"><span class="label">Source</span><span class="value" id="mobQuoteSource">—</span></div>
   </div>
+
+  <div class="mob-watchlist" id="mobWatchlist"></div>
 </div>
 {% endblock %}
 
@@ -140,9 +150,42 @@ window.__TRADE_CONFIG__ = {
     elQuoteAsk.textContent=fmt(state.ask);
     elQuoteMid.textContent=fmt(state.liveMid);
     elQuoteSource.textContent=state.liveSource||'—';
+    renderWatchlist(state.symbol);
   }
 
-  const session=new MobileTradingSession(onStatusChange,onAccount,onQuote);
+  // PRE-VPS-POLISH-03C.2.3 — real catalog from the backend's own
+  // allowed-symbol authority (views.py's mobile_allowed_symbols_json,
+  // sourced from market_data/symbol_specs.py — the exact same source
+  // consumers.py's own symbol-switch handler enforces). Only symbol +
+  // asset_class, both real SymbolSpec fields — no daily %, sparkline,
+  // high/low, market status, or fake quotes for unselected rows.
+  const MOBILE_SYMBOLS = {{ mobile_allowed_symbols_json|safe }};
+  const elWatchlist = document.getElementById('mobWatchlist');
+
+  function renderWatchlist(selectedSymbol){
+    elWatchlist.innerHTML = '';
+    MOBILE_SYMBOLS.forEach(function(item){
+      const row = document.createElement('div');
+      row.className = 'mob-watchlist-item' + (item.symbol === selectedSymbol ? ' is-selected' : '');
+      row.setAttribute('data-symbol', item.symbol);
+      const symEl = document.createElement('span');
+      symEl.className = 'wl-sym';
+      symEl.textContent = item.symbol;
+      const assetEl = document.createElement('span');
+      assetEl.className = 'wl-asset';
+      assetEl.textContent = item.asset_class;
+      row.appendChild(symEl);
+      row.appendChild(assetEl);
+      row.addEventListener('click', function(){ session.selectSymbol(item.symbol); });
+      elWatchlist.appendChild(row);
+    });
+  }
+
+  const session=new MobileTradingSession(
+    onStatusChange, onAccount, onQuote,
+    MOBILE_SYMBOLS.map(function(item){ return item.symbol; })
+  );
+  renderWatchlist(session.currentSymbol);
   session.connect();
 })();
 </script>

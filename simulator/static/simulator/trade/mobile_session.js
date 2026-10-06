@@ -9,13 +9,18 @@
    03C.2.2 adds live price/tick quote handling, reusing trading_core.js's
    applyPriceTickState() directly — the FIX-05C fail-closed gate is NOT
    duplicated here; this file only parses/forwards fields and applies
-   whatever that shared function returns. Symbol is whatever the
-   backend's current connection-level subscription says (msg.symbol) —
-   Mobile sends no change_symbol, no boot-config symbol, nothing.
+   whatever that shared function returns.
 
-   Deliberately still minimal: NO chart, history, symbol/timeframe
-   selection, positions, pending orders, or order placement — those are
-   later, separately authorized sub-blocks (03C.2.3+/03C.3). */
+   03C.2.3 adds symbol selection (selectSymbol()) — the ONLY outbound
+   action Mobile sends is the existing, unmodified backend contract
+   {action:'change_symbol',symbol}, from selectSymbol() itself or from
+   onopen's reconnect-restoration resend. No other new WS action exists
+   here — no timeframe switching, no history loading, no order:*, no
+   risk:*.
+
+   Deliberately still minimal: NO chart, history, timeframe selection,
+   positions, pending orders, or order placement — those are later,
+   separately authorized sub-blocks (03C.2.4+/03C.3). */
 
 // Same client-side provider preference Desktop reads — not a second
 // source of truth, just the identical localStorage key read again in
@@ -24,7 +29,7 @@
 let mobileGlobalProvider = localStorage.provider || 'sim';
 
 class MobileTradingSession {
-  constructor(onStatusChange, onAccount, onQuote) {
+  constructor(onStatusChange, onAccount, onQuote, allowedSymbols) {
     this.ws = null;
     this.hb = null;
     this.reconnTimer = null;
@@ -33,6 +38,13 @@ class MobileTradingSession {
     this.onStatusChange = onStatusChange || (() => {});
     this.onAccount = onAccount || (() => {});
     this.onQuote = onQuote || (() => {});
+
+    // PRE-VPS-POLISH-03C.2.3 — server-provided symbol catalog (the same
+    // authority the backend's own change_symbol handler enforces via
+    // _ALLOWED_SYMBOLS), used only for client-side UX validation in
+    // selectSymbol() — never a second source of truth; the backend
+    // still independently validates and rejects on its own.
+    this.allowedSymbols = Array.isArray(allowedSymbols) ? allowedSymbols : [];
 
     // PRE-VPS-POLISH-03C.2.2 — quote state belongs to this connection/
     // symbol (the backend subscribes one symbol per connection), same
@@ -44,6 +56,38 @@ class MobileTradingSession {
     this.liveMid = null;
     this.liveSource = null;
     this.prevLiveMid = null;
+  }
+
+  // PRE-VPS-POLISH-03C.2.3 — the one Mobile symbol authority. Mirrors
+  // Desktop's _onSymChange() ordering exactly: state updated (and quote
+  // fields reset) synchronously BEFORE the WS send, so the existing
+  // _handleMsg symbol-mismatch guard immediately rejects any old-symbol
+  // tick already in flight — no separate desiredSymbol/currentSymbol
+  // split needed (see 03C.2.3 preflight, Section H).
+  selectSymbol(symbol) {
+    if (this.allowedSymbols.length && !this.allowedSymbols.includes(symbol)) return;
+    this.currentSymbol = symbol;
+    // FIX-05C-pattern reset (mirrors desktop.html's _onSymChange()): the
+    // previous symbol's live quote must never leak into the newly
+    // selected instrument.
+    this.bid = null;
+    this.ask = null;
+    this.liveMid = null;
+    this.liveSource = null;
+    this.prevLiveMid = null;
+    this.onQuote({
+      symbol: this.currentSymbol,
+      bid: this.bid,
+      ask: this.ask,
+      liveMid: this.liveMid,
+      liveSource: this.liveSource,
+    });
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try { this.ws.send(JSON.stringify({ action: 'change_symbol', symbol: this.currentSymbol })); } catch (_) {}
+    }
+    // If the socket isn't OPEN: do nothing further. currentSymbol is
+    // already set, so onopen's reconnect-restoration resend (below)
+    // picks it up once a connection is actually established.
   }
 
   // Identical construction to TradingPanel.wsUrl() — same accountId
@@ -79,6 +123,15 @@ class MobileTradingSession {
       this.connecting = false;
       clearInterval(this.hb);
       this.hb = setInterval(() => { try { this.ws.send('{"action":"ping"}'); } catch (_) {} }, 15000);
+      // PRE-VPS-POLISH-03C.2.3 — reconnect symbol restoration, mirroring
+      // Desktop's connect()/onopen exactly: every new connection
+      // (including every reconnect) re-sends change_symbol for
+      // whatever currentSymbol already is, so a user selection survives
+      // a dropped socket instead of silently drifting back to the
+      // backend's own per-connection default symbol.
+      if (this.currentSymbol) {
+        try { this.ws.send(JSON.stringify({ action: 'change_symbol', symbol: this.currentSymbol })); } catch (_) {}
+      }
     };
     this.ws.onmessage = ev => { try { this._handleMsg(JSON.parse(ev.data)); } catch (_) {} };
     this.ws.onerror = () => { this.onStatusChange('DISCONNECTED'); };

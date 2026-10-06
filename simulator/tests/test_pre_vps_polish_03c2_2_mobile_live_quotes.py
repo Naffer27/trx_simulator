@@ -129,8 +129,13 @@ class PriceTickBranchSourceContractTests(SimpleTestCase):
         self.assertIn("msg.ask ?? msg.best_ask ?? null", branch)
 
     def test_quote_state_initialized_to_null(self):
+        # PRE-VPS-POLISH-03C.2.3A — locate the constructor by its stable
+        # "constructor(" boundary rather than the exact, now-obsolete
+        # 3-argument literal (03C.2.3 legitimately added a 4th
+        # allowedSymbols parameter) — stays stable if the parameter list
+        # changes again. The quote-state contract itself is unchanged.
         src = _session_source()
-        ctor_start = src.index("constructor(onStatusChange, onAccount, onQuote)")
+        ctor_start = src.index("constructor(")
         ctor_end = src.index("\n  }", ctor_start)
         block = src[ctor_start:ctor_end]
         for field in (
@@ -156,9 +161,15 @@ class NoNewWsMessagesTests(SimpleTestCase):
         # Check for the real outbound-message pattern (action:'...'), not
         # the bare word — this file's own documentation comments mention
         # "change_symbol" by name precisely to document its absence.
+        #
+        # PRE-VPS-POLISH-03C.2.3 — change_symbol is now an authorized
+        # Mobile action (symbol selector/watchlist), sent ONLY from
+        # selectSymbol() and from onopen's reconnect-restoration resend
+        # — removed from this forbidden list for that reason alone.
+        # change_timeframe/load_history/get_positions/get_closed_trades/
+        # order:*/risk:* remain fully forbidden, unweakened.
         src = _session_source()
         for forbidden in (
-            "action:'change_symbol'", "action: 'change_symbol'",
             "action:'change_timeframe'", "action: 'change_timeframe'",
             "action:'load_history'", "action: 'load_history'",
             "action:'get_positions'", "action: 'get_positions'",
@@ -169,12 +180,19 @@ class NoNewWsMessagesTests(SimpleTestCase):
         ):
             self.assertNotIn(forbidden, src)
 
-    def test_only_ping_is_ever_sent(self):
-        # Confirms the ONLY this.ws.send(...) call anywhere in the file
-        # is the existing heartbeat ping — no new send call was added.
+    def test_only_ping_and_change_symbol_are_ever_sent(self):
+        # PRE-VPS-POLISH-03C.2.3 — previously asserted ONLY ping was ever
+        # sent; change_symbol is now an authorized second action (from
+        # selectSymbol() and onopen's reconnect resend) — exactly 3 real
+        # send call sites now: ping, selectSymbol's change_symbol, and
+        # onopen's resend. Still proves no OTHER action exists.
         src = _session_source()
-        self.assertEqual(src.count("this.ws.send("), 1)
+        self.assertEqual(src.count("this.ws.send("), 3)
         self.assertIn('this.ws.send(\'{"action":"ping"}\');', src)
+        self.assertEqual(
+            src.count("this.ws.send(JSON.stringify({ action: 'change_symbol', symbol: this.currentSymbol }))"),
+            2,
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -244,17 +262,33 @@ class MobileQuoteUiTests(TestCase):
         self.assertIn("state.liveSource", html)
 
     def test_on_quote_wired_into_session_constructor(self):
+        # PRE-VPS-POLISH-03C.2.3A — the old single-line literal is
+        # obsolete: 03C.2.3 legitimately added a 4th argument (the
+        # server-derived allowed-symbol catalog), making the real call
+        # multiline. Verify the actual wiring — all 4 real arguments —
+        # rather than either the stale literal or a weak substring check.
         html = self._html_for("STANDARD")
+        start = html.index("new MobileTradingSession(")
+        end = html.index(");", start)
+        block = html[start:end]
+        self.assertIn("onStatusChange", block)
+        self.assertIn("onAccount", block)
+        self.assertIn("onQuote", block)
         self.assertIn(
-            "new MobileTradingSession(onStatusChange,onAccount,onQuote)", html
+            "MOBILE_SYMBOLS.map(function(item){ return item.symbol; })", block
         )
 
-    # No chart/order/position/SL-TP/bottom-nav-final UI introduced
+    # No chart/order/position/SL-TP/bottom-nav-final UI introduced.
+    # PRE-VPS-POLISH-03C.2.3A — "watchlist" removed from this forbidden
+    # list ONLY: 03C.2.3 explicitly, authorizedly introduces the Mobile
+    # watchlist/symbol selector (its own existence/correctness is proven
+    # by test_pre_vps_polish_03c2_3_mobile_symbol_selector.py). Every
+    # other prohibition here is unchanged and still fully enforced.
     def test_no_chart_or_order_ui_introduced(self):
         html = self._html_for("STANDARD")
         for forbidden in (
             "LightweightCharts", "BUY", "SELL", "order:new",
-            "position", "watchlist",
+            "position",
         ):
             self.assertNotIn(forbidden, html)
 
@@ -501,8 +535,29 @@ class DesktopAndBackendZeroDiffTests(SimpleTestCase):
     def test_trading_core_js_zero_diff(self):
         self._assert_zero_diff("simulator/static/simulator/trade/trading_core.js")
 
-    def test_views_py_zero_diff(self):
-        self._assert_zero_diff("simulator/views.py")
+    # PRE-VPS-POLISH-03C.2.3A — the blanket views.py zero-diff invariant
+    # was explicitly superseded by 03C.2.3's own authorization: views.py
+    # may now expose the existing allowed-symbol catalog to Mobile.
+    # Replaced with the narrow real contract: the new exposure exists,
+    # and the account-resolution/ownership/redirect logic it must NOT
+    # touch is still present verbatim. Full behavioral routing/security
+    # coverage (foreign-account redirect, same account_id across
+    # presentations, ownership boundary) already exists and stays green
+    # in test_pre_vps_polish_03c1_presentation_routing.py — not
+    # re-proven here via brittle source matching.
+    def test_views_py_symbol_exposure_added_without_touching_account_logic(self):
+        with open("simulator/views.py", encoding="utf-8") as f:
+            src = f.read()
+        # The new, narrowly-authorized exposure exists.
+        self.assertIn("mobile_allowed_symbols_json", src)
+        self.assertIn("_allowed_symbols()", src)
+        # Account resolution/ownership/redirect logic — unauthorized to
+        # change in this block — is untouched, verbatim.
+        self.assertIn(
+            'account = TradingAccount.objects.filter(pk=account_id, user=request.user).first()',
+            src,
+        )
+        self.assertIn('return redirect("simulator:accounts")', src)
 
     def test_consumers_py_zero_diff(self):
         self._assert_zero_diff("simulator/consumers.py")
