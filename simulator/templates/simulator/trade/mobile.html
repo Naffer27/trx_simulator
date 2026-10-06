@@ -36,6 +36,13 @@
   .mob-summary .cell .value{font-size:.95rem;color:#c8cfe0;margin-top:4px;}
   .mob-summary .cell .value.pos{color:#26a69a;}
   .mob-summary .cell .value.neg{color:#ef5350;}
+  /* PRE-VPS-POLISH-03C.2.2 — quote foundation only; NOT the final
+     visual design. */
+  .mob-quote{width:100%;max-width:360px;background:#08091c;border-radius:8px;padding:12px;box-sizing:border-box;}
+  .mob-quote .sym{font-size:.9rem;color:#c8cfe0;margin-bottom:8px;}
+  .mob-quote .row{display:flex;justify-content:space-between;min-height:44px;align-items:center;font-size:.85rem;}
+  .mob-quote .row .label{color:#4a5270;font-size:.65rem;letter-spacing:.06em;text-transform:uppercase;}
+  .mob-quote .row .value{color:#c8cfe0;}
 </style>
 {% endblock %}
 
@@ -56,6 +63,14 @@
     <div class="cell"><div class="label">Free Margin</div><div class="value" id="mobFree">—</div></div>
     <div class="cell"><div class="label">Unrealized P&amp;L</div><div class="value" id="mobUpnl">—</div></div>
     <div class="cell"><div class="label">Leverage</div><div class="value" id="mobLeverage">—</div></div>
+  </div>
+
+  <div class="mob-quote">
+    <div class="sym" id="mobQuoteSymbol">—</div>
+    <div class="row"><span class="label">Bid</span><span class="value" id="mobQuoteBid">—</span></div>
+    <div class="row"><span class="label">Ask</span><span class="value" id="mobQuoteAsk">—</span></div>
+    <div class="row"><span class="label">Mid</span><span class="value" id="mobQuoteMid">—</span></div>
+    <div class="row"><span class="label">Source</span><span class="value" id="mobQuoteSource">—</span></div>
   </div>
 </div>
 {% endblock %}
@@ -109,7 +124,25 @@ window.__TRADE_CONFIG__ = {
     elLeverage.textContent=msg.leverage!=null?String(msg.leverage)+'x':'—';
   }
 
-  const session=new MobileTradingSession(onStatusChange,onAccount);
+  const elQuoteSymbol=document.getElementById('mobQuoteSymbol');
+  const elQuoteBid=document.getElementById('mobQuoteBid');
+  const elQuoteAsk=document.getElementById('mobQuoteAsk');
+  const elQuoteMid=document.getElementById('mobQuoteMid');
+  const elQuoteSource=document.getElementById('mobQuoteSource');
+
+  // PRE-VPS-POLISH-03C.2.2 — display only. The value source is
+  // exclusively the state applyPriceTickState() (trading_core.js)
+  // already returned inside MobileTradingSession — no second mid
+  // calculation here, no new price authority.
+  function onQuote(state){
+    elQuoteSymbol.textContent=state.symbol||'—';
+    elQuoteBid.textContent=fmt(state.bid);
+    elQuoteAsk.textContent=fmt(state.ask);
+    elQuoteMid.textContent=fmt(state.liveMid);
+    elQuoteSource.textContent=state.liveSource||'—';
+  }
+
+  const session=new MobileTradingSession(onStatusChange,onAccount,onQuote);
   session.connect();
 })();
 </script>

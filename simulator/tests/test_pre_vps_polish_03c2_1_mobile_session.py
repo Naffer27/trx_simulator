@@ -56,6 +56,18 @@ def _session_source() -> str:
         return f.read()
 
 
+def _core_source() -> str:
+    # PRE-VPS-POLISH-03C.2.2A — mobile_session.js now has a real,
+    # approved dependency on trading_core.js's applyPriceTickState()
+    # (03C.2.2); the Node harness below must load the real core source
+    # too, so _handleMsg() runs against the actual shared function —
+    # never a mock/stub/reimplementation of the FIX-05C gate.
+    with open(
+        "simulator/static/simulator/trade/trading_core.js", encoding="utf-8"
+    ) as f:
+        return f.read()
+
+
 NODE_AVAILABLE = shutil.which("node") is not None
 
 
@@ -176,11 +188,24 @@ class MobileSessionSourceContractTests(SimpleTestCase):
 
     # 22-24. no order/BUY/SELL/risk-preview action anywhere in the session
     def test_session_sends_no_order_or_risk_actions(self):
+        # PRE-VPS-POLISH-03C.2.2A — check the real action PAYLOAD pattern
+        # (action:'...'), not a bare word: 03C.2.2 added a documentation
+        # comment that mentions "change_symbol" by name precisely to
+        # describe its absence, which a bare substring match would
+        # misread as the action itself. The contract under test is
+        # unchanged and, if anything, pinned more precisely: Mobile must
+        # never construct any of these as an outbound action.
         src = _session_source()
         for forbidden in (
-            "order:new", "order:close", "order:update",
-            "risk_preview", "'BUY'", "'SELL'", "get_positions",
-            "get_closed_trades", "change_symbol", "change_timeframe",
+            "action:'order:new'", "action: 'order:new'",
+            "action:'order:close'", "action: 'order:close'",
+            "action:'order:update'", "action: 'order:update'",
+            "action:'risk_preview'", "action: 'risk_preview'",
+            "'BUY'", "'SELL'",
+            "action:'get_positions'", "action: 'get_positions'",
+            "action:'get_closed_trades'", "action: 'get_closed_trades'",
+            "action:'change_symbol'", "action: 'change_symbol'",
+            "action:'change_timeframe'", "action: 'change_timeframe'",
         ):
             self.assertNotIn(forbidden, src)
 
@@ -247,6 +272,7 @@ class MobileSessionRealExecutionTests(SimpleTestCase):
             self.skipTest("node not available on PATH")
 
     def _run_node(self, script):
+        core_src = _core_source()
         session_src = _session_source()
         driver = f"""
         global.window = global;
@@ -260,6 +286,7 @@ class MobileSessionRealExecutionTests(SimpleTestCase):
         FakeWS.OPEN = 1; FakeWS.CONNECTING = 0; FakeWS.CLOSED = 3;
         FakeWS.instances = [];
         global.WebSocket = FakeWS;
+        {core_src}
         {session_src}
         {script}
         """
@@ -332,10 +359,17 @@ class MobileSessionRealExecutionTests(SimpleTestCase):
         self.assertTrue(out["gotIt"])
 
     def test_handle_msg_ignores_other_message_types(self):
+        # PRE-VPS-POLISH-03C.2.2A — 'price' is no longer an unsupported
+        # type (03C.2.2 made it, alongside 'tick', a real, handled quote
+        # message — see test_pre_vps_polish_03c2_2_mobile_live_quotes.py,
+        # now the contractual authority for price/tick). Replaced with a
+        # genuinely unsupported synthetic type so this test keeps
+        # demonstrating its real intent: unsupported messages are still
+        # ignored. 'history' is unchanged — still genuinely unhandled.
         out = self._run_node("""
           let called = false;
           const s = new MobileTradingSession(null, () => { called = true; });
-          s._handleMsg({ type: 'price', bid: 1.1, ask: 1.2, source: 'massive' });
+          s._handleMsg({ type: '__unsupported_test_message_type__' });
           s._handleMsg({ type: 'history', data: [] });
           console.log(JSON.stringify({ called }));
         """)
