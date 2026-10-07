@@ -79,6 +79,11 @@
     --mb-text-base:14px;  /* body default */
     --mb-text-md:15px;    /* emphasized body, buttons */
     --mb-text-lg:17px;    /* section/page title */
+    /* PRE-VPS-POLISH-03C.3.3 — one new size added to the SAME single
+       scale (declared here in :root, never ad-hoc inline): the
+       protagonist live-price figure in Trade's quote header is the
+       only thing in Mobile big enough to need it. */
+    --mb-text-xl:22px;    /* hero live price (Trade view only) */
     --mb-tracking-label:.06em;
 
     /* ── Spacing scale ── */
@@ -199,11 +204,31 @@
   .mob-summary .cell .value{font-size:var(--mb-text-md);color:var(--mb-text-primary);margin-top:var(--mb-space-1);font-weight:600;}
   .mob-summary .cell .value.pos{color:var(--mb-positive);}
   .mob-summary .cell .value.neg{color:var(--mb-negative);}
-  /* quote block */
-  .mob-quote{width:100%;max-width:360px;background:var(--mb-surface-1);border:1px solid var(--mb-border);border-radius:var(--mb-radius-md);padding:var(--mb-space-3);box-sizing:border-box;box-shadow:var(--mb-shadow-1);}
-  .mob-quote .sym{font-size:var(--mb-text-md);color:var(--mb-text-primary);font-weight:600;margin-bottom:var(--mb-space-2);}
-  .mob-quote .row{display:flex;justify-content:space-between;min-height:var(--mb-touch-min);align-items:center;font-size:var(--mb-text-sm);border-top:1px solid var(--mb-border);}
-  .mob-quote .row:first-of-type{border-top:none;}
+  /* ════════════════════════════════════════════════════════════════
+     PRE-VPS-POLISH-03C.3.3 — TRADE VIEW VISUAL POLISH.
+
+     Trade-only classes (.mob-quote/.mob-tf/.mob-chart-block/
+     .mob-chart-wrap/.mob-ticket and their descendants) are never
+     reused by Markets/Positions/History/Account — every rule below is
+     safely scoped to Trade alone. The chart becomes the protagonist
+     (full width, no 360px cap, viewport-relative height) and the
+     quote header gets a real price hierarchy (symbol + hero live mid
+     price, bid/ask side-by-side, source) — same ids, same callbacks,
+     same WS contract; only HTML wrapping/reordering + CSS. No spread/
+     daily-% is rendered — there is no real backend authority exposing
+     either to Mobile today, so neither is fabricated (design lock
+     Section 6). No Entry/SL/TP chart overlay is added here either —
+     out of scope per design lock Section 10 — but the chart is given
+     real vertical room precisely so that future block has space to
+     render into without a cramped redesign. */
+  .mob-quote{width:100%;max-width:none;background:var(--mb-surface-1);border:1px solid var(--mb-border);border-radius:var(--mb-radius-md);padding:var(--mb-space-3) var(--mb-space-4);box-sizing:border-box;box-shadow:var(--mb-shadow-1);}
+  .mob-quote .mq-head{display:flex;align-items:baseline;justify-content:space-between;gap:var(--mb-space-2);flex-wrap:wrap;}
+  .mob-quote .sym{font-size:var(--mb-text-lg);color:var(--mb-text-primary);font-weight:700;}
+  .mob-quote .mq-price{font-size:var(--mb-text-xl);color:var(--mb-text-primary);font-weight:700;}
+  .mob-quote .mq-bidask{display:flex;gap:var(--mb-space-4);margin-top:var(--mb-space-2);padding-top:var(--mb-space-2);border-top:1px solid var(--mb-border);}
+  .mob-quote .mq-bidask .row{flex:1;flex-direction:column;align-items:flex-start;gap:2px;border-top:none;}
+  .mob-quote .row{display:flex;justify-content:space-between;align-items:center;font-size:var(--mb-text-sm);}
+  .mob-quote .row.mq-source{margin-top:var(--mb-space-2);padding-top:var(--mb-space-2);border-top:1px solid var(--mb-border);min-height:var(--mb-touch-min);}
   .mob-quote .row .label{color:var(--mb-text-muted);font-size:var(--mb-text-2xs);letter-spacing:var(--mb-tracking-label);text-transform:uppercase;}
   .mob-quote .row .value{color:var(--mb-text-primary);font-weight:600;}
   /* watchlist/selector */
@@ -213,17 +238,24 @@
   .mob-watchlist-item.is-selected{background:var(--mb-brand-dim);}
   .mob-watchlist-item .wl-sym{font-size:var(--mb-text-sm);color:var(--mb-text-primary);}
   .mob-watchlist-item .wl-asset{font-size:var(--mb-text-2xs);letter-spacing:var(--mb-tracking-label);text-transform:uppercase;color:var(--mb-text-muted);}
-  /* chart/timeframe */
-  .mob-tf{width:100%;max-width:360px;display:flex;gap:var(--mb-space-2);}
+  /* chart/timeframe — .mob-chart-block is a new, purely-visual wrapper
+     pairing the (unchanged) timeframe selector directly against the
+     (unchanged) chart container, so they read as one integrated
+     instrument instead of two separate cards. */
+  .mob-chart-block{width:100%;display:flex;flex-direction:column;gap:var(--mb-space-2);}
+  .mob-tf{width:100%;max-width:none;display:flex;gap:var(--mb-space-2);}
   .mob-tf-item{flex:1;min-height:var(--mb-touch-sm);display:flex;align-items:center;justify-content:center;background:var(--mb-surface-1);border:1px solid var(--mb-border);border-radius:var(--mb-radius-sm);font-size:var(--mb-text-xs);color:var(--mb-text-muted);cursor:pointer;}
   .mob-tf-item.is-selected{background:var(--mb-brand-dim);color:var(--mb-brand);border-color:var(--mb-brand-border);}
-  .mob-chart-wrap{width:100%;max-width:360px;background:var(--mb-surface-1);border:1px solid var(--mb-border);border-radius:var(--mb-radius-md);overflow:hidden;box-shadow:var(--mb-shadow-1);}
-  #mobChartContainer{width:100%;height:260px;}
-  /* order ticket */
-  .mob-ticket{width:100%;max-width:360px;background:var(--mb-surface-1);border:1px solid var(--mb-border);border-radius:var(--mb-radius-md);padding:var(--mb-space-3);box-sizing:border-box;display:flex;flex-direction:column;gap:var(--mb-space-3);box-shadow:var(--mb-shadow-1);}
-  .mob-ticket-row{display:flex;justify-content:space-between;align-items:center;gap:var(--mb-space-3);min-height:40px;}
+  .mob-chart-wrap{width:100%;max-width:none;height:44vh;min-height:240px;max-height:420px;background:var(--mb-surface-1);border:1px solid var(--mb-border);border-radius:var(--mb-radius-md);overflow:hidden;box-shadow:var(--mb-shadow-1);box-sizing:border-box;}
+  #mobChartContainer{width:100%;height:100%;}
+  /* order ticket — .mob-ticket-fields is a new, purely-visual grid
+     wrapper around the 3 (unchanged) Volume/SL/TP rows, so they read
+     as one compact ticket row instead of 3 stacked form rows. */
+  .mob-ticket{width:100%;max-width:none;background:var(--mb-surface-1);border:1px solid var(--mb-border);border-radius:var(--mb-radius-md);padding:var(--mb-space-3) var(--mb-space-4);box-sizing:border-box;display:flex;flex-direction:column;gap:var(--mb-space-3);box-shadow:var(--mb-shadow-1);}
+  .mob-ticket-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--mb-space-3);}
+  .mob-ticket-row{display:flex;flex-direction:column;align-items:stretch;gap:var(--mb-space-1);min-width:0;}
   .mob-ticket-row label{font-size:var(--mb-text-2xs);letter-spacing:var(--mb-tracking-label);text-transform:uppercase;color:var(--mb-text-muted);}
-  .mob-ticket-row input{width:140px;background:var(--mb-surface-2);border:1px solid var(--mb-border);border-radius:var(--mb-radius-sm);color:var(--mb-text-primary);padding:var(--mb-space-2);font-size:var(--mb-text-sm);text-align:right;}
+  .mob-ticket-row input{width:100%;min-width:0;background:var(--mb-surface-2);border:1px solid var(--mb-border);border-radius:var(--mb-radius-sm);color:var(--mb-text-primary);padding:var(--mb-space-2);font-size:var(--mb-text-sm);text-align:left;box-sizing:border-box;}
   .mob-ticket-buttons{display:flex;gap:var(--mb-space-3);}
   .mob-ticket-buttons button{flex:1;min-height:var(--mb-touch-min);border-radius:var(--mb-radius-sm);font-weight:700;font-size:var(--mb-text-md);border:1px solid transparent;cursor:pointer;}
   #mobSellBtn{background:var(--mb-sell-dim);border-color:var(--mb-sell-border);color:var(--mb-sell);}
@@ -267,29 +299,44 @@
 
   <div class="mob-view-area">
     <div class="mob-view" data-mobile-view="trade">
+      <!-- PRE-VPS-POLISH-03C.3.3 — same 5 ids (mobQuoteSymbol/Bid/Ask/
+           Mid/Source), same onQuote() callback untouched. Mid is
+           reused verbatim as the hero live price (it already IS the
+           live mid price applyPriceTickState() computes — no second
+           price authority). No Spread/daily-% row: no real backend
+           field exists for either on this contract (design lock
+           Section 6) — omitted, not fabricated. -->
       <div class="mob-quote">
-        <div class="sym" id="mobQuoteSymbol">—</div>
-        <div class="row"><span class="label">Bid</span><span class="value" id="mobQuoteBid">—</span></div>
-        <div class="row"><span class="label">Ask</span><span class="value" id="mobQuoteAsk">—</span></div>
-        <div class="row"><span class="label">Mid</span><span class="value" id="mobQuoteMid">—</span></div>
-        <div class="row"><span class="label">Source</span><span class="value" id="mobQuoteSource">—</span></div>
+        <div class="mq-head">
+          <span class="sym" id="mobQuoteSymbol">—</span>
+          <span class="mq-price" id="mobQuoteMid">—</span>
+        </div>
+        <div class="mq-bidask">
+          <div class="row"><span class="label">Bid</span><span class="value" id="mobQuoteBid">—</span></div>
+          <div class="row"><span class="label">Ask</span><span class="value" id="mobQuoteAsk">—</span></div>
+        </div>
+        <div class="row mq-source"><span class="label">Source</span><span class="value" id="mobQuoteSource">—</span></div>
       </div>
 
-      <div class="mob-tf" id="mobTfSelector"></div>
-      <div class="mob-chart-wrap"><div id="mobChartContainer"></div></div>
+      <div class="mob-chart-block">
+        <div class="mob-tf" id="mobTfSelector"></div>
+        <div class="mob-chart-wrap"><div id="mobChartContainer"></div></div>
+      </div>
 
       <div class="mob-ticket" id="mobTicket">
-        <div class="mob-ticket-row">
-          <label for="mobQtyInput">Volume</label>
-          <input type="number" id="mobQtyInput" step="0.01" min="0" value="0.01">
-        </div>
-        <div class="mob-ticket-row">
-          <label for="mobSlInput">SL</label>
-          <input type="number" id="mobSlInput" placeholder="—">
-        </div>
-        <div class="mob-ticket-row">
-          <label for="mobTpInput">TP</label>
-          <input type="number" id="mobTpInput" placeholder="—">
+        <div class="mob-ticket-fields">
+          <div class="mob-ticket-row">
+            <label for="mobQtyInput">Volume</label>
+            <input type="number" id="mobQtyInput" step="0.01" min="0" value="0.01">
+          </div>
+          <div class="mob-ticket-row">
+            <label for="mobSlInput">SL</label>
+            <input type="number" id="mobSlInput" placeholder="—">
+          </div>
+          <div class="mob-ticket-row">
+            <label for="mobTpInput">TP</label>
+            <input type="number" id="mobTpInput" placeholder="—">
+          </div>
         </div>
         <div class="mob-ticket-buttons">
           <button id="mobSellBtn" type="button">SELL</button>
