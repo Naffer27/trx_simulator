@@ -7,91 +7,197 @@
 {% block extra_head %}
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <style>
+  /* ════════════════════════════════════════════════════════════════
+     PRE-VPS-POLISH-03C.3.1 — DESIGN TOKENS / TYPOGRAPHY / COLOR SYSTEM
+     FOUNDATION.
+
+     This is the ONE visual authority for Mobile. Every component rule
+     below consumes these custom properties — no component defines a
+     raw color/size/radius/shadow literal of its own. This block
+     supersedes the ad-hoc literals introduced incrementally across
+     03C.2.1–03C.2.6 (same selectors, same structural behavior — this
+     is a token consolidation + visual refinement, not a layout
+     change). Direction: institutional fintech / professional trading
+     terminal — dark, precise, dense-but-clean. The brand gold is a
+     single accent hue used deliberately sparingly (brand mark +
+     selection/active tints only) — it is never the dominant color of
+     a surface, and there is exactly one accent system, not two
+     competing ones (the old ad-hoc cyan from 03C.2.1-03C.2.6 is fully
+     retired here).
+
+     NOTHING below changes: class names, element ids, DOM structure,
+     callback wiring, WS contracts, or any functional behavior — purely
+     CSS custom-property values and the component rules that consume
+     them. */
+  :root{
+    /* ── Surfaces ── */
+    --mb-bg:#0a0c12;
+    --mb-surface-1:#12141d;   /* cards/panels — watchlist, quote, ticket, row-cards */
+    --mb-surface-2:#1a1d29;   /* nested/elevated — inputs, risk panel, confirm dialog */
+    --mb-border:rgba(255,255,255,.08);
+    --mb-border-strong:rgba(255,255,255,.16);
+
+    /* ── Text ── */
+    --mb-text-primary:#e7e9f0;
+    --mb-text-secondary:#9aa0b4;
+    --mb-text-muted:#5c6178;
+
+    /* ── Brand accent (single accent hue — used sparingly) ── */
+    --mb-brand:#c7a64a;
+    --mb-brand-strong:#ddbd6e;
+    --mb-brand-dim:rgba(199,166,74,.14);
+    --mb-brand-border:rgba(199,166,74,.35);
+
+    /* ── BUY/SELL semantics (trading direction) ── */
+    --mb-buy:#1f9d6c;
+    --mb-buy-dim:rgba(31,157,108,.12);
+    --mb-buy-border:rgba(31,157,108,.35);
+    --mb-sell:#d1524f;
+    --mb-sell-dim:rgba(209,82,79,.12);
+    --mb-sell-border:rgba(209,82,79,.35);
+
+    /* ── P&L semantics (profit sign — distinct token identity from
+       BUY/SELL even though they share the same hues today, so a
+       future divergence never requires touching two systems) ── */
+    --mb-positive:var(--mb-buy);
+    --mb-negative:var(--mb-sell);
+
+    /* ── Connection/status semantics ── */
+    --mb-status-neutral:var(--mb-text-muted);
+    --mb-status-pending:var(--mb-brand);
+    --mb-status-live:var(--mb-buy);
+    --mb-status-down:var(--mb-sell);
+
+    /* ── Focus (accessible, deliberately distinct from brand/buy/sell) ── */
+    --mb-focus:#4fb6e0;
+
+    /* ── Typography scale ── */
+    --mb-font-sans:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    --mb-text-2xs:11px;   /* micro eyebrow labels */
+    --mb-text-xs:12px;    /* secondary small text, field values */
+    --mb-text-sm:13px;    /* body secondary */
+    --mb-text-base:14px;  /* body default */
+    --mb-text-md:15px;    /* emphasized body, buttons */
+    --mb-text-lg:17px;    /* section/page title */
+    --mb-tracking-label:.06em;
+
+    /* ── Spacing scale ── */
+    --mb-space-1:4px;
+    --mb-space-2:8px;
+    --mb-space-3:12px;
+    --mb-space-4:16px;
+    --mb-space-5:20px;
+    --mb-space-6:24px;
+
+    /* ── Radius ── */
+    --mb-radius-sm:6px;
+    --mb-radius-md:10px;
+    --mb-radius-lg:14px;
+
+    /* ── Elevation (subtle — no glassmorphism/glow) ── */
+    --mb-shadow-1:0 1px 2px rgba(0,0,0,.5);
+    --mb-shadow-2:0 6px 20px rgba(0,0,0,.45);
+
+    /* ── Touch targets ── */
+    --mb-touch-min:44px;
+    --mb-touch-sm:36px;
+
+    /* ── Safe area (consolidated from the raw env() calls already used
+       since 03C.2.1 — same values, named) ── */
+    --mb-safe-top:env(safe-area-inset-top,0px);
+    --mb-safe-bottom:env(safe-area-inset-bottom,0px);
+  }
+
   /* PRE-VPS-POLISH-03C.1 — same per-page navbar hide already used by
      trade/desktop.html (nav.navbar{display:none!important;}), repeated
      here rather than touching base.html globally. */
   nav.navbar{display:none!important;}
-  body{background:#020209;color:#c8cfe0;margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;}
-  /* PRE-VPS-POLISH-03C.2.1 — safe-area + touch-target foundation only;
-     NOT the final visual design (that is a later, separately
-     authorized block). */
+  body{background:var(--mb-bg);color:var(--mb-text-primary);margin:0;font-family:var(--mb-font-sans);}
+
+  /* Focus-visible foundation — native interactive elements only
+     (button/input); no tabindex/keyboard-activation added to the
+     dynamically-created div rows (watchlist/tf/pane-tab items) in this
+     block, since that would be a wiring change, not a style one. */
+  .mob-foundation button:focus-visible,
+  .mob-foundation input:focus-visible{
+    outline:2px solid var(--mb-focus);
+    outline-offset:2px;
+  }
+
   .mob-foundation{
     min-height:100dvh;
-    padding:calc(16px + env(safe-area-inset-top,0px)) 20px calc(16px + env(safe-area-inset-bottom,0px));
+    padding:calc(var(--mb-space-4) + var(--mb-safe-top)) var(--mb-space-5) calc(var(--mb-space-4) + var(--mb-safe-bottom));
     box-sizing:border-box;
-    display:flex;flex-direction:column;align-items:center;gap:18px;
+    display:flex;flex-direction:column;align-items:center;gap:var(--mb-space-5);
+    font-variant-numeric:tabular-nums;
   }
-  .mob-foundation h1{font-size:1.1rem;letter-spacing:.04em;color:#00b4d8;margin:0;}
-  .mob-foundation h2{font-size:.9rem;color:#c8cfe0;margin:0;font-weight:400;}
-  .mob-status{display:flex;align-items:center;gap:8px;font-size:.8rem;min-height:44px;}
-  .mob-status .dot{width:10px;height:10px;border-radius:50%;background:#4a5270;}
-  .mob-status.is-connecting .dot{background:#f5a623;}
-  .mob-status.is-connected .dot{background:#26a69a;}
-  .mob-status.is-reconnecting .dot{background:#f5a623;}
-  .mob-status.is-disconnected .dot{background:#ef5350;}
-  .mob-acct-id{font-size:.8rem;color:#4a5270;}
-  .mob-summary{width:100%;max-width:360px;display:grid;grid-template-columns:1fr 1fr;gap:12px;}
-  .mob-summary .cell{background:#08091c;border-radius:8px;padding:12px;min-height:44px;box-sizing:border-box;}
-  .mob-summary .cell .label{font-size:.65rem;letter-spacing:.06em;text-transform:uppercase;color:#4a5270;}
-  .mob-summary .cell .value{font-size:.95rem;color:#c8cfe0;margin-top:4px;}
-  .mob-summary .cell .value.pos{color:#26a69a;}
-  .mob-summary .cell .value.neg{color:#ef5350;}
-  /* PRE-VPS-POLISH-03C.2.2 — quote foundation only; NOT the final
-     visual design. */
-  .mob-quote{width:100%;max-width:360px;background:#08091c;border-radius:8px;padding:12px;box-sizing:border-box;}
-  .mob-quote .sym{font-size:.9rem;color:#c8cfe0;margin-bottom:8px;}
-  .mob-quote .row{display:flex;justify-content:space-between;min-height:44px;align-items:center;font-size:.85rem;}
-  .mob-quote .row .label{color:#4a5270;font-size:.65rem;letter-spacing:.06em;text-transform:uppercase;}
-  .mob-quote .row .value{color:#c8cfe0;}
-  /* PRE-VPS-POLISH-03C.2.3 — watchlist/selector foundation only; NOT the
-     final visual design. */
-  .mob-watchlist{width:100%;max-width:360px;background:#08091c;border-radius:8px;overflow:hidden;}
-  .mob-watchlist-item{display:flex;justify-content:space-between;align-items:center;min-height:44px;padding:0 12px;box-sizing:border-box;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.05);}
+  .mob-foundation h1{font-size:var(--mb-text-lg);letter-spacing:.02em;font-weight:700;color:var(--mb-brand);margin:0;}
+  .mob-foundation h2{font-size:var(--mb-text-sm);color:var(--mb-text-secondary);margin:0;font-weight:400;}
+  .mob-status{display:flex;align-items:center;gap:var(--mb-space-2);font-size:var(--mb-text-sm);min-height:var(--mb-touch-min);}
+  .mob-status .dot{width:9px;height:9px;border-radius:50%;background:var(--mb-status-neutral);}
+  .mob-status.is-connecting .dot{background:var(--mb-status-pending);}
+  .mob-status.is-connected .dot{background:var(--mb-status-live);}
+  .mob-status.is-reconnecting .dot{background:var(--mb-status-pending);}
+  .mob-status.is-disconnected .dot{background:var(--mb-status-down);}
+  .mob-acct-id{font-size:var(--mb-text-sm);color:var(--mb-text-muted);}
+  .mob-summary{width:100%;max-width:360px;display:grid;grid-template-columns:1fr 1fr;gap:var(--mb-space-3);}
+  .mob-summary .cell{background:var(--mb-surface-1);border:1px solid var(--mb-border);border-radius:var(--mb-radius-md);padding:var(--mb-space-3);min-height:var(--mb-touch-min);box-sizing:border-box;box-shadow:var(--mb-shadow-1);}
+  .mob-summary .cell .label{font-size:var(--mb-text-2xs);letter-spacing:var(--mb-tracking-label);text-transform:uppercase;color:var(--mb-text-muted);}
+  .mob-summary .cell .value{font-size:var(--mb-text-md);color:var(--mb-text-primary);margin-top:var(--mb-space-1);font-weight:600;}
+  .mob-summary .cell .value.pos{color:var(--mb-positive);}
+  .mob-summary .cell .value.neg{color:var(--mb-negative);}
+  /* quote block */
+  .mob-quote{width:100%;max-width:360px;background:var(--mb-surface-1);border:1px solid var(--mb-border);border-radius:var(--mb-radius-md);padding:var(--mb-space-3);box-sizing:border-box;box-shadow:var(--mb-shadow-1);}
+  .mob-quote .sym{font-size:var(--mb-text-md);color:var(--mb-text-primary);font-weight:600;margin-bottom:var(--mb-space-2);}
+  .mob-quote .row{display:flex;justify-content:space-between;min-height:var(--mb-touch-min);align-items:center;font-size:var(--mb-text-sm);border-top:1px solid var(--mb-border);}
+  .mob-quote .row:first-of-type{border-top:none;}
+  .mob-quote .row .label{color:var(--mb-text-muted);font-size:var(--mb-text-2xs);letter-spacing:var(--mb-tracking-label);text-transform:uppercase;}
+  .mob-quote .row .value{color:var(--mb-text-primary);font-weight:600;}
+  /* watchlist/selector */
+  .mob-watchlist{width:100%;max-width:360px;background:var(--mb-surface-1);border:1px solid var(--mb-border);border-radius:var(--mb-radius-md);overflow:hidden;box-shadow:var(--mb-shadow-1);}
+  .mob-watchlist-item{display:flex;justify-content:space-between;align-items:center;min-height:var(--mb-touch-min);padding:0 var(--mb-space-3);box-sizing:border-box;cursor:pointer;border-bottom:1px solid var(--mb-border);}
   .mob-watchlist-item:last-child{border-bottom:none;}
-  .mob-watchlist-item.is-selected{background:rgba(0,180,216,.12);}
-  .mob-watchlist-item .wl-sym{font-size:.85rem;color:#c8cfe0;}
-  .mob-watchlist-item .wl-asset{font-size:.65rem;letter-spacing:.06em;text-transform:uppercase;color:#4a5270;}
-  /* PRE-VPS-POLISH-03C.2.4 — chart/timeframe foundation only; NOT the
-     final visual design. */
-  .mob-tf{width:100%;max-width:360px;display:flex;gap:6px;}
-  .mob-tf-item{flex:1;min-height:36px;display:flex;align-items:center;justify-content:center;background:#08091c;border-radius:6px;font-size:.75rem;color:#4a5270;cursor:pointer;}
-  .mob-tf-item.is-selected{background:rgba(0,180,216,.12);color:#00b4d8;}
-  .mob-chart-wrap{width:100%;max-width:360px;background:#08091c;border-radius:8px;overflow:hidden;}
+  .mob-watchlist-item.is-selected{background:var(--mb-brand-dim);}
+  .mob-watchlist-item .wl-sym{font-size:var(--mb-text-sm);color:var(--mb-text-primary);}
+  .mob-watchlist-item .wl-asset{font-size:var(--mb-text-2xs);letter-spacing:var(--mb-tracking-label);text-transform:uppercase;color:var(--mb-text-muted);}
+  /* chart/timeframe */
+  .mob-tf{width:100%;max-width:360px;display:flex;gap:var(--mb-space-2);}
+  .mob-tf-item{flex:1;min-height:var(--mb-touch-sm);display:flex;align-items:center;justify-content:center;background:var(--mb-surface-1);border:1px solid var(--mb-border);border-radius:var(--mb-radius-sm);font-size:var(--mb-text-xs);color:var(--mb-text-muted);cursor:pointer;}
+  .mob-tf-item.is-selected{background:var(--mb-brand-dim);color:var(--mb-brand);border-color:var(--mb-brand-border);}
+  .mob-chart-wrap{width:100%;max-width:360px;background:var(--mb-surface-1);border:1px solid var(--mb-border);border-radius:var(--mb-radius-md);overflow:hidden;box-shadow:var(--mb-shadow-1);}
   #mobChartContainer{width:100%;height:260px;}
-  /* PRE-VPS-POLISH-03C.2.5 — order ticket foundation only; NOT the
-     final visual design. */
-  .mob-ticket{width:100%;max-width:360px;background:#08091c;border-radius:8px;padding:12px;box-sizing:border-box;display:flex;flex-direction:column;gap:10px;}
-  .mob-ticket-row{display:flex;justify-content:space-between;align-items:center;gap:10px;min-height:40px;}
-  .mob-ticket-row label{font-size:.65rem;letter-spacing:.06em;text-transform:uppercase;color:#4a5270;}
-  .mob-ticket-row input{width:140px;background:#05050a;border:1px solid rgba(255,255,255,.08);border-radius:6px;color:#c8cfe0;padding:8px;font-size:.85rem;text-align:right;}
-  .mob-ticket-buttons{display:flex;gap:10px;}
-  .mob-ticket-buttons button{flex:1;min-height:44px;border-radius:8px;font-weight:800;font-size:.85rem;border:1px solid transparent;cursor:pointer;}
-  #mobSellBtn{background:rgba(239,83,80,.1);border-color:rgba(239,83,80,.35);color:#ef5350;}
-  #mobBuyBtn{background:rgba(38,166,154,.1);border-color:rgba(38,166,154,.35);color:#26a69a;}
+  /* order ticket */
+  .mob-ticket{width:100%;max-width:360px;background:var(--mb-surface-1);border:1px solid var(--mb-border);border-radius:var(--mb-radius-md);padding:var(--mb-space-3);box-sizing:border-box;display:flex;flex-direction:column;gap:var(--mb-space-3);box-shadow:var(--mb-shadow-1);}
+  .mob-ticket-row{display:flex;justify-content:space-between;align-items:center;gap:var(--mb-space-3);min-height:40px;}
+  .mob-ticket-row label{font-size:var(--mb-text-2xs);letter-spacing:var(--mb-tracking-label);text-transform:uppercase;color:var(--mb-text-muted);}
+  .mob-ticket-row input{width:140px;background:var(--mb-surface-2);border:1px solid var(--mb-border);border-radius:var(--mb-radius-sm);color:var(--mb-text-primary);padding:var(--mb-space-2);font-size:var(--mb-text-sm);text-align:right;}
+  .mob-ticket-buttons{display:flex;gap:var(--mb-space-3);}
+  .mob-ticket-buttons button{flex:1;min-height:var(--mb-touch-min);border-radius:var(--mb-radius-sm);font-weight:700;font-size:var(--mb-text-md);border:1px solid transparent;cursor:pointer;}
+  #mobSellBtn{background:var(--mb-sell-dim);border-color:var(--mb-sell-border);color:var(--mb-sell);}
+  #mobBuyBtn{background:var(--mb-buy-dim);border-color:var(--mb-buy-border);color:var(--mb-buy);}
   .mob-ticket-buttons button:disabled{opacity:.5;cursor:default;}
-  .mob-ticket-status{min-height:20px;font-size:.75rem;color:#4a5270;}
-  .mob-risk-panel{background:#05050a;border-radius:6px;padding:8px 10px;font-size:.75rem;color:#c8cfe0;display:flex;flex-direction:column;gap:4px;}
-  .mob-risk-confirm{background:#05050a;border:1px solid rgba(255,193,7,.35);border-radius:6px;padding:10px;font-size:.75rem;color:#c8cfe0;display:flex;flex-direction:column;gap:8px;}
-  .mob-risk-confirm-buttons{display:flex;gap:8px;}
-  .mob-risk-confirm-buttons button{flex:1;min-height:38px;border-radius:6px;font-size:.78rem;border:1px solid rgba(255,255,255,.1);background:#08091c;color:#c8cfe0;cursor:pointer;}
-  /* PRE-VPS-POLISH-03C.2.6 — positions/pending/closed foundation only;
-     NOT the final visual design. */
-  .mob-pane-tabs{width:100%;max-width:360px;display:flex;gap:6px;}
-  .mob-pane-tab{flex:1;min-height:36px;display:flex;align-items:center;justify-content:center;background:#08091c;border-radius:6px;font-size:.75rem;color:#4a5270;cursor:pointer;}
-  .mob-pane-tab.is-selected{background:rgba(0,180,216,.12);color:#00b4d8;}
-  .mob-pane{width:100%;max-width:360px;display:flex;flex-direction:column;gap:8px;}
-  .mob-row-card{background:#08091c;border-radius:8px;padding:10px 12px;box-sizing:border-box;display:flex;flex-direction:column;gap:6px;font-size:.8rem;}
+  .mob-ticket-status{min-height:20px;font-size:var(--mb-text-xs);color:var(--mb-text-muted);}
+  .mob-risk-panel{background:var(--mb-surface-2);border:1px solid var(--mb-border);border-radius:var(--mb-radius-sm);padding:var(--mb-space-2) var(--mb-space-3);font-size:var(--mb-text-xs);color:var(--mb-text-primary);display:flex;flex-direction:column;gap:var(--mb-space-1);}
+  .mob-risk-confirm{background:var(--mb-surface-2);border:1px solid var(--mb-brand-border);border-radius:var(--mb-radius-sm);padding:var(--mb-space-3);font-size:var(--mb-text-xs);color:var(--mb-text-primary);display:flex;flex-direction:column;gap:var(--mb-space-2);}
+  .mob-risk-confirm-buttons{display:flex;gap:var(--mb-space-2);}
+  .mob-risk-confirm-buttons button{flex:1;min-height:38px;border-radius:var(--mb-radius-sm);font-size:var(--mb-text-sm);border:1px solid var(--mb-border-strong);background:var(--mb-surface-1);color:var(--mb-text-primary);cursor:pointer;}
+  /* positions/pending/closed */
+  .mob-pane-tabs{width:100%;max-width:360px;display:flex;gap:var(--mb-space-2);}
+  .mob-pane-tab{flex:1;min-height:var(--mb-touch-sm);display:flex;align-items:center;justify-content:center;background:var(--mb-surface-1);border:1px solid var(--mb-border);border-radius:var(--mb-radius-sm);font-size:var(--mb-text-xs);color:var(--mb-text-muted);cursor:pointer;}
+  .mob-pane-tab.is-selected{background:var(--mb-brand-dim);color:var(--mb-brand);border-color:var(--mb-brand-border);}
+  .mob-pane{width:100%;max-width:360px;display:flex;flex-direction:column;gap:var(--mb-space-2);}
+  .mob-row-card{background:var(--mb-surface-1);border:1px solid var(--mb-border);border-radius:var(--mb-radius-md);padding:var(--mb-space-3);box-sizing:border-box;display:flex;flex-direction:column;gap:var(--mb-space-2);font-size:var(--mb-text-sm);box-shadow:var(--mb-shadow-1);}
   .mob-row-card .rc-top{display:flex;justify-content:space-between;align-items:center;}
-  .mob-row-card .rc-sym{color:#c8cfe0;}
-  .mob-row-card .rc-side-buy{color:#26a69a;}
-  .mob-row-card .rc-side-sell{color:#ef5350;}
-  .mob-row-card .rc-fields{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;font-size:.72rem;color:#4a5270;}
-  .mob-row-card .rc-fields span b{color:#c8cfe0;font-weight:400;}
-  .mob-row-card .rc-pnl.pos{color:#26a69a;}
-  .mob-row-card .rc-pnl.neg{color:#ef5350;}
-  .mob-row-card button{min-height:36px;border-radius:6px;font-size:.75rem;border:1px solid rgba(239,83,80,.35);background:rgba(239,83,80,.1);color:#ef5350;cursor:pointer;}
+  .mob-row-card .rc-sym{color:var(--mb-text-primary);font-weight:600;}
+  .mob-row-card .rc-side-buy{color:var(--mb-buy);}
+  .mob-row-card .rc-side-sell{color:var(--mb-sell);}
+  .mob-row-card .rc-fields{display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--mb-space-1);font-size:var(--mb-text-xs);color:var(--mb-text-muted);}
+  .mob-row-card .rc-fields span b{color:var(--mb-text-primary);font-weight:500;}
+  .mob-row-card .rc-pnl.pos{color:var(--mb-positive);}
+  .mob-row-card .rc-pnl.neg{color:var(--mb-negative);}
+  .mob-row-card button{min-height:var(--mb-touch-sm);border-radius:var(--mb-radius-sm);font-size:var(--mb-text-xs);border:1px solid var(--mb-sell-border);background:var(--mb-sell-dim);color:var(--mb-sell);cursor:pointer;}
   .mob-row-card button:disabled{opacity:.5;cursor:default;}
-  .mob-empty{min-height:44px;display:flex;align-items:center;justify-content:center;color:#4a5270;font-size:.8rem;background:#08091c;border-radius:8px;}
+  .mob-empty{min-height:var(--mb-touch-min);display:flex;align-items:center;justify-content:center;color:var(--mb-text-muted);font-size:var(--mb-text-sm);background:var(--mb-surface-1);border:1px solid var(--mb-border);border-radius:var(--mb-radius-md);}
 </style>
 <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
 {% endblock %}
