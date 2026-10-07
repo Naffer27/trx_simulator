@@ -199,7 +199,12 @@ class MobileSessionSourceContractTests(SimpleTestCase):
         # Mobile action (symbol selector/watchlist), sent ONLY from
         # selectSymbol() and from onopen's reconnect-restoration resend
         # — removed from this forbidden list for that reason alone.
-        # Every other action remains fully forbidden, unweakened.
+        # PRE-VPS-POLISH-03C.2.4A — change_timeframe (selectTimeframe()/
+        # onopen reconnect resend) and load_history (the debounced
+        # _requestHistory() helper) are now, likewise, authorized real
+        # Mobile actions — removed from the forbidden list for that
+        # reason alone. Every financial/order/risk action remains fully
+        # forbidden, unweakened.
         src = _session_source()
         for forbidden in (
             "action:'order:new'", "action: 'order:new'",
@@ -209,18 +214,39 @@ class MobileSessionSourceContractTests(SimpleTestCase):
             "'BUY'", "'SELL'",
             "action:'get_positions'", "action: 'get_positions'",
             "action:'get_closed_trades'", "action: 'get_closed_trades'",
-            "action:'change_timeframe'", "action: 'change_timeframe'",
         ):
             self.assertNotIn(forbidden, src)
 
-    # 25. no chart/history/candle handling in the session
+    # 25. only the 03C.2.4-authorized chart/history messages are handled;
+    # no order/position/P&L logic and no Desktop TradingPanel coupling.
     def test_session_has_no_chart_or_history_handling(self):
         src = _session_source()
+        # PRE-VPS-POLISH-03C.2.4A — history/candle_new/candle_update/
+        # volume_update are now real, authorized Mobile message types
+        # (parsed, guarded, and forwarded to MobileTradingChart via
+        # plain callbacks) — removed from the forbidden list for that
+        # reason alone. LightweightCharts/candleSeries remain forbidden:
+        # this file (the transport layer) must never itself touch the
+        # rendering library or own a chart series — that is exclusively
+        # mobile_chart.js's job.
+        for forbidden in ("LightweightCharts", "candleSeries"):
+            self.assertNotIn(forbidden, src)
+        # Still-forbidden: orders, risk, positions, P&L. (Desktop's
+        # TradingPanel is referenced by name only in this file's own
+        # pre-existing, approved documentation comments describing the
+        # protocol it mirrors — never as actual coupling/inheritance —
+        # so it is intentionally not bare-word-checked here; the real
+        # "no inheritance, no shared chart/order code" contract is
+        # covered structurally by class-shape tests, not this list.)
         for forbidden in (
-            "LightweightCharts", "candleSeries", "load_history",
-            "candle_update", "candle_new",
+            "order:new", "order:close", "order:update", "risk_preview",
+            "get_positions", "get_closed_trades", "get_pending",
         ):
             self.assertNotIn(forbidden, src)
+        # The 4 messages this sub-block actually authorizes must each be
+        # real, present, and guarded — not simply absent-of-prohibition.
+        for authorized in ("'history'", "'candle_new'", "'candle_update'", "'volume_update'"):
+            self.assertIn(authorized, src)
 
 
 class MobileAccountDisplaySourceContractTests(TestCase):

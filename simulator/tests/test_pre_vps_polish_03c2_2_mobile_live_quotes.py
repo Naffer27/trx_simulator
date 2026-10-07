@@ -11,9 +11,13 @@ onStatusChange/onAccount callbacks (03C.2.1). mobile.html gains a
 minimal SYMBOL/BID/ASK/MID/SOURCE display, sourced exclusively from
 that shared state (no second mid calculation anywhere in the template).
 
-No new WS message is sent (no change_symbol/change_timeframe/
-load_history/order:*/risk:*) — Mobile only consumes ticks the backend
-already streams to every connection by default.
+No new WS message is sent by this sub-block itself (no order:*/risk:*/
+get_positions/get_closed_trades) — Mobile only consumes ticks the
+backend already streams to every connection by default. (change_symbol,
+change_timeframe, and load_history were separately authorized by later
+sub-blocks — 03C.2.3 and 03C.2.4 respectively — and are covered by
+their own test files; see NoNewWsMessagesTests below for the current,
+updated allowlist.)
 
 Structural assertions use the same source-inspection convention already
 established throughout this series. Real-execution assertions run the
@@ -22,6 +26,7 @@ trading_core.js) via Node — skipped gracefully when `node` is not on
 PATH.
 """
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -166,12 +171,14 @@ class NoNewWsMessagesTests(SimpleTestCase):
         # Mobile action (symbol selector/watchlist), sent ONLY from
         # selectSymbol() and from onopen's reconnect-restoration resend
         # — removed from this forbidden list for that reason alone.
-        # change_timeframe/load_history/get_positions/get_closed_trades/
-        # order:*/risk:* remain fully forbidden, unweakened.
+        # PRE-VPS-POLISH-03C.2.4A — change_timeframe (selectTimeframe()/
+        # onopen reconnect resend) and load_history (the debounced
+        # _requestHistory() helper) are likewise now authorized real
+        # Mobile actions — removed from this forbidden list for that
+        # reason alone. get_positions/get_closed_trades/order:*/risk:*
+        # remain fully forbidden, unweakened.
         src = _session_source()
         for forbidden in (
-            "action:'change_timeframe'", "action: 'change_timeframe'",
-            "action:'load_history'", "action: 'load_history'",
             "action:'get_positions'", "action: 'get_positions'",
             "action:'get_closed_trades'", "action: 'get_closed_trades'",
             "action:'order:", "action: 'order:",
@@ -180,19 +187,31 @@ class NoNewWsMessagesTests(SimpleTestCase):
         ):
             self.assertNotIn(forbidden, src)
 
-    def test_only_ping_and_change_symbol_are_ever_sent(self):
-        # PRE-VPS-POLISH-03C.2.3 — previously asserted ONLY ping was ever
-        # sent; change_symbol is now an authorized second action (from
-        # selectSymbol() and onopen's reconnect resend) — exactly 3 real
-        # send call sites now: ping, selectSymbol's change_symbol, and
-        # onopen's resend. Still proves no OTHER action exists.
+    def test_only_authorized_ws_actions_are_ever_sent(self):
+        # PRE-VPS-POLISH-03C.2.4A — superseded the old "exactly 3 call
+        # sites" structural count (03C.2.4 legitimately added 3 more
+        # real send sites for change_timeframe/load_history). Rather than
+        # replace one brittle magic number with another ("exactly 6"),
+        # this proves the actual contract semantically: every single
+        # this.ws.send(...) call site in the file is either the literal
+        # ping payload, or a JSON.stringify({action:'...'}) call whose
+        # action is one of the 3 authorized WS actions — so no other
+        # action (financial, order, risk, or otherwise) can ever be
+        # constructed here, regardless of how many call sites exist.
         src = _session_source()
-        self.assertEqual(src.count("this.ws.send("), 3)
-        self.assertIn('this.ws.send(\'{"action":"ping"}\');', src)
-        self.assertEqual(
-            src.count("this.ws.send(JSON.stringify({ action: 'change_symbol', symbol: this.currentSymbol }))"),
-            2,
-        )
+        action_values = set(re.findall(r"action:\s*'([a-zA-Z_]+)'", src))
+        self.assertEqual(action_values, {"change_symbol", "change_timeframe", "load_history"})
+
+        send_sites = re.findall(r"this\.ws\.send\(([^;]*)\);", src)
+        self.assertTrue(send_sites, "expected at least one this.ws.send( call site")
+        allowed_actions = ("change_symbol", "change_timeframe", "load_history")
+        for site in send_sites:
+            is_ping = site == '\'{"action":"ping"}\''
+            is_authorized_json = any(f"action: '{a}'" in site for a in allowed_actions)
+            self.assertTrue(
+                is_ping or is_authorized_json,
+                f"unexpected this.ws.send(...) payload shape, not ping nor an authorized action: {site}",
+            )
 
 
 # ─────────────────────────────────────────────────────────────────────────

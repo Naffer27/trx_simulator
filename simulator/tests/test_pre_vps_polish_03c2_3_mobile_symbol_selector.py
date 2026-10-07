@@ -19,6 +19,7 @@ trading_core.js) via Node — skipped gracefully when `node` is not on
 PATH.
 """
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -151,10 +152,25 @@ class MobileWatchlistWiringTests(TestCase):
         self.assertIn("session.selectSymbol(item.symbol)", html)
 
     def test_allowed_symbols_passed_to_session_constructor(self):
+        # PRE-VPS-POLISH-03C.2.4A — the old assertion was an exact,
+        # whole-signature literal; 03C.2.4 legitimately extended the
+        # constructor with 4 more trailing callback args (onHistory/
+        # onCandleNew/onCandleUpdate/onVolumeUpdate), which made that
+        # literal obsolete. This now proves the real functional
+        # contract instead: the allowedSymbols expression must appear
+        # as a genuine argument INSIDE the actual `new
+        # MobileTradingSession(...)` call span (bounded below), not
+        # merely as text anywhere on the page — and it must be
+        # terminated by a comma or the call's closing paren, proving
+        # it is a real positional argument rather than embedded inside
+        # some other expression.
         html = self._html()
-        self.assertIn(
-            "new MobileTradingSession(\n    onStatusChange, onAccount, onQuote,\n    MOBILE_SYMBOLS.map(function(item){ return item.symbol; })\n  )",
-            html,
+        start = html.index("new MobileTradingSession(")
+        end = html.index(");", start) + 1
+        call_text = html[start:end]
+        self.assertRegex(
+            call_text,
+            r"MOBILE_SYMBOLS\.map\(function\(item\)\{\s*return item\.symbol;\s*\}\)\s*[,)]",
         )
 
     def test_no_second_onsymbolchange_callback_invented(self):
@@ -236,20 +252,44 @@ class SelectSymbolSourceContractTests(SimpleTestCase):
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# No new WS actions beyond change_symbol
+# No new WS actions beyond the currently-authorized set
 # ─────────────────────────────────────────────────────────────────────────
 class NoOtherNewWsActionsTests(SimpleTestCase):
-    def test_exactly_three_send_call_sites(self):
-        # ping (heartbeat) + selectSymbol's change_symbol + onopen's
-        # reconnect-restoration change_symbol resend. No other send.
+    def test_only_authorized_ws_actions_are_ever_sent(self):
+        # PRE-VPS-POLISH-03C.2.4A — superseded the old "exactly 3 call
+        # sites" structural count (03C.2.4 legitimately added 3 more
+        # real send sites for change_timeframe/load_history). Rather
+        # than swap one brittle magic number ("3") for another ("6"),
+        # this proves the real contract semantically: every single
+        # this.ws.send(...) call site in the file is either the
+        # literal ping payload, or a JSON.stringify({action:'...'})
+        # call whose action is one of the 3 authorized WS actions —
+        # so no other action can ever be constructed here, regardless
+        # of how many call sites exist.
         src = _session_source()
-        self.assertEqual(src.count("this.ws.send("), 3)
+        action_values = set(re.findall(r"action:\s*'([a-zA-Z_]+)'", src))
+        self.assertEqual(action_values, {"change_symbol", "change_timeframe", "load_history"})
+
+        send_sites = re.findall(r"this\.ws\.send\(([^;]*)\);", src)
+        self.assertTrue(send_sites, "expected at least one this.ws.send( call site")
+        allowed_actions = ("change_symbol", "change_timeframe", "load_history")
+        for site in send_sites:
+            is_ping = site == '\'{"action":"ping"}\''
+            is_authorized_json = any(f"action: '{a}'" in site for a in allowed_actions)
+            self.assertTrue(
+                is_ping or is_authorized_json,
+                f"unexpected this.ws.send(...) payload shape, not ping nor an authorized action: {site}",
+            )
 
     def test_no_other_action_payloads(self):
+        # PRE-VPS-POLISH-03C.2.4A — change_timeframe (selectTimeframe()/
+        # onopen reconnect resend) and load_history (the debounced
+        # _requestHistory() helper) are now authorized real Mobile
+        # actions — removed from this forbidden list for that reason
+        # alone. Every financial/order/risk action remains fully
+        # forbidden, unweakened.
         src = _session_source()
         for forbidden in (
-            "action:'change_timeframe'", "action: 'change_timeframe'",
-            "action:'load_history'", "action: 'load_history'",
             "action:'get_positions'", "action: 'get_positions'",
             "action:'get_closed_trades'", "action: 'get_closed_trades'",
             "action:'order:new'", "action: 'order:new'",
@@ -260,9 +300,19 @@ class NoOtherNewWsActionsTests(SimpleTestCase):
             self.assertNotIn(forbidden, src)
 
     def test_no_chart_or_history_handling(self):
+        # PRE-VPS-POLISH-03C.2.4A — history/candle_new/candle_update/
+        # volume_update are now real, authorized Mobile message types,
+        # parsed and guarded in _handleMsg and forwarded to
+        # MobileTradingChart via plain callbacks — removed from the
+        # forbidden list for that reason alone. LightweightCharts/
+        # candleSeries remain forbidden: this file (the transport
+        # layer) must never itself touch the rendering library or own
+        # a chart series — that stays exclusively mobile_chart.js's job.
         src = _session_source()
-        for forbidden in ("LightweightCharts", "candleSeries", "candle_update", "candle_new"):
+        for forbidden in ("LightweightCharts", "candleSeries"):
             self.assertNotIn(forbidden, src)
+        for authorized in ("'history'", "'candle_new'", "'candle_update'", "'volume_update'"):
+            self.assertIn(authorized, src)
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -442,7 +492,16 @@ class MobileSymbolRealExecutionTests(SimpleTestCase):
             {"action": "change_symbol", "symbol": "BTCUSD"},
         )
 
-    def test_no_resend_on_first_connect_without_prior_selection(self):
+    def test_no_symbol_or_history_resend_but_timeframe_resend_without_prior_selection(self):
+        # PRE-VPS-POLISH-03C.2.4A — the old contract ("nothing at all is
+        # resent on first connect without a prior symbol selection") is
+        # no longer correct: 03C.2.4 legitimately gave currentTF a real,
+        # always-present default ('15m', unlike currentSymbol which
+        # starts null), and onopen now always resends change_timeframe
+        # — mirroring Desktop, which always has a timeframe. The real
+        # contract is: no symbol selected -> no change_symbol AND no
+        # load_history (both need a real symbol); but change_timeframe
+        # for the default IS sent, every connect, regardless.
         out = self._run_node("""
           global.window.__TRADE_CONFIG__ = { accountId: 1 };
           global.window.location = { href: 'http://example.com/dashboard/1/' };
@@ -453,7 +512,10 @@ class MobileSymbolRealExecutionTests(SimpleTestCase):
           clearInterval(s.hb);
           console.log(JSON.stringify({ sent: s.ws.sent }));
         """)
-        self.assertEqual(out["sent"], [])
+        payloads = [json.loads(x) for x in out["sent"]]
+        self.assertFalse(any(p.get("action") == "change_symbol" for p in payloads))
+        self.assertFalse(any(p.get("action") == "load_history" for p in payloads))
+        self.assertIn({"action": "change_timeframe", "timeframe": "15m"}, payloads)
 
     def test_repeated_same_symbol_selection(self):
         out = self._run_node("""
