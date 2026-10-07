@@ -220,19 +220,21 @@ class MobileChartHtmlWiringTests(TestCase):
         self.assertIn("mobileChart.clear();", snippet)
         self.assertIn("session.selectTimeframe(tf);", snippet)
 
-    def test_order_ticket_authorized_but_no_positions_pending_closed_ui_yet(self):
-        # PRE-VPS-POLISH-03C.2.5A — the order ticket (BUY/SELL) is now
-        # the real, authorized Mobile contract (03C.2.5) — removed from
-        # this forbidden list for that reason alone. Positions/pending/
-        # closed-trades UI remain fully unauthorized, unweakened — not
-        # eliminated, exactly as instructed. "SL/TP" (the combined bare
-        # label) is also removed: 03C.2.5's own real, already-authorized
-        # documentation comment legitimately reads "qty/SL/TP" to
-        # describe the ticket's fields, which this bare substring check
-        # would otherwise misread as the UI itself — stopLoss/takeProfit
-        # (the concrete, never-used verbose names) stay forbidden.
+    def test_order_ticket_and_positions_pending_closed_ui_authorized(self):
+        # OLD CONTRACT (03C.2.5A): mobPositions/mobPendingOrders/
+        # mobClosedTrades were still fully prohibited.
+        # NEW CONTRACT (03C.2.6): all three ARE now real, authorized
+        # Mobile UI sections — rewritten as a positive assertion of
+        # their real DOM ids, exactly like the order ticket's own ids
+        # already are below. WHY preserved: still fails if any of the
+        # three is silently removed; stopLoss/takeProfit (the concrete,
+        # never-used verbose names, as opposed to the legitimate short
+        # "SL"/"TP" labels the real ticket/position rows use) stay
+        # forbidden, unweakened.
         html = self._html()
-        for forbidden in ("mobPositions", "mobPendingOrders", "mobClosedTrades", "stopLoss", "takeProfit"):
+        for authorized in ("mobPositionsPane", "mobPendingPane", "mobClosedPane"):
+            self.assertIn(authorized, html)
+        for forbidden in ("stopLoss", "takeProfit"):
             self.assertNotIn(forbidden, html)
 
     # Account types 31-34
@@ -816,25 +818,33 @@ class ChartRealExecutionTests(SimpleTestCase):
 # G. No order/position/P&L UI anywhere in this block's files
 # ─────────────────────────────────────────────────────────────────────────
 class NoOutOfScopeUiTests(SimpleTestCase):
-    def test_mobile_session_order_actions_authorized_but_no_close_update_pending(self):
-        # PRE-VPS-POLISH-03C.2.5A — order:new/order:risk_preview and
-        # 'positions'-message ingestion are now real, authorized Mobile
-        # contracts (03C.2.5) — the old blanket prohibition is replaced
-        # by a positive assertion of the new contract, plus confirmation
-        # that order:close/order:update/order:pending:new and the
-        # OUTBOUND action get_positions (never to be confused with the
-        # real 'positions' INBOUND message this file now legitimately
-        # parses) remain fully unauthorized, unweakened.
+    def test_mobile_session_order_actions_authorized_but_no_update_or_pending_create(self):
+        # OLD CONTRACT (03C.2.5A): order:close/get_closed_trades were
+        # still fully prohibited (close/closed-trades didn't exist yet).
+        # NEW CONTRACT (03C.2.6): order:close (closePosition()),
+        # order:pending:cancel (cancelPendingOrder()), and
+        # get_closed_trades (requestClosedTrades()) are now real,
+        # authorized Mobile contracts — moved to the positive-assertion
+        # list for that reason. WHY preserved: order:update (position
+        # SL/TP editing), order:pending:new/order:pending:update
+        # (pending-order creation/edit), and the OUTBOUND action
+        # get_positions (never to be confused with the real 'positions'
+        # INBOUND message this file legitimately parses) remain fully
+        # unauthorized, unweakened — Mobile stays display+cancel-only
+        # for pending orders and never edits an open position's SL/TP.
         src = _session_source()
-        for authorized in ("action: 'order:new'", "action: 'order:risk_preview'", "'positions'"):
+        for authorized in (
+            "action: 'order:new'", "action: 'order:risk_preview'", "'positions'",
+            "action: 'order:close'", "action: 'order:pending:cancel'",
+            "action: 'get_closed_trades'",
+        ):
             self.assertIn(authorized, src)
         for forbidden in (
-            "action:'order:close'", "action: 'order:close'",
             "action:'order:update'", "action: 'order:update'",
             "action:'order:pending:new'", "action: 'order:pending:new'",
+            "action:'order:pending:update'", "action: 'order:pending:update'",
             "action:'get_positions'", "action: 'get_positions'",
             "action:'get_pending'", "action: 'get_pending'",
-            "action:'get_closed_trades'", "action: 'get_closed_trades'",
         ):
             self.assertNotIn(forbidden, src)
 
@@ -843,21 +853,26 @@ class NoOutOfScopeUiTests(SimpleTestCase):
         for forbidden in ("order:new", "order:close", "order:update", "risk_preview"):
             self.assertNotIn(forbidden, src)
 
-    def test_mobile_html_ticket_authorized_but_no_positions_pending_closed_ui(self):
-        # PRE-VPS-POLISH-03C.2.5A — the order ticket (BUY/SELL/qty/SL/TP)
-        # is now the real, authorized Mobile contract (03C.2.5) — the
-        # old blanket prohibition is replaced by a positive assertion of
-        # the new contract's real DOM ids, plus confirmation that
-        # positions/pending-orders/closed-trades UI remain fully
-        # unauthorized, unweakened.
+    def test_mobile_html_ticket_and_positions_pending_closed_ui_authorized(self):
+        # OLD CONTRACT (03C.2.5A): positions/pending-orders/closed-
+        # trades UI were still fully prohibited.
+        # NEW CONTRACT (03C.2.6): all three ARE now real, authorized
+        # Mobile UI sections — the order ticket's own ids (unchanged
+        # since 03C.2.5) and the three new pane ids are both now
+        # positive assertions of the full real contract. WHY preserved:
+        # still fails if any of the 10 real ids is silently removed, and
+        # the still-unauthorized boundary (pending creation/edit UI,
+        # local P&L computation) is covered separately by
+        # test_order_ticket_and_positions_pending_closed_ui_authorized
+        # above and NoFinancialEngineDuplicationTests-equivalent checks
+        # in the 03C.2.6 suite — not duplicated here.
         html = _html_source()
         for el_id in (
             "mobBuyBtn", "mobSellBtn", "mobQtyInput", "mobSlInput", "mobTpInput",
             "mobTicketStatus", "mobRiskPanel",
+            "mobPositionsPane", "mobPendingPane", "mobClosedPane",
         ):
             self.assertIn(f'id="{el_id}"', html)
-        for forbidden in ("mobPositions", "mobPendingOrders", "mobClosedTrades"):
-            self.assertNotIn(forbidden, html)
 
 
 # ─────────────────────────────────────────────────────────────────────────

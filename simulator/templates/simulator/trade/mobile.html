@@ -74,6 +74,24 @@
   .mob-risk-confirm{background:#05050a;border:1px solid rgba(255,193,7,.35);border-radius:6px;padding:10px;font-size:.75rem;color:#c8cfe0;display:flex;flex-direction:column;gap:8px;}
   .mob-risk-confirm-buttons{display:flex;gap:8px;}
   .mob-risk-confirm-buttons button{flex:1;min-height:38px;border-radius:6px;font-size:.78rem;border:1px solid rgba(255,255,255,.1);background:#08091c;color:#c8cfe0;cursor:pointer;}
+  /* PRE-VPS-POLISH-03C.2.6 — positions/pending/closed foundation only;
+     NOT the final visual design. */
+  .mob-pane-tabs{width:100%;max-width:360px;display:flex;gap:6px;}
+  .mob-pane-tab{flex:1;min-height:36px;display:flex;align-items:center;justify-content:center;background:#08091c;border-radius:6px;font-size:.75rem;color:#4a5270;cursor:pointer;}
+  .mob-pane-tab.is-selected{background:rgba(0,180,216,.12);color:#00b4d8;}
+  .mob-pane{width:100%;max-width:360px;display:flex;flex-direction:column;gap:8px;}
+  .mob-row-card{background:#08091c;border-radius:8px;padding:10px 12px;box-sizing:border-box;display:flex;flex-direction:column;gap:6px;font-size:.8rem;}
+  .mob-row-card .rc-top{display:flex;justify-content:space-between;align-items:center;}
+  .mob-row-card .rc-sym{color:#c8cfe0;}
+  .mob-row-card .rc-side-buy{color:#26a69a;}
+  .mob-row-card .rc-side-sell{color:#ef5350;}
+  .mob-row-card .rc-fields{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;font-size:.72rem;color:#4a5270;}
+  .mob-row-card .rc-fields span b{color:#c8cfe0;font-weight:400;}
+  .mob-row-card .rc-pnl.pos{color:#26a69a;}
+  .mob-row-card .rc-pnl.neg{color:#ef5350;}
+  .mob-row-card button{min-height:36px;border-radius:6px;font-size:.75rem;border:1px solid rgba(239,83,80,.35);background:rgba(239,83,80,.1);color:#ef5350;cursor:pointer;}
+  .mob-row-card button:disabled{opacity:.5;cursor:default;}
+  .mob-empty{min-height:44px;display:flex;align-items:center;justify-content:center;color:#4a5270;font-size:.8rem;background:#08091c;border-radius:8px;}
 </style>
 <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
 {% endblock %}
@@ -140,6 +158,27 @@
         <button id="mobRiskConfirmBtn" type="button">Confirm anyway</button>
       </div>
     </div>
+  </div>
+
+  <div class="mob-pane-tabs" id="mobPaneTabs">
+    <div class="mob-pane-tab is-selected" data-pane="positions">Positions</div>
+    <div class="mob-pane-tab" data-pane="pending">Pending</div>
+    <div class="mob-pane-tab" data-pane="closed">Closed</div>
+  </div>
+
+  <div class="mob-pane" id="mobPositionsPane">
+    <div id="mobPositionsList"></div>
+    <div class="mob-empty" id="mobPositionsEmpty" hidden>No open positions</div>
+  </div>
+
+  <div class="mob-pane" id="mobPendingPane" hidden>
+    <div id="mobPendingList"></div>
+    <div class="mob-empty" id="mobPendingEmpty" hidden>No pending orders</div>
+  </div>
+
+  <div class="mob-pane" id="mobClosedPane" hidden>
+    <div id="mobClosedList"></div>
+    <div class="mob-empty" id="mobClosedEmpty" hidden>No closed trades</div>
   </div>
 </div>
 {% endblock %}
@@ -377,21 +416,188 @@ window.__TRADE_CONFIG__ = {
     setTicketSending(false);
     elTicketStatus.textContent=msg.message||msg.code||'Error';
   }
-  // PRE-VPS-POLISH-03C.2.5 — domain state only. MobileTradingSession
-  // already called the real replaceCanonicalPositions() before this
-  // fires; this block intentionally renders nothing yet — positions UI
-  // is explicitly out of scope for this sub-block (03C.2.5 preflight,
-  // Section Q).
-  function onPositions(items){}
+  // PRE-VPS-POLISH-03C.2.6 — Positions/Pending/Closed foundation. Reuses
+  // the REAL canonical positions store (getCanonicalPositions(), already
+  // updated by MobileTradingSession before this callback fires — see
+  // its own 'positions' branch) — no second store. P&L display rule
+  // (design lock Section 5, fixed for this version): pos.pnl shown
+  // directly when it is a finite number, "—" otherwise — NO fallback
+  // computation, never liveMid/bid/ask, never a raw price-minus-entry
+  // times quantity formula.
+  const elPositionsList=document.getElementById('mobPositionsList');
+  const elPositionsEmpty=document.getElementById('mobPositionsEmpty');
+  let closeInFlight=false;
+  function setCloseInFlight(v){
+    closeInFlight=v;
+    elPositionsList.querySelectorAll('.mob-close-btn').forEach(function(b){ b.disabled=v; });
+  }
+  function renderPositions(items){
+    if(!items.length){
+      elPositionsList.innerHTML='';
+      elPositionsEmpty.hidden=false;
+      return;
+    }
+    elPositionsEmpty.hidden=true;
+    elPositionsList.innerHTML=items.map(function(pos){
+      const side=String(pos.side||'buy').toLowerCase();
+      const pnlOk=pos.pnl!=null&&isFinite(Number(pos.pnl));
+      const pnlVal=pnlOk?Number(pos.pnl):null;
+      const pnlText=pnlOk?(pnlVal>=0?'+':'')+usd(pnlVal):'—';
+      const pnlCls=pnlOk?(pnlVal>0.00001?'pos':pnlVal<-0.00001?'neg':''):'';
+      return '<div class="mob-row-card" data-id="'+pos.id+'">'
+        +'<div class="rc-top"><span class="rc-sym">'+(pos.symbol||'')+' <span class="rc-side-'+side+'">'+side.toUpperCase()+'</span></span>'
+        +'<span class="rc-pnl '+pnlCls+'">'+pnlText+'</span></div>'
+        +'<div class="rc-fields">'
+        +'<span>Qty <b>'+(pos.qty!=null?Number(pos.qty):'—')+'</b></span>'
+        +'<span>Entry <b>'+(pos.avg!=null?fmt(pos.avg):'—')+'</b></span>'
+        +'<span>SL <b>'+(pos.sl!=null?fmt(pos.sl):'—')+'</b></span>'
+        +'<span>TP <b>'+(pos.tp!=null?fmt(pos.tp):'—')+'</b></span>'
+        +'</div>'
+        +'<button type="button" class="mob-close-btn" data-id="'+pos.id+'"'+(closeInFlight?' disabled':'')+'>Close</button>'
+        +'</div>';
+    }).join('');
+  }
+  // PRE-VPS-POLISH-03C.2.6 — domain state already applied by
+  // MobileTradingSession (replaceCanonicalPositions already ran) —
+  // this callback only renders getCanonicalPositions(), never
+  // recomputes anything from it.
+  function onPositions(items){ renderPositions(items); }
+
+  elPositionsList.addEventListener('click',function(e){
+    const btn=e.target.closest('.mob-close-btn');
+    if(!btn||closeInFlight)return;
+    setCloseInFlight(true);
+    session.closePosition(btn.getAttribute('data-id'));
+  });
+  function onOrderClose(msg){
+    setCloseInFlight(false);
+    // Real passthrough only — the backend already follows this with its
+    // own account:update/positions pushes (03C.2.6 preflight, Section
+    // F); this file never mutates canonical positions itself and never
+    // recomputes realized_pnl — it only waits for those real messages.
+  }
+  function onCloseError(msg){
+    setCloseInFlight(false);
+  }
+
+  // PRE-VPS-POLISH-03C.2.6 — pending orders: no canonical store exists
+  // for these even on Desktop (pendingOrdersCache is a plain Desktop-
+  // local variable, not a trading_core.js shared store — 03C.2.6
+  // preflight, Section H) — this plain array lives only in this
+  // orchestrator closure, mirroring that same precedent, not inventing
+  // a new shared concept.
+  const elPendingList=document.getElementById('mobPendingList');
+  const elPendingEmpty=document.getElementById('mobPendingEmpty');
+  let cancelInFlight=false;
+  function setCancelInFlight(v){
+    cancelInFlight=v;
+    elPendingList.querySelectorAll('.mob-cancel-btn').forEach(function(b){ b.disabled=v; });
+  }
+  function renderPending(items){
+    if(!items.length){
+      elPendingList.innerHTML='';
+      elPendingEmpty.hidden=false;
+      return;
+    }
+    elPendingEmpty.hidden=true;
+    elPendingList.innerHTML=items.map(function(po){
+      const side=String(po.side||'buy').toLowerCase();
+      return '<div class="mob-row-card" data-id="'+po.id+'">'
+        +'<div class="rc-top"><span class="rc-sym">'+(po.symbol||'')+' <span class="rc-side-'+side+'">'+side.toUpperCase()+' '+String(po.order_type||'').toUpperCase()+'</span></span>'
+        +'<span>'+(po.status||'PENDING')+'</span></div>'
+        +'<div class="rc-fields">'
+        +'<span>Qty <b>'+(po.qty!=null?Number(po.qty):'—')+'</b></span>'
+        +'<span>Trigger <b>'+(po.trigger_price!=null?fmt(po.trigger_price):'—')+'</b></span>'
+        +'<span>SL <b>'+(po.sl!=null?fmt(po.sl):'—')+'</b></span>'
+        +'<span>TP <b>'+(po.tp!=null?fmt(po.tp):'—')+'</b></span>'
+        +'</div>'
+        +'<button type="button" class="mob-cancel-btn" data-id="'+po.id+'"'+(cancelInFlight?' disabled':'')+'>Cancel</button>'
+        +'</div>';
+    }).join('');
+  }
+  function onPendingOrders(items){ renderPending(items); }
+
+  elPendingList.addEventListener('click',function(e){
+    const btn=e.target.closest('.mob-cancel-btn');
+    if(!btn||cancelInFlight)return;
+    setCancelInFlight(true);
+    session.cancelPendingOrder(btn.getAttribute('data-id'));
+  });
+  function onPendingOrderCancelled(msg){
+    setCancelInFlight(false);
+    // The backend's own pending_order_changed resync (triggered server-
+    // side after the cancel commits) re-pushes a fresh 'pending_orders'
+    // snapshot — this file never removes the row locally beforehand.
+  }
+  function onPendingCancelError(msg){
+    setCancelInFlight(false);
+  }
+
+  // PRE-VPS-POLISH-03C.2.6 — closed trades. Fields exactly per the real
+  // contract (id/symbol/side/qty/entry/close/pnl/ts) — no commission/
+  // fee/close_reason (none exist on this contract — 03C.2.6 preflight,
+  // Section I).
+  const elClosedList=document.getElementById('mobClosedList');
+  const elClosedEmpty=document.getElementById('mobClosedEmpty');
+  function renderClosed(trades){
+    if(!trades.length){
+      elClosedList.innerHTML='';
+      elClosedEmpty.hidden=false;
+      return;
+    }
+    elClosedEmpty.hidden=true;
+    elClosedList.innerHTML=trades.map(function(t){
+      const side=String(t.side||'buy').toLowerCase();
+      const pnlOk=t.pnl!=null&&isFinite(Number(t.pnl));
+      const pnlVal=pnlOk?Number(t.pnl):null;
+      const pnlText=pnlOk?(pnlVal>=0?'+':'')+usd(pnlVal):'—';
+      const pnlCls=pnlOk?(pnlVal>0.00001?'pos':pnlVal<-0.00001?'neg':''):'';
+      const timeStr=t.ts!=null?new Date(t.ts).toLocaleString():'—';
+      return '<div class="mob-row-card">'
+        +'<div class="rc-top"><span class="rc-sym">'+(t.symbol||'')+' <span class="rc-side-'+side+'">'+side.toUpperCase()+'</span></span>'
+        +'<span class="rc-pnl '+pnlCls+'">'+pnlText+'</span></div>'
+        +'<div class="rc-fields">'
+        +'<span>Qty <b>'+(t.qty!=null?Number(t.qty):'—')+'</b></span>'
+        +'<span>Entry <b>'+(t.entry!=null?fmt(t.entry):'—')+'</b></span>'
+        +'<span>Exit <b>'+(t.close!=null?fmt(t.close):'—')+'</b></span>'
+        +'</div>'
+        +'<div style="font-size:.7rem;color:#4a5270;">'+timeStr+'</div>'
+        +'</div>';
+    }).join('');
+  }
+  function onClosedTrades(trades){ renderClosed(trades); }
+
+  // PRE-VPS-POLISH-03C.2.6 — tab switcher. Closed trades are requested
+  // explicitly, only when this tab is actually activated (never
+  // automatically on connect/reconnect — see requestClosedTrades()'s
+  // own comment in mobile_session.js for why) — re-activating the tab
+  // later simply re-requests the latest snapshot; this is user-driven,
+  // not periodic/automatic spam.
+  const elPaneTabs=document.getElementById('mobPaneTabs');
+  const mobPanes={
+    positions: document.getElementById('mobPositionsPane'),
+    pending: document.getElementById('mobPendingPane'),
+    closed: document.getElementById('mobClosedPane'),
+  };
+  elPaneTabs.querySelectorAll('.mob-pane-tab').forEach(function(tab){
+    tab.addEventListener('click',function(){
+      const key=tab.getAttribute('data-pane');
+      elPaneTabs.querySelectorAll('.mob-pane-tab').forEach(function(t){ t.classList.toggle('is-selected', t===tab); });
+      Object.keys(mobPanes).forEach(function(k){ mobPanes[k].hidden=(k!==key); });
+      if(key==='closed') session.requestClosedTrades();
+    });
+  });
 
   const session=new MobileTradingSession(
     onStatusChange, onAccount, onQuote,
     MOBILE_SYMBOLS.map(function(item){ return item.symbol; }),
     onHistory, onCandleNew, onCandleUpdate, onVolumeUpdate,
-    onRiskPreview, onRiskWarning, onOrderAck, onOrderRejected, onTradingError, onPositions
+    onRiskPreview, onRiskWarning, onOrderAck, onOrderRejected, onTradingError, onPositions,
+    onPendingOrders, onOrderClose, onCloseError, onClosedTrades, onPendingOrderCancelled, onPendingCancelError
   );
   renderWatchlist(session.currentSymbol);
   renderTfSelector(session.currentTF);
+  renderPositions(getCanonicalPositions());
   session.connect();
 })();
 </script>

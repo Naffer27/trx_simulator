@@ -257,49 +257,72 @@ class SelectSymbolSourceContractTests(SimpleTestCase):
 class NoOtherNewWsActionsTests(SimpleTestCase):
     def test_only_authorized_ws_actions_are_ever_sent(self):
         # PRE-VPS-POLISH-03C.2.4A — superseded the old "exactly 3 call
-        # sites" structural count (03C.2.4 legitimately added 3 more
-        # real send sites for change_timeframe/load_history). Rather
-        # than swap one brittle magic number for another, this proves
-        # the real contract semantically: every single this.ws.send(...)
-        # call site in the file is either the literal ping payload, or
-        # a JSON.stringify({action:'...'}) call whose action is one of
-        # the currently-authorized WS actions — so no other action can
-        # ever be constructed here, regardless of how many call sites
-        # exist.
-        # PRE-VPS-POLISH-03C.2.5A — order:new/order:risk_preview
-        # (submitOrder()/requestRiskPreview()) added to the authorized
-        # set for that same reason; the action-name regex is widened to
-        # [a-zA-Z0-9_:]+ so it actually captures these colon-containing
-        # action names instead of silently skipping them.
-        src = _session_source()
-        action_values = set(re.findall(r"action:\s*'([a-zA-Z0-9_:]+)'", src))
+        # sites" structural count. PRE-VPS-POLISH-03C.2.5A then proved
+        # the contract via static text instead — but 03C.2.6 added a
+        # SECOND method (closePosition()) that also names its payload
+        # variable `payload`, making its call site textually identical
+        # to submitOrder()'s own ("JSON.stringify(payload)") and
+        # impossible to disambiguate by a single "look up the payload
+        # definition" text search.
+        # PRE-VPS-POLISH-03C.2.6A — replaced with real execution: every
+        # send-capable method is actually invoked, the real
+        # this.ws.sent payloads are parsed, and the resulting set of
+        # real `action` values is compared against the FULL currently-
+        # authorized set — proving exactly what is sent, not guessing
+        # from source text.
+        if not NODE_AVAILABLE:
+            self.skipTest("node not available on PATH")
+        core_src = _core_source()
+        session_src = _session_source()
+        driver = f"""
+        global.window = global;
+        global.localStorage = {{}};
+        global.document = {{ getElementById: () => null }};
+        class FakeWS {{
+          constructor(url){{ this.url = url; this.readyState = 1; this.sent = []; }}
+          send(payload){{ this.sent.push(payload); }}
+          close(){{}}
+        }}
+        FakeWS.OPEN = 1; FakeWS.CONNECTING = 0; FakeWS.CLOSED = 3;
+        global.WebSocket = FakeWS;
+        {core_src}
+        {session_src}
+        const s = new MobileTradingSession(null, null, null, ['EUR/USD']);
+        s.ws = new WebSocket('x');
+        s.selectSymbol('EUR/USD');
+        s.selectTimeframe('1h');
+        s.submitOrder({{ side: 'buy', qty: 1 }});
+        s._handleMsg({{ type: 'order_ack', order_id: 1, symbol: 'EUR/USD', side: 'buy', qty: 1 }});
+        s.closePosition(42);
+        s._handleMsg({{ type: 'order_close', id: 42 }});
+        s.cancelPendingOrder(7);
+        s._handleMsg({{ type: 'order_pending_cancel', id: 7 }});
+        s.requestClosedTrades();
+        s.requestRiskPreview('EUR/USD', 1);
+        setTimeout(() => {{
+          const actions = new Set(
+            s.ws.sent
+              .map((x) => {{ try {{ return JSON.parse(x).action; }} catch (e) {{ return null; }} }})
+              .filter((a) => a)
+          );
+          console.log(JSON.stringify({{ actions: Array.from(actions).sort() }}));
+        }}, 300);
+        """
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "harness.js"
+            path.write_text(driver, encoding="utf-8")
+            result = subprocess.run(["node", str(path)], capture_output=True, text=True, timeout=15)
+            if result.returncode != 0:
+                self.fail(f"node harness failed:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}")
+            out = json.loads(result.stdout.strip().splitlines()[-1])
         self.assertEqual(
-            action_values,
-            {"change_symbol", "change_timeframe", "load_history", "order:new", "order:risk_preview"},
+            out["actions"],
+            sorted([
+                "change_symbol", "change_timeframe", "load_history",
+                "order:new", "order:close", "order:pending:cancel",
+                "get_closed_trades", "order:risk_preview",
+            ]),
         )
-
-        send_sites = re.findall(r"this\.ws\.send\(([^;]*)\);", src)
-        self.assertTrue(send_sites, "expected at least one this.ws.send( call site")
-        allowed_actions = ("change_symbol", "change_timeframe", "load_history", "order:new", "order:risk_preview")
-        # submitOrder() builds its payload as a separate `payload`
-        # variable (so risk_confirmed can be added conditionally) rather
-        # than inlining the object literal directly in the send() call
-        # — look up that one real variable's own definition (bounded to
-        # its own "{...}" body) instead of the call-site text itself.
-        payload_def = ""
-        _pd_start = src.find("const payload = {")
-        if _pd_start != -1:
-            _pd_end = src.find("};", _pd_start)
-            payload_def = src[_pd_start:_pd_end]
-        for site in send_sites:
-            is_ping = site == '\'{"action":"ping"}\''
-            is_authorized_json = any(f"action: '{a}'" in site for a in allowed_actions)
-            if not is_ping and not is_authorized_json and site == "JSON.stringify(payload)":
-                is_authorized_json = any(f"action: '{a}'" in payload_def for a in allowed_actions)
-            self.assertTrue(
-                is_ping or is_authorized_json,
-                f"unexpected this.ws.send(...) payload shape, not ping nor an authorized action: {site}",
-            )
 
     def test_no_other_action_payloads(self):
         # PRE-VPS-POLISH-03C.2.4A — change_timeframe (selectTimeframe()/
@@ -310,21 +333,28 @@ class NoOtherNewWsActionsTests(SimpleTestCase):
         # PRE-VPS-POLISH-03C.2.5A — order:new/order:risk_preview
         # (submitOrder()/requestRiskPreview()) are now, likewise,
         # authorized real Mobile actions — removed from this forbidden
+        # list for that reason alone.
+        # PRE-VPS-POLISH-03C.2.6A — order:close (closePosition()),
+        # order:pending:cancel (cancelPendingOrder()), and
+        # get_closed_trades (requestClosedTrades()) are now, likewise,
+        # authorized real Mobile actions — removed from this forbidden
         # list for that reason alone. Every other financial/order/risk
         # action remains fully forbidden, unweakened.
         src = _session_source()
         for forbidden in (
             "action:'get_positions'", "action: 'get_positions'",
-            "action:'get_closed_trades'", "action: 'get_closed_trades'",
-            "action:'order:close'", "action: 'order:close'",
             "action:'order:update'", "action: 'order:update'",
             "action:'order:pending:new'", "action: 'order:pending:new'",
-            "action:'order:pending:cancel'", "action: 'order:pending:cancel'",
+            "action:'order:pending:update'", "action: 'order:pending:update'",
         ):
             self.assertNotIn(forbidden, src)
-        # The 2 actions this sub-block actually authorizes must each be
-        # real and present — not simply absent-of-prohibition.
-        for authorized in ("action: 'order:new'", "action: 'order:risk_preview'"):
+        # The 5 actions currently authorized must each be real and
+        # present — not simply absent-of-prohibition.
+        for authorized in (
+            "action: 'order:new'", "action: 'order:risk_preview'",
+            "action: 'order:close'", "action: 'order:pending:cancel'",
+            "action: 'get_closed_trades'",
+        ):
             self.assertIn(authorized, src)
 
     def test_no_chart_or_history_handling(self):

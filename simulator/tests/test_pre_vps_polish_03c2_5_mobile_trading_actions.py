@@ -113,8 +113,23 @@ class SubmitOrderSourceContractTests(SimpleTestCase):
         self.assertNotIn("account:", body)
 
     def test_sending_guard_present(self):
+        # OLD CONTRACT: the exact literal was
+        # "if (this._orderSending) return;".
+        # NEW CONTRACT (03C.2.6): submitOrder() also refuses while a
+        # close is in flight (mutual exclusion with closePosition(), so
+        # a generic 'error' response is never attributed to the wrong
+        # flow — see mobile_session.js's own comment on _closeSending).
+        # Updated to the real literal. The semantic behavior this guard
+        # produces (order:new blocked while close is in flight, close
+        # blocked while order:new is in flight, double-submit blocked)
+        # is proven via real execution by
+        # test_no_double_submit_while_sending (this file) and
+        # test_close_blocked_while_order_new_in_flight/
+        # test_order_new_blocked_while_close_in_flight
+        # (test_pre_vps_polish_03c2_6_mobile_positions.py) — not
+        # duplicated here.
         body = self._submit_order_body()
-        self.assertIn("if (this._orderSending) return;", body)
+        self.assertIn("if (this._orderSending || this._closeSending) return;", body)
 
     def test_requires_open_socket_and_current_symbol(self):
         body = self._submit_order_body()
@@ -153,9 +168,26 @@ class ConfirmCancelRiskWarningSourceContractTests(SimpleTestCase):
         self.assertIn("if (intent.symbol !== this.currentSymbol) return;", body)
 
     def test_cancel_only_clears_pending_state(self):
+        # OLD CONTRACT: the slice end-marker ("\n  }\n\n  // Identical
+        # construction") assumed cancelRiskWarning() was immediately
+        # followed by wsUrl() — a locator tied to the method's physical
+        # position, not its identity.
+        # NEW CONTRACT (03C.2.6): closePosition()/cancelPendingOrder()/
+        # requestClosedTrades() were inserted between them (all of which
+        # legitimately call this.ws.send()), so the old slice silently
+        # swallowed their bodies too and this test started failing on
+        # THEIR sends, not cancelRiskWarning()'s own. Rebounded to
+        # cancelRiskWarning()'s own real end (closePosition()'s
+        # preceding doc comment, a stable structural marker) — same
+        # functional assertions, now measuring the right method. The
+        # equivalent real-execution proof (cancelRiskWarning() actually
+        # sends nothing and clears state) already exists and passes as
+        # RiskWarningConfirmCancelRealExecutionTests.
+        # test_cancel_clears_pending_without_resending, not duplicated
+        # here.
         src = _session_source()
         start = src.index("cancelRiskWarning() {")
-        end = src.index("\n  }\n\n  // Identical construction", start)
+        end = src.index("\n  }\n\n  // PRE-VPS-POLISH-03C.2.6 — the one Mobile position-close authority.", start)
         body = src[start:end]
         self.assertIn("this._pendingRiskOrder = null;", body)
         self.assertNotIn("this.ws.send(", body)
@@ -196,12 +228,69 @@ class HandleMsgTradingBranchesSourceContractTests(SimpleTestCase):
         self.assertIn("this._pendingRiskOrder = this._lastOrderIntent;", snippet)
         self.assertIn("this.onRiskWarning(msg)", snippet)
 
-    def test_error_guarded_by_sending_flag(self):
-        body = self._handle_msg_body()
-        idx = body.index("msg.type === 'error'")
-        snippet = body[idx:idx + 160]
-        self.assertIn("if (this._orderSending)", snippet)
-        self.assertIn("this.onTradingError(msg)", snippet)
+    def test_error_routes_to_trading_error_only_during_order_new(self):
+        # OLD CONTRACT: a 160-char static snippet after the 'error'
+        # branch's own `if` was enough to prove _orderSending gated
+        # onTradingError — assumed 'error' only ever correlated with an
+        # in-flight order:new.
+        # NEW CONTRACT (03C.2.6): order:close now ALSO produces this
+        # same generic 'error' type, routed to a DIFFERENT callback
+        # (onCloseError) via a SEPARATE guard (_closeSending) checked
+        # FIRST in the real source — which simply pushed the
+        # _orderSending text past the old snippet's 160-char window.
+        # Verified here via real execution (not a static snippet) across
+        # all three real scenarios: protection preserved and sharpened —
+        # an order:new error still reaches onTradingError (and only
+        # that), a close error never does, and a message with neither
+        # action in flight calls neither financial callback.
+        if not NODE_AVAILABLE:
+            self.skipTest("node not available on PATH")
+        core_src = _core_source()
+        session_src = _session_source()
+        driver = f"""
+        global.window = global;
+        global.localStorage = {{}};
+        global.document = {{ getElementById: () => null }};
+        class FakeWS {{
+          constructor(url){{ this.url = url; this.readyState = 1; this.sent = []; }}
+          send(payload){{ this.sent.push(payload); }}
+          close(){{}}
+        }}
+        FakeWS.OPEN = 1; FakeWS.CONNECTING = 0; FakeWS.CLOSED = 3;
+        global.WebSocket = FakeWS;
+        {core_src}
+        {session_src}
+        let tradingErr = null, closeErr = null;
+        const s = new MobileTradingSession(null, null, null, ['EUR/USD'], null, null, null, null, null, null, null, null, (m) => {{ tradingErr = m; }}, null, null, null, (m) => {{ closeErr = m; }});
+        s.ws = new WebSocket('x');
+        s.selectSymbol('EUR/USD');
+        s.submitOrder({{ side: 'buy', qty: 1 }});
+        s._handleMsg({{ type: 'error', code: 'insufficient_margin', message: 'm1' }});
+        const afterOrderErr = {{ tradingErr, closeErr, orderSending: s._orderSending }};
+        tradingErr = null; closeErr = null;
+        s.closePosition(42);
+        s._handleMsg({{ type: 'error', code: 'price_unavailable', message: 'm2' }});
+        const afterCloseErr = {{ tradingErr, closeErr, closeSending: s._closeSending }};
+        tradingErr = null; closeErr = null;
+        s._handleMsg({{ type: 'error', code: 'invalid_symbol', message: 'm3' }});
+        const afterNeither = {{ tradingErr, closeErr }};
+        console.log(JSON.stringify({{ afterOrderErr, afterCloseErr, afterNeither }}));
+        """
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "harness.js"
+            path.write_text(driver, encoding="utf-8")
+            result = subprocess.run(["node", str(path)], capture_output=True, text=True, timeout=15)
+            if result.returncode != 0:
+                self.fail(f"node harness failed:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}")
+            out = json.loads(result.stdout.strip().splitlines()[-1])
+        self.assertIsNotNone(out["afterOrderErr"]["tradingErr"])
+        self.assertIsNone(out["afterOrderErr"]["closeErr"])
+        self.assertFalse(out["afterOrderErr"]["orderSending"])
+        self.assertIsNotNone(out["afterCloseErr"]["closeErr"])
+        self.assertIsNone(out["afterCloseErr"]["tradingErr"])
+        self.assertFalse(out["afterCloseErr"]["closeSending"])
+        self.assertIsNone(out["afterNeither"]["tradingErr"])
+        self.assertIsNone(out["afterNeither"]["closeErr"])
 
     def test_risk_preview_not_gated_by_sending_flag(self):
         body = self._handle_msg_body()
@@ -250,12 +339,29 @@ class NoFinancialEngineDuplicationTests(SimpleTestCase):
         self.assertNotIn("let positionsCache", src)
         self.assertNotIn("const positionsCache", src)
 
-    def test_no_pending_or_update_or_close_actions(self):
+    def test_no_pending_create_edit_or_position_update_actions(self):
+        # OLD CONTRACT (03C.2.5): order:close/order:pending:cancel were
+        # still fully prohibited (close/cancel didn't exist yet).
+        # NEW CONTRACT (03C.2.6): order:close (closePosition()) and
+        # order:pending:cancel (cancelPendingOrder()) are now real,
+        # authorized Mobile actions — moved to the positive-assertion
+        # list for that reason. WHY preserved: order:pending:new/
+        # order:pending:update (pending-order creation/edit) and
+        # order:update (position SL/TP editing) remain fully forbidden,
+        # unweakened — 03C.2.6 is display+cancel-only for pending
+        # orders and never edits an open position's SL/TP.
+        # "order:update" is checked as the precise action-payload pattern
+        # (action:'...'), not the bare word: this file's own 03C.2.6
+        # documentation comment legitimately names "order:update" by
+        # word to describe its absence, which a bare substring match
+        # would misread as the action itself.
         src = _session_source()
-        for forbidden in (
-            "order:pending:new", "order:pending:cancel", "order:update", "order:close",
-        ):
+        for forbidden in ("order:pending:new", "order:pending:update"):
             self.assertNotIn(forbidden, src)
+        for forbidden in ("action:'order:update'", "action: 'order:update'"):
+            self.assertNotIn(forbidden, src)
+        for authorized in ("action: 'order:close'", "action: 'order:pending:cancel'"):
+            self.assertIn(authorized, src)
 
     def test_no_fetch_or_xhr_introduced(self):
         src = _session_source()
@@ -303,10 +409,17 @@ class MobileTicketHtmlWiringTests(TestCase):
         for forbidden in ("order:pending:new", "Limit", "Stop", "trigPrice", "ordType"):
             self.assertNotIn(forbidden, html)
 
-    def test_no_positions_pending_closed_ui_yet(self):
+    def test_positions_pending_closed_ui_authorized(self):
+        # OLD CONTRACT (03C.2.5): mobPositions/mobPendingOrders/
+        # mobClosedTrades were still fully prohibited — positions/
+        # pending/closed UI did not exist yet.
+        # NEW CONTRACT (03C.2.6): all three ARE now real, authorized
+        # Mobile UI sections — rewritten as a positive assertion of the
+        # real pane ids. WHY preserved: still fails if any of the three
+        # is silently removed.
         html = self._html()
-        for forbidden in ("mobPositions", "mobPendingOrders", "mobClosedTrades"):
-            self.assertNotIn(forbidden, html)
+        for authorized in ("mobPositionsPane", "mobPendingPane", "mobClosedPane"):
+            self.assertIn(authorized, html)
 
 
 # ─────────────────────────────────────────────────────────────────────────
