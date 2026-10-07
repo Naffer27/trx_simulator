@@ -200,9 +200,17 @@ class MobileChartHtmlWiringTests(TestCase):
         html = self._html()
         self.assertLess(html.index("mobile_chart"), html.index("new MobileTradingSession("))
 
-    def test_timeframe_catalog_exactly_six_no_4h(self):
+    # PRE-VPS-POLISH-03C.3.TF-01A — OLD CONTRACT: the public catalog
+    # was exactly 6 entries including "1s". NEW CONTRACT (TF-01,
+    # separately authorized): "1s" is retired from the public UI —
+    # the catalog is now exactly the 5 entries 1m/5m/15m/1h/1d. WHY
+    # preserved: still fails if 4h (or any other not-yet-supported
+    # timeframe) is ever accidentally enabled, and now ALSO fails if
+    # "1s" is ever reintroduced into this specific public array.
+    def test_timeframe_catalog_exactly_five_no_1s_no_4h(self):
         html = self._html()
-        self.assertIn("const MOBILE_TIMEFRAMES = ['1s','1m','5m','15m','1h','1d'];", html)
+        self.assertIn("const MOBILE_TIMEFRAMES = ['1m','5m','15m','1h','1d'];", html)
+        self.assertNotIn("['1s','1m','5m','15m','1h','1d']", html)
         self.assertNotIn("'4h'", html)
         self.assertNotIn('"4h"', html)
 
@@ -275,9 +283,17 @@ class SelectTimeframeSourceContractTests(SimpleTestCase):
         body = self._body()
         self.assertIn("MOBILE_TIMEFRAMES.includes(tf)", body)
 
-    def test_catalog_exactly_six_no_4h(self):
+    # PRE-VPS-POLISH-03C.3.TF-01A — OLD CONTRACT: mobile_session.js's
+    # own client-side validation catalog was exactly 6 entries
+    # including "1s". NEW CONTRACT (TF-01, separately authorized):
+    # narrowed to the same 5-entry public catalog mobile.html now
+    # renders — one single contractual authority, not two. WHY
+    # preserved: still fails if 4h is ever accidentally enabled, and
+    # now ALSO fails if "1s" is ever reintroduced into this guard.
+    def test_catalog_exactly_five_no_1s_no_4h(self):
         src = _session_source()
-        self.assertIn("const MOBILE_TIMEFRAMES = ['1s', '1m', '5m', '15m', '1h', '1d'];", src)
+        self.assertIn("const MOBILE_TIMEFRAMES = ['1m', '5m', '15m', '1h', '1d'];", src)
+        self.assertNotIn("['1s', '1m', '5m', '15m', '1h', '1d']", src)
         self.assertNotIn("'4h'", src)
         self.assertNotIn('"4h"', src)
 
@@ -883,8 +899,33 @@ class DesktopAndBackendZeroDiffTests(SimpleTestCase):
         result = subprocess.run(["git", "diff", "--quiet", "--", path])
         self.assertEqual(result.returncode, 0, f"{path} has a diff against HEAD, expected none")
 
-    def test_desktop_html_zero_diff(self):
-        self._assert_zero_diff("simulator/templates/simulator/trade/desktop.html")
+    # PRE-VPS-POLISH-03C.3.TF-01A — OLD CONTRACT: this suite's own
+    # block never touched desktop.html, so a blanket zero-diff was the
+    # right check. NEW CONTRACT: TF-01 (a later, separately-authorized
+    # block) legitimately removed the "1s" timeframe option from
+    # desktop.html's 3 selector entries (public catalog retired 1s).
+    # WHY preserved: still fails if desktop.html's diff ever touches
+    # anything beyond those 3 removals — every removed line must
+    # mention "1s", and no order/position/SL-TP/margin/commission code
+    # may appear anywhere in the diff.
+    def test_desktop_html_diff_scoped_to_tf01_1s_removal_only(self):
+        result = subprocess.run(
+            ["git", "diff", "--", "simulator/templates/simulator/trade/desktop.html"],
+            capture_output=True, text=True,
+        )
+        diff = result.stdout
+        removed = [l for l in diff.splitlines() if l.startswith("-") and not l.startswith("---")]
+        for line in removed:
+            self.assertIn("1s", line, line)
+        for forbidden in (
+            "sendOrder", "closePosition", "commission", "margin_used", "BrokerLedger",
+            "computeRawPnL", "risk_preview", "'order:new'", "'order:close'",
+        ):
+            self.assertNotIn(forbidden, diff, forbidden)
+        with open("simulator/templates/simulator/trade/desktop.html", encoding="utf-8") as f:
+            src = f.read()
+        self.assertNotIn('value="1s"', src)
+        self.assertNotIn('data-tf="1s"', src)
 
     def test_shell_html_zero_diff(self):
         self._assert_zero_diff("simulator/templates/simulator/trade/shell.html")
@@ -895,8 +936,29 @@ class DesktopAndBackendZeroDiffTests(SimpleTestCase):
     def test_views_py_zero_diff(self):
         self._assert_zero_diff("simulator/views.py")
 
-    def test_consumers_py_zero_diff(self):
-        self._assert_zero_diff("simulator/consumers.py")
+    # PRE-VPS-POLISH-03C.3.TF-01A — OLD CONTRACT: this suite's own
+    # block never touched consumers.py, so a blanket zero-diff was the
+    # right check. NEW CONTRACT: TF-01 (a later, separately-authorized
+    # block) legitimately rewrote tf_seconds()/normalize_tf() to be
+    # fail-closed and added explicit invalid_timeframe rejection to
+    # change_timeframe/load_history. WHY preserved: still fails if
+    # that diff ever touches order/position/P&L/margin/commission/
+    # ledger code, or if the fail-closed contract itself regresses.
+    def test_consumers_py_diff_scoped_to_tf01_timeframe_helpers_only(self):
+        with open("simulator/consumers.py", encoding="utf-8") as f:
+            src = f.read()
+        self.assertIn("_TF_ALIASES", src)
+        self.assertIn("_TF_SECONDS", src)
+        self.assertIn('"code": "invalid_timeframe"', src)
+        result = subprocess.run(["git", "diff", "--", "simulator/consumers.py"], capture_output=True, text=True)
+        diff = result.stdout
+        for forbidden in (
+            "commission_for", "calculate_spread_revenue", "broker_price(",
+            "BrokerLedger", "LedgerEntry", "pnl_engine", "margin_used",
+            "_check_tp_sl", "_check_pending_triggers", "_order_new(", "_order_close(",
+            "_db_open_position", "_db_close_position",
+        ):
+            self.assertNotIn(forbidden, diff, forbidden)
 
     def test_routing_py_zero_diff(self):
         self._assert_zero_diff("simulator/routing.py")

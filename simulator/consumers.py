@@ -29,22 +29,43 @@ _KLINE_SYMBOLS   = kline_symbols()   # symbols with exchange kline stream (Binan
 _ALLOWED_SYMBOLS = allowed_symbols() # whitelist: rejects unknown symbols at the WS boundary
 
 # ---------------- TF helpers ----------------
-def tf_seconds(tf: str) -> int:
-    s = str(tf).strip().lower()
-    alias = {
-        "1": "1s","1sec":"1s","1second":"1s","1s":"1s",
-        "60":"1m","60s":"1m","m1":"1m","1m":"1m","1min":"1m",
-        "300":"5m","m5":"5m","5m":"5m",
-        "900":"15m","m15":"15m","15m":"15m",
-        "3600":"1h","h1":"1h","1h":"1h",
-        "86400":"1d","d1":"1d","1d":"1d",
-    }
-    s = alias.get(s, s)
-    return {"1s":1,"1m":60,"5m":300,"15m":900,"1h":3600,"1d":86400}.get(s, 1)
+# PRE-VPS-POLISH-03C.3.TF-01 — fail-closed timeframe contract. Both
+# functions below return None for anything not in the internal
+# catalog — NEITHER EVER silently remaps an unrecognized timeframe to
+# any other bucket (not even "1s", the historical bug this block
+# fixes: a typo'd or not-yet-supported value like "4h" used to resolve
+# to tf_seconds()==1, i.e. silently become 1-second candles). Callers
+# that accept a timeframe from an incoming WS message MUST check for
+# None and reject the request explicitly (see receive()'s
+# change_timeframe/load_history branches) — never use a None result as
+# a timeframe. "1s" itself remains a fully valid INTERNAL value (real,
+# tested, end-to-end support — see test_fix05b1_real_history_
+# integrity.py / test_fix05b2_massive_history.py); only the PUBLIC UI
+# (mobile.html/desktop.html) stops offering it as of this block.
+_TF_ALIASES = {
+    "1": "1s", "1sec": "1s", "1second": "1s", "1s": "1s",
+    "60": "1m", "60s": "1m", "m1": "1m", "1m": "1m", "1min": "1m",
+    "300": "5m", "m5": "5m", "5m": "5m",
+    "900": "15m", "m15": "15m", "15m": "15m",
+    "3600": "1h", "h1": "1h", "1h": "1h",
+    "86400": "1d", "d1": "1d", "1d": "1d",
+}
+_TF_SECONDS = {"1s": 1, "1m": 60, "5m": 300, "15m": 900, "1h": 3600, "1d": 86400}
 
-def normalize_tf(tf: str) -> str:
-    rev = {1:"1s",60:"1m",300:"5m",900:"15m",3600:"1h",86400:"1d"}
-    return rev.get(tf_seconds(tf), "1s")
+def normalize_tf(tf) -> "str | None":
+    """Canonical internal timeframe string for any recognized alias of
+    it, or None if `tf` is not recognized at all. Fail-closed: never
+    returns anything other than the exact bucket the input actually
+    aliases to."""
+    return _TF_ALIASES.get(str(tf).strip().lower())
+
+def tf_seconds(tf) -> "int | None":
+    """Seconds for an already-canonical internal timeframe string
+    (every call site in this file passes a value that has already
+    been through normalize_tf() — this is defense-in-depth, not the
+    primary validation point). None for anything not in _TF_SECONDS —
+    same fail-closed contract as normalize_tf(), never a default."""
+    return _TF_SECONDS.get(str(tf).strip().lower())
 
 # ---------------- Símbolos / formatos ----------------
 # Thin wrappers — all instrument parameters come from the symbol registry.
@@ -1112,7 +1133,13 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
         # --- Estado inicial (memoria) ---
         self.symbol = "EUR/USD"
-        self.timeframe = normalize_tf(q_tf_raw or "1m")
+        # PRE-VPS-POLISH-03C.3.TF-01 — fail-closed: an invalid/garbage
+        # ?tf= querystring value is simply ignored (same effect as it
+        # being absent — falls back to the "1m" bootstrap default
+        # below), never silently turned into "1s" or any other bucket
+        # via normalize_tf()'s old built-in fallback. Zero behavior
+        # change for every currently-valid querystring value.
+        self.timeframe = (q_tf_raw and normalize_tf(q_tf_raw)) or "1m"
         self._price_state = {}   # mid price por símbolo
         self._bid_state   = {}   # bid (sell/close-buy) por símbolo
         self._ask_state   = {}   # ask (buy/close-sell) por símbolo
@@ -1270,7 +1297,16 @@ class TradingConsumer(AsyncWebsocketConsumer):
             await self._refresh_and_send_positions()
 
         elif act == "change_timeframe":
+            # PRE-VPS-POLISH-03C.3.TF-01 — fail-closed, mirrors the
+            # existing change_symbol rejection pattern immediately
+            # above (invalid_symbol/simbolo_no_permitido): an
+            # unrecognized timeframe is rejected explicitly and
+            # self.timeframe is left untouched — never silently
+            # remapped to "1s" or any other bucket.
             tf = normalize_tf(data.get("timeframe", self.timeframe))
+            if tf is None:
+                await self.send_json({"type": "error", "code": "invalid_timeframe", "message": "timeframe_no_permitido"})
+                return
             self.timeframe = tf
             self._reset_agg(self.symbol)
             self._reset_trade_agg(self.symbol)
@@ -1283,7 +1319,13 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
         elif act == "load_history":
             sym = data.get("symbol", self.symbol)
-            tf  = normalize_tf(data.get("timeframe", self.timeframe))
+            # PRE-VPS-POLISH-03C.3.TF-01 — same fail-closed rejection
+            # as change_timeframe above: an unrecognized timeframe is
+            # rejected explicitly, never silently remapped.
+            tf = normalize_tf(data.get("timeframe", self.timeframe))
+            if tf is None:
+                await self.send_json({"type": "error", "code": "invalid_timeframe", "message": "timeframe_no_permitido"})
+                return
             self._history_generation += 1
             hist, cursor = await self.generate_history_first_page(sym, tf, bars=240)
             await self._send_history_or_unavailable(sym, tf, hist, phase=("initial" if cursor is not None else "complete"))

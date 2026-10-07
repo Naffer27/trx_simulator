@@ -65,7 +65,16 @@ let mobileGlobalProvider = localStorage.provider || 'sim';
 // remains the single source for that mapping; this list exists only
 // because tfToSec() has a silent ??60 fallback and can't itself reject
 // an invalid timeframe.
-const MOBILE_TIMEFRAMES = ['1s', '1m', '5m', '15m', '1h', '1d'];
+//
+// PRE-VPS-POLISH-03C.3.TF-01 — narrowed to the current PUBLIC catalog
+// (1s retired from the UI; mobile.html's own MOBILE_TIMEFRAMES was
+// narrowed to this exact same set — one contractual authority, not two
+// incompatible catalogs). This is a client-side input-validation list
+// only, not a capability flag: the backend's own tf_seconds()/
+// normalize_tf() (consumers.py) still fully support "1s" internally
+// and remain untouched as a capability — nothing here ever sends "1s"
+// anymore simply because nothing in the UI offers it.
+const MOBILE_TIMEFRAMES = ['1m', '5m', '15m', '1h', '1d'];
 
 class MobileTradingSession {
   constructor(onStatusChange, onAccount, onQuote, allowedSymbols, onHistory, onCandleNew, onCandleUpdate, onVolumeUpdate, onRiskPreview, onRiskWarning, onOrderAck, onOrderRejected, onTradingError, onPositions, onPendingOrders, onOrderClose, onCloseError, onClosedTrades, onPendingOrderCancelled, onPendingCancelError) {

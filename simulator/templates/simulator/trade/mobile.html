@@ -531,10 +531,25 @@ window.__TRADE_CONFIG__ = {
   function onCandleUpdate(bar){ mobileChart.updateLastCandle(bar); }
   function onVolumeUpdate(point){ mobileChart.updateVolume(point); }
 
-  // PRE-VPS-POLISH-03C.2.4 — the real backend timeframe catalog
-  // (consumers.py's tf_seconds() keys — no four-hour entry). Default
-  // 15m, matching MobileTradingSession's own currentTF default.
-  const MOBILE_TIMEFRAMES = ['1s','1m','5m','15m','1h','1d'];
+  // PRE-VPS-POLISH-03C.3.TF-01 — public catalog, provisional (1m/5m/
+  // 15m/1h/1d — 4h/1w/1mo land in their own later, separately-
+  // authorized blocks per the TF-AUDIT). "1s" is retired from this
+  // UI only — the backend/consumer still fully supports it internally
+  // (tf_seconds()/normalize_tf() in consumers.py, untouched as a
+  // capability), and mobile_session.js's own MOBILE_TIMEFRAMES
+  // validation array was narrowed to match this exact same public set
+  // (single contractual authority between the two files — no second,
+  // incompatible catalog). Default stays 15m, matching
+  // MobileTradingSession's own currentTF default.
+  //
+  // Display label vs internal value, explicit (TF-AUDIT Section 14):
+  // MOBILE_TIMEFRAMES holds the real internal values this sends to
+  // selectTimeframe()/the backend unchanged; MOBILE_TF_LABELS is
+  // presentation-only text, never sent anywhere — 1h/1d display as
+  // 1H/1D while the WS payload still carries the lowercase internal
+  // string the backend's tf_seconds()/normalize_tf() already expect.
+  const MOBILE_TIMEFRAMES = ['1m','5m','15m','1h','1d'];
+  const MOBILE_TF_LABELS = {'1m':'1m','5m':'5m','15m':'15m','1h':'1H','1d':'1D'};
   const elTf = document.getElementById('mobTfSelector');
 
   function renderTfSelector(selectedTf){
@@ -542,7 +557,7 @@ window.__TRADE_CONFIG__ = {
     MOBILE_TIMEFRAMES.forEach(function(tf){
       const item = document.createElement('div');
       item.className = 'mob-tf-item' + (tf === selectedTf ? ' is-selected' : '');
-      item.textContent = tf;
+      item.textContent = MOBILE_TF_LABELS[tf] || tf;
       item.addEventListener('click', function(){
         mobileChart.clear();
         session.selectTimeframe(tf);

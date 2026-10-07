@@ -441,27 +441,51 @@ class NoFunctionalChangeTests(SimpleTestCase):
     # is appended, or if the new script does anything beyond toggling
     # [hidden]/`.is-active` — proving it is presentation-only, never a
     # second transport/financial layer.
-    def test_extra_scripts_orchestrator_preserved_new_code_is_navigation_only(self):
+    # PRE-VPS-POLISH-03C.3.TF-01A — OLD CONTRACT: the entire
+    # orchestrator <script> had to be byte-identical to HEAD (03C.3.2A's
+    # own contract). NEW CONTRACT: TF-01 (a later, separately-
+    # authorized block) legitimately rewrote exactly the
+    # MOBILE_TIMEFRAMES/renderTfSelector section inside that same
+    # script (public catalog narrowed to 5 entries + display-label
+    # split) — everything BEFORE and AFTER that section must still be
+    # byte-identical to HEAD, and the 03C.3.2 navigation controller
+    # must still be the one and only script appended after the
+    # orchestrator, still presentation-only. WHY preserved: still
+    # fails if the orchestrator is rewritten anywhere outside the
+    # TF-01-authorized section, if a second script is appended, or if
+    # the navigation controller stops being presentation-only.
+    def test_extra_scripts_orchestrator_preserved_outside_tf01_section_new_code_is_navigation_only(self):
+        PREFIX_END = "function onVolumeUpdate(point){ mobileChart.updateVolume(point); }"
+        SUFFIX_START = "// PRE-VPS-POLISH-03C.2.5 — order ticket foundation."
+
         old_main_script = _old_main_script(self.old)
-        self.assertIn(old_main_script, self.new)
+        old_prefix = old_main_script[: old_main_script.index(PREFIX_END) + len(PREFIX_END)]
+        old_suffix = old_main_script[old_main_script.index(SUFFIX_START):]
 
-        tail = self.new[self.new.index(old_main_script) + len(old_main_script):]
+        new_main_script_start = self.new.index("<script>\n(function(){")
+        new_main_script_end = self.new.index("\n})();\n</script>", new_main_script_start) + len("\n})();\n</script>")
+        new_main_script = self.new[new_main_script_start:new_main_script_end]
+        new_prefix_end = new_main_script.index(PREFIX_END) + len(PREFIX_END)
+        new_suffix_start = new_main_script.index(SUFFIX_START)
+        new_prefix = new_main_script[:new_prefix_end]
+        new_suffix = new_main_script[new_suffix_start:]
 
-        # Exactly one new script appended, and it is the 03C.3.2
-        # navigation controller — not a second orchestrator.
+        self.assertEqual(old_prefix, new_prefix)
+        self.assertEqual(old_suffix, new_suffix)
+
+        middle = new_main_script[new_prefix_end:new_suffix_start]
+        self.assertIn("const MOBILE_TIMEFRAMES = ['1m','5m','15m','1h','1d'];", middle)
+        self.assertIn("MOBILE_TF_LABELS", middle)
+        self.assertNotIn("'1s'", middle)
+
+        tail = self.new[self.new.index(new_main_script) + len(new_main_script):]
         self.assertEqual(tail.count("<script>"), 1)
         self.assertIn("PRE-VPS-POLISH-03C.3.2", tail)
-
-        # Its real, minimal contract: operates on .mob-view/.mob-
-        # navitem, toggles hidden/.is-active, defaults to trade.
         self.assertIn("querySelectorAll('.mob-view')", tail)
         self.assertIn("querySelectorAll('.mob-navitem')", tail)
         self.assertIn("v.hidden = (v.getAttribute('data-mobile-view') !== name);", tail)
         self.assertIn("b.classList.toggle('is-active', b.getAttribute('data-target') === name);", tail)
         self.assertIn("showView('trade');", tail)
-
-        # Presentation-only — no transport/financial contract of any
-        # kind lives in the new code.
         for forbidden in [
             "new WebSocket(", ".send(", "order:new", "order:close",
             "order:risk_preview", "order:pending", "load_history",
@@ -471,12 +495,15 @@ class NoFunctionalChangeTests(SimpleTestCase):
         ]:
             self.assertNotIn(forbidden, tail)
 
-    def test_only_style_block_differs(self):
-        self.assertNotEqual(
-            _style_block(self.old),
-            _style_block(self.new),
-            "03C.3.1 should have actually changed the style block",
-        )
+    # PRE-VPS-POLISH-03C.3.TF-01A — OLD CONTRACT: HEAD's style block
+    # had to differ from the working tree's (true only in 03C.3.1's
+    # own commit window, before its style changes were committed to
+    # HEAD). NEW CONTRACT: HEAD now already includes every style
+    # change through 03C.3.3, and TF-01 is JS/HTML-catalog-only — the
+    # correct, stronger assertion today is that the style block is
+    # BYTE-IDENTICAL to HEAD (proving TF-01 really never touched CSS).
+    def test_style_block_untouched_by_tf01(self):
+        self.assertEqual(_style_block(self.old), _style_block(self.new))
 
     def test_no_new_websocket_or_action_strings_introduced(self):
         for forbidden in [
@@ -518,8 +545,26 @@ class ProtectedFilesZeroDiffTests(SimpleTestCase):
         result = subprocess.run(["git", "diff", "--quiet", "--", path])
         self.assertEqual(result.returncode, 0, f"{path} has a diff against HEAD, expected none")
 
-    def test_mobile_session_js_zero_diff(self):
-        self._assert_zero_diff("simulator/static/simulator/trade/mobile_session.js")
+    # PRE-VPS-POLISH-03C.3.TF-01A — OLD CONTRACT: blanket zero-diff.
+    # NEW CONTRACT: TF-01 (separately authorized) narrowed
+    # MOBILE_TIMEFRAMES to the 5-entry public catalog. WHY preserved:
+    # still fails if the diff ever touches order/position/risk/close
+    # wiring, or if the catalog itself drifts from the authorized set.
+    def test_mobile_session_js_diff_scoped_to_tf01_timeframe_catalog_only(self):
+        result = subprocess.run(
+            ["git", "diff", "--", "simulator/static/simulator/trade/mobile_session.js"],
+            capture_output=True, text=True,
+        )
+        diff = result.stdout
+        self.assertIn("MOBILE_TIMEFRAMES", diff)
+        for forbidden in (
+            "submitOrder(", "closePosition(", "cancelPendingOrder(", "confirmRiskWarning(",
+            "requestRiskPreview", "new WebSocket(", "_handleMsg(msg)",
+        ):
+            self.assertNotIn(forbidden, diff, forbidden)
+        with open("simulator/static/simulator/trade/mobile_session.js", encoding="utf-8") as f:
+            src = f.read()
+        self.assertIn("const MOBILE_TIMEFRAMES = ['1m', '5m', '15m', '1h', '1d'];", src)
 
     def test_mobile_chart_js_zero_diff(self):
         self._assert_zero_diff("simulator/static/simulator/trade/mobile_chart.js")
@@ -527,8 +572,28 @@ class ProtectedFilesZeroDiffTests(SimpleTestCase):
     def test_trading_core_js_zero_diff(self):
         self._assert_zero_diff("simulator/static/simulator/trade/trading_core.js")
 
-    def test_desktop_html_zero_diff(self):
-        self._assert_zero_diff("simulator/templates/simulator/trade/desktop.html")
+    # PRE-VPS-POLISH-03C.3.TF-01A — OLD CONTRACT: blanket zero-diff.
+    # NEW CONTRACT: TF-01 removed "1s" from desktop.html's 3 selector
+    # entries. WHY preserved: still fails if the diff touches anything
+    # beyond those removals.
+    def test_desktop_html_diff_scoped_to_tf01_1s_removal_only(self):
+        result = subprocess.run(
+            ["git", "diff", "--", "simulator/templates/simulator/trade/desktop.html"],
+            capture_output=True, text=True,
+        )
+        diff = result.stdout
+        removed = [l for l in diff.splitlines() if l.startswith("-") and not l.startswith("---")]
+        for line in removed:
+            self.assertIn("1s", line, line)
+        for forbidden in (
+            "sendOrder", "closePosition", "commission", "margin_used", "BrokerLedger",
+            "computeRawPnL", "risk_preview", "'order:new'", "'order:close'",
+        ):
+            self.assertNotIn(forbidden, diff, forbidden)
+        with open("simulator/templates/simulator/trade/desktop.html", encoding="utf-8") as f:
+            src = f.read()
+        self.assertNotIn('value="1s"', src)
+        self.assertNotIn('data-tf="1s"', src)
 
     def test_shell_html_zero_diff(self):
         self._assert_zero_diff("simulator/templates/simulator/trade/shell.html")
@@ -536,8 +601,26 @@ class ProtectedFilesZeroDiffTests(SimpleTestCase):
     def test_views_py_zero_diff(self):
         self._assert_zero_diff("simulator/views.py")
 
-    def test_consumers_py_zero_diff(self):
-        self._assert_zero_diff("simulator/consumers.py")
+    # PRE-VPS-POLISH-03C.3.TF-01A — OLD CONTRACT: blanket zero-diff.
+    # NEW CONTRACT: TF-01 rewrote tf_seconds()/normalize_tf() to be
+    # fail-closed and added explicit invalid_timeframe rejection. WHY
+    # preserved: still fails if that diff ever touches order/position/
+    # P&L/margin/commission/ledger code.
+    def test_consumers_py_diff_scoped_to_tf01_timeframe_helpers_only(self):
+        with open("simulator/consumers.py", encoding="utf-8") as f:
+            src = f.read()
+        self.assertIn("_TF_ALIASES", src)
+        self.assertIn("_TF_SECONDS", src)
+        self.assertIn('"code": "invalid_timeframe"', src)
+        result = subprocess.run(["git", "diff", "--", "simulator/consumers.py"], capture_output=True, text=True)
+        diff = result.stdout
+        for forbidden in (
+            "commission_for", "calculate_spread_revenue", "broker_price(",
+            "BrokerLedger", "LedgerEntry", "pnl_engine", "margin_used",
+            "_check_tp_sl", "_check_pending_triggers", "_order_new(", "_order_close(",
+            "_db_open_position", "_db_close_position",
+        ):
+            self.assertNotIn(forbidden, diff, forbidden)
 
     def test_routing_py_zero_diff(self):
         self._assert_zero_diff("simulator/routing.py")
