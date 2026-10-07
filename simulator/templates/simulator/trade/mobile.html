@@ -58,6 +58,22 @@
   .mob-tf-item.is-selected{background:rgba(0,180,216,.12);color:#00b4d8;}
   .mob-chart-wrap{width:100%;max-width:360px;background:#08091c;border-radius:8px;overflow:hidden;}
   #mobChartContainer{width:100%;height:260px;}
+  /* PRE-VPS-POLISH-03C.2.5 — order ticket foundation only; NOT the
+     final visual design. */
+  .mob-ticket{width:100%;max-width:360px;background:#08091c;border-radius:8px;padding:12px;box-sizing:border-box;display:flex;flex-direction:column;gap:10px;}
+  .mob-ticket-row{display:flex;justify-content:space-between;align-items:center;gap:10px;min-height:40px;}
+  .mob-ticket-row label{font-size:.65rem;letter-spacing:.06em;text-transform:uppercase;color:#4a5270;}
+  .mob-ticket-row input{width:140px;background:#05050a;border:1px solid rgba(255,255,255,.08);border-radius:6px;color:#c8cfe0;padding:8px;font-size:.85rem;text-align:right;}
+  .mob-ticket-buttons{display:flex;gap:10px;}
+  .mob-ticket-buttons button{flex:1;min-height:44px;border-radius:8px;font-weight:800;font-size:.85rem;border:1px solid transparent;cursor:pointer;}
+  #mobSellBtn{background:rgba(239,83,80,.1);border-color:rgba(239,83,80,.35);color:#ef5350;}
+  #mobBuyBtn{background:rgba(38,166,154,.1);border-color:rgba(38,166,154,.35);color:#26a69a;}
+  .mob-ticket-buttons button:disabled{opacity:.5;cursor:default;}
+  .mob-ticket-status{min-height:20px;font-size:.75rem;color:#4a5270;}
+  .mob-risk-panel{background:#05050a;border-radius:6px;padding:8px 10px;font-size:.75rem;color:#c8cfe0;display:flex;flex-direction:column;gap:4px;}
+  .mob-risk-confirm{background:#05050a;border:1px solid rgba(255,193,7,.35);border-radius:6px;padding:10px;font-size:.75rem;color:#c8cfe0;display:flex;flex-direction:column;gap:8px;}
+  .mob-risk-confirm-buttons{display:flex;gap:8px;}
+  .mob-risk-confirm-buttons button{flex:1;min-height:38px;border-radius:6px;font-size:.78rem;border:1px solid rgba(255,255,255,.1);background:#08091c;color:#c8cfe0;cursor:pointer;}
 </style>
 <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
 {% endblock %}
@@ -93,6 +109,38 @@
 
   <div class="mob-tf" id="mobTfSelector"></div>
   <div class="mob-chart-wrap"><div id="mobChartContainer"></div></div>
+
+  <div class="mob-ticket" id="mobTicket">
+    <div class="mob-ticket-row">
+      <label for="mobQtyInput">Volume</label>
+      <input type="number" id="mobQtyInput" step="0.01" min="0" value="0.01">
+    </div>
+    <div class="mob-ticket-row">
+      <label for="mobSlInput">SL</label>
+      <input type="number" id="mobSlInput" placeholder="—">
+    </div>
+    <div class="mob-ticket-row">
+      <label for="mobTpInput">TP</label>
+      <input type="number" id="mobTpInput" placeholder="—">
+    </div>
+    <div class="mob-ticket-buttons">
+      <button id="mobSellBtn" type="button">SELL</button>
+      <button id="mobBuyBtn" type="button">BUY</button>
+    </div>
+    <div class="mob-ticket-status" id="mobTicketStatus"></div>
+    <div class="mob-risk-panel" id="mobRiskPanel" hidden>
+      <div><span>Risk</span> <span id="mobRiskLevel">—</span></div>
+      <div><span>Margin required</span> <span id="mobRiskMargin">—</span></div>
+      <div><span>Exposure</span> <span id="mobRiskExposure">—</span></div>
+    </div>
+    <div class="mob-risk-confirm" id="mobRiskConfirm" hidden>
+      <p id="mobRiskConfirmText"></p>
+      <div class="mob-risk-confirm-buttons">
+        <button id="mobRiskCancelBtn" type="button">Cancel</button>
+        <button id="mobRiskConfirmBtn" type="button">Confirm anyway</button>
+      </div>
+    </div>
+  </div>
 </div>
 {% endblock %}
 
@@ -226,10 +274,121 @@ window.__TRADE_CONFIG__ = {
     });
   }
 
+  // PRE-VPS-POLISH-03C.2.5 — order ticket foundation. Market-only (BUY/
+  // SELL), qty/SL/TP read here and clamped via the REAL shared
+  // getLotMin()/getLotDecimals() (trading_core.js) — same architecture
+  // split as Desktop's sendActiveOrder() (UI layer clamps, then calls
+  // the session's submitOrder(), which trusts the value given with no
+  // second clamp). No price, no accountId, no margin/commission/spread/
+  // contract_size/risk computed here — session.submitOrder()/
+  // requestRiskPreview() send intention only; the backend's real
+  // responses are displayed as-is.
+  const elQty=document.getElementById('mobQtyInput');
+  const elSl=document.getElementById('mobSlInput');
+  const elTp=document.getElementById('mobTpInput');
+  const elBuyBtn=document.getElementById('mobBuyBtn');
+  const elSellBtn=document.getElementById('mobSellBtn');
+  const elTicketStatus=document.getElementById('mobTicketStatus');
+  const elRiskPanel=document.getElementById('mobRiskPanel');
+  const elRiskLevel=document.getElementById('mobRiskLevel');
+  const elRiskMargin=document.getElementById('mobRiskMargin');
+  const elRiskExposure=document.getElementById('mobRiskExposure');
+  const elRiskConfirm=document.getElementById('mobRiskConfirm');
+  const elRiskConfirmText=document.getElementById('mobRiskConfirmText');
+  const elRiskConfirmBtn=document.getElementById('mobRiskConfirmBtn');
+  const elRiskCancelBtn=document.getElementById('mobRiskCancelBtn');
+
+  function setTicketSending(sending){
+    elBuyBtn.disabled=sending;
+    elSellBtn.disabled=sending;
+  }
+
+  function readSlTp(){
+    const slV=elSl.value, tpV=elTp.value;
+    return { sl: slV!==''?Number(slV):null, tp: tpV!==''?Number(tpV):null };
+  }
+
+  function submitTicket(side){
+    if(!session.currentSymbol)return;
+    const rawQty=parseFloat(elQty.value);
+    const min=getLotMin(session.currentSymbol);
+    const qty=rawQty>=min?+rawQty.toFixed(getLotDecimals(session.currentSymbol)):min;
+    const{sl,tp}=readSlTp();
+    setTicketSending(true);
+    elTicketStatus.textContent=side==='sell'?'Enviando SELL…':'Enviando BUY…';
+    session.submitOrder({side,qty,sl,tp});
+  }
+  elBuyBtn.addEventListener('click',function(){ submitTicket('buy'); });
+  elSellBtn.addEventListener('click',function(){ submitTicket('sell'); });
+
+  elQty.addEventListener('input',function(){
+    const qty=parseFloat(elQty.value);
+    if(session.currentSymbol&&qty>0){
+      session.requestRiskPreview(session.currentSymbol,qty);
+    }else{
+      elRiskPanel.hidden=true;
+    }
+  });
+
+  // PRE-VPS-POLISH-03C.2.5 — plain passthrough of the real backend
+  // risk_preview response (consumers.py::_handle_risk_preview ->
+  // risk_engine.evaluate_position_risk()). No local risk computation,
+  // no Desktop-style instant local estimate (see 03C.2.5 preflight,
+  // Section F — that estimate depends on a contract-size global that
+  // only exists on desktop.html, not here).
+  function onRiskPreview(msg){
+    elRiskPanel.hidden=false;
+    elRiskLevel.textContent=msg.risk_level||'—';
+    elRiskMargin.textContent=msg.margin_required!=null?usd(Number(msg.margin_required)):'—';
+    elRiskExposure.textContent=msg.exposure_pct!=null?(msg.exposure_pct+'%'):'—';
+  }
+
+  // risk_warning pauses for explicit user confirmation — never executes
+  // automatically. Ticket buttons are re-enabled (setTicketSending(false))
+  // the same way Desktop's own risk_warning handling releases its order
+  // ticket buttons while the confirm modal is open.
+  function onRiskWarning(msg){
+    setTicketSending(false);
+    elTicketStatus.textContent='';
+    elRiskConfirmText.textContent='Esta operación usa '+(msg.exposure_pct!=null?msg.exposure_pct+'%':'?')+' de tu equity. ¿Confirmar igualmente?';
+    elRiskConfirm.hidden=false;
+  }
+  elRiskConfirmBtn.addEventListener('click',function(){
+    elRiskConfirm.hidden=true;
+    setTicketSending(true);
+    elTicketStatus.textContent='Enviando…';
+    session.confirmRiskWarning();
+  });
+  elRiskCancelBtn.addEventListener('click',function(){
+    elRiskConfirm.hidden=true;
+    elTicketStatus.textContent='';
+    session.cancelRiskWarning();
+  });
+
+  function onOrderAck(msg){
+    setTicketSending(false);
+    elTicketStatus.textContent=(String(msg.side||'').toLowerCase()==='sell'?'SELL':'BUY')+' ejecutado';
+  }
+  function onOrderRejected(msg){
+    setTicketSending(false);
+    elTicketStatus.textContent='Orden rechazada: '+(msg.message||msg.code||'error');
+  }
+  function onTradingError(msg){
+    setTicketSending(false);
+    elTicketStatus.textContent=msg.message||msg.code||'Error';
+  }
+  // PRE-VPS-POLISH-03C.2.5 — domain state only. MobileTradingSession
+  // already called the real replaceCanonicalPositions() before this
+  // fires; this block intentionally renders nothing yet — positions UI
+  // is explicitly out of scope for this sub-block (03C.2.5 preflight,
+  // Section Q).
+  function onPositions(items){}
+
   const session=new MobileTradingSession(
     onStatusChange, onAccount, onQuote,
     MOBILE_SYMBOLS.map(function(item){ return item.symbol; }),
-    onHistory, onCandleNew, onCandleUpdate, onVolumeUpdate
+    onHistory, onCandleNew, onCandleUpdate, onVolumeUpdate,
+    onRiskPreview, onRiskWarning, onOrderAck, onOrderRejected, onTradingError, onPositions
   );
   renderWatchlist(session.currentSymbol);
   renderTfSelector(session.currentTF);

@@ -220,9 +220,19 @@ class MobileChartHtmlWiringTests(TestCase):
         self.assertIn("mobileChart.clear();", snippet)
         self.assertIn("session.selectTimeframe(tf);", snippet)
 
-    def test_no_order_ticket_or_positions_ui_yet(self):
+    def test_order_ticket_authorized_but_no_positions_pending_closed_ui_yet(self):
+        # PRE-VPS-POLISH-03C.2.5A — the order ticket (BUY/SELL) is now
+        # the real, authorized Mobile contract (03C.2.5) — removed from
+        # this forbidden list for that reason alone. Positions/pending/
+        # closed-trades UI remain fully unauthorized, unweakened — not
+        # eliminated, exactly as instructed. "SL/TP" (the combined bare
+        # label) is also removed: 03C.2.5's own real, already-authorized
+        # documentation comment legitimately reads "qty/SL/TP" to
+        # describe the ticket's fields, which this bare substring check
+        # would otherwise misread as the UI itself — stopLoss/takeProfit
+        # (the concrete, never-used verbose names) stay forbidden.
         html = self._html()
-        for forbidden in ("BUY", "SELL", "mobPositions", "mobPendingOrders", "mobClosedTrades", "SL/TP", "stopLoss", "takeProfit"):
+        for forbidden in ("mobPositions", "mobPendingOrders", "mobClosedTrades", "stopLoss", "takeProfit"):
             self.assertNotIn(forbidden, html)
 
     # Account types 31-34
@@ -806,11 +816,25 @@ class ChartRealExecutionTests(SimpleTestCase):
 # G. No order/position/P&L UI anywhere in this block's files
 # ─────────────────────────────────────────────────────────────────────────
 class NoOutOfScopeUiTests(SimpleTestCase):
-    def test_mobile_session_no_order_or_position_actions(self):
+    def test_mobile_session_order_actions_authorized_but_no_close_update_pending(self):
+        # PRE-VPS-POLISH-03C.2.5A — order:new/order:risk_preview and
+        # 'positions'-message ingestion are now real, authorized Mobile
+        # contracts (03C.2.5) — the old blanket prohibition is replaced
+        # by a positive assertion of the new contract, plus confirmation
+        # that order:close/order:update/order:pending:new and the
+        # OUTBOUND action get_positions (never to be confused with the
+        # real 'positions' INBOUND message this file now legitimately
+        # parses) remain fully unauthorized, unweakened.
         src = _session_source()
+        for authorized in ("action: 'order:new'", "action: 'order:risk_preview'", "'positions'"):
+            self.assertIn(authorized, src)
         for forbidden in (
-            "order:new", "order:close", "order:update", "risk_preview",
-            "get_positions", "get_pending", "get_closed_trades",
+            "action:'order:close'", "action: 'order:close'",
+            "action:'order:update'", "action: 'order:update'",
+            "action:'order:pending:new'", "action: 'order:pending:new'",
+            "action:'get_positions'", "action: 'get_positions'",
+            "action:'get_pending'", "action: 'get_pending'",
+            "action:'get_closed_trades'", "action: 'get_closed_trades'",
         ):
             self.assertNotIn(forbidden, src)
 
@@ -819,9 +843,20 @@ class NoOutOfScopeUiTests(SimpleTestCase):
         for forbidden in ("order:new", "order:close", "order:update", "risk_preview"):
             self.assertNotIn(forbidden, src)
 
-    def test_mobile_html_no_buy_sell_or_sl_tp_controls(self):
+    def test_mobile_html_ticket_authorized_but_no_positions_pending_closed_ui(self):
+        # PRE-VPS-POLISH-03C.2.5A — the order ticket (BUY/SELL/qty/SL/TP)
+        # is now the real, authorized Mobile contract (03C.2.5) — the
+        # old blanket prohibition is replaced by a positive assertion of
+        # the new contract's real DOM ids, plus confirmation that
+        # positions/pending-orders/closed-trades UI remain fully
+        # unauthorized, unweakened.
         html = _html_source()
-        for forbidden in ("mobBuyBtn", "mobSellBtn", "mobSlInput", "mobTpInput"):
+        for el_id in (
+            "mobBuyBtn", "mobSellBtn", "mobQtyInput", "mobSlInput", "mobTpInput",
+            "mobTicketStatus", "mobRiskPanel",
+        ):
+            self.assertIn(f'id="{el_id}"', html)
+        for forbidden in ("mobPositions", "mobPendingOrders", "mobClosedTrades"):
             self.assertNotIn(forbidden, html)
 
 

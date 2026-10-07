@@ -116,11 +116,17 @@ class MobileTemplateWiringTests(TestCase):
 
     # 22-25. No order/trading/chart/history functionality exists yet
     def test_no_order_actions_in_mobile_html(self):
+        # PRE-VPS-POLISH-03C.2.5A — order:new/risk_preview are now
+        # authorized Mobile trading actions (03C.2.5) — removed from
+        # this forbidden list for that reason alone. order:close/
+        # order:update remain fully forbidden, unweakened (not yet
+        # authorized), and local financial computation stays forbidden
+        # too — strengthened, not weakened.
         _, html = self._html_for("STANDARD")
-        self.assertNotIn("order:new", html)
         self.assertNotIn("order:close", html)
         self.assertNotIn("order:update", html)
-        self.assertNotIn("risk_preview", html)
+        for forbidden in ("computeRiskLocal", "getContractSize", "CONTRACT_SIZE"):
+            self.assertNotIn(forbidden, html)
 
     def test_no_chart_or_history_in_mobile_html(self):
         _, html = self._html_for("STANDARD")
@@ -203,19 +209,30 @@ class MobileSessionSourceContractTests(SimpleTestCase):
         # onopen reconnect resend) and load_history (the debounced
         # _requestHistory() helper) are now, likewise, authorized real
         # Mobile actions — removed from the forbidden list for that
-        # reason alone. Every financial/order/risk action remains fully
-        # forbidden, unweakened.
+        # reason alone.
+        # PRE-VPS-POLISH-03C.2.5A — order:new (submitOrder()) and
+        # order:risk_preview (requestRiskPreview()) are now, likewise,
+        # authorized real Mobile actions — removed from the forbidden
+        # list for that reason alone (the old "action:'risk_preview'"
+        # pair never matched the real action name order:risk_preview in
+        # the first place — replaced with the correct literal below so
+        # the still-forbidden order:close/order:update stay precisely
+        # pinned). Every other financial/order/risk action remains
+        # fully forbidden, unweakened.
         src = _session_source()
         for forbidden in (
-            "action:'order:new'", "action: 'order:new'",
             "action:'order:close'", "action: 'order:close'",
             "action:'order:update'", "action: 'order:update'",
-            "action:'risk_preview'", "action: 'risk_preview'",
+            "action:'order:pending:new'", "action: 'order:pending:new'",
             "'BUY'", "'SELL'",
             "action:'get_positions'", "action: 'get_positions'",
             "action:'get_closed_trades'", "action: 'get_closed_trades'",
         ):
             self.assertNotIn(forbidden, src)
+        # The 2 actions this sub-block actually authorizes must each be
+        # real and present — not simply absent-of-prohibition.
+        for authorized in ("action: 'order:new'", "action: 'order:risk_preview'"):
+            self.assertIn(authorized, src)
 
     # 25. only the 03C.2.4-authorized chart/history messages are handled;
     # no order/position/P&L logic and no Desktop TradingPanel coupling.
@@ -231,21 +248,30 @@ class MobileSessionSourceContractTests(SimpleTestCase):
         # mobile_chart.js's job.
         for forbidden in ("LightweightCharts", "candleSeries"):
             self.assertNotIn(forbidden, src)
-        # Still-forbidden: orders, risk, positions, P&L. (Desktop's
-        # TradingPanel is referenced by name only in this file's own
-        # pre-existing, approved documentation comments describing the
-        # protocol it mirrors — never as actual coupling/inheritance —
-        # so it is intentionally not bare-word-checked here; the real
-        # "no inheritance, no shared chart/order code" contract is
-        # covered structurally by class-shape tests, not this list.)
+        # Still-forbidden: pending orders, position editing/closing. Not
+        # order:new/order:risk_preview/positions ingestion any more —
+        # PRE-VPS-POLISH-03C.2.5A: those 3 are now real, authorized
+        # Mobile message types (submitOrder()/requestRiskPreview()/
+        # positions-ingestion-via-canonical-store), removed from this
+        # forbidden list for that reason alone. (Desktop's TradingPanel
+        # is referenced by name only in this file's own pre-existing,
+        # approved documentation comments describing the protocol it
+        # mirrors — never as actual coupling/inheritance — so it is
+        # intentionally not bare-word-checked here; the real "no
+        # inheritance, no shared chart/order code" contract is covered
+        # structurally by class-shape tests, not this list.)
         for forbidden in (
-            "order:new", "order:close", "order:update", "risk_preview",
+            "order:close", "order:update", "order:pending:new", "order:pending:cancel",
             "get_positions", "get_closed_trades", "get_pending",
         ):
             self.assertNotIn(forbidden, src)
-        # The 4 messages this sub-block actually authorizes must each be
-        # real, present, and guarded — not simply absent-of-prohibition.
-        for authorized in ("'history'", "'candle_new'", "'candle_update'", "'volume_update'"):
+        # The messages this sub-block (03C.2.4) and 03C.2.5 actually
+        # authorize must each be real, present, and guarded — not simply
+        # absent-of-prohibition.
+        for authorized in (
+            "'history'", "'candle_new'", "'candle_update'", "'volume_update'",
+            "'positions'", "order:new", "order:risk_preview",
+        ):
             self.assertIn(authorized, src)
 
 

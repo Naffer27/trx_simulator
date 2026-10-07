@@ -259,23 +259,43 @@ class NoOtherNewWsActionsTests(SimpleTestCase):
         # PRE-VPS-POLISH-03C.2.4A — superseded the old "exactly 3 call
         # sites" structural count (03C.2.4 legitimately added 3 more
         # real send sites for change_timeframe/load_history). Rather
-        # than swap one brittle magic number ("3") for another ("6"),
-        # this proves the real contract semantically: every single
-        # this.ws.send(...) call site in the file is either the
-        # literal ping payload, or a JSON.stringify({action:'...'})
-        # call whose action is one of the 3 authorized WS actions —
-        # so no other action can ever be constructed here, regardless
-        # of how many call sites exist.
+        # than swap one brittle magic number for another, this proves
+        # the real contract semantically: every single this.ws.send(...)
+        # call site in the file is either the literal ping payload, or
+        # a JSON.stringify({action:'...'}) call whose action is one of
+        # the currently-authorized WS actions — so no other action can
+        # ever be constructed here, regardless of how many call sites
+        # exist.
+        # PRE-VPS-POLISH-03C.2.5A — order:new/order:risk_preview
+        # (submitOrder()/requestRiskPreview()) added to the authorized
+        # set for that same reason; the action-name regex is widened to
+        # [a-zA-Z0-9_:]+ so it actually captures these colon-containing
+        # action names instead of silently skipping them.
         src = _session_source()
-        action_values = set(re.findall(r"action:\s*'([a-zA-Z_]+)'", src))
-        self.assertEqual(action_values, {"change_symbol", "change_timeframe", "load_history"})
+        action_values = set(re.findall(r"action:\s*'([a-zA-Z0-9_:]+)'", src))
+        self.assertEqual(
+            action_values,
+            {"change_symbol", "change_timeframe", "load_history", "order:new", "order:risk_preview"},
+        )
 
         send_sites = re.findall(r"this\.ws\.send\(([^;]*)\);", src)
         self.assertTrue(send_sites, "expected at least one this.ws.send( call site")
-        allowed_actions = ("change_symbol", "change_timeframe", "load_history")
+        allowed_actions = ("change_symbol", "change_timeframe", "load_history", "order:new", "order:risk_preview")
+        # submitOrder() builds its payload as a separate `payload`
+        # variable (so risk_confirmed can be added conditionally) rather
+        # than inlining the object literal directly in the send() call
+        # — look up that one real variable's own definition (bounded to
+        # its own "{...}" body) instead of the call-site text itself.
+        payload_def = ""
+        _pd_start = src.find("const payload = {")
+        if _pd_start != -1:
+            _pd_end = src.find("};", _pd_start)
+            payload_def = src[_pd_start:_pd_end]
         for site in send_sites:
             is_ping = site == '\'{"action":"ping"}\''
             is_authorized_json = any(f"action: '{a}'" in site for a in allowed_actions)
+            if not is_ping and not is_authorized_json and site == "JSON.stringify(payload)":
+                is_authorized_json = any(f"action: '{a}'" in payload_def for a in allowed_actions)
             self.assertTrue(
                 is_ping or is_authorized_json,
                 f"unexpected this.ws.send(...) payload shape, not ping nor an authorized action: {site}",
@@ -286,18 +306,26 @@ class NoOtherNewWsActionsTests(SimpleTestCase):
         # onopen reconnect resend) and load_history (the debounced
         # _requestHistory() helper) are now authorized real Mobile
         # actions — removed from this forbidden list for that reason
-        # alone. Every financial/order/risk action remains fully
-        # forbidden, unweakened.
+        # alone.
+        # PRE-VPS-POLISH-03C.2.5A — order:new/order:risk_preview
+        # (submitOrder()/requestRiskPreview()) are now, likewise,
+        # authorized real Mobile actions — removed from this forbidden
+        # list for that reason alone. Every other financial/order/risk
+        # action remains fully forbidden, unweakened.
         src = _session_source()
         for forbidden in (
             "action:'get_positions'", "action: 'get_positions'",
             "action:'get_closed_trades'", "action: 'get_closed_trades'",
-            "action:'order:new'", "action: 'order:new'",
             "action:'order:close'", "action: 'order:close'",
             "action:'order:update'", "action: 'order:update'",
-            "action:'risk_preview'", "action: 'risk_preview'",
+            "action:'order:pending:new'", "action: 'order:pending:new'",
+            "action:'order:pending:cancel'", "action: 'order:pending:cancel'",
         ):
             self.assertNotIn(forbidden, src)
+        # The 2 actions this sub-block actually authorizes must each be
+        # real and present — not simply absent-of-prohibition.
+        for authorized in ("action: 'order:new'", "action: 'order:risk_preview'"):
+            self.assertIn(authorized, src)
 
     def test_no_chart_or_history_handling(self):
         # PRE-VPS-POLISH-03C.2.4A — history/candle_new/candle_update/

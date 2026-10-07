@@ -175,39 +175,72 @@ class NoNewWsMessagesTests(SimpleTestCase):
         # onopen reconnect resend) and load_history (the debounced
         # _requestHistory() helper) are likewise now authorized real
         # Mobile actions — removed from this forbidden list for that
-        # reason alone. get_positions/get_closed_trades/order:*/risk:*
+        # reason alone.
+        # PRE-VPS-POLISH-03C.2.5A — order:new (submitOrder()) and
+        # order:risk_preview (requestRiskPreview()) are now, likewise,
+        # authorized real Mobile actions — the old blanket "action:'order:"
+        # prefix ban and bare "risk_preview" ban are removed for that
+        # reason alone, replaced by precisely-pinned bans on the still-
+        # forbidden order:close/order:update/order:pending:new/
+        # order:pending:cancel. get_positions/get_closed_trades/risk:*
         # remain fully forbidden, unweakened.
         src = _session_source()
         for forbidden in (
             "action:'get_positions'", "action: 'get_positions'",
             "action:'get_closed_trades'", "action: 'get_closed_trades'",
-            "action:'order:", "action: 'order:",
+            "action:'order:close'", "action: 'order:close'",
+            "action:'order:update'", "action: 'order:update'",
+            "action:'order:pending:new'", "action: 'order:pending:new'",
+            "action:'order:pending:cancel'", "action: 'order:pending:cancel'",
             "action:'risk:", "action: 'risk:",
-            "risk_preview",
         ):
             self.assertNotIn(forbidden, src)
+        # The 2 actions this sub-block actually authorizes must each be
+        # real and present — not simply absent-of-prohibition.
+        for authorized in ("action: 'order:new'", "action: 'order:risk_preview'"):
+            self.assertIn(authorized, src)
 
     def test_only_authorized_ws_actions_are_ever_sent(self):
         # PRE-VPS-POLISH-03C.2.4A — superseded the old "exactly 3 call
         # sites" structural count (03C.2.4 legitimately added 3 more
         # real send sites for change_timeframe/load_history). Rather than
-        # replace one brittle magic number with another ("exactly 6"),
-        # this proves the actual contract semantically: every single
-        # this.ws.send(...) call site in the file is either the literal
-        # ping payload, or a JSON.stringify({action:'...'}) call whose
-        # action is one of the 3 authorized WS actions — so no other
-        # action (financial, order, risk, or otherwise) can ever be
-        # constructed here, regardless of how many call sites exist.
+        # replace one brittle magic number with another, this proves the
+        # actual contract semantically: every single this.ws.send(...)
+        # call site in the file is either the literal ping payload, or a
+        # JSON.stringify({action:'...'}) call whose action is one of the
+        # currently-authorized WS actions — so no other action
+        # (financial, order, risk, or otherwise) can ever be constructed
+        # here, regardless of how many call sites exist.
+        # PRE-VPS-POLISH-03C.2.5A — order:new/order:risk_preview
+        # (submitOrder()/requestRiskPreview()) added to the authorized
+        # set for that same reason; the action-name regex is widened to
+        # [a-zA-Z0-9_:]+ so it actually captures these colon-containing
+        # action names instead of silently skipping them.
         src = _session_source()
-        action_values = set(re.findall(r"action:\s*'([a-zA-Z_]+)'", src))
-        self.assertEqual(action_values, {"change_symbol", "change_timeframe", "load_history"})
+        action_values = set(re.findall(r"action:\s*'([a-zA-Z0-9_:]+)'", src))
+        self.assertEqual(
+            action_values,
+            {"change_symbol", "change_timeframe", "load_history", "order:new", "order:risk_preview"},
+        )
 
         send_sites = re.findall(r"this\.ws\.send\(([^;]*)\);", src)
         self.assertTrue(send_sites, "expected at least one this.ws.send( call site")
-        allowed_actions = ("change_symbol", "change_timeframe", "load_history")
+        allowed_actions = ("change_symbol", "change_timeframe", "load_history", "order:new", "order:risk_preview")
+        # submitOrder() builds its payload as a separate `payload`
+        # variable (so risk_confirmed can be added conditionally) rather
+        # than inlining the object literal directly in the send() call
+        # — look up that one real variable's own definition (bounded to
+        # its own "{...}" body) instead of the call-site text itself.
+        payload_def = ""
+        _pd_start = src.find("const payload = {")
+        if _pd_start != -1:
+            _pd_end = src.find("};", _pd_start)
+            payload_def = src[_pd_start:_pd_end]
         for site in send_sites:
             is_ping = site == '\'{"action":"ping"}\''
             is_authorized_json = any(f"action: '{a}'" in site for a in allowed_actions)
+            if not is_ping and not is_authorized_json and site == "JSON.stringify(payload)":
+                is_authorized_json = any(f"action: '{a}'" in payload_def for a in allowed_actions)
             self.assertTrue(
                 is_ping or is_authorized_json,
                 f"unexpected this.ws.send(...) payload shape, not ping nor an authorized action: {site}",
@@ -304,11 +337,21 @@ class MobileQuoteUiTests(TestCase):
     # by test_pre_vps_polish_03c2_3_mobile_symbol_selector.py). Every
     # other prohibition here is unchanged and still fully enforced.
     def test_no_chart_or_order_ui_introduced(self):
+        # PRE-VPS-POLISH-03C.2.5A — BUY/SELL/order:new are now the real,
+        # authorized Mobile order ticket (03C.2.5) — removed from this
+        # forbidden list for that reason alone. LightweightCharts
+        # (03C.2.4, already authorized) remains forbidden, unweakened.
+        # The old bare-word "position" check is replaced by the real,
+        # concrete positions-UI markers (mobPositions/etc.) — 03C.2.5's
+        # own domain-state-only plumbing legitimately mentions the word
+        # "position(s)" in documentation comments (replaceCanonicalPositions,
+        # onPositions, evaluate_position_risk) without that being a
+        # positions UI; a bare-word check would now misfire on its own
+        # accurate documentation. Positions/pending/closed UI remain
+        # fully unauthorized, unweakened.
         html = self._html_for("STANDARD")
-        for forbidden in (
-            "LightweightCharts", "BUY", "SELL", "order:new",
-            "position",
-        ):
+        self.assertNotIn("LightweightCharts", html)
+        for forbidden in ("mobPositions", "mobPendingOrders", "mobClosedTrades"):
             self.assertNotIn(forbidden, html)
 
     # 43-46. All 4 account types still render Mobile correctly
