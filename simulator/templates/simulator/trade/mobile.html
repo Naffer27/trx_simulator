@@ -124,13 +124,66 @@
     outline-offset:2px;
   }
 
+  /* ════════════════════════════════════════════════════════════════
+     PRE-VPS-POLISH-03C.3.2 — MOBILE APP SHELL + PRIMARY NAVIGATION.
+
+     Converts the flat, single-scroll stack of Mobile sections (03C.2.1
+     -03C.3.1) into a real app shell: a fixed-height frame (100dvh)
+     with a non-scrolling top app bar, a scrollable view area holding
+     exactly 5 named views (one visible at a time via the native
+     [hidden] attribute — no framework, no router, no event bus), and
+     a non-scrolling bottom navigation bar. Every existing id/class/
+     data-attribute from 03C.2.1-03C.2.6 is preserved verbatim — this
+     block only changes WHICH DOM ancestor each existing element sits
+     under, never the element itself. Uses only 03C.3.1 tokens — no
+     new ad-hoc colors/sizes. */
   .mob-foundation{
-    min-height:100dvh;
-    padding:calc(var(--mb-space-4) + var(--mb-safe-top)) var(--mb-space-5) calc(var(--mb-space-4) + var(--mb-safe-bottom));
+    height:100dvh;
+    overflow:hidden;
     box-sizing:border-box;
-    display:flex;flex-direction:column;align-items:center;gap:var(--mb-space-5);
+    display:flex;flex-direction:column;
     font-variant-numeric:tabular-nums;
   }
+  .mob-topbar{
+    flex:0 0 auto;
+    display:flex;align-items:center;justify-content:space-between;gap:var(--mb-space-3);
+    min-height:var(--mb-touch-min);
+    padding:var(--mb-space-2) var(--mb-space-4);
+    padding-top:calc(var(--mb-space-2) + var(--mb-safe-top));
+    background:var(--mb-surface-1);
+    border-bottom:1px solid var(--mb-border);
+    box-sizing:border-box;
+  }
+  .mob-view-area{
+    flex:1 1 auto;
+    min-height:0;
+    overflow-y:auto;
+    box-sizing:border-box;
+    padding:var(--mb-space-4) var(--mb-space-5);
+  }
+  .mob-view{
+    display:flex;flex-direction:column;align-items:center;gap:var(--mb-space-5);
+    width:100%;
+  }
+  .mob-bottomnav{
+    flex:0 0 auto;
+    display:flex;
+    background:var(--mb-surface-1);
+    border-top:1px solid var(--mb-border);
+    padding-bottom:var(--mb-safe-bottom);
+    box-sizing:border-box;
+  }
+  .mob-navitem{
+    flex:1;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    min-height:var(--mb-touch-min);
+    font-size:var(--mb-text-2xs);
+    letter-spacing:var(--mb-tracking-label);
+    color:var(--mb-text-muted);
+    background:none;border:none;cursor:pointer;
+    font-family:var(--mb-font-sans);
+  }
+  .mob-navitem.is-active{color:var(--mb-brand);}
   .mob-foundation h1{font-size:var(--mb-text-lg);letter-spacing:.02em;font-weight:700;color:var(--mb-brand);margin:0;}
   .mob-foundation h2{font-size:var(--mb-text-sm);color:var(--mb-text-secondary);margin:0;font-weight:400;}
   .mob-status{display:flex;align-items:center;gap:var(--mb-space-2);font-size:var(--mb-text-sm);min-height:var(--mb-touch-min);}
@@ -204,87 +257,120 @@
 
 {% block content %}
 <div class="mob-foundation">
-  <h1>Money Broker</h1>
-  <h2>Mobile Trading — Account {{ account_id }} · {{ account.account_type }}</h2>
-
-  <div class="mob-status" id="mobConnStatus">
-    <span class="dot"></span>
-    <span id="mobConnStatusLabel">CONNECTING</span>
+  <div class="mob-topbar">
+    <h1>Money Broker</h1>
+    <div class="mob-status" id="mobConnStatus">
+      <span class="dot"></span>
+      <span id="mobConnStatusLabel">CONNECTING</span>
+    </div>
   </div>
 
-  <div class="mob-summary">
-    <div class="cell"><div class="label">Balance</div><div class="value" id="mobBalance">—</div></div>
-    <div class="cell"><div class="label">Equity</div><div class="value" id="mobEquity">—</div></div>
-    <div class="cell"><div class="label">Margin Used</div><div class="value" id="mobMargin">—</div></div>
-    <div class="cell"><div class="label">Free Margin</div><div class="value" id="mobFree">—</div></div>
-    <div class="cell"><div class="label">Unrealized P&amp;L</div><div class="value" id="mobUpnl">—</div></div>
-    <div class="cell"><div class="label">Leverage</div><div class="value" id="mobLeverage">—</div></div>
-  </div>
+  <div class="mob-view-area">
+    <div class="mob-view" data-mobile-view="trade">
+      <div class="mob-quote">
+        <div class="sym" id="mobQuoteSymbol">—</div>
+        <div class="row"><span class="label">Bid</span><span class="value" id="mobQuoteBid">—</span></div>
+        <div class="row"><span class="label">Ask</span><span class="value" id="mobQuoteAsk">—</span></div>
+        <div class="row"><span class="label">Mid</span><span class="value" id="mobQuoteMid">—</span></div>
+        <div class="row"><span class="label">Source</span><span class="value" id="mobQuoteSource">—</span></div>
+      </div>
 
-  <div class="mob-quote">
-    <div class="sym" id="mobQuoteSymbol">—</div>
-    <div class="row"><span class="label">Bid</span><span class="value" id="mobQuoteBid">—</span></div>
-    <div class="row"><span class="label">Ask</span><span class="value" id="mobQuoteAsk">—</span></div>
-    <div class="row"><span class="label">Mid</span><span class="value" id="mobQuoteMid">—</span></div>
-    <div class="row"><span class="label">Source</span><span class="value" id="mobQuoteSource">—</span></div>
-  </div>
+      <div class="mob-tf" id="mobTfSelector"></div>
+      <div class="mob-chart-wrap"><div id="mobChartContainer"></div></div>
 
-  <div class="mob-watchlist" id="mobWatchlist"></div>
+      <div class="mob-ticket" id="mobTicket">
+        <div class="mob-ticket-row">
+          <label for="mobQtyInput">Volume</label>
+          <input type="number" id="mobQtyInput" step="0.01" min="0" value="0.01">
+        </div>
+        <div class="mob-ticket-row">
+          <label for="mobSlInput">SL</label>
+          <input type="number" id="mobSlInput" placeholder="—">
+        </div>
+        <div class="mob-ticket-row">
+          <label for="mobTpInput">TP</label>
+          <input type="number" id="mobTpInput" placeholder="—">
+        </div>
+        <div class="mob-ticket-buttons">
+          <button id="mobSellBtn" type="button">SELL</button>
+          <button id="mobBuyBtn" type="button">BUY</button>
+        </div>
+        <div class="mob-ticket-status" id="mobTicketStatus"></div>
+        <div class="mob-risk-panel" id="mobRiskPanel" hidden>
+          <div><span>Risk</span> <span id="mobRiskLevel">—</span></div>
+          <div><span>Margin required</span> <span id="mobRiskMargin">—</span></div>
+          <div><span>Exposure</span> <span id="mobRiskExposure">—</span></div>
+        </div>
+        <div class="mob-risk-confirm" id="mobRiskConfirm" hidden>
+          <p id="mobRiskConfirmText"></p>
+          <div class="mob-risk-confirm-buttons">
+            <button id="mobRiskCancelBtn" type="button">Cancel</button>
+            <button id="mobRiskConfirmBtn" type="button">Confirm anyway</button>
+          </div>
+        </div>
+      </div>
+    </div>
 
-  <div class="mob-tf" id="mobTfSelector"></div>
-  <div class="mob-chart-wrap"><div id="mobChartContainer"></div></div>
+    <div class="mob-view" data-mobile-view="markets" hidden>
+      <div class="mob-watchlist" id="mobWatchlist"></div>
+    </div>
 
-  <div class="mob-ticket" id="mobTicket">
-    <div class="mob-ticket-row">
-      <label for="mobQtyInput">Volume</label>
-      <input type="number" id="mobQtyInput" step="0.01" min="0" value="0.01">
+    <div class="mob-view" data-mobile-view="positions" hidden>
+      <div class="mob-pane-tabs" id="mobPaneTabs">
+        <div class="mob-pane-tab is-selected" data-pane="positions">Positions</div>
+        <div class="mob-pane-tab" data-pane="pending">Pending</div>
+        <div class="mob-pane-tab" data-pane="closed">Closed</div>
+      </div>
+
+      <div class="mob-pane" id="mobPositionsPane">
+        <div id="mobPositionsList"></div>
+        <div class="mob-empty" id="mobPositionsEmpty" hidden>No open positions</div>
+      </div>
+
+      <div class="mob-pane" id="mobPendingPane" hidden>
+        <div id="mobPendingList"></div>
+        <div class="mob-empty" id="mobPendingEmpty" hidden>No pending orders</div>
+      </div>
+
+      <div class="mob-pane" id="mobClosedPane" hidden>
+        <div id="mobClosedList"></div>
+        <div class="mob-empty" id="mobClosedEmpty" hidden>No closed trades</div>
+      </div>
     </div>
-    <div class="mob-ticket-row">
-      <label for="mobSlInput">SL</label>
-      <input type="number" id="mobSlInput" placeholder="—">
+
+    <!-- PRE-VPS-POLISH-03C.3.2 — History view: structural placeholder
+         only (design lock Section 13). Closed Trades data/authority
+         stays exactly where 03C.2.6 put it — inside the Positions
+         view's own "Closed" tab above. This is a deliberately empty
+         container, not a second data source. -->
+    <div class="mob-view" data-mobile-view="history" hidden>
+      <div class="mob-empty">History — coming soon</div>
     </div>
-    <div class="mob-ticket-row">
-      <label for="mobTpInput">TP</label>
-      <input type="number" id="mobTpInput" placeholder="—">
-    </div>
-    <div class="mob-ticket-buttons">
-      <button id="mobSellBtn" type="button">SELL</button>
-      <button id="mobBuyBtn" type="button">BUY</button>
-    </div>
-    <div class="mob-ticket-status" id="mobTicketStatus"></div>
-    <div class="mob-risk-panel" id="mobRiskPanel" hidden>
-      <div><span>Risk</span> <span id="mobRiskLevel">—</span></div>
-      <div><span>Margin required</span> <span id="mobRiskMargin">—</span></div>
-      <div><span>Exposure</span> <span id="mobRiskExposure">—</span></div>
-    </div>
-    <div class="mob-risk-confirm" id="mobRiskConfirm" hidden>
-      <p id="mobRiskConfirmText"></p>
-      <div class="mob-risk-confirm-buttons">
-        <button id="mobRiskCancelBtn" type="button">Cancel</button>
-        <button id="mobRiskConfirmBtn" type="button">Confirm anyway</button>
+
+    <!-- PRE-VPS-POLISH-03C.3.2 — Account view: the already-authorized
+         03C.2.1 account summary (real backend-pushed balance/equity/
+         margin/free/UPNL/leverage), relocated here verbatim — not a
+         new placeholder, since this content already existed and was
+         already certified. -->
+    <div class="mob-view" data-mobile-view="account" hidden>
+      <h2>Mobile Trading — Account {{ account_id }} · {{ account.account_type }}</h2>
+      <div class="mob-summary">
+        <div class="cell"><div class="label">Balance</div><div class="value" id="mobBalance">—</div></div>
+        <div class="cell"><div class="label">Equity</div><div class="value" id="mobEquity">—</div></div>
+        <div class="cell"><div class="label">Margin Used</div><div class="value" id="mobMargin">—</div></div>
+        <div class="cell"><div class="label">Free Margin</div><div class="value" id="mobFree">—</div></div>
+        <div class="cell"><div class="label">Unrealized P&amp;L</div><div class="value" id="mobUpnl">—</div></div>
+        <div class="cell"><div class="label">Leverage</div><div class="value" id="mobLeverage">—</div></div>
       </div>
     </div>
   </div>
 
-  <div class="mob-pane-tabs" id="mobPaneTabs">
-    <div class="mob-pane-tab is-selected" data-pane="positions">Positions</div>
-    <div class="mob-pane-tab" data-pane="pending">Pending</div>
-    <div class="mob-pane-tab" data-pane="closed">Closed</div>
-  </div>
-
-  <div class="mob-pane" id="mobPositionsPane">
-    <div id="mobPositionsList"></div>
-    <div class="mob-empty" id="mobPositionsEmpty" hidden>No open positions</div>
-  </div>
-
-  <div class="mob-pane" id="mobPendingPane" hidden>
-    <div id="mobPendingList"></div>
-    <div class="mob-empty" id="mobPendingEmpty" hidden>No pending orders</div>
-  </div>
-
-  <div class="mob-pane" id="mobClosedPane" hidden>
-    <div id="mobClosedList"></div>
-    <div class="mob-empty" id="mobClosedEmpty" hidden>No closed trades</div>
+  <div class="mob-bottomnav" id="mobBottomNav">
+    <button type="button" class="mob-navitem" data-target="markets">MARKETS</button>
+    <button type="button" class="mob-navitem is-active" data-target="trade">TRADE</button>
+    <button type="button" class="mob-navitem" data-target="positions">POSITIONS</button>
+    <button type="button" class="mob-navitem" data-target="history">HISTORY</button>
+    <button type="button" class="mob-navitem" data-target="account">ACCOUNT</button>
   </div>
 </div>
 {% endblock %}
@@ -705,6 +791,30 @@ window.__TRADE_CONFIG__ = {
   renderTfSelector(session.currentTF);
   renderPositions(getCanonicalPositions());
   session.connect();
+})();
+</script>
+
+<!-- PRE-VPS-POLISH-03C.3.2 — app-shell view switcher. Deliberately
+     separate, additive IIFE: does not read/touch `session`, any on*
+     callback, or any id defined above — it only toggles the native
+     [hidden] attribute on the 5 `.mob-view` containers and the
+     `.is-active` class on the 5 `.mob-navitem` buttons. No router, no
+     framework, no event bus, no new WebSocket traffic. Switching views
+     never disconnects/reconnects the session and never clears chart/
+     position/pending/closed state — they keep rendering into their
+     real DOM nodes regardless of which view is currently visible. -->
+<script>
+(function(){
+  const views = document.querySelectorAll('.mob-view');
+  const navItems = document.querySelectorAll('.mob-navitem');
+  function showView(name){
+    views.forEach(function(v){ v.hidden = (v.getAttribute('data-mobile-view') !== name); });
+    navItems.forEach(function(b){ b.classList.toggle('is-active', b.getAttribute('data-target') === name); });
+  }
+  navItems.forEach(function(btn){
+    btn.addEventListener('click', function(){ showView(btn.getAttribute('data-target')); });
+  });
+  showView('trade');
 })();
 </script>
 {% endblock %}

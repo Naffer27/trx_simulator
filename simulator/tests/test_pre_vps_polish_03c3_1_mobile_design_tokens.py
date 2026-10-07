@@ -49,6 +49,16 @@ def _head_source():
     return result.stdout
 
 
+def _old_main_script(head_source):
+    # The one pre-03C.3.2 orchestrator <script> (account/quote/chart/
+    # ticket/positions/pending/closed wiring) — unique anchor, since
+    # the only other <script> blocks in extra_scripts are single-line
+    # src="..."/config tags, never starting with "(function(){".
+    start = head_source.index("<script>\n(function(){")
+    end = head_source.index("\n})();\n</script>", start) + len("\n})();\n</script>")
+    return head_source[start:end]
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # A. Tokens present
 # ─────────────────────────────────────────────────────────────────────────
@@ -252,12 +262,51 @@ class SpacingRadiusElevationTests(SimpleTestCase):
     def setUp(self):
         self.style = _style_block(_mobile_html_source())
 
-    def test_foundation_padding_and_gap_use_spacing_tokens(self):
-        self.assertIn(
-            "padding:calc(var(--mb-space-4) + var(--mb-safe-top)) var(--mb-space-5) calc(var(--mb-space-4) + var(--mb-safe-bottom));",
-            self.style,
-        )
-        self.assertIn("gap:var(--mb-space-5);", self.style)
+    # PRE-VPS-POLISH-03C.3.2A — OLD CONTRACT: 03C.3.1's `.mob-foundation`
+    # owned BOTH top and bottom safe-area padding directly (it was the
+    # single padded content column). NEW CONTRACT (03C.3.2, authorized):
+    # `.mob-foundation` became the app-shell FRAME (100dvh, overflow
+    # hidden, flex column, no padding/gap of its own at all) and safe-
+    # area ownership moved to the two real edge regions of that frame —
+    # `.mob-topbar` (top) and `.mob-bottomnav` (bottom) — while
+    # `.mob-view-area` (the scrollable middle region) deliberately does
+    # NOT consume `--mb-safe-bottom` itself, since the bottom nav below
+    # it already reserves that space. WHY preserved: still fails if any
+    # of the 5 shell regions stops using the 03C.3.1 token system, or if
+    # the scrollable area starts double-reserving the bottom safe area.
+    def _rule_body(self, selector):
+        start = self.style.index(selector)
+        end = self.style.index("}", start) + 1
+        return self.style[start:end]
+
+    def test_foundation_is_a_bare_frame_with_no_own_padding_or_safe_area(self):
+        body = self._rule_body(".mob-foundation{")
+        self.assertIn("height:100dvh;", body)
+        self.assertIn("overflow:hidden;", body)
+        self.assertIn("display:flex;flex-direction:column;", body)
+        self.assertNotIn("padding", body)
+        self.assertNotIn("--mb-safe-", body)
+
+    def test_topbar_owns_safe_area_top_via_tokens(self):
+        body = self._rule_body(".mob-topbar{")
+        self.assertIn("var(--mb-safe-top)", body)
+        self.assertIn("var(--mb-space-", body)
+
+    def test_view_area_scrolls_and_does_not_absorb_safe_bottom(self):
+        body = self._rule_body(".mob-view-area{")
+        self.assertIn("overflow-y:auto;", body)
+        self.assertIn("var(--mb-space-", body)
+        self.assertNotIn("--mb-safe-bottom", body)
+
+    def test_view_preserves_gap_via_spacing_token(self):
+        body = self._rule_body(".mob-view{")
+        self.assertIn("gap:var(--mb-space-5);", body)
+
+    def test_bottomnav_owns_safe_area_bottom_via_tokens(self):
+        body = self._rule_body(".mob-bottomnav{")
+        self.assertIn("var(--mb-safe-bottom)", body)
+        navitem_body = self._rule_body(".mob-navitem{")
+        self.assertIn("var(--mb-touch-min)", navitem_body)
 
     def test_cards_use_radius_and_elevation_tokens(self):
         self.assertIn("border-radius:var(--mb-radius-md)", self.style)
@@ -337,18 +386,90 @@ class NoFunctionalChangeTests(SimpleTestCase):
         self.old = _head_source()
         self.new = _mobile_html_source()
 
-    def test_content_block_byte_identical_to_head(self):
-        marker_start = "{% block content %}"
-        marker_end = "{% endblock %}\n\n{% block extra_scripts %}"
-        old_content = self.old[self.old.index(marker_start) : self.old.index(marker_end)]
-        new_content = self.new[self.new.index(marker_start) : self.new.index(marker_end)]
-        self.assertEqual(old_content, new_content)
+    # PRE-VPS-POLISH-03C.3.2A — OLD CONTRACT: the `content` block had
+    # to be byte-identical to HEAD, because 03C.3.1 was CSS-only. NEW
+    # CONTRACT (03C.3.2, authorized): `content` was reorganized into a
+    # real app shell — same existing ids/classes/data-attributes, now
+    # nested under 5 named `.mob-view` containers plus a topbar/
+    # bottomnav. WHY preserved: the test's real intent — "the redesign
+    # did not destroy the functional structure" — survives as a
+    # semantic, structural check instead of a literal diff: the shell
+    # regions exist, exactly 5 primary views exist with the right
+    # names, exactly one (trade) starts visible, the other 4 start
+    # hidden, every pre-existing id important to 03C.2.1-03C.2.6 is
+    # still present exactly once (no silent removal, no accidental
+    # duplication).
+    def test_content_block_preserves_shell_structure_and_existing_ids(self):
+        html = self.new
+        self.assertIn('<div class="mob-foundation">', html)
+        self.assertIn('<div class="mob-topbar">', html)
+        self.assertIn('<div class="mob-view-area">', html)
+        self.assertIn('<div class="mob-bottomnav" id="mobBottomNav">', html)
 
-    def test_extra_scripts_block_byte_identical_to_head(self):
-        marker = "{% block extra_scripts %}"
-        old_scripts = self.old[self.old.index(marker):]
-        new_scripts = self.new[self.new.index(marker):]
-        self.assertEqual(old_scripts, new_scripts)
+        views = re.findall(r'<div class="mob-view" data-mobile-view="(\w+)"( hidden)?>', html)
+        self.assertEqual(len(views), 5)
+        self.assertEqual({name for name, _ in views}, {"trade", "markets", "positions", "history", "account"})
+        visible = {name for name, hidden_attr in views if not hidden_attr}
+        hidden = {name for name, hidden_attr in views if hidden_attr}
+        self.assertEqual(visible, {"trade"})
+        self.assertEqual(hidden, {"markets", "positions", "history", "account"})
+
+        important_ids = [
+            "mobConnStatus", "mobConnStatusLabel",
+            "mobBalance", "mobEquity", "mobMargin", "mobFree", "mobUpnl", "mobLeverage",
+            "mobQuoteSymbol", "mobQuoteBid", "mobQuoteAsk", "mobQuoteMid", "mobQuoteSource",
+            "mobWatchlist", "mobTfSelector", "mobChartContainer",
+            "mobTicket", "mobQtyInput", "mobSlInput", "mobTpInput",
+            "mobSellBtn", "mobBuyBtn", "mobTicketStatus",
+            "mobRiskPanel", "mobRiskLevel", "mobRiskMargin", "mobRiskExposure",
+            "mobRiskConfirm", "mobRiskConfirmText", "mobRiskCancelBtn", "mobRiskConfirmBtn",
+            "mobPaneTabs", "mobPositionsPane", "mobPositionsList", "mobPositionsEmpty",
+            "mobPendingPane", "mobPendingList", "mobPendingEmpty",
+            "mobClosedPane", "mobClosedList", "mobClosedEmpty",
+        ]
+        for el_id in important_ids:
+            self.assertEqual(html.count(f'id="{el_id}"'), 1, el_id)
+
+    # PRE-VPS-POLISH-03C.3.2A — OLD CONTRACT: `extra_scripts` had to be
+    # byte-identical to HEAD. NEW CONTRACT (03C.3.2, authorized): the
+    # pre-existing orchestrator <script> (account/quote/chart/ticket/
+    # positions/pending/closed wiring) is preserved byte-for-byte as a
+    # contiguous substring (proven below, not merely "present"), and
+    # exactly one new, additive <script> was appended after it — the
+    # 03C.3.2 navigation controller. WHY preserved: still fails if the
+    # orchestrator script is rewritten at all, if more than one script
+    # is appended, or if the new script does anything beyond toggling
+    # [hidden]/`.is-active` — proving it is presentation-only, never a
+    # second transport/financial layer.
+    def test_extra_scripts_orchestrator_preserved_new_code_is_navigation_only(self):
+        old_main_script = _old_main_script(self.old)
+        self.assertIn(old_main_script, self.new)
+
+        tail = self.new[self.new.index(old_main_script) + len(old_main_script):]
+
+        # Exactly one new script appended, and it is the 03C.3.2
+        # navigation controller — not a second orchestrator.
+        self.assertEqual(tail.count("<script>"), 1)
+        self.assertIn("PRE-VPS-POLISH-03C.3.2", tail)
+
+        # Its real, minimal contract: operates on .mob-view/.mob-
+        # navitem, toggles hidden/.is-active, defaults to trade.
+        self.assertIn("querySelectorAll('.mob-view')", tail)
+        self.assertIn("querySelectorAll('.mob-navitem')", tail)
+        self.assertIn("v.hidden = (v.getAttribute('data-mobile-view') !== name);", tail)
+        self.assertIn("b.classList.toggle('is-active', b.getAttribute('data-target') === name);", tail)
+        self.assertIn("showView('trade');", tail)
+
+        # Presentation-only — no transport/financial contract of any
+        # kind lives in the new code.
+        for forbidden in [
+            "new WebSocket(", ".send(", "order:new", "order:close",
+            "order:risk_preview", "order:pending", "load_history",
+            "change_symbol", "change_timeframe", "get_closed_trades",
+            "margin", "commission", "pnl", "spread", "price",
+            "account:update", "account:snapshot", "onAccount(",
+        ]:
+            self.assertNotIn(forbidden, tail)
 
     def test_only_style_block_differs(self):
         self.assertNotEqual(
