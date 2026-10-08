@@ -548,8 +548,14 @@ window.__TRADE_CONFIG__ = {
   // presentation-only text, never sent anywhere — 1h/1d display as
   // 1H/1D while the WS payload still carries the lowercase internal
   // string the backend's tf_seconds()/normalize_tf() already expect.
-  const MOBILE_TIMEFRAMES = ['1m','5m','15m','1h','1d'];
-  const MOBILE_TF_LABELS = {'1m':'1m','5m':'5m','15m':'15m','1h':'1H','1d':'1D'};
+  // PRE-VPS-POLISH-03C.3.TF-02 — real 4h added to the public catalog
+  // (consumers.py's _TF_ALIASES/_TF_SECONDS now recognize "4h" as a
+  // real 14400-second bucket, backed by Massive's own native 4-hour
+  // aggs — see market_data/feeds.py's _MASSIVE_TF). Internal value
+  // stays lowercase "4h" (sent to selectTimeframe()/the backend
+  // unchanged); only the display label is "4H".
+  const MOBILE_TIMEFRAMES = ['1m','5m','15m','1h','4h','1d'];
+  const MOBILE_TF_LABELS = {'1m':'1m','5m':'5m','15m':'15m','1h':'1H','4h':'4H','1d':'1D'};
   const elTf = document.getElementById('mobTfSelector');
 
   function renderTfSelector(selectedTf){

@@ -104,6 +104,13 @@ class TfHelpersFailClosedTests(SimpleTestCase):
         self.assertEqual(normalize_tf("D1"), "1d")
         self.assertEqual(normalize_tf("86400"), "1d")
 
+    # PRE-VPS-POLISH-03C.3.TF-02A — OLD CONTRACT: "4h"/"4H" were listed
+    # as bogus/unsupported values. NEW CONTRACT: TF-02 (separately
+    # authorized) made "4h" a real, valid internal timeframe — removed
+    # from this list (it is the opposite of bogus now). WHY preserved:
+    # the actual regression check — an unrecognized timeframe never
+    # falls back to "1s" — is untouched; only the illustrative bogus
+    # values changed (1w/1mo/garbage strings remain genuinely bogus).
     def test_unknown_timeframe_never_falls_back_to_1s(self):
         # THE regression this block fixes: an unrecognized timeframe
         # used to resolve to tf_seconds()==1 / normalize_tf()=="1s".
@@ -113,12 +120,16 @@ class TfHelpersFailClosedTests(SimpleTestCase):
         # exactly the real ambiguity the TF-AUDIT flagged for the
         # future monthly timeframe's internal identifier (recommended
         # "1mo", never "1M") — confirmed here, not a defect in this fix.
-        for bogus in ("4h", "1w", "1mo", "not_a_timeframe", "", "4H", "7d"):
+        for bogus in ("1w", "1mo", "not_a_timeframe", "", "7d", "4hh"):
             self.assertIsNone(tf_seconds(bogus), bogus)
             self.assertIsNone(normalize_tf(bogus), bogus)
 
+    # PRE-VPS-POLISH-03C.3.TF-02A — OLD CONTRACT: "4h" was listed as a
+    # not-yet-supported future timeframe. NEW CONTRACT: TF-02 made it
+    # real — removed from this list. WHY preserved: 1w/1mo remain
+    # genuinely out of scope and still fail closed.
     def test_not_yet_supported_future_timeframes_not_accidentally_enabled(self):
-        for future_tf in ("4h", "1w", "1mo"):
+        for future_tf in ("1w", "1mo"):
             self.assertIsNone(normalize_tf(future_tf), future_tf)
 
 
@@ -134,9 +145,15 @@ class ChangeTimeframeFailClosedTests(TestCase):
         self.assertEqual(acks[-1]["timeframe"], "1h")
         self.assertEqual(acks[-1]["tf_sec"], 3600)
 
+    # PRE-VPS-POLISH-03C.3.TF-02A — OLD CONTRACT: used "4h" as the
+    # example of a timeframe that must be rejected. NEW CONTRACT: "4h"
+    # is now real/accepted (TF-02) — swapped to "1w" (still genuinely
+    # unsupported). WHY preserved: the actual protection — explicit
+    # rejection, self.timeframe untouched — is identical, only the
+    # illustrative invalid value changed.
     def test_invalid_timeframe_rejected_explicitly(self):
         c = _bare_tf_consumer(timeframe="15m")
-        _run(c.receive(json.dumps({"action": "change_timeframe", "timeframe": "4h"})))
+        _run(c.receive(json.dumps({"action": "change_timeframe", "timeframe": "1w"})))
         # Mirrors the existing change_symbol/invalid_symbol pattern.
         self.assertEqual(c.sent, [{"type": "error", "code": "invalid_timeframe", "message": "timeframe_no_permitido"}])
 
@@ -169,9 +186,13 @@ class LoadHistoryFailClosedTests(TestCase):
         args = c.generate_history_first_page.await_args.args
         self.assertEqual(args[1], "1d")
 
+    # PRE-VPS-POLISH-03C.3.TF-02A — OLD CONTRACT: used "4h" as the
+    # example of a timeframe that must be rejected. NEW CONTRACT: "4h"
+    # is now real/accepted (TF-02) — swapped to "1w". WHY preserved:
+    # same protection, different illustrative invalid value.
     def test_invalid_timeframe_rejected_explicitly(self):
         c = _bare_tf_consumer(timeframe="15m")
-        _run(c.receive(json.dumps({"action": "load_history", "symbol": "EUR/USD", "timeframe": "4h"})))
+        _run(c.receive(json.dumps({"action": "load_history", "symbol": "EUR/USD", "timeframe": "1w"})))
         self.assertEqual(c.sent, [{"type": "error", "code": "invalid_timeframe", "message": "timeframe_no_permitido"}])
         c.generate_history_first_page.assert_not_called()
 
@@ -195,33 +216,51 @@ class MobilePublicCatalogTests(SimpleTestCase):
         self.html = _read(MOBILE_HTML_PATH)
         self.session_src = _read(MOBILE_SESSION_PATH)
 
+    # PRE-VPS-POLISH-03C.3.TF-02A — OLD CONTRACT: public catalog was
+    # exactly the 5 entries 1m/5m/15m/1h/1d. NEW CONTRACT: TF-02 (sep.
+    # authorized) added real "4h" — now exactly 6 entries. WHY
+    # preserved: still fails if "1s" ever reappears.
     def test_1s_not_in_mobile_html_timeframe_catalog(self):
-        self.assertIn("const MOBILE_TIMEFRAMES = ['1m','5m','15m','1h','1d'];", self.html)
+        self.assertIn("const MOBILE_TIMEFRAMES = ['1m','5m','15m','1h','4h','1d'];", self.html)
         self.assertNotIn("['1s','1m','5m','15m','1h','1d']", self.html)
+        self.assertNotIn("['1s','1m','5m','15m','1h','4h','1d']", self.html)
 
     def test_1s_not_in_mobile_session_validation_catalog(self):
-        self.assertIn("const MOBILE_TIMEFRAMES = ['1m', '5m', '15m', '1h', '1d'];", self.session_src)
+        self.assertIn("const MOBILE_TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h', '1d'];", self.session_src)
         self.assertNotIn("['1s', '1m', '5m', '15m', '1h', '1d']", self.session_src)
+        self.assertNotIn("['1s', '1m', '5m', '15m', '1h', '4h', '1d']", self.session_src)
 
     def test_catalog_order_exact(self):
         start = self.html.index("const MOBILE_TIMEFRAMES = [") + len("const MOBILE_TIMEFRAMES = [")
         end = self.html.index("]", start)
         items = [x.strip().strip("'") for x in self.html[start:end].split(",")]
-        self.assertEqual(items, ["1m", "5m", "15m", "1h", "1d"])
+        self.assertEqual(items, ["1m", "5m", "15m", "1h", "4h", "1d"])
 
     def test_default_still_15m(self):
         self.assertIn("this.currentTF = '15m';", self.session_src)
 
+    # PRE-VPS-POLISH-03C.3.TF-02A — OLD CONTRACT: display-label map had
+    # exactly 5 entries (1h->1H, 1d->1D). NEW CONTRACT: TF-02 added
+    # 4h->4H to the same map. WHY preserved: internal value sent to
+    # selectTimeframe()/the backend stays lowercase — never the
+    # uppercase display label, for 4h either.
     def test_display_labels_1H_1D_internal_values_unchanged(self):
-        self.assertIn("const MOBILE_TF_LABELS = {'1m':'1m','5m':'5m','15m':'15m','1h':'1H','1d':'1D'};", self.html)
-        # The internal value sent to selectTimeframe()/the backend is
-        # the lowercase key — never the uppercase display label.
+        self.assertIn(
+            "const MOBILE_TF_LABELS = {'1m':'1m','5m':'5m','15m':'15m','1h':'1H','4h':'4H','1d':'1D'};",
+            self.html,
+        )
         self.assertIn("session.selectTimeframe(tf)", self.html)
         self.assertNotIn("selectTimeframe('1H')", self.html)
         self.assertNotIn("selectTimeframe('1D')", self.html)
+        self.assertNotIn("selectTimeframe('4H')", self.html)
 
+    # PRE-VPS-POLISH-03C.3.TF-02A — OLD CONTRACT: "4h" was listed
+    # alongside 1w/1mo as a future timeframe that must not be enabled.
+    # NEW CONTRACT: TF-02 made "4h" real — removed from this list. WHY
+    # preserved: 1w/1mo remain genuinely out of scope for both Mobile
+    # files.
     def test_future_timeframes_not_accidentally_enabled_in_mobile(self):
-        for forbidden in ("'4h'", '"4h"', "'1w'", '"1w"', "'1mo'", '"1mo"'):
+        for forbidden in ("'1w'", '"1w"', "'1mo'", '"1mo"'):
             self.assertNotIn(forbidden, self.html)
             self.assertNotIn(forbidden, self.session_src)
 
@@ -354,8 +393,36 @@ class NoFinancialCalculationChangedTests(SimpleTestCase):
     def test_mobile_chart_js_zero_diff(self):
         self._assert_zero_diff("simulator/static/simulator/trade/mobile_chart.js")
 
-    def test_trading_core_js_zero_diff(self):
-        self._assert_zero_diff("simulator/static/simulator/trade/trading_core.js")
+    # PRE-VPS-POLISH-03C.3.TF-02A — OLD CONTRACT: blanket zero-diff
+    # (trading_core.js had never been touched by any Mobile sub-block).
+    # NEW CONTRACT: TF-02B added exactly one key ('4h':14400) to the
+    # existing tfToSec() lookup (Desktop's shared, non-financial
+    # timeframe-seconds helper), closing the same silent-fallback gap
+    # class TF-01 fixed on the backend. WHY preserved: still fails if
+    # trading_core.js's diff ever touches any protected financial/
+    # transport surface (P&L, contract size, canonical positions,
+    # price authority, order execution, margin, spread, commissions,
+    # Broker Ledger, risk, WebSocket/transport, candle construction) —
+    # only the tfToSec() dict is allowed to change, and every removed
+    # line must be that one definition.
+    def test_trading_core_js_diff_scoped_to_4h_timeframe_only(self):
+        result = subprocess.run(
+            ["git", "diff", "--", "simulator/static/simulator/trade/trading_core.js"],
+            capture_output=True, text=True,
+        )
+        diff = result.stdout
+        self.assertIn("const tfToSec=", diff)
+        self.assertIn("'4h':14400", diff)
+        for forbidden in (
+            "computeRawPnL(", "computePositionPnL(", "getContractSize(", "LOT_SPECS=",
+            "applyPriceTickState(", "getCanonicalPositions(", "replaceCanonicalPositions(",
+            "commission_for", "margin_used", "spread_revenue", "BrokerLedger",
+            "new WebSocket(", "_calcSMA", "_calcEMA", "_calcRSI",
+        ):
+            self.assertNotIn(forbidden, diff, forbidden)
+        removed = [l for l in diff.splitlines() if l.startswith("-") and not l.startswith("---")]
+        for line in removed:
+            self.assertIn("tfToSec", line, line)
 
     def test_views_py_zero_diff(self):
         self._assert_zero_diff("simulator/views.py")

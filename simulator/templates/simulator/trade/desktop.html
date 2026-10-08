@@ -1439,6 +1439,7 @@
       <button class="mfp-tf-pop-item" data-tf="5m">5m</button>
       <button class="mfp-tf-pop-item active" data-tf="15m">15m</button>
       <button class="mfp-tf-pop-item" data-tf="1h">1h</button>
+      <button class="mfp-tf-pop-item" data-tf="4h">4h</button>
       <button class="mfp-tf-pop-item" data-tf="1d">1d</button>
     </div>
   </div>
@@ -1583,7 +1584,7 @@
           <select id="gTfSel" class="p-tf" title="Timeframe (active panel)">
             <option value="1m">1m</option>
             <option value="5m">5m</option><option value="15m" selected>15m</option>
-            <option value="1h">1h</option><option value="1d">1d</option>
+            <option value="1h">1h</option><option value="4h">4h</option><option value="1d">1d</option>
           </select>
           <button id="gIndBtn" class="p-ind-btn" title="Technical Indicators (active panel)">Indicadores</button>
           <span id="gWsDot" class="ops-ws-dot" title="WebSocket status"></span>
@@ -2848,7 +2849,7 @@ class TradingPanel {
         <select class="p-tf">
           <option value="1m">1m</option>
           <option value="5m">5m</option><option value="15m" selected>15m</option>
-          <option value="1h">1h</option><option value="1d">1d</option>
+          <option value="1h">1h</option><option value="4h">4h</option><option value="1d">1d</option>
         </select>
         <span class="panel-status p-status">connecting…</span>
         <button class="p-ind-btn" title="Technical Indicators">Ind</button>

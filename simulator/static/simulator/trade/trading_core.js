@@ -16,7 +16,15 @@ const priceFormatFor=sym=>(sym.includes('BTC')||sym.includes('ETH'))?{precision:
 // from "1 pip". Real convention: 0.0001 for non-JPY forex, 0.01 for
 // JPY pairs.
 const pipSizeFor=sym=>sym.endsWith('/JPY')?0.01:0.0001;
-const tfToSec=tf=>({'1s':1,'1m':60,'5m':300,'15m':900,'1h':3600,'1d':86400}[String(tf)]??60);
+// PRE-VPS-POLISH-03C.3.TF-02B — "4h" added to this lookup (14400s),
+// matching the real backend catalog (consumers.py's _TF_ALIASES/
+// _TF_SECONDS, now 4h-aware since TF-02). Same dict, same ??60
+// fallback, same signature — only Desktop's two callers (_resetAgg(),
+// whose this.agg is dead/write-only state, and _updateRangeBar()'s
+// purely cosmetic range-button visibility filter) are affected, and
+// neither touches OHLCV/history/candle_new/candle_update/orders/P&L/
+// spread/margin/risk/economics.
+const tfToSec=tf=>({'1s':1,'1m':60,'5m':300,'15m':900,'1h':3600,'4h':14400,'1d':86400}[String(tf)]??60);
 const roundToTick=(price,sym)=>{const {minMove,precision}=priceFormatFor(sym);return Number((Math.round(price/minMove)*minMove).toFixed(precision));};
 const debounce=(fn,ms)=>{let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms);};};
 const normTime=secOrMs=>{const t=Number(secOrMs||0);if(!t)return null;return(t>1e12)?Math.floor(t/1000):t;};

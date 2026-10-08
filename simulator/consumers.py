@@ -48,9 +48,17 @@ _TF_ALIASES = {
     "300": "5m", "m5": "5m", "5m": "5m",
     "900": "15m", "m15": "15m", "15m": "15m",
     "3600": "1h", "h1": "1h", "1h": "1h",
+    # PRE-VPS-POLISH-03C.3.TF-02 — real end-to-end 4h support. Same
+    # alias shape as every other bucket here (bare seconds + MT-style
+    # letter+number alias); 14400 = 4*3600, the exact bucket size the
+    # live tick/kline/trade aggregators (_on_tick/candle_kline/
+    # price_trade — all already generic over tf_seconds()) and
+    # _massive_range()/fetch_massive_history() already handle for any
+    # value, with zero code changes beyond this catalog entry.
+    "14400": "4h", "h4": "4h", "4h": "4h",
     "86400": "1d", "d1": "1d", "1d": "1d",
 }
-_TF_SECONDS = {"1s": 1, "1m": 60, "5m": 300, "15m": 900, "1h": 3600, "1d": 86400}
+_TF_SECONDS = {"1s": 1, "1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
 
 def normalize_tf(tf) -> "str | None":
     """Canonical internal timeframe string for any recognized alias of

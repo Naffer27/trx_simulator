@@ -300,12 +300,14 @@ class ProtectedFilesZeroDiffTests(SimpleTestCase):
         result = subprocess.run(["git", "diff", "--quiet", "--", path])
         self.assertEqual(result.returncode, 0, f"{path} has a diff against HEAD, expected none")
 
-    # PRE-VPS-POLISH-03C.3.TF-01A — OLD CONTRACT: blanket zero-diff.
-    # NEW CONTRACT: TF-01 (separately authorized) narrowed
-    # MOBILE_TIMEFRAMES to the 5-entry public catalog. WHY preserved:
-    # still fails if the diff ever touches order/position/risk/close
-    # wiring, or if the catalog itself drifts from the authorized set.
-    def test_mobile_session_js_diff_scoped_to_tf01_timeframe_catalog_only(self):
+    # PRE-VPS-POLISH-03C.3.TF-02A — OLD CONTRACT CHAIN: TF-01 narrowed
+    # MOBILE_TIMEFRAMES to the 5-entry public catalog (blanket zero-
+    # diff superseded then). NEW CONTRACT: TF-02 (separately
+    # authorized) grew it to the real 6-entry catalog (added "4h").
+    # WHY preserved: still fails if the diff ever touches order/
+    # position/risk/close wiring, or if the catalog itself drifts from
+    # the authorized set.
+    def test_mobile_session_js_diff_scoped_to_timeframe_catalog_only(self):
         result = subprocess.run(
             ["git", "diff", "--", "simulator/static/simulator/trade/mobile_session.js"],
             capture_output=True, text=True,
@@ -319,27 +321,60 @@ class ProtectedFilesZeroDiffTests(SimpleTestCase):
             self.assertNotIn(forbidden, diff, forbidden)
         with open("simulator/static/simulator/trade/mobile_session.js", encoding="utf-8") as f:
             src = f.read()
-        self.assertIn("const MOBILE_TIMEFRAMES = ['1m', '5m', '15m', '1h', '1d'];", src)
+        self.assertIn("const MOBILE_TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h', '1d'];", src)
 
     def test_mobile_chart_js_zero_diff(self):
         self._assert_zero_diff("simulator/static/simulator/trade/mobile_chart.js")
 
-    def test_trading_core_js_zero_diff(self):
-        self._assert_zero_diff("simulator/static/simulator/trade/trading_core.js")
+    # PRE-VPS-POLISH-03C.3.TF-02A — OLD CONTRACT: blanket zero-diff
+    # (trading_core.js had never been touched by any Mobile sub-block).
+    # NEW CONTRACT: TF-02B added exactly one key ('4h':14400) to the
+    # existing tfToSec() lookup (Desktop's shared, non-financial
+    # timeframe-seconds helper), closing the same silent-fallback gap
+    # class TF-01 fixed on the backend. WHY preserved: still fails if
+    # trading_core.js's diff ever touches any protected financial/
+    # transport surface (P&L, contract size, canonical positions,
+    # price authority, order execution, margin, spread, commissions,
+    # Broker Ledger, risk, WebSocket/transport, candle construction) —
+    # only the tfToSec() dict is allowed to change, and every removed
+    # line must be that one definition.
+    def test_trading_core_js_diff_scoped_to_4h_timeframe_only(self):
+        result = subprocess.run(
+            ["git", "diff", "--", "simulator/static/simulator/trade/trading_core.js"],
+            capture_output=True, text=True,
+        )
+        diff = result.stdout
+        self.assertIn("const tfToSec=", diff)
+        self.assertIn("'4h':14400", diff)
+        for forbidden in (
+            "computeRawPnL(", "computePositionPnL(", "getContractSize(", "LOT_SPECS=",
+            "applyPriceTickState(", "getCanonicalPositions(", "replaceCanonicalPositions(",
+            "commission_for", "margin_used", "spread_revenue", "BrokerLedger",
+            "new WebSocket(", "_calcSMA", "_calcEMA", "_calcRSI",
+        ):
+            self.assertNotIn(forbidden, diff, forbidden)
+        removed = [l for l in diff.splitlines() if l.startswith("-") and not l.startswith("---")]
+        for line in removed:
+            self.assertIn("tfToSec", line, line)
 
-    # PRE-VPS-POLISH-03C.3.TF-01A — OLD CONTRACT: blanket zero-diff.
-    # NEW CONTRACT: TF-01 removed "1s" from desktop.html's 3 selector
-    # entries. WHY preserved: still fails if the diff touches anything
-    # beyond those removals.
-    def test_desktop_html_diff_scoped_to_tf01_1s_removal_only(self):
+    # PRE-VPS-POLISH-03C.3.TF-02A — OLD CONTRACT (TF-01A): the diff had
+    # to be exactly the "1s" removal. NEW CONTRACT: TF-02 ALSO inserted
+    # "4h" between "1h" and "1d" in the same 3 selector locations. WHY
+    # preserved: still fails if the diff touches anything beyond those
+    # legitimate timeframe-catalog changes.
+    def test_desktop_html_diff_scoped_to_timeframe_catalog_only(self):
         result = subprocess.run(
             ["git", "diff", "--", "simulator/templates/simulator/trade/desktop.html"],
             capture_output=True, text=True,
         )
         diff = result.stdout
-        removed = [l for l in diff.splitlines() if l.startswith("-") and not l.startswith("---")]
-        for line in removed:
-            self.assertIn("1s", line, line)
+        changed = [
+            l for l in diff.splitlines()
+            if (l.startswith("+") or l.startswith("-")) and not l.startswith(("+++", "---"))
+        ]
+        self.assertTrue(changed, "expected a real timeframe-catalog diff")
+        for line in changed:
+            self.assertTrue(("1s" in line) or ("4h" in line) or ("1h" in line and "1d" in line), line)
         for forbidden in (
             "sendOrder", "closePosition", "commission", "margin_used", "BrokerLedger",
             "computeRawPnL", "risk_preview", "'order:new'", "'order:close'",
@@ -349,6 +384,8 @@ class ProtectedFilesZeroDiffTests(SimpleTestCase):
             src = f.read()
         self.assertNotIn('value="1s"', src)
         self.assertNotIn('data-tf="1s"', src)
+        self.assertIn('value="4h"', src)
+        self.assertIn('data-tf="4h"', src)
 
     def test_shell_html_zero_diff(self):
         self._assert_zero_diff("simulator/templates/simulator/trade/shell.html")

@@ -134,6 +134,11 @@ _MASSIVE_TF = {
     "5m":  (5, "minute"),
     "15m": (15, "minute"),
     "1h":  (1, "hour"),
+    # PRE-VPS-POLISH-03C.3.TF-02 — real 4-hour bars, requested directly
+    # from Massive's own aggs endpoint (multiplier=4, timespan=hour) —
+    # the exact same mechanism already used for 1h/1d, never a client-
+    # side aggregation of 1h bars into 4h ones.
+    "4h":  (4, "hour"),
     "1d":  (1, "day"),
 }
 _MASSIVE_SECONDS_PER_UNIT = {"second": 1, "minute": 60, "hour": 3600, "day": 86400}

@@ -74,7 +74,11 @@ let mobileGlobalProvider = localStorage.provider || 'sim';
 // normalize_tf() (consumers.py) still fully support "1s" internally
 // and remain untouched as a capability — nothing here ever sends "1s"
 // anymore simply because nothing in the UI offers it.
-const MOBILE_TIMEFRAMES = ['1m', '5m', '15m', '1h', '1d'];
+// PRE-VPS-POLISH-03C.3.TF-02 — real 4h added to this client-side
+// validation list, matching mobile.html's own public catalog exactly
+// (one contractual authority) — the backend's _TF_ALIASES/_TF_SECONDS
+// (consumers.py) now recognize "4h" as a real 14400-second bucket.
+const MOBILE_TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h', '1d'];
 
 class MobileTradingSession {
   constructor(onStatusChange, onAccount, onQuote, allowedSymbols, onHistory, onCandleNew, onCandleUpdate, onVolumeUpdate, onRiskPreview, onRiskWarning, onOrderAck, onOrderRejected, onTradingError, onPositions, onPendingOrders, onOrderClose, onCloseError, onClosedTrades, onPendingOrderCancelled, onPendingCancelError) {
