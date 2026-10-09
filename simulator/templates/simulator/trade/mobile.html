@@ -1645,6 +1645,26 @@ window.__TRADE_CONFIG__ = {
   // untouched, exactly as condition 4 requires ("si no coinciden, no
   // declares guardado").
   function onPositions(items){
+    // FIX (MOBILE GRÁFICO — reload/posiciones, isolated reproduction)
+    // — the ONLY existing path that ever sets session.currentSymbol is
+    // a watchlist tap (selectSymbol()); after a full page reload that
+    // never happens on its own, so an already-open position stayed
+    // invisible on Gráfico until the user manually re-tapped its
+    // symbol — confirmed by isolated reproduction (not a race between
+    // 'positions'/'history' order; currentSymbol simply never gets a
+    // value at all). If no symbol has been chosen yet AND the REAL,
+    // just-received canonical snapshot already has an open position,
+    // auto-select the first one's symbol — same deterministic "first
+    // in canonical order" rule reconcileSelection() already uses below,
+    // and the exact same selectSymbol() the watchlist itself calls
+    // (the same real symbol-selection/history-request round trip,
+    // never a new message, never invented data). No-ops once the user
+    // has chosen any symbol
+    // (currentSymbol is no longer null) and never fires at all when
+    // there is no open position to anchor a default to.
+    if(!session.currentSymbol && items.length){
+      session.selectSymbol(items[0].symbol);
+    }
     renderPositions(items);
     let resolvedField=null;
     if(pendingSlTp){

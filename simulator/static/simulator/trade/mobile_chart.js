@@ -213,6 +213,25 @@ class MobileTradingChart {
       this.containerEl.style.position = 'relative';
     }
     this.applyThemeColors();
+    // FIX (MOBILE GRÁFICO — reload/chart-not-ready, isolated
+    // reproduction) — candleSeries/volumeSeries did not exist yet if
+    // applyHistory()/setPositions() were already called while this
+    // async function was still awaiting the CDN script (a real gap on
+    // a slow connection/device — this.chart stays null the whole time,
+    // see the guard at the top of this method). Both of those methods
+    // already retain their own data (this.bars / this._lastPositions)
+    // even without a real series to draw into (applyHistory() via
+    // optional chaining on the .setData() calls only; setPositions()
+    // the same way now, see its own comment). Replaying both here,
+    // exactly once, the instant the series become real, reconstructs
+    // the full visual state from canonical truth already received —
+    // no new network call, no fabricated event, nothing resent.
+    if (this.bars.length) {
+      this.candleSeries.setData(this.bars);
+      this.volumeSeries.setData(this.bars.map(volPointForBar));
+      this.chart.timeScale().fitContent();
+    }
+    this.setPositions(this._lastPositions, this._selectedId);
   }
 
   // 2nd correction round — reads the REAL --bg/--muted/--line/--candle-up/
@@ -385,7 +404,6 @@ class MobileTradingChart {
   // non-selected positions' SL/TP are deliberately not drawn as lines,
   // per this round's own authorization.
   setPositions(positions, selectedId) {
-    if (!this.candleSeries) return;
     const list = Array.isArray(positions) ? positions : [];
     const selIdStr = selectedId != null ? String(selectedId) : null;
     const stillHasSelected = selIdStr != null && list.some((p) => String(p.id) === selIdStr);
@@ -406,10 +424,26 @@ class MobileTradingChart {
     const editStillSelected = this._edit && stillHasSelected && String(this._edit.pos.id) === selIdStr;
     const keepSending = this._edit && this._edit.mode === 'sending' && editStillSelected;
     if (this._edit && !keepSending) this._abandonEdit();
-    this._clearAllLines();
-    this._clearOverlay();
+    // FIX (MOBILE GRÁFICO — reload/chart-not-ready, isolated
+    // reproduction) — _lastPositions/_selectedId are this class's own
+    // retained memory of the last real canonical truth it was given,
+    // kept EVEN WHEN candleSeries doesn't exist yet (same discipline
+    // applyHistory() already follows for bars/_historySymbol — data is
+    // never dropped just because there is nothing to draw into yet).
+    // Confirmed root cause (isolated reproduction): the previous `if
+    // (!this.candleSeries) return;` guard sat BEFORE this assignment,
+    // so a 'positions' snapshot that arrived during initialize()'s own
+    // async startup window (CDN script still loading) was silently
+    // discarded — this class never even remembered it existed, so
+    // nothing could ever re-render it once the chart became ready.
+    // initialize() below replays this exact retained state the instant
+    // candleSeries becomes real — no new network call, no fabricated
+    // event.
     this._lastPositions = list;
     this._selectedId = stillHasSelected ? selIdStr : null;
+    if (!this.candleSeries) return;
+    this._clearAllLines();
+    this._clearOverlay();
     if (!list.length) return;
     this._renderAllEntries(list);
     const sel = this._selectedPos();
