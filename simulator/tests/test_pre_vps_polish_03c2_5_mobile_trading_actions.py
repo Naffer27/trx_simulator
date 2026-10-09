@@ -345,22 +345,28 @@ class NoFinancialEngineDuplicationTests(SimpleTestCase):
         # NEW CONTRACT (03C.2.6): order:close (closePosition()) and
         # order:pending:cancel (cancelPendingOrder()) are now real,
         # authorized Mobile actions — moved to the positive-assertion
-        # list for that reason. WHY preserved: order:pending:new/
-        # order:pending:update (pending-order creation/edit) and
-        # order:update (position SL/TP editing) remain fully forbidden,
+        # list for that reason. order:pending:new/order:pending:update
+        # (pending-order creation/edit) remain fully forbidden,
         # unweakened — 03C.2.6 is display+cancel-only for pending
-        # orders and never edits an open position's SL/TP.
-        # "order:update" is checked as the precise action-payload pattern
-        # (action:'...'), not the bare word: this file's own 03C.2.6
-        # documentation comment legitimately names "order:update" by
-        # word to describe its absence, which a bare substring match
-        # would misread as the action itself.
+        # orders.
+        #
+        # OLD: order:update (position SL/TP editing) was also fully
+        # forbidden here.
+        # NEW: order:update is now authorized — moved to the positive-
+        # assertion list.
+        # WHY: MOBILE-DESIGN-INTEGRATION-01 — GRAPH, SL/TP-on-open-
+        # position editing (audited-then-authorized sub-block).
+        # updateSlTp() sends it, reusing the EXACT real backend contract
+        # Desktop's own chart drag-lines/sheet editor already use
+        # (confirmed by a dedicated read-only audit of consumers.py
+        # before authorization) — modifying SL/TP on an ALREADY-OPEN
+        # position, a distinct action from order:new's own sl/tp
+        # (new-order creation, unaffected). order:pending:new/
+        # order:pending:update remain genuinely out of scope.
         src = _session_source()
         for forbidden in ("order:pending:new", "order:pending:update"):
             self.assertNotIn(forbidden, src)
-        for forbidden in ("action:'order:update'", "action: 'order:update'"):
-            self.assertNotIn(forbidden, src)
-        for authorized in ("action: 'order:close'", "action: 'order:pending:cancel'"):
+        for authorized in ("action: 'order:close'", "action: 'order:pending:cancel'", "action: 'order:update'"):
             self.assertIn(authorized, src)
 
     def test_no_fetch_or_xhr_introduced(self):
@@ -381,9 +387,16 @@ class MobileTicketHtmlWiringTests(TestCase):
         self.assertEqual(r.status_code, 200)
         return r.content.decode()
 
-    def test_buy_sell_qty_sl_tp_controls_present(self):
+    # OLD: mobSlInput/mobTpInput were expected among these ids.
+    # NEW: removed — Gráfico scope-removal round explicitly took the
+    # new-order SL/TP panel (and its two inputs) out of this screen; the
+    # Owner's own words: that configuration moves to a future, not-yet-
+    # built order-creation screen. session.submitOrder() itself is
+    # unchanged (still accepts sl/tp) — see test_submit_ticket_calls_
+    # session_submit_order right below, unaffected.
+    def test_buy_sell_qty_controls_present(self):
         html = self._html()
-        for el_id in ("mobBuyBtn", "mobSellBtn", "mobQtyInput", "mobSlInput", "mobTpInput"):
+        for el_id in ("mobBuyBtn", "mobSellBtn", "mobQtyInput"):
             self.assertIn(f'id="{el_id}"', html)
 
     def test_submit_ticket_calls_session_submit_order(self):

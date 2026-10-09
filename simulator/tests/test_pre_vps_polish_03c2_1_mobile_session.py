@@ -118,10 +118,17 @@ class MobileTemplateWiringTests(TestCase):
     def test_no_order_actions_in_mobile_html(self):
         # PRE-VPS-POLISH-03C.2.5A — order:new/risk_preview are now
         # authorized Mobile trading actions (03C.2.5) — removed from
-        # this forbidden list for that reason alone. order:close/
-        # order:update remain fully forbidden, unweakened (not yet
-        # authorized), and local financial computation stays forbidden
-        # too — strengthened, not weakened.
+        # this forbidden list for that reason alone.
+        #
+        # order:close (03C.2.6) and order:update (SL/TP-on-open-position
+        # editing, audited-then-authorized sub-block) are now ALSO real,
+        # authorized backend contracts — but this assertion itself was
+        # never about whether those actions exist; it is about WHERE
+        # they are constructed. mobile.html delegates every real send to
+        # a dedicated mobile_session.js method (closePosition()/
+        # updateSlTp()) and never itself embeds the literal action
+        # string — so this check correctly still holds, unweakened.
+        # Local financial computation stays forbidden too.
         _, html = self._html_for("STANDARD")
         self.assertNotIn("order:close", html)
         self.assertNotIn("order:update", html)
@@ -222,26 +229,36 @@ class MobileSessionSourceContractTests(SimpleTestCase):
         # order:pending:cancel (cancelPendingOrder()), and
         # get_closed_trades (requestClosedTrades()) are now, likewise,
         # authorized real Mobile actions — removed from the forbidden
-        # list for that reason alone. order:update (position SL/TP
-        # editing) and order:pending:new/order:pending:update (pending-
-        # order creation/edit) remain fully forbidden, unweakened —
-        # Mobile stays market-only for creation and display+cancel-only
+        # list for that reason alone. order:pending:new/
+        # order:pending:update (pending-order creation/edit) remain
+        # fully forbidden, unweakened — Mobile stays display+cancel-only
         # for pending orders.
+        #
+        # MOBILE-DESIGN-INTEGRATION-01 — GRAPH, SL/TP-on-open-position
+        # editing (audited-then-authorized sub-block) — order:update
+        # moves from forbidden to authorized: updateSlTp() now sends it,
+        # reusing the EXACT real backend contract Desktop's own chart
+        # drag-lines/sheet editor already use (confirmed by a dedicated
+        # read-only audit of consumers.py before authorization). This
+        # modifies SL/TP on an ALREADY-OPEN position — a distinct action
+        # from order:new's own sl/tp (new-order creation), which stays
+        # authorized as before. order:pending:new/order:pending:update/
+        # get_positions/'BUY'/'SELL' (as bare literals) remain genuinely
+        # out of scope and still forbidden.
         src = _session_source()
         for forbidden in (
-            "action:'order:update'", "action: 'order:update'",
             "action:'order:pending:new'", "action: 'order:pending:new'",
             "action:'order:pending:update'", "action: 'order:pending:update'",
             "'BUY'", "'SELL'",
             "action:'get_positions'", "action: 'get_positions'",
         ):
             self.assertNotIn(forbidden, src)
-        # The 5 actions currently authorized must each be real and
+        # The 6 actions currently authorized must each be real and
         # present — not simply absent-of-prohibition.
         for authorized in (
             "action: 'order:new'", "action: 'order:risk_preview'",
             "action: 'order:close'", "action: 'order:pending:cancel'",
-            "action: 'get_closed_trades'",
+            "action: 'get_closed_trades'", "action: 'order:update'",
         ):
             self.assertIn(authorized, src)
 
@@ -278,25 +295,32 @@ class MobileSessionSourceContractTests(SimpleTestCase):
         # checked here; the real "no inheritance, no shared chart/order
         # code" contract is covered structurally by class-shape tests,
         # not this list.)
-        # "order:update" is checked as the precise action-payload pattern
-        # (action:'...'), not the bare word: this file's own 03C.2.6
-        # documentation comment legitimately names "order:update" by
-        # word to describe its absence ("no position-SL/TP editing
-        # (order:update stays out of scope)"), which a bare substring
-        # match would misread as the action itself.
+        # OLD: "action:'order:update'"/"action: 'order:update'" were in
+        # the forbidden list below.
+        # NEW: removed — order:update is now authorized.
+        # WHY: MOBILE-DESIGN-INTEGRATION-01 — GRAPH, SL/TP-on-open-
+        # position editing (audited-then-authorized sub-block).
+        # updateSlTp() now sends order:update, reusing the EXACT real
+        # backend contract Desktop's own chart drag-lines/sheet editor
+        # already use (confirmed by a dedicated read-only audit of
+        # consumers.py before authorization) — modifying SL/TP on an
+        # ALREADY-OPEN position, distinct from order:new's own sl/tp
+        # (new-order creation). order:pending:new/order:pending:update/
+        # get_positions/get_pending remain genuinely out of scope and
+        # still forbidden.
         for forbidden in (
-            "action:'order:update'", "action: 'order:update'",
             "order:pending:new", "order:pending:update",
             "get_positions", "get_pending",
         ):
             self.assertNotIn(forbidden, src)
-        # The messages this sub-block (03C.2.4), 03C.2.5, and 03C.2.6
-        # actually authorize must each be real, present, and guarded —
-        # not simply absent-of-prohibition.
+        # The messages this sub-block (03C.2.4), 03C.2.5, 03C.2.6, and
+        # the SL/TP-editing sub-block actually authorize must each be
+        # real, present, and guarded — not simply absent-of-prohibition.
         for authorized in (
             "'history'", "'candle_new'", "'candle_update'", "'volume_update'",
             "'positions'", "order:new", "order:risk_preview",
             "order:close", "order:pending:cancel", "get_closed_trades",
+            "order:update",
         ):
             self.assertIn(authorized, src)
 

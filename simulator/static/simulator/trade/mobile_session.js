@@ -45,11 +45,44 @@
    P&L/commission/margin/spread/IB computation anywhere. Still no
    pending-order creation or edit (the backend's own pending-order
    create/update actions stay out of scope — Mobile is still market-only
-   for creation), no
-   position-SL/TP editing (order:update stays out of scope), no partial-
-   close UI (closePosition() accepts an optional qty the backend already
-   supports, but the ticket's own Close control never passes one). Those
-   remain later, separately authorized sub-blocks. */
+   for creation), no partial-close UI (closePosition() accepts an
+   optional qty the backend already supports, but the ticket's own
+   Close control never passes one). Those remain later, separately
+   authorized sub-blocks.
+
+   MOBILE-DESIGN-INTEGRATION-01 — GRAPH, SL/TP-on-open-position editing
+   (audited-then-authorized sub-block) — adds updateSlTp(), the ONLY
+   Mobile authority for modifying SL/TP on an ALREADY-OPEN position
+   (distinct from submitOrder()'s sl/tp, which only ever applies at
+   NEW-order creation time). Sends the EXACT real backend contract
+   Desktop's chart drag-lines/sheet editor already use unmodified
+   (consumers.py::TradingConsumer._order_update, confirmed by a
+   dedicated read-only audit of consumers.py + desktop.html before this
+   method was authorized): {action:'order:update', id, symbol, sl, tp}.
+   No new WebSocket, no second position model, no parallel P&L/SL/TP/
+   price computation — sl/tp are passed through to the wire EXACTLY as
+   the caller (mobile.html) provides them; this method never defaults
+   either to null itself (null here only ever means an explicit
+   removal the caller already decided on).
+
+   The real backend response carries NO request/correlation id —
+   success is just the generic {"type":"positions",...} snapshot (same
+   message every other flow can also trigger), and 'error'/'warn' share
+   codes with order:new's own validation path. This file resolves that
+   the same way it already resolves order:new vs order:close ambiguity
+   (_orderSending/_closeSending, see closePosition()'s own comment):
+   one more mutually-exclusive single-slot guard, _slTpSendingId.
+   Matching an incoming 'positions' snapshot against what was actually
+   requested (same id + same confirmed sl/tp, instrument precision)
+   is the caller's (mobile.html's) job, via the EXISTING, UNCHANGED
+   onPositions callback — this file adds no special-casing to the
+   'positions' branch below for this. A generous (20s) internal-only
+   safety-valve timeout exists solely so a lost/dropped response can
+   never deadlock this slot forever; it is NOT a success/failure
+   declaration (the caller's own, separate, shorter UI-facing timeout
+   owns that user-facing distinction) and is cleared early by
+   clearSlTpPending() the moment the caller itself determines the real
+   outcome (so a legitimate quick success never has to wait it out). */
 
 // Same client-side provider preference Desktop reads — not a second
 // source of truth, just the identical localStorage key read again in
@@ -81,7 +114,7 @@ let mobileGlobalProvider = localStorage.provider || 'sim';
 const MOBILE_TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h', '1d'];
 
 class MobileTradingSession {
-  constructor(onStatusChange, onAccount, onQuote, allowedSymbols, onHistory, onCandleNew, onCandleUpdate, onVolumeUpdate, onRiskPreview, onRiskWarning, onOrderAck, onOrderRejected, onTradingError, onPositions, onPendingOrders, onOrderClose, onCloseError, onClosedTrades, onPendingOrderCancelled, onPendingCancelError) {
+  constructor(onStatusChange, onAccount, onQuote, allowedSymbols, onHistory, onCandleNew, onCandleUpdate, onVolumeUpdate, onRiskPreview, onRiskWarning, onOrderAck, onOrderRejected, onTradingError, onPositions, onPendingOrders, onOrderClose, onCloseError, onClosedTrades, onPendingOrderCancelled, onPendingCancelError, onSlTpUpdateRejected) {
     this.ws = null;
     this.hb = null;
     this.reconnTimer = null;
@@ -124,6 +157,14 @@ class MobileTradingSession {
     this.onPendingOrderCancelled = onPendingOrderCancelled || (() => {});
     this.onPendingCancelError = onPendingCancelError || (() => {});
 
+    // MOBILE-DESIGN-INTEGRATION-01 — GRAPH, SL/TP editing — same plain-
+    // callback pattern as every other response above; fires ONLY when
+    // an 'error'/'warn' is unambiguously attributable to the single
+    // in-flight order:update this file itself sent (see updateSlTp()
+    // and _slTpSendingId below). Receives the raw server message
+    // unmodified, same as onTradingError/onCloseError.
+    this.onSlTpUpdateRejected = onSlTpUpdateRejected || (() => {});
+
     // PRE-VPS-POLISH-03C.2.6 — close-in-flight guard, deliberately
     // SEPARATE from _orderSending (see submitOrder()'s own note below):
     // order:new and order:close share the generic 'error' message type
@@ -135,6 +176,12 @@ class MobileTradingSession {
     // 'error' is never attributed to the wrong flow — not clever
     // inspection of the error payload itself.
     this._closeSending = false;
+    // ISOLATED BUG FIX — token identifying which closePosition() call
+    // owns the pending _closeSending slot, so that call's own 20s
+    // safety-valve (see closePosition()) can never release a LATER,
+    // different close's slot — same `=== key` discipline _slTpSendingId
+    // already uses, adapted for _closeSending's plain boolean shape.
+    this._closeToken = 0;
     // Single-slot cancel-in-flight guard (one pending-order cancel at a
     // time, not a per-id Set): the backend's failure response
     // ({"type":"warn","message":"order_pending_cancel_<code>"}) carries
@@ -144,6 +191,17 @@ class MobileTradingSession {
     // (order_pending_cancel) DOES carry an id, but since only one cancel
     // can ever be in flight here there is nothing to disambiguate.
     this._cancelSendingId = null;
+
+    // MOBILE-DESIGN-INTEGRATION-01 — GRAPH, SL/TP editing — single-slot
+    // guard, same shape as _cancelSendingId above (holds the position
+    // id as a string while a modification is in flight, null
+    // otherwise). updateSlTp() refuses to send while _orderSending/
+    // _closeSending/this flag are already set, so at most ONE of the
+    // three can ever be true when an 'error'/'warn' response arrives —
+    // that mutual exclusion, not inspection of the error payload
+    // itself, is what keeps attribution unambiguous (identical
+    // reasoning to _closeSending's own comment above).
+    this._slTpSendingId = null;
 
     // PRE-VPS-POLISH-03C.2.5 — order-ticket transient state. Mirrors
     // Desktop's module-level orderTicketState/_ pendingRiskOrder, scoped
@@ -357,19 +415,112 @@ class MobileTradingSession {
   // parameter (the backend already supports partial close) but the
   // Mobile ticket's own Close control never passes one — full close
   // only for this sub-block's UI, per design lock Section 7.
+  // ISOLATED BUG FIX — close-position guard never releasing after a
+  // blocked/never-sent attempt (confirmed by isolated reproduction: a
+  // disconnected tap on × left Mobile's closeInFlight stuck true
+  // forever, since the caller set it unconditionally and no backend
+  // response was ever going to arrive to release it). Returns true
+  // ONLY when a message was actually handed to the socket — exactly
+  // the same true/false discipline updateSlTp() already uses below —
+  // so the caller (mobile.html) can set its own closeInFlight ONLY
+  // when a real send happened, never before confirming it.
   closePosition(id, qty) {
     // Mutual exclusion with submitOrder() — see _closeSending's comment.
-    if (this._orderSending || this._closeSending) return;
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-    if (id == null) return;
+    if (this._orderSending || this._closeSending) return false;
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
+    if (id == null) return false;
     const payload = { action: 'order:close', id: String(id) };
     if (qty != null) payload.qty = qty;
     this._closeSending = true;
+    const token = ++this._closeToken;
     try {
       this.ws.send(JSON.stringify(payload));
     } catch (_) {
       this._closeSending = false;
+      return false;
     }
+    // ISOLATED BUG FIX — same safety-valve discipline as updateSlTp()'s
+    // own 20s timeout above (see its comment): order:close's real
+    // response carries no correlation id either, so if the backend
+    // never answers at all (not just a disconnect — a send that
+    // genuinely gets no reply), _closeSending would otherwise stay
+    // true forever and silently refuse every future close, even after
+    // the caller's own shorter UI-facing timeout has already released
+    // ITS guard and reported "no confirmado". NOT a success/failure
+    // declaration — purely so a lost/dropped response can never
+    // deadlock this slot forever. The token check never releases a
+    // LATER close's own slot.
+    const self = this;
+    const safetyValve = setTimeout(() => { if (self._closeSending && self._closeToken === token) self._closeSending = false; }, 20000);
+    // Node-harness compatibility only (this file also runs under plain
+    // Node in this project's own test scripts, which have no event
+    // loop activity besides this timer and don't call process.exit()):
+    // a browser's setTimeout() return value has no .unref — guarded,
+    // never called there, so production behavior is unchanged.
+    if (typeof safetyValve.unref === 'function') safetyValve.unref();
+    return true;
+  }
+
+  // MOBILE-DESIGN-INTEGRATION-01 — GRAPH, SL/TP editing — the one
+  // Mobile position-SL/TP-modify authority (distinct from submitOrder()
+  // 's sl/tp, which only ever applies at new-order creation time).
+  // Sends the EXACT real backend contract (consumers.py::_order_update,
+  // confirmed against Desktop's own drag-lines/sheet editor, which use
+  // this identically): {action:'order:update', id, symbol, sl, tp}.
+  //
+  // Deliberately requires the caller to pass id/symbol explicitly —
+  // NEVER falls back to this.currentSymbol itself (an Owner-mandated
+  // correction: the caller must always use the canonical position's
+  // OWN id/symbol, since a position's symbol need not equal whatever
+  // is currently selected on screen). Refuses and returns false,
+  // sending nothing, if either is missing, so the caller can report
+  // state instead of silently failing.
+  //
+  // sl/tp are passed through to the wire EXACTLY as given — this
+  // method never substitutes null for an unspecified field itself;
+  // the caller (mobile.html) must always pass the field being edited's
+  // new value AND the other field's current confirmed value (or an
+  // explicit null, only when the user explicitly requested removal).
+  //
+  // Mutually exclusive with submitOrder()/closePosition() and with
+  // itself (_slTpSendingId, see its own comment in the constructor) —
+  // refuses while any trading action already owns the connection, the
+  // same unambiguous-attribution discipline every other send method
+  // here already follows.
+  updateSlTp({ id, symbol, sl, tp } = {}) {
+    if (id == null || !symbol) return false;
+    if (this._orderSending || this._closeSending || this._slTpSendingId != null) return false;
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
+    const key = String(id);
+    this._slTpSendingId = key;
+    try {
+      this.ws.send(JSON.stringify({ action: 'order:update', id: key, symbol, sl, tp }));
+    } catch (_) {
+      this._slTpSendingId = null;
+      return false;
+    }
+    // Safety-valve only (see the class-level comment at the top of this
+    // file) — order:update carries no correlation id, so a lost/
+    // dropped response could otherwise block this slot forever. NOT a
+    // success/failure declaration: the caller's own, separate, shorter
+    // UI-facing timeout owns that distinction. Auto-releases only if
+    // nothing has already resolved THIS exact request (the `=== key`
+    // check never clears a newer request's slot).
+    const self = this;
+    setTimeout(() => { if (self._slTpSendingId === key) self._slTpSendingId = null; }, 20000);
+    return true;
+  }
+
+  // Lets the caller release the single-slot guard as soon as IT has
+  // independently determined the real outcome (a matching 'positions'
+  // snapshot confirming success — see this file's class-level comment:
+  // that match/no-match comparison is the caller's job, never this
+  // file's, since the backend's 'positions' push carries no request
+  // id to correlate against here). No-ops if the given id doesn't
+  // match the currently-pending one, so it can never release a NEWER
+  // request's slot by mistake.
+  clearSlTpPending(id) {
+    if (this._slTpSendingId != null && this._slTpSendingId === String(id)) this._slTpSendingId = null;
   }
 
   // PRE-VPS-POLISH-03C.2.6 — the one Mobile pending-order-cancel
@@ -425,23 +576,41 @@ class MobileTradingSession {
     return u.toString();
   }
 
+  // ISOLATED FIX (Mobile desconexión/reconexión) — every one of this
+  // socket's own four handlers below (onopen/onmessage/onerror/
+  // onclose) now starts by checking `this.ws !== sock` — `sock` is the
+  // EXACT object this specific connect() call created, captured in a
+  // local const at the moment it's constructed, never re-read from
+  // `this.ws` afterward (which is a mutable field connect() itself
+  // reassigns on every call). The instant a LATER connect() call
+  // replaces `this.ws` with a newer socket, every one of THIS old
+  // socket's handlers becomes a no-op — it can never again touch
+  // session state, call _handleMsg(), flip the status badge, or
+  // schedule a reconnect that would race the new connection's own.
+  // This is connection identity, not request identity — it says
+  // nothing about (and does not attempt to solve) two requests sent
+  // over the SAME still-current connection; that remains open, tracked
+  // separately, deliberately not addressed here.
   connect() {
     if (this.connecting || (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING))) return;
     this.connecting = true;
     this.onStatusChange('CONNECTING');
+    let sock;
     try {
-      this.ws = new WebSocket(this.wsUrl());
+      sock = new WebSocket(this.wsUrl());
     } catch (e) {
       this.connecting = false;
       this.onStatusChange('DISCONNECTED');
       return;
     }
-    this.ws.onopen = () => {
+    this.ws = sock;
+    sock.onopen = () => {
+      if (this.ws !== sock) return;
       this.onStatusChange('CONNECTED');
       this.reconnDelay = 800;
       this.connecting = false;
       clearInterval(this.hb);
-      this.hb = setInterval(() => { try { this.ws.send('{"action":"ping"}'); } catch (_) {} }, 15000);
+      this.hb = setInterval(() => { try { sock.send('{"action":"ping"}'); } catch (_) {} }, 15000);
       // PRE-VPS-POLISH-03C.2.3 — reconnect symbol restoration, mirroring
       // Desktop's connect()/onopen exactly: every new connection
       // (including every reconnect) re-sends change_symbol for
@@ -449,7 +618,7 @@ class MobileTradingSession {
       // a dropped socket instead of silently drifting back to the
       // backend's own per-connection default symbol.
       if (this.currentSymbol) {
-        try { this.ws.send(JSON.stringify({ action: 'change_symbol', symbol: this.currentSymbol })); } catch (_) {}
+        try { sock.send(JSON.stringify({ action: 'change_symbol', symbol: this.currentSymbol })); } catch (_) {}
       }
       // PRE-VPS-POLISH-03C.2.4 — reconnect timeframe restoration, same
       // rationale as the symbol resend above (Desktop's connect()/onopen
@@ -457,12 +626,19 @@ class MobileTradingSession {
       // always fires. History is only (re-)requested once a symbol is
       // actually selected — load_history needs a real symbol, and until
       // one is chosen there is nothing to request yet.
-      try { this.ws.send(JSON.stringify({ action: 'change_timeframe', timeframe: this.currentTF })); } catch (_) {}
+      try { sock.send(JSON.stringify({ action: 'change_timeframe', timeframe: this.currentTF })); } catch (_) {}
       if (this.currentSymbol) this._requestHistory();
     };
-    this.ws.onmessage = ev => { try { this._handleMsg(JSON.parse(ev.data)); } catch (_) {} };
-    this.ws.onerror = () => { this.onStatusChange('DISCONNECTED'); };
-    this.ws.onclose = () => {
+    sock.onmessage = ev => {
+      if (this.ws !== sock) return;
+      try { this._handleMsg(JSON.parse(ev.data)); } catch (_) {}
+    };
+    sock.onerror = () => {
+      if (this.ws !== sock) return;
+      this.onStatusChange('DISCONNECTED');
+    };
+    sock.onclose = () => {
+      if (this.ws !== sock) return;
       this.connecting = false;
       clearInterval(this.hb);
       this.onStatusChange('RECONNECTING');
@@ -613,6 +789,19 @@ class MobileTradingSession {
       if (this._orderSending) {
         this._orderSending = false;
         this.onTradingError(msg);
+        return;
+      }
+      // MOBILE-DESIGN-INTEGRATION-01 — GRAPH, SL/TP editing — order:
+      // update shares this same generic 'error' type and some codes
+      // (price_unavailable, invalid_sl_value/invalid_tp_value/
+      // invalid_sl_direction/invalid_tp_direction) with order:new's own
+      // validation path. updateSlTp() refuses to send while
+      // _orderSending/_closeSending are active, so by the time
+      // execution reaches here at most one of the three guards is ever
+      // true — never attributed by inspecting the error's own code.
+      if (this._slTpSendingId != null) {
+        this._slTpSendingId = null;
+        this.onSlTpUpdateRejected(msg);
       }
       return;
     }
@@ -634,6 +823,15 @@ class MobileTradingSession {
       if (this._cancelSendingId != null && warnMsg.indexOf('order_pending_cancel_') === 0) {
         this._cancelSendingId = null;
         this.onPendingCancelError(msg);
+        return;
+      }
+      // MOBILE-DESIGN-INTEGRATION-01 — GRAPH, SL/TP editing — real
+      // backend warn for an order:update whose id/symbol matched no
+      // open position (consumers.py::_order_update, literal message
+      // 'order_update_not_found').
+      if (this._slTpSendingId != null && warnMsg.indexOf('order_update_not_found') === 0) {
+        this._slTpSendingId = null;
+        this.onSlTpUpdateRejected(msg);
         return;
       }
       return;

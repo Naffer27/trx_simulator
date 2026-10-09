@@ -847,22 +847,34 @@ class NoOutOfScopeUiTests(SimpleTestCase):
         # order:pending:cancel (cancelPendingOrder()), and
         # get_closed_trades (requestClosedTrades()) are now real,
         # authorized Mobile contracts — moved to the positive-assertion
-        # list for that reason. WHY preserved: order:update (position
-        # SL/TP editing), order:pending:new/order:pending:update
-        # (pending-order creation/edit), and the OUTBOUND action
+        # list for that reason. order:pending:new/order:pending:update
+        # (pending-order creation/edit) and the OUTBOUND action
         # get_positions (never to be confused with the real 'positions'
         # INBOUND message this file legitimately parses) remain fully
-        # unauthorized, unweakened — Mobile stays display+cancel-only
-        # for pending orders and never edits an open position's SL/TP.
+        # unauthorized, unweakened.
+        #
+        # OLD: order:update (position SL/TP editing) was also fully
+        # unauthorized here.
+        # NEW: order:update is now authorized — moved to the positive-
+        # assertion list.
+        # WHY: MOBILE-DESIGN-INTEGRATION-01 — GRAPH, SL/TP-on-open-
+        # position editing (audited-then-authorized sub-block).
+        # updateSlTp() sends it, reusing the EXACT real backend contract
+        # Desktop's own chart drag-lines/sheet editor already use
+        # (confirmed by a dedicated read-only audit of consumers.py
+        # before authorization) — modifying SL/TP on an ALREADY-OPEN
+        # position, a distinct action from order:new's own sl/tp
+        # (new-order creation, unaffected). order:pending:new/
+        # order:pending:update/get_positions/get_pending remain
+        # genuinely out of scope.
         src = _session_source()
         for authorized in (
             "action: 'order:new'", "action: 'order:risk_preview'", "'positions'",
             "action: 'order:close'", "action: 'order:pending:cancel'",
-            "action: 'get_closed_trades'",
+            "action: 'get_closed_trades'", "action: 'order:update'",
         ):
             self.assertIn(authorized, src)
         for forbidden in (
-            "action:'order:update'", "action: 'order:update'",
             "action:'order:pending:new'", "action: 'order:pending:new'",
             "action:'order:pending:update'", "action: 'order:pending:update'",
             "action:'get_positions'", "action: 'get_positions'",
@@ -888,9 +900,15 @@ class NoOutOfScopeUiTests(SimpleTestCase):
         # test_order_ticket_and_positions_pending_closed_ui_authorized
         # above and NoFinancialEngineDuplicationTests-equivalent checks
         # in the 03C.2.6 suite — not duplicated here.
+        # OLD: mobSlInput/mobTpInput were expected among these ids.
+        # NEW: removed — Gráfico scope-removal round took the new-order
+        # SL/TP panel (and its two inputs) out of this screen entirely;
+        # that configuration moves to a future, not-yet-built order-
+        # creation screen (Owner's own explicit decision).
+        # submitOrder()'s sl/tp parameters are unchanged.
         html = _html_source()
         for el_id in (
-            "mobBuyBtn", "mobSellBtn", "mobQtyInput", "mobSlInput", "mobTpInput",
+            "mobBuyBtn", "mobSellBtn", "mobQtyInput",
             "mobTicketStatus", "mobRiskPanel",
             "mobPositionsPane", "mobPendingPane", "mobClosedPane",
         ):

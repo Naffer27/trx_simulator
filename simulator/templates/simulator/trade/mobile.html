@@ -6,6 +6,12 @@
 
 {% block extra_head %}
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<!-- MOBILE-DESIGN-INTEGRATION-01 — GRAPH — same Google Fonts family the
+     approved Visual Contract V1 (money-broker-movil/tema.css) declares.
+     Applied only inside [data-mobile-view="trade"]'s own CSS below —
+     Markets/Positions/History/Account keep the existing system-font
+     stack untouched. -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap">
 <style>
   /* ════════════════════════════════════════════════════════════════
      PRE-VPS-POLISH-03C.3.1 — DESIGN TOKENS / TYPOGRAPHY / COLOR SYSTEM
@@ -142,12 +148,32 @@
      block only changes WHICH DOM ancestor each existing element sits
      under, never the element itself. Uses only 03C.3.1 tokens — no
      new ad-hoc colors/sizes. */
+  /* MOBILE-DESIGN-INTEGRATION-01 — GRAPH (presentation isolation pass).
+     simulator/base.html (shared with Desktop/Dashboard, NOT touched)
+     declares `body{background:#05050a !important;color:#fff !important;
+     font-family:'Inter',sans-serif;}`. The two !important declarations
+     silently won over this file's own (non-!important) body rule below
+     — invisible so far only because #05050a/white are each a few shades
+     off the Mobile dark tokens they were supposed to show instead, so
+     nobody noticed. It becomes a REAL, visible bug the moment any
+     screen (this one, "día" theme) needs an actual light background —
+     the page would have stayed black regardless. Equal-specificity,
+     equal-importance ties resolve to source order, and this file's
+     <style> loads AFTER base.html's — so one matching !important rule,
+     scoped to this file only, correctly wins without touching the
+     shared base template. */
+  body{background:var(--mb-bg) !important;color:var(--mb-text-primary) !important;}
   .mob-foundation{
     height:100dvh;
     overflow:hidden;
     box-sizing:border-box;
     display:flex;flex-direction:column;
     font-variant-numeric:tabular-nums;
+    /* --bg (defined below, defaults to "noche") covers the whole
+       viewport here, correctly flips with [data-mb-theme="dia"] — the
+       earlier var(--mb-bg) reference was the OLD, theme-unaware global
+       token and silently kept this painted dark even in "día". */
+    background:var(--bg);
   }
   .mob-topbar{
     flex:0 0 auto;
@@ -159,6 +185,16 @@
     border-bottom:1px solid var(--mb-border);
     box-sizing:border-box;
   }
+  /* MOBILE-DESIGN-INTEGRATION-01 — GRAPH — the generic brand/connection
+     topbar above is redundant with Gráfico's OWN topbar (symbol/live,
+     inside .mbg below) and visually produced the "double header" the
+     Owner flagged. `.mbg-active` is toggled on .mob-foundation by the
+     EXISTING view-switcher IIFE (additive one-line extension, see its
+     showView() below) — ONLY while the trade view is the active one.
+     Markets/Positions/History/Account are untouched: they still show
+     the generic topbar exactly as before, since they have no header of
+     their own yet (out of scope for this block). */
+  .mob-foundation.mbg-active .mob-topbar{display:none;}
   .mob-view-area{
     flex:1 1 auto;
     min-height:0;
@@ -170,25 +206,61 @@
     display:flex;flex-direction:column;align-items:center;gap:var(--mb-space-5);
     width:100%;
   }
+  /* MOBILE-DESIGN-INTEGRATION-01 — GRAPH — true flex:1 chart geometry
+     (2nd correction round). The 50vh/min/max-height floor+ceiling used
+     before was a workaround for .mob-view-area's shared overflow-y:auto
+     (a flex:1 child never fills "remaining space" inside a scrolling
+     ancestor — it sizes to content instead). Scoped ONLY to the trade
+     view: height:100% here resolves correctly against .mob-view-area's
+     own definite height (it has one, from the .mob-foundation flex
+     chain above) and, because Gráfico's own content is now sized to
+     fit exactly that 100%, .mob-view-area never actually needs to
+     scroll for this view — matching grafico.html's own non-scrolling
+     .app. Markets/Positions/History/Account are untouched (no height
+     set on them) — they keep shrink-to-fit + real scrolling exactly as
+     before. */
+  .mob-view[data-mobile-view="trade"]{height:100%;box-sizing:border-box;}
+  /* MOBILE-DESIGN-INTEGRATION-01 — GRAPH — bottom nav restyled to the
+     Visual Contract V1's own .tabbar geometry/icon treatment (same SVG
+     path data as money-broker-movil/grafico.html's own <nav
+     class="tabbar">). 6-item correction round, item 4 — labels are now
+     the reference's own exact literal text (Watch/Gráfico/Posiciones/
+     Historial/Cuenta, same markup as grafico.html's <nav class="tabbar">
+     itself), superseding the first round's EXISTING-English-labels
+     choice (MARKETS/TRADE/POSITIONS/HISTORY/ACCOUNT). Shared across all
+     5 views (it always was one nav bar) — this is the "ajustes mínimos
+     del marco/nav" the authorization explicitly allows; it does not
+     touch any OTHER view's own content. Same data-target wiring, same
+     click listeners, same showView() — only the visible text/visual
+     treatment changed. Uses the --brand/--muted/--nav-bg/--nav-active/
+     --line tokens defined on .mob-foundation below. */
   .mob-bottomnav{
     flex:0 0 auto;
     display:flex;
-    background:var(--mb-surface-1);
-    border-top:1px solid var(--mb-border);
-    padding-bottom:var(--mb-safe-bottom);
+    align-items:flex-start;
+    min-height:80px;
+    padding:6px 8px calc(6px + var(--mb-safe-bottom));
+    background:var(--nav-bg);
+    border-top:1px solid var(--line);
     box-sizing:border-box;
   }
   .mob-navitem{
     flex:1;
-    display:flex;flex-direction:column;align-items:center;justify-content:center;
-    min-height:var(--mb-touch-min);
-    font-size:var(--mb-text-2xs);
-    letter-spacing:var(--mb-tracking-label);
-    color:var(--mb-text-muted);
+    min-width:0;
+    display:flex;flex-direction:column;align-items:center;justify-content:flex-start;
+    gap:4px;
+    min-height:48px;
+    padding-top:6px;
+    font-size:11px;
+    font-weight:500;
+    letter-spacing:normal;
+    color:var(--muted);
     background:none;border:none;cursor:pointer;
-    font-family:var(--mb-font-sans);
+    font-family:'Geist',var(--mb-font-sans);
   }
-  .mob-navitem.is-active{color:var(--mb-brand);}
+  .mob-navitem svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
+  .mob-navitem svg .fill-brand{fill:var(--brand);}
+  .mob-navitem.is-active{color:var(--nav-active);font-weight:600;}
   .mob-foundation h1{font-size:var(--mb-text-lg);letter-spacing:.02em;font-weight:700;color:var(--mb-brand);margin:0;}
   .mob-foundation h2{font-size:var(--mb-text-sm);color:var(--mb-text-secondary);margin:0;font-weight:400;}
   .mob-status{display:flex;align-items:center;gap:var(--mb-space-2);font-size:var(--mb-text-sm);min-height:var(--mb-touch-min);}
@@ -204,68 +276,326 @@
   .mob-summary .cell .value{font-size:var(--mb-text-md);color:var(--mb-text-primary);margin-top:var(--mb-space-1);font-weight:600;}
   .mob-summary .cell .value.pos{color:var(--mb-positive);}
   .mob-summary .cell .value.neg{color:var(--mb-negative);}
-  /* ════════════════════════════════════════════════════════════════
-     PRE-VPS-POLISH-03C.3.3 — TRADE VIEW VISUAL POLISH.
-
-     Trade-only classes (.mob-quote/.mob-tf/.mob-chart-block/
-     .mob-chart-wrap/.mob-ticket and their descendants) are never
-     reused by Markets/Positions/History/Account — every rule below is
-     safely scoped to Trade alone. The chart becomes the protagonist
-     (full width, no 360px cap, viewport-relative height) and the
-     quote header gets a real price hierarchy (symbol + hero live mid
-     price, bid/ask side-by-side, source) — same ids, same callbacks,
-     same WS contract; only HTML wrapping/reordering + CSS. No spread/
-     daily-% is rendered — there is no real backend authority exposing
-     either to Mobile today, so neither is fabricated (design lock
-     Section 6). No Entry/SL/TP chart overlay is added here either —
-     out of scope per design lock Section 10 — but the chart is given
-     real vertical room precisely so that future block has space to
-     render into without a cramped redesign. */
-  .mob-quote{width:100%;max-width:none;background:var(--mb-surface-1);border:1px solid var(--mb-border);border-radius:var(--mb-radius-md);padding:var(--mb-space-3) var(--mb-space-4);box-sizing:border-box;box-shadow:var(--mb-shadow-1);}
-  .mob-quote .mq-head{display:flex;align-items:baseline;justify-content:space-between;gap:var(--mb-space-2);flex-wrap:wrap;}
-  .mob-quote .sym{font-size:var(--mb-text-lg);color:var(--mb-text-primary);font-weight:700;}
-  .mob-quote .mq-price{font-size:var(--mb-text-xl);color:var(--mb-text-primary);font-weight:700;}
-  .mob-quote .mq-bidask{display:flex;gap:var(--mb-space-4);margin-top:var(--mb-space-2);padding-top:var(--mb-space-2);border-top:1px solid var(--mb-border);}
-  .mob-quote .mq-bidask .row{flex:1;flex-direction:column;align-items:flex-start;gap:2px;border-top:none;}
-  .mob-quote .row{display:flex;justify-content:space-between;align-items:center;font-size:var(--mb-text-sm);}
-  .mob-quote .row.mq-source{margin-top:var(--mb-space-2);padding-top:var(--mb-space-2);border-top:1px solid var(--mb-border);min-height:var(--mb-touch-min);}
-  .mob-quote .row .label{color:var(--mb-text-muted);font-size:var(--mb-text-2xs);letter-spacing:var(--mb-tracking-label);text-transform:uppercase;}
-  .mob-quote .row .value{color:var(--mb-text-primary);font-weight:600;}
   /* watchlist/selector */
-  .mob-watchlist{width:100%;max-width:360px;background:var(--mb-surface-1);border:1px solid var(--mb-border);border-radius:var(--mb-radius-md);overflow:hidden;box-shadow:var(--mb-shadow-1);}
+  /* PRE-VPS-POLISH-03C.3.4V.1 — Markets visual contract correction: no
+     outer card (no border/radius/shadow) — a continuous full-width list
+     with hairline separators between rows only, matching the Visual
+     Contract V1 reference's "Mercados" screen. */
+  .mob-watchlist{width:100%;background:var(--mb-surface-1);overflow:hidden;}
   .mob-watchlist-item{display:flex;justify-content:space-between;align-items:center;min-height:var(--mb-touch-min);padding:0 var(--mb-space-3);box-sizing:border-box;cursor:pointer;border-bottom:1px solid var(--mb-border);}
   .mob-watchlist-item:last-child{border-bottom:none;}
   .mob-watchlist-item.is-selected{background:var(--mb-brand-dim);}
-  .mob-watchlist-item .wl-sym{font-size:var(--mb-text-sm);color:var(--mb-text-primary);}
+  .mob-watchlist-item .wl-sym{font-size:var(--mb-text-sm);color:var(--mb-text-primary);font-weight:600;}
   .mob-watchlist-item .wl-asset{font-size:var(--mb-text-2xs);letter-spacing:var(--mb-tracking-label);text-transform:uppercase;color:var(--mb-text-muted);}
-  /* chart/timeframe — .mob-chart-block is a new, purely-visual wrapper
-     pairing the (unchanged) timeframe selector directly against the
-     (unchanged) chart container, so they read as one integrated
-     instrument instead of two separate cards. */
-  .mob-chart-block{width:100%;display:flex;flex-direction:column;gap:var(--mb-space-2);}
-  .mob-tf{width:100%;max-width:none;display:flex;gap:var(--mb-space-2);}
-  .mob-tf-item{flex:1;min-height:var(--mb-touch-sm);display:flex;align-items:center;justify-content:center;background:var(--mb-surface-1);border:1px solid var(--mb-border);border-radius:var(--mb-radius-sm);font-size:var(--mb-text-xs);color:var(--mb-text-muted);cursor:pointer;}
-  .mob-tf-item.is-selected{background:var(--mb-brand-dim);color:var(--mb-brand);border-color:var(--mb-brand-border);}
-  .mob-chart-wrap{width:100%;max-width:none;height:44vh;min-height:240px;max-height:420px;background:var(--mb-surface-1);border:1px solid var(--mb-border);border-radius:var(--mb-radius-md);overflow:hidden;box-shadow:var(--mb-shadow-1);box-sizing:border-box;}
-  #mobChartContainer{width:100%;height:100%;}
-  /* order ticket — .mob-ticket-fields is a new, purely-visual grid
-     wrapper around the 3 (unchanged) Volume/SL/TP rows, so they read
-     as one compact ticket row instead of 3 stacked form rows. */
-  .mob-ticket{width:100%;max-width:none;background:var(--mb-surface-1);border:1px solid var(--mb-border);border-radius:var(--mb-radius-md);padding:var(--mb-space-3) var(--mb-space-4);box-sizing:border-box;display:flex;flex-direction:column;gap:var(--mb-space-3);box-shadow:var(--mb-shadow-1);}
-  .mob-ticket-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--mb-space-3);}
-  .mob-ticket-row{display:flex;flex-direction:column;align-items:stretch;gap:var(--mb-space-1);min-width:0;}
-  .mob-ticket-row label{font-size:var(--mb-text-2xs);letter-spacing:var(--mb-tracking-label);text-transform:uppercase;color:var(--mb-text-muted);}
-  .mob-ticket-row input{width:100%;min-width:0;background:var(--mb-surface-2);border:1px solid var(--mb-border);border-radius:var(--mb-radius-sm);color:var(--mb-text-primary);padding:var(--mb-space-2);font-size:var(--mb-text-sm);text-align:left;box-sizing:border-box;}
-  .mob-ticket-buttons{display:flex;gap:var(--mb-space-3);}
-  .mob-ticket-buttons button{flex:1;min-height:var(--mb-touch-min);border-radius:var(--mb-radius-sm);font-weight:700;font-size:var(--mb-text-md);border:1px solid transparent;cursor:pointer;}
-  #mobSellBtn{background:var(--mb-sell-dim);border-color:var(--mb-sell-border);color:var(--mb-sell);}
-  #mobBuyBtn{background:var(--mb-buy-dim);border-color:var(--mb-buy-border);color:var(--mb-buy);}
-  .mob-ticket-buttons button:disabled{opacity:.5;cursor:default;}
-  .mob-ticket-status{min-height:20px;font-size:var(--mb-text-xs);color:var(--mb-text-muted);}
-  .mob-risk-panel{background:var(--mb-surface-2);border:1px solid var(--mb-border);border-radius:var(--mb-radius-sm);padding:var(--mb-space-2) var(--mb-space-3);font-size:var(--mb-text-xs);color:var(--mb-text-primary);display:flex;flex-direction:column;gap:var(--mb-space-1);}
-  .mob-risk-confirm{background:var(--mb-surface-2);border:1px solid var(--mb-brand-border);border-radius:var(--mb-radius-sm);padding:var(--mb-space-3);font-size:var(--mb-text-xs);color:var(--mb-text-primary);display:flex;flex-direction:column;gap:var(--mb-space-2);}
-  .mob-risk-confirm-buttons{display:flex;gap:var(--mb-space-2);}
-  .mob-risk-confirm-buttons button{flex:1;min-height:38px;border-radius:var(--mb-radius-sm);font-size:var(--mb-text-sm);border:1px solid var(--mb-border-strong);background:var(--mb-surface-1);color:var(--mb-text-primary);cursor:pointer;}
+  /* PRE-VPS-POLISH-03C.3.4 — Markets header (search + category chips) +
+     live price/Bid/Ask cell on the selected watchlist row only. Same
+     tokens as every other block above — no new palette.
+     PRE-VPS-POLISH-03C.3.4V.1 — width:100% now fills the full view
+     (max-width:360px removed, Markets-only — every other view's own
+     360px-capped components are untouched); h2 now reads as a real
+     screen title (no more eyebrow-label uppercase treatment). */
+  .mob-markets-head{width:100%;display:flex;flex-direction:column;gap:var(--mb-space-2);box-sizing:border-box;}
+  .mob-markets-head h2{font-size:var(--mb-text-lg);color:var(--mb-text-primary);margin:0;font-weight:700;}
+  .mob-search-input{width:100%;min-height:var(--mb-touch-min);background:var(--mb-surface-2);border:1px solid var(--mb-border);border-radius:var(--mb-radius-sm);color:var(--mb-text-primary);padding:0 var(--mb-space-3);font-size:var(--mb-text-sm);box-sizing:border-box;}
+  .mob-search-input::placeholder{color:var(--mb-text-muted);}
+  /* PRE-VPS-POLISH-03C.3.4V.1 — single horizontal line, never wraps to
+     a second row: overflow-x scroll instead, with the scrollbar itself
+     hidden (touch scrolling stays fully functional). */
+  .mob-market-chips{width:100%;display:flex;gap:var(--mb-space-2);flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;-webkit-overflow-scrolling:touch;}
+  .mob-market-chips::-webkit-scrollbar{display:none;}
+  .mob-market-chip{flex:0 0 auto;min-height:var(--mb-touch-sm);padding:0 var(--mb-space-3);display:flex;align-items:center;justify-content:center;background:var(--mb-surface-1);border:1px solid var(--mb-border);border-radius:var(--mb-radius-sm);font-size:var(--mb-text-xs);color:var(--mb-text-muted);cursor:pointer;text-transform:uppercase;letter-spacing:var(--mb-tracking-label);box-sizing:border-box;}
+  .mob-market-chip.is-selected{background:var(--mb-brand-dim);color:var(--mb-brand);border-color:var(--mb-brand-border);}
+  .mob-watchlist-item .wl-right{display:flex;flex-direction:column;align-items:flex-end;gap:2px;}
+  .mob-watchlist-item .wl-price{font-size:var(--mb-text-sm);color:var(--mb-text-primary);font-weight:600;}
+  .mob-watchlist-item .wl-bidask{font-size:var(--mb-text-2xs);color:var(--mb-text-muted);}
+  /* ════════════════════════════════════════════════════════════════
+     MOBILE-DESIGN-INTEGRATION-01 — GRAPH.
+
+     Replaces 03C.3.3's Trade-view visual polish with the Owner-approved
+     Visual Contract V1 (money-broker-movil/grafico.html + tema.css).
+     Geometry/proportions/spacing/typography/colors/controls match the
+     contract exactly (per the authorized audit) — the engine behind
+     them does not change: same ids (mobQuoteSymbol/Bid/Ask/Mid,
+     mobTfSelector, mobChartContainer, mobQtyInput, mobBuyBtn/
+     mobSellBtn, mobTicket, mobTicketStatus,
+     mobRiskPanel/.../mobRiskConfirmBtn), same onQuote()/
+     renderTfSelector()/submitTicket()/onRiskPreview()/onRiskWarning()
+     callbacks. A dedicated set of custom properties mirrors tema.css's
+     "noche" (default) values under THEIR OWN names, declared on
+     .mob-foundation (the one ancestor shared by BOTH Gráfico's content
+     and the bottom nav restyle above, which also needs them) — the
+     global --mb-* tokens :root defines are completely untouched, so
+     Markets/Positions/History/Account content still renders exactly as
+     before (none of it ever references --bg/--brand/--buy/etc.). A
+     [data-mb-theme="dia"] variant is included as dormant infrastructure
+     for a future Account-screen toggle (out of scope here, never wired
+     to any switch in this block) — deliberately a LOCAL attribute,
+     never reusing <html>'s own data-theme (that belongs to base.html's
+     shared UI-THEME-01 mechanism, used by Desktop/Dashboard — left
+     completely untouched). No Entry/SL/TP calculation happens in CSS
+     — the lines themselves are drawn by mobile_chart.js's
+     setPositions() from real position data (trading_core.js's
+     getCanonicalPositions()), never from here. */
+  .mob-foundation{
+    --bg:#0B0E13; --surface:#11161E; --surface-2:#1F2733; --surface-3:#2C3442;
+    --border:#1F2632; --line:#1A212C; --divider:#151B24; --nav-bg:#0E1218;
+    --text:#E8ECF2; --text-2:#C3CAD6; --muted:#8A94A6;
+    --brand:#F5C518; --on-brand:#0B0E13; --brand-soft:rgba(245,197,24,.15); --brand-text:#F5C518; --brand-line:rgba(245,197,24,.7);
+    --nav-active:#F5C518;
+    --buy:#2EBD85; --on-buy:#04130C; --buy-text:#2EBD85;
+    --sell:#D92D4B; --on-sell:#FFFFFF; --sell-text:#F6465D;
+    --candle-up:#2EBD85; --candle-down:#F6465D;
+    /* Item 1/2 (6-item correction round) — tema.css's own dedicated,
+       deliberately NON-theme-reactive entry-capsule tokens (stay dark
+       in BOTH noche and día, paired with a hardcoded light text/icon
+       color — unlike --surface-2/--surface-3/--text, which DO flip)
+       and the TP/SL shaded-zone fills (tema.css .zone-tp/.zone-sl —
+       --buy-zone/--sell-zone), exact hex/rgba values re-verified
+       directly against money-broker-movil/tema.css. */
+    --entry-bg:#1F2733; --entry-line:#E8ECF2; --entry-close:#2C3442;
+    --buy-zone:rgba(46,189,133,.08); --sell-zone:rgba(246,70,93,.08);
+  }
+  .mob-foundation[data-mb-theme="dia"]{
+    --bg:#FFFFFF; --surface:#F3F4F6; --surface-2:#FFFFFF; --surface-3:#26292E;
+    --border:#E2E4E8; --line:#F0F1F3; --divider:#F1F2F4; --nav-bg:#FFFFFF;
+    --text:#0A0A0A; --text-2:#0A0A0A; --muted:#5F6672;
+    --brand:#F5C518; --on-brand:#0A0A0A; --brand-soft:#FBF1C7; --brand-text:#0A0A0A; --brand-line:#C99A00;
+    --nav-active:#0A0A0A;
+    --buy:#0B7F57; --on-buy:#FFFFFF; --buy-text:#0B7F57;
+    --sell:#D92D4B; --on-sell:#FFFFFF; --sell-text:#C42840;
+    --candle-up:#10A36F; --candle-down:#E5364F;
+    --entry-bg:#0A0A0A; --entry-line:#0A0A0A; --entry-close:#26292E;
+    --buy-zone:rgba(16,163,111,.08); --sell-zone:rgba(229,54,79,.07);
+  }
+  .mob-view[data-mobile-view="trade"] .mbg{width:100%;height:100%;max-width:none;box-sizing:border-box;display:flex;flex-direction:column;gap:var(--mb-space-2);font-family:'Geist',var(--mb-font-sans);}
+  .mob-view[data-mobile-view="trade"] .mbg-num{font-family:'Geist Mono',var(--mb-font-sans);font-variant-numeric:tabular-nums;letter-spacing:-.01em;}
+  .mob-view[data-mobile-view="trade"] .mbg-topbar{display:flex;align-items:center;gap:var(--mb-space-2);}
+  .mob-view[data-mobile-view="trade"] .mbg-logo{width:34px;height:34px;border-radius:9px;background:var(--brand);color:var(--on-brand);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;letter-spacing:-.02em;flex:0 0 auto;}
+  .mob-view[data-mobile-view="trade"] .mbg-symbol-btn{display:flex;align-items:center;gap:4px;height:44px;padding:0 6px;background:none;border:none;cursor:pointer;font-family:inherit;}
+  .mob-view[data-mobile-view="trade"] .mbg-symbol-btn svg{width:16px;height:16px;stroke:var(--muted);}
+  /* 2nd correction round — star is present (same slot/geometry as the
+     reference) but visibly disabled: reduced opacity, no pointer
+     cursor, native [disabled] blocks any click — honest "control exists,
+     not connected yet" instead of a silent gap. Favorites still have no
+     real backend — unlike Trade below, this stays untouched. */
+  .mob-view[data-mobile-view="trade"] .mbg-star-btn{width:40px;height:44px;display:flex;align-items:center;justify-content:center;background:none;border:none;color:var(--muted);opacity:.45;cursor:default;}
+  /* Gráfico scope-removal round — "Trade" reverts to the same honestly-
+     disabled treatment as the star button above: the panel it used to
+     open is gone from this screen (Owner decision — that configuration
+     moves to a future, not-yet-built order-creation screen). */
+  .mob-view[data-mobile-view="trade"] .mbg-trade-link-btn{height:36px;padding:0 14px;border-radius:10px;background:var(--surface);color:var(--muted);border:1px solid var(--border);font-size:13px;font-weight:700;opacity:.55;cursor:default;font-family:inherit;}
+  .mob-view[data-mobile-view="trade"] .mbg-sltp-status{min-height:16px;font-size:var(--mb-text-xs);color:var(--muted);}
+  .mob-view[data-mobile-view="trade"] .mbg-sltp-status.is-error{color:var(--sell-text);}
+  .mob-view[data-mobile-view="trade"] .mbg-symbol{font-size:var(--mb-text-lg);font-weight:600;color:var(--text);}
+  .mob-view[data-mobile-view="trade"] .mbg-spacer{flex:1;}
+  /* Item 4 fix — "EN VIVO" (2 words) is longer than the prior round's
+     "LIVE" (1 word); white-space:nowrap/flex-shrink:0 keep it on one
+     line regardless of topbar width, matching the reference's own
+     single-line rendering (tema.css's .live has no such rule either,
+     but its topbar has more free width in practice — this is the
+     equivalent fix for ours). */
+  .mob-view[data-mobile-view="trade"] .mbg-live{display:flex;align-items:center;gap:6px;font-size:var(--mb-text-2xs);font-weight:600;letter-spacing:var(--mb-tracking-label);color:var(--buy-text);white-space:nowrap;flex-shrink:0;}
+  .mob-view[data-mobile-view="trade"] .mbg-live::before{content:'';width:7px;height:7px;border-radius:50%;background:var(--buy);}
+  .mob-view[data-mobile-view="trade"] .mbg-quote{display:flex;flex-direction:column;gap:2px;}
+  .mob-view[data-mobile-view="trade"] .mbg-price{font-size:32px;font-weight:600;letter-spacing:-.03em;color:var(--text);}
+  .mob-view[data-mobile-view="trade"] .mbg-stats{display:flex;gap:14px;font-size:var(--mb-text-xs);color:var(--muted);}
+  .mob-view[data-mobile-view="trade"] .mbg-stats b{color:var(--text);font-weight:400;}
+  .mob-view[data-mobile-view="trade"] .mbg-tf-row{display:flex;align-items:center;gap:2px;}
+  /* Item 3 (6-item correction round) — tf items are plain <div>s (not
+     <button>s), so they never got a <button>'s default centered-text
+     UA rule the reference's own real <button> timeframe items get "for
+     free" — root cause of the un-centered labels the Owner flagged.
+     display:flex+centering here reproduces that exactly, for any text
+     length (1m/15m/4H/...), not just a fixed-width guess. */
+  .mob-view[data-mobile-view="trade"] .mbg-tf-row .mbg-tf{min-width:44px;height:32px;border-radius:8px;font-size:var(--mb-text-sm);font-weight:500;color:var(--muted);background:none;border:none;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;text-align:center;}
+  .mob-view[data-mobile-view="trade"] .mbg-tf-row .mbg-tf.is-selected{background:var(--brand);color:var(--on-brand);}
+  /* MOBILE-DESIGN-INTEGRATION-01 — GRAPH — the reference's own .chart
+     rule (tema.css) has NO background/border-radius of its own — it is
+     transparent, blending directly into the page background, exactly
+     like every other un-boxed region of the design. The earlier pass
+     incorrectly gave it a card-like surface fill; removed here. */
+  /* 2nd correction round — true flex:1 (see .mob-view[trade] above):
+     the chart now genuinely consumes all leftover vertical space after
+     its (fixed-height) siblings, exactly like grafico.html's own
+     .chart{flex:1}, instead of a fixed vh guess. min-height:0 is the
+     standard flex-item fix that lets a flex child actually shrink
+     below its content's intrinsic height when space is tight (without
+     it, flex children default to min-height:auto and can force the
+     parent to overflow instead of respecting flex:1). */
+  .mob-view[data-mobile-view="trade"] .mbg-chart{width:100%;flex:1;min-height:0;overflow:hidden;box-sizing:border-box;}
+  .mob-view[data-mobile-view="trade"] .mbg-chart #mobChartContainer{width:100%;height:100%;}
+  /* 2nd correction round — Entry/TP/SL pill capsules (tema.css's own
+     .entry/.pill geometry/colors). mobile_chart.js only creates these
+     elements and sets their `top`/`display` (positioning, computed from
+     priceToCoordinate()) — every color/padding/radius/font below lives
+     here, in CSS, same as every other presentation rule in this file. */
+  .mob-view[data-mobile-view="trade"] .mbgc-pill{position:absolute;left:8px;z-index:5;font-family:'Geist Mono',var(--mb-font-sans);font-size:11px;font-weight:600;white-space:nowrap;pointer-events:none;}
+  /* SL/TP presentation correction round — ROOT CAUSE of "drag doesn't
+     work" in a real browser: .mbgc-pill's own base rule above sets
+     pointer-events:none (correct for the ENTRY pill's background
+     ambient text, which isn't interactive except its own ×), but TP/SL
+     pills ARE interactive (drag/tap) and never re-enabled pointer
+     events — they inherited none and therefore never actually received
+     any pointerdown in production, only in earlier ad-hoc test
+     harnesses whose hand-written CSS never reproduced this rule. Fixed
+     here, explicitly, the same way .mbgc-pill-entry already does.
+     Height raised 20px->24px and a ::after hit-slop (±10px/±8px)
+     added so the real touch target is comfortably larger than the
+     visual pill without changing its approved geometry — "área táctil
+     cómoda" (this round's explicit requirement), same technique for
+     both confirmed and provisional/editing states since the pseudo-
+     element is on the shared base rule. */
+  .mob-view[data-mobile-view="trade"] .mbgc-pill-tp,
+  .mob-view[data-mobile-view="trade"] .mbgc-pill-sl{height:24px;padding:0 8px;border-radius:5px;display:flex;align-items:center;pointer-events:auto;position:relative;font-size:12px;}
+  .mob-view[data-mobile-view="trade"] .mbgc-pill-tp::after,
+  .mob-view[data-mobile-view="trade"] .mbgc-pill-sl::after{content:'';position:absolute;top:-10px;bottom:-10px;left:-8px;right:-8px;}
+  .mob-view[data-mobile-view="trade"] .mbgc-pill-tp{background:var(--buy);color:var(--on-buy);}
+  .mob-view[data-mobile-view="trade"] .mbgc-pill-sl{background:var(--sell);color:var(--on-sell);}
+  /* Item 2 (6-item correction round) — contrast fix: this capsule used
+     --surface-2/--text (theme-reactive: light background + dark text
+     in día), which is the real root cause of the near-invisible-icon
+     bug the Owner flagged. tema.css's own .chart .entry rule uses
+     dedicated --entry-bg (dark in BOTH themes) with a HARDCODED light
+     text color (#F5F7FA, never themed) — reproduced exactly here. */
+  /* ISOLATED CLOSE-BUG FIX — Entry capsules (full AND compact, selection
+     + the × close button) get a HIGHER z-index than "+ Añadir SL/TP"
+     (.mbgc-add, z-index:5 — same tier as every other .mbgc-pill). Root
+     cause, confirmed by isolated reproduction: both the selected
+     position's own add-affordances and a nearby position's compact
+     select-chip can land at overlapping screen coordinates; at tied
+     z-index, whichever was appended to the DOM later (the add-
+     affordances, rendered after every entry capsule in setPositions())
+     wins real hit-testing — so a tap meant to select a DIFFERENT
+     position (needed before its × can even be reached) was instead
+     intercepted by "+ SL"/"+ TP". Entry capsules now always win that
+     tie, restoring both selection and the × itself; it never changes
+     which element is drawn on top when they do NOT overlap (the normal
+     case), so there is no visible design change. */
+  .mob-view[data-mobile-view="trade"] .mbgc-pill-entry{display:flex;align-items:center;height:24px;border-radius:6px;overflow:hidden;background:var(--entry-bg);color:#F5F7FA;pointer-events:auto;z-index:6;}
+  .mob-view[data-mobile-view="trade"] .mbgc-pill-side{height:24px;display:flex;align-items:center;padding:0 7px;font-size:10px;font-weight:700;letter-spacing:.05em;}
+  .mob-view[data-mobile-view="trade"] .mbgc-pill-entry.mbgc-side-buy .mbgc-pill-side{background:var(--buy);color:var(--on-buy);}
+  .mob-view[data-mobile-view="trade"] .mbgc-pill-entry.mbgc-side-sell .mbgc-pill-side{background:var(--sell);color:var(--on-sell);}
+  .mob-view[data-mobile-view="trade"] .mbgc-pill-info{padding:0 7px;font-size:11px;font-weight:500;}
+  /* Item 2 — same fix: --entry-close (dedicated, dark in both themes)
+     + hardcoded light × icon color, instead of --surface-3/--text. */
+  .mob-view[data-mobile-view="trade"] .mbgc-pill-close{width:22px;height:24px;border:none;background:var(--entry-close);color:#F5F7FA;display:flex;align-items:center;justify-content:center;font-size:13px;line-height:1;cursor:pointer;font-family:inherit;}
+  /* Multi-position correction round — compact chip for every OPEN
+     position on this symbol that is NOT the selected one: small,
+     side-colored (buy=green/sell=red border+text, reusing the same
+     --buy/--sell tokens the confirmed SL/TP pills already use — never
+     a new color), tap-to-select, "para no saturar el gráfico" per this
+     round's own wording. pointer-events:auto (re-enabled, same as
+     .mbgc-pill-entry above — the shared .mbgc-pill base sets none) +
+     a comfortable ~30px-tall hit area despite the small visual size. */
+  .mob-view[data-mobile-view="trade"] .mbgc-pill-entry-compact{height:20px;padding:0 7px;border-radius:5px;display:flex;align-items:center;font-size:10px;font-weight:700;pointer-events:auto;cursor:pointer;background:var(--surface);border:1px solid var(--border);color:var(--text-2);position:relative;z-index:6;}
+  .mob-view[data-mobile-view="trade"] .mbgc-pill-entry-compact::after{content:'';position:absolute;top:-6px;bottom:-6px;left:-6px;right:-6px;}
+  .mob-view[data-mobile-view="trade"] .mbgc-pill-entry-compact.mbgc-side-buy{border-color:var(--buy);color:var(--buy-text);}
+  .mob-view[data-mobile-view="trade"] .mbgc-pill-entry-compact.mbgc-side-sell{border-color:var(--sell);color:var(--sell-text);}
+  /* SL/TP presentation correction round — a confirmed/editing SL or TP
+     level whose real price falls outside the currently visible candle
+     range is clamped to the nearest chart edge (never hidden, never
+     drawn at a false price — the label keeps showing its REAL value) —
+     this dashed outline is the "forma clara de localizar" cue that it
+     is clamped, not at its literal drawn position. */
+  .mob-view[data-mobile-view="trade"] .mbgc-pill-offscreen{outline:1.5px dashed currentColor;outline-offset:1px;}
+  /* Item 1 (6-item correction round) — shaded Entry↔TP/Entry↔SL zones
+     (tema.css's own .zone-tp/.zone-sl). Full-width translucent bands;
+     top/height are set by mobile_chart.js's _repositionOverlay() from
+     priceToCoordinate() on the two real boundary prices — pure pixel
+     placement, no color/financial logic lives in JS. z-index below the
+     pills (5) so the entry/TP/SL capsules always stay legible on top
+     of the tint. */
+  .mob-view[data-mobile-view="trade"] .mbgc-zone{position:absolute;left:0;right:0;z-index:1;pointer-events:none;}
+  .mob-view[data-mobile-view="trade"] .mbgc-zone-tp{background:var(--buy-zone);}
+  .mob-view[data-mobile-view="trade"] .mbgc-zone-sl{background:var(--sell-zone);}
+  /* SL/TP presentation correction round — interactive states layered on
+     the EXISTING .mbgc-pill-tp/.mbgc-pill-sl geometry/colors above
+     (same selectors, same base rule — these only add a ring/outline
+     cue, never change the pill's own background/text color, and never
+     touch opacity on a CONFIRMED pill — "las líneas y etiquetas SL/TP
+     NO deben volverse translúcidas junto con la zona" is a hard
+     requirement this round; only the shaded zone bands themselves use
+     a translucent --buy-zone/--sell-zone fill, an entirely separate
+     rule from these).
+       mbgc-pill-editing   = dragging/editing an EXISTING confirmed
+                              level (solid ring in --text).
+       mbgc-pill-provisional = a brand-new level via "+ Añadir" that has
+                              never been confirmed (dashed ring in
+                              --brand) — visually distinct from editing
+                              an existing one, per this round's explicit
+                              "visualmente distinguible de un nivel
+                              confirmado".
+       mbgc-pill-sending   = Confirm already tapped, order-update
+                              already sent — locked, reduced opacity
+                              (this is the ONLY state that dims the
+                              pill — a deliberate "awaiting backend"
+                              cue, not a presentation bug). */
+  .mob-view[data-mobile-view="trade"] .mbgc-pill-editing{box-shadow:0 0 0 2px var(--text);}
+  .mob-view[data-mobile-view="trade"] .mbgc-pill-provisional{box-shadow:0 0 0 2px var(--brand);border:1px dashed var(--on-brand);}
+  .mob-view[data-mobile-view="trade"] .mbgc-pill-sending{opacity:.55;}
+  /* "+ Añadir SL/TP" — shown only when the position genuinely has no
+     level for that field; tapping enters edit mode directly (a
+     draggable provisional pill + the Confirmar/Cancelar form), never
+     assigns a level automatically. Solid tinted fill (not a faint
+     dashed outline) + --text color + a comfortable 44px-tall hit area
+     (touch-target parity with the rest of this screen's primary
+     controls, e.g. --mb-touch-min) for real contrast/visibility and
+     touch comfort, colored by the SAME semantic TP(buy)/SL(sell) tint
+     the confirmed pills and shaded zones already use — never a new
+     color, just --buy-zone/--sell-zone (already-existing tokens) as
+     the fill and --buy/--sell as the border, so it reads as clearly
+     associated with its position the moment it appears. */
+  .mob-view[data-mobile-view="trade"] .mbgc-add{position:absolute;left:8px;z-index:5;min-height:36px;padding:0 12px;border-radius:8px;display:flex;align-items:center;font-family:'Geist Mono',var(--mb-font-sans);font-size:12px;font-weight:700;cursor:pointer;touch-action:none;}
+  .mob-view[data-mobile-view="trade"] .mbgc-add-tp{background:var(--buy-zone);border:1.5px solid var(--buy);color:var(--buy-text);}
+  .mob-view[data-mobile-view="trade"] .mbgc-add-sl{background:var(--sell-zone);border:1.5px solid var(--sell);color:var(--sell-text);}
+  /* Confirm/Cancel toolbar — always carries an editable price input
+     (pre-filled with the live preview, kept in sync with any ongoing
+     drag and vice versa), for BOTH editing an existing level and
+     adding a brand-new one. The only surface that can ever lead to a
+     real send (Confirm) or guarantee zero send (Cancel). */
+  .mob-view[data-mobile-view="trade"] .mbgc-edit-box{position:absolute;left:8px;z-index:6;display:flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:4px 6px;box-shadow:0 2px 10px rgba(0,0,0,.25);flex-wrap:wrap;max-width:min(260px, calc(100% - 16px));box-sizing:border-box;}
+  .mob-view[data-mobile-view="trade"] .mbgc-edit-label{font-family:'Geist Mono',var(--mb-font-sans);font-size:11px;font-weight:700;color:var(--muted);}
+  .mob-view[data-mobile-view="trade"] .mbgc-edit-input{width:84px;height:30px;border-radius:5px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px;padding:0 6px;box-sizing:border-box;}
+  .mob-view[data-mobile-view="trade"] .mbgc-edit-cancel,
+  .mob-view[data-mobile-view="trade"] .mbgc-edit-confirm{height:30px;padding:0 10px;border-radius:5px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;}
+  .mob-view[data-mobile-view="trade"] .mbgc-edit-confirm{background:var(--brand);color:var(--on-brand);border-color:var(--brand);}
+  .mob-view[data-mobile-view="trade"] .mbgc-edit-err{width:100%;font-size:10px;color:var(--sell-text);}
+  .mob-view[data-mobile-view="trade"] .mbg-protect-row{display:flex;gap:var(--mb-space-2);}
+  /* ROOT CAUSE of the horizontal clipping (confirmed with real
+     scrollWidth/clientWidth measurements at a genuine 390px viewport —
+     see report section 3): a flex item's default min-width is `auto`,
+     not 0 — it refuses to shrink below its OWN content's intrinsic
+     width. This <label> is itself a flex item of .mbg-protect-row;
+     its content (an <input type="number">) has a browser-default
+     intrinsic minimum width wide enough that two side-by-side boxes
+     together (~394px+) exceeded the ~350px actually available at
+     390px, even though the inner input already had min-width:0 (that
+     only lets the INPUT shrink inside the label, not the label itself
+     shrink inside the row). min-width:0 here is the standard fix. */
+  .mob-view[data-mobile-view="trade"] .mbg-protect-row label{flex:1;min-width:0;display:flex;align-items:center;gap:var(--mb-space-2);height:40px;padding:0 var(--mb-space-3);border-radius:10px;background:var(--surface);border:1px solid var(--border);box-sizing:border-box;}
+  .mob-view[data-mobile-view="trade"] .mbg-protect-row label span{font-size:var(--mb-text-2xs);color:var(--muted);letter-spacing:var(--mb-tracking-label);}
+  .mob-view[data-mobile-view="trade"] .mbg-protect-row input{flex:1;min-width:0;background:none;border:none;color:var(--text);font-size:var(--mb-text-sm);text-align:right;}
+  .mob-view[data-mobile-view="trade"] .mbg-protect-row input::placeholder{color:var(--muted);}
+  .mob-view[data-mobile-view="trade"] .mbg-trade-bar{display:flex;gap:var(--mb-space-2);}
+  .mob-view[data-mobile-view="trade"] .mbg-trade-bar .mbg-sell,
+  .mob-view[data-mobile-view="trade"] .mbg-trade-bar .mbg-buy{flex:1;min-width:0;height:62px;border-radius:14px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;border:none;cursor:pointer;font-family:inherit;}
+  .mob-view[data-mobile-view="trade"] .mbg-trade-bar .mbg-sell{background:var(--sell);color:var(--on-sell);}
+  .mob-view[data-mobile-view="trade"] .mbg-trade-bar .mbg-buy{background:var(--buy);color:var(--on-buy);}
+  .mob-view[data-mobile-view="trade"] .mbg-trade-bar .mbg-sell:disabled,
+  .mob-view[data-mobile-view="trade"] .mbg-trade-bar .mbg-buy:disabled{opacity:.5;cursor:default;}
+  .mob-view[data-mobile-view="trade"] .mbg-tb-label{font-size:var(--mb-text-2xs);font-weight:600;letter-spacing:.08em;}
+  .mob-view[data-mobile-view="trade"] .mbg-tb-price{font-size:var(--mb-text-md);font-weight:600;}
+  .mob-view[data-mobile-view="trade"] .mbg-lot{width:118px;border-radius:14px;background:var(--surface);border:1px solid var(--border);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:4px 0;box-sizing:border-box;}
+  .mob-view[data-mobile-view="trade"] .mbg-lot small{font-size:var(--mb-text-2xs);color:var(--muted);}
+  .mob-view[data-mobile-view="trade"] .mbg-lot-row{display:flex;align-items:center;width:100%;}
+  .mob-view[data-mobile-view="trade"] .mbg-lot-row button{width:36px;height:34px;font-size:20px;font-weight:500;color:var(--text-2);background:none;border:none;cursor:pointer;font-family:inherit;}
+  .mob-view[data-mobile-view="trade"] .mbg-lot-row button:disabled{opacity:.5;cursor:default;}
+  .mob-view[data-mobile-view="trade"] .mbg-lot-row input{flex:1;width:0;min-width:0;text-align:center;font-size:var(--mb-text-md);font-weight:700;padding:3px 0;border-radius:6px;background:var(--brand-soft);color:var(--brand-text);border:none;}
+  .mob-view[data-mobile-view="trade"] .mbg-ticket-status{min-height:18px;font-size:var(--mb-text-xs);color:var(--muted);}
+  .mob-view[data-mobile-view="trade"] .mbg-risk-panel{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--mb-radius-sm);padding:var(--mb-space-2) var(--mb-space-3);font-size:var(--mb-text-xs);color:var(--text);display:flex;flex-direction:column;gap:var(--mb-space-1);}
+  .mob-view[data-mobile-view="trade"] .mbg-risk-confirm{background:var(--surface-2);border:1px solid var(--brand-line);border-radius:var(--mb-radius-sm);padding:var(--mb-space-3);font-size:var(--mb-text-xs);color:var(--text);display:flex;flex-direction:column;gap:var(--mb-space-2);}
+  .mob-view[data-mobile-view="trade"] .mbg-risk-confirm-buttons{display:flex;gap:var(--mb-space-2);}
+  .mob-view[data-mobile-view="trade"] .mbg-risk-confirm-buttons button{flex:1;min-width:0;min-height:38px;border-radius:var(--mb-radius-sm);font-size:var(--mb-text-sm);border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-family:inherit;}
   /* positions/pending/closed */
   .mob-pane-tabs{width:100%;max-width:360px;display:flex;gap:var(--mb-space-2);}
   .mob-pane-tab{flex:1;min-height:var(--mb-touch-sm);display:flex;align-items:center;justify-content:center;background:var(--mb-surface-1);border:1px solid var(--mb-border);border-radius:var(--mb-radius-sm);font-size:var(--mb-text-xs);color:var(--mb-text-muted);cursor:pointer;}
@@ -299,66 +629,148 @@
 
   <div class="mob-view-area">
     <div class="mob-view" data-mobile-view="trade">
-      <!-- PRE-VPS-POLISH-03C.3.3 — same 5 ids (mobQuoteSymbol/Bid/Ask/
-           Mid/Source), same onQuote() callback untouched. Mid is
-           reused verbatim as the hero live price (it already IS the
-           live mid price applyPriceTickState() computes — no second
-           price authority). No Spread/daily-% row: no real backend
-           field exists for either on this contract (design lock
-           Section 6) — omitted, not fabricated. -->
-      <div class="mob-quote">
-        <div class="mq-head">
-          <span class="sym" id="mobQuoteSymbol">—</span>
-          <span class="mq-price" id="mobQuoteMid">—</span>
-        </div>
-        <div class="mq-bidask">
-          <div class="row"><span class="label">Bid</span><span class="value" id="mobQuoteBid">—</span></div>
-          <div class="row"><span class="label">Ask</span><span class="value" id="mobQuoteAsk">—</span></div>
-        </div>
-        <div class="row mq-source"><span class="label">Source</span><span class="value" id="mobQuoteSource">—</span></div>
-      </div>
+      <!-- MOBILE-DESIGN-INTEGRATION-01 — GRAPH — geometry/composition
+           from the approved Visual Contract V1 (money-broker-movil/
+           grafico.html). Same ids as before (mobQuoteSymbol/Bid/Ask/
+           Mid, mobTfSelector, mobChartContainer, mobQtyInput,
+           mobBuyBtn/mobSellBtn, mobTicket,
+           mobTicketStatus, mobRiskPanel/.../mobRiskConfirmBtn) — same
+           onQuote()/renderTfSelector()/submitTicket()/onRiskPreview()/
+           onRiskWarning() callbacks, zero functional change.
 
-      <div class="mob-chart-block">
-        <div class="mob-tf" id="mobTfSelector"></div>
-        <div class="mob-chart-wrap"><div id="mobChartContainer"></div></div>
-      </div>
+           2nd correction round — composition fidelity: the star/
+           favorite and "Trade" header button are no longer omitted —
+           they are PRESENT, in the same slot/geometry as the reference,
+           explicitly disabled/muted (aria-disabled, a dedicated class,
+           and a title= tooltip) rather than wired to fabricated
+           behavior — a real control the user can SEE has no backend yet,
+           instead of a silent gap. "Máx/Mín/Vol" (daily high/low/
+           volume) keep the reference's own labels, explicitly showing
+           "—" (VISUAL PRESENT / ENGINE MISSING — no real field exists)
+           instead of being quietly replaced by different data in the
+           same slot. The daily "%" badge next to price is the one
+           remaining omission — there is no honest "label + —" form for
+           a lone colored badge the way there is for a labeled stat row.
+           Bid/Ask stay visible on the trade-bar buttons below (real).
+           Spread (ask-bid, a live arithmetic derivation of two already-
+           real numbers, never a new data source) moved into the Lot
+           box's own small label — the reference's OWN actual slot for
+           it ("Lote · Spr 23.0"), not an invented new row.
+           mobQuoteSource/"Src" stays removed: it rendered feed/provider
+           infrastructure detail (e.g. "massive") in a user-facing slot,
+           which this block's own instructions explicitly prohibit —
+           mobConnStatus (unchanged, still real) is the correct place
+           for that. -->
+      <div class="mbg">
+        <div class="mbg-topbar">
+          <span class="mbg-logo">MB</span>
+          <button type="button" class="mbg-symbol-btn" id="mobSymbolBtn" aria-label="Change instrument">
+            <span class="mbg-symbol" id="mobQuoteSymbol">—</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+          <span class="mbg-spacer"></span>
+          <!-- Item 4 (6-item correction round) — same principle as the
+               VENDER/COMPRAR/Lote/nav labels above: equivalent real
+               functionality (the connection-live indicator, toggled by
+               the actual connection status, onStatusChange() below)
+               already exists — reproduced with the reference's own
+               exact literal text (grafico.html: <span class="live">EN
+               VIVO</span>), not left as the prior round's "LIVE". -->
+          <span class="mbg-live" id="mobLiveBadge" hidden>EN VIVO</span>
+          <button type="button" class="mbg-star-btn" disabled aria-disabled="true" title="Favorites are not available yet" aria-label="Favorite (not available yet)">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/></svg>
+          </button>
+          <!-- Gráfico scope-removal round — the new-order SL/TP panel
+               that briefly lived behind this button is REMOVED from
+               this screen (Owner decision: that configuration belongs
+               to a future, separately-designed order-creation screen,
+               not implemented yet). "Trade" reverts to its earlier
+               honestly-disabled state — same pattern as the star button
+               above — rather than staying wired to a panel that no
+               longer exists here. submitOrder()'s own sl/tp parameters
+               are UNCHANGED and still fully functional; only this
+               screen's current UI source for them is gone (see
+               readSlTp() below, which now always returns {sl:null,
+               tp:null} — never a stale/residual DOM value). -->
+          <button type="button" class="mbg-trade-link-btn" disabled aria-disabled="true" title="SL/TP for a new order will move to its own screen">Trade</button>
+        </div>
 
-      <div class="mob-ticket" id="mobTicket">
-        <div class="mob-ticket-fields">
-          <div class="mob-ticket-row">
-            <label for="mobQtyInput">Volume</label>
-            <input type="number" id="mobQtyInput" step="0.01" min="0" value="0.01">
+        <section class="mbg-quote">
+          <span class="mbg-num mbg-price" id="mobQuoteMid">—</span>
+          <div class="mbg-num mbg-stats">
+            <span>M&aacute;x <b>&mdash;</b></span>
+            <span>M&iacute;n <b>&mdash;</b></span>
+            <span>Vol <b>&mdash;</b></span>
           </div>
-          <div class="mob-ticket-row">
-            <label for="mobSlInput">SL</label>
-            <input type="number" id="mobSlInput" placeholder="—">
+        </section>
+
+        <div class="mbg-tf-row" id="mobTfSelector"></div>
+
+        <div class="mbg-chart"><div id="mobChartContainer"></div></div>
+
+        <!-- SL/TP-on-open-position editing — transient status line for
+             the chart-based edit flow only (pending/rejected/"cambio no
+             confirmado"). Entirely separate from mobTicketStatus below
+             (new-order submission feedback) so the two flows never
+             share or overwrite each other's message. -->
+        <div class="mbg-sltp-status" id="mobSlTpStatus" hidden></div>
+
+        <div id="mobTicket">
+          <div class="mbg-trade-bar">
+            <button class="mbg-sell" id="mobSellBtn" type="button">
+              <span class="mbg-tb-label">VENDER</span>
+              <span class="mbg-num mbg-tb-price" id="mobTradeBidPrice">—</span>
+            </button>
+            <div class="mbg-lot">
+              <small>Lote &middot; Spr <b id="mobQuoteSpread">—</b></small>
+              <div class="mbg-lot-row">
+                <button type="button" id="mobLotDownBtn" aria-label="Decrease lot">−</button>
+                <input type="number" id="mobQtyInput" step="0.01" min="0" value="0.01" readonly>
+                <button type="button" id="mobLotUpBtn" aria-label="Increase lot">+</button>
+              </div>
+            </div>
+            <button class="mbg-buy" id="mobBuyBtn" type="button">
+              <span class="mbg-tb-label">COMPRAR</span>
+              <span class="mbg-num mbg-tb-price" id="mobTradeAskPrice">—</span>
+            </button>
           </div>
-          <div class="mob-ticket-row">
-            <label for="mobTpInput">TP</label>
-            <input type="number" id="mobTpInput" placeholder="—">
+
+          <!-- Gráfico scope-removal round — mobTicketStatus/
+               mobRiskPanel/mobRiskConfirm (submit status, the real
+               Risk/Margin/Exposure advisory, and the MANDATORY
+               risk_warning confirm-anyway gate) stay directly in the
+               main flow, compact and independent — never inside the
+               now-removed order panel, and never skipped. Same ids,
+               same onRiskPreview()/onRiskWarning()/onOrderAck()/
+               onOrderRejected()/onTradingError() wiring as before —
+               pure presentation location, zero behavior change. -->
+          <div class="mbg-ticket-status" id="mobTicketStatus"></div>
+          <div class="mbg-risk-panel" id="mobRiskPanel" hidden>
+            <div><span>Risk</span> <span id="mobRiskLevel">—</span></div>
+            <div><span>Margin required</span> <span id="mobRiskMargin">—</span></div>
+            <div><span>Exposure</span> <span id="mobRiskExposure">—</span></div>
           </div>
-        </div>
-        <div class="mob-ticket-buttons">
-          <button id="mobSellBtn" type="button">SELL</button>
-          <button id="mobBuyBtn" type="button">BUY</button>
-        </div>
-        <div class="mob-ticket-status" id="mobTicketStatus"></div>
-        <div class="mob-risk-panel" id="mobRiskPanel" hidden>
-          <div><span>Risk</span> <span id="mobRiskLevel">—</span></div>
-          <div><span>Margin required</span> <span id="mobRiskMargin">—</span></div>
-          <div><span>Exposure</span> <span id="mobRiskExposure">—</span></div>
-        </div>
-        <div class="mob-risk-confirm" id="mobRiskConfirm" hidden>
-          <p id="mobRiskConfirmText"></p>
-          <div class="mob-risk-confirm-buttons">
-            <button id="mobRiskCancelBtn" type="button">Cancel</button>
-            <button id="mobRiskConfirmBtn" type="button">Confirm anyway</button>
+          <div class="mbg-risk-confirm" id="mobRiskConfirm" hidden>
+            <p id="mobRiskConfirmText"></p>
+            <div class="mbg-risk-confirm-buttons">
+              <button id="mobRiskCancelBtn" type="button">Cancel</button>
+              <button id="mobRiskConfirmBtn" type="button">Confirm anyway</button>
+            </div>
           </div>
         </div>
       </div>
     </div>
 
     <div class="mob-view" data-mobile-view="markets" hidden>
+      <!-- PRE-VPS-POLISH-03C.3.4 — Markets header: search + asset_class
+           chips, both driven entirely by MOBILE_SYMBOLS (the same real
+           catalog the watchlist below already used since 03C.2.3) — no
+           second catalog, no fabricated field. -->
+      <div class="mob-markets-head">
+        <h2>Markets</h2>
+        <input type="text" id="mobMarketSearch" class="mob-search-input" placeholder="Search instrument…" autocomplete="off">
+        <div class="mob-market-chips" id="mobMarketChips"></div>
+      </div>
       <div class="mob-watchlist" id="mobWatchlist"></div>
     </div>
 
@@ -412,12 +824,39 @@
     </div>
   </div>
 
+  <!-- MOBILE-DESIGN-INTEGRATION-01 — GRAPH — same 5 buttons, same
+       data-target wiring, same click listeners (showView(), below) —
+       only the icon/label visual treatment changed, to the Visual
+       Contract V1's own exact SVG path data (money-broker-movil/
+       grafico.html's <nav class="tabbar">), relabeled to this
+       project's existing English labels. -->
+  <!-- Item 4 (6-item correction round) — exact literal label text from
+       the reference's own markup (money-broker-movil/grafico.html's
+       <nav class="tabbar">: Watch/Gráfico/Posiciones/Historial/Cuenta —
+       the reference's own mixed Spanish/English wording, not a
+       translation of our own invention). data-target attributes and
+       all JS wiring (showView(), click listeners) are unchanged. -->
   <div class="mob-bottomnav" id="mobBottomNav">
-    <button type="button" class="mob-navitem" data-target="markets">MARKETS</button>
-    <button type="button" class="mob-navitem is-active" data-target="trade">TRADE</button>
-    <button type="button" class="mob-navitem" data-target="positions">POSITIONS</button>
-    <button type="button" class="mob-navitem" data-target="history">HISTORY</button>
-    <button type="button" class="mob-navitem" data-target="account">ACCOUNT</button>
+    <button type="button" class="mob-navitem" data-target="markets">
+      <svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3" class="fill-brand"/></svg>
+      Watch
+    </button>
+    <button type="button" class="mob-navitem is-active" data-target="trade">
+      <svg viewBox="0 0 24 24"><path d="M7 3v18M17 3v18"/><rect x="5" y="7" width="4" height="8" rx="1" class="fill-brand"/><rect x="15" y="9" width="4" height="7" rx="1" class="fill-brand"/></svg>
+      Gráfico
+    </button>
+    <button type="button" class="mob-navitem" data-target="positions">
+      <svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+      Posiciones
+    </button>
+    <button type="button" class="mob-navitem" data-target="history">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+      Historial
+    </button>
+    <button type="button" class="mob-navitem" data-target="account">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
+      Cuenta
+    </button>
   </div>
 </div>
 {% endblock %}
@@ -440,9 +879,26 @@ window.__TRADE_CONFIG__ = {
 (function(){
   const statusEl=document.getElementById('mobConnStatus');
   const statusLabel=document.getElementById('mobConnStatusLabel');
+  // MOBILE-DESIGN-INTEGRATION-01 — GRAPH — the "LIVE" badge reuses this
+  // SAME connection-status authority (no second status source): shown
+  // only while truly connected, hidden otherwise — never a hardcoded
+  // claim.
+  const elLiveBadge=document.getElementById('mobLiveBadge');
   function onStatusChange(state){
     statusLabel.textContent=state;
     statusEl.className='mob-status is-'+state.toLowerCase();
+    if(elLiveBadge)elLiveBadge.hidden=(String(state).toLowerCase()!=='connected');
+    // ISOLATED FIX (Mobile desconexión/reconexión) — any state other
+    // than a genuinely established connection means the chart's own
+    // history can no longer be trusted as current: invalidate SL/TP
+    // readiness immediately (CONNECTING fires both for the very first
+    // attempt and for every reconnect attempt; RECONNECTING fires the
+    // instant the socket actually drops, before the reconnect timer
+    // even runs). Becoming CONNECTED again never by itself re-enables
+    // anything — that still only happens once a real, accepted history
+    // response lands for the current symbol/timeframe (applyHistory(),
+    // unchanged — see the symbol/scale and timeframe-window fixes).
+    if(String(state).toUpperCase()!=='CONNECTED') mobileChart.invalidateForConnectionChange();
   }
 
   const elBalance=document.getElementById('mobBalance');
@@ -473,22 +929,70 @@ window.__TRADE_CONFIG__ = {
   }
 
   const elQuoteSymbol=document.getElementById('mobQuoteSymbol');
-  const elQuoteBid=document.getElementById('mobQuoteBid');
-  const elQuoteAsk=document.getElementById('mobQuoteAsk');
   const elQuoteMid=document.getElementById('mobQuoteMid');
-  const elQuoteSource=document.getElementById('mobQuoteSource');
+  // MOBILE-DESIGN-INTEGRATION-01 — GRAPH (2nd correction round) —
+  // mobQuoteBid/mobQuoteAsk ids were retired from this file: the
+  // reference's own quote-stats slot is "Máx/Mín/Vol" (now shown
+  // honestly as "—", see the markup comment above), never Bid/Ask —
+  // Bid/Ask are real and still fully displayed, exclusively via
+  // mobTradeBidPrice/mobTradeAskPrice on the trade-bar buttons (the
+  // reference's own actual slot for per-side price). mobQuoteSpread is
+  // a live arithmetic derivation of the SAME real bid/ask (ask-bid,
+  // never a new WS field), now shown in the Lot box's own label.
+  const elQuoteSpread=document.getElementById('mobQuoteSpread');
+  const elTradeBidPrice=document.getElementById('mobTradeBidPrice');
+  const elTradeAskPrice=document.getElementById('mobTradeAskPrice');
 
   // PRE-VPS-POLISH-03C.2.2 — display only. The value source is
   // exclusively the state applyPriceTickState() (trading_core.js)
   // already returned inside MobileTradingSession — no second mid
   // calculation here, no new price authority.
+  //
+  // PRE-VPS-POLISH-03C.3.4 — on every tick this used to rebuild the
+  // ENTIRE Markets watchlist (innerHTML='' + full loop) just to
+  // refresh one row's highlight. Now: a real symbol change (rare —
+  // only after selectSymbol()/change_symbol) still triggers exactly
+  // one structural renderWatchlist() rebuild (so the new row is
+  // correctly marked selected and search/category filters — both
+  // read fresh from their own persisted module state below — are
+  // re-applied unchanged); every other tick (the overwhelming
+  // majority) only patches the 2 live text nodes of the already-
+  // selected row via updateWatchlistLiveRow() — no innerHTML, no
+  // lost search text/focus, no filter reset, no navigation.
   function onQuote(state){
     elQuoteSymbol.textContent=state.symbol||'—';
-    elQuoteBid.textContent=fmt(state.bid);
-    elQuoteAsk.textContent=fmt(state.ask);
+    // Item 3 (6-item correction round) — real per-instrument display
+    // precision (priceFormatFor(), trading_core.js — same helper
+    // Desktop's own chart already uses) applied to the chart's own
+    // price axis/price-line labels. Called on every tick: cheap/
+    // idempotent (setSymbolFormat() itself no-ops when the symbol's
+    // format hasn't changed), guarantees correctness without a
+    // dedicated symbol-change hook. Never touches the engine price.
+    if(state.symbol)mobileChart.setSymbolFormat(state.symbol);
     elQuoteMid.textContent=fmt(state.liveMid);
-    elQuoteSource.textContent=state.liveSource||'—';
-    renderWatchlist(state.symbol);
+    elQuoteSpread.textContent=(state.bid!=null&&state.ask!=null)?fmt(state.ask-state.bid):'—';
+    elTradeBidPrice.textContent=fmt(state.bid);
+    elTradeAskPrice.textContent=fmt(state.ask);
+    lastQuoteState = state;
+    if(state.symbol && state.symbol !== marketsSelectedSymbol){
+      marketsSelectedSymbol = state.symbol;
+      renderWatchlist();
+    } else {
+      updateWatchlistLiveRow(state);
+    }
+  }
+
+  // MOBILE-DESIGN-INTEGRATION-01 — GRAPH — the topbar's symbol button
+  // (chevron, Visual Contract V1 geometry) reuses the EXISTING, already
+  //-authorized navigation-reuse pattern (03C.3.4's Markets watchlist
+  // tap) instead of inventing a new symbol picker: it simply activates
+  // the real Markets view, where real symbol selection already lives.
+  const elSymbolBtn=document.getElementById('mobSymbolBtn');
+  if(elSymbolBtn){
+    elSymbolBtn.addEventListener('click',function(){
+      const marketsNavBtn=document.querySelector('.mob-navitem[data-target="markets"]');
+      if(marketsNavBtn)marketsNavBtn.click();
+    });
   }
 
   // PRE-VPS-POLISH-03C.2.3 — real catalog from the backend's own
@@ -499,25 +1003,141 @@ window.__TRADE_CONFIG__ = {
   // high/low, market status, or fake quotes for unselected rows.
   const MOBILE_SYMBOLS = {{ mobile_allowed_symbols_json|safe }};
   const elWatchlist = document.getElementById('mobWatchlist');
+  const elMarketSearch = document.getElementById('mobMarketSearch');
+  const elMarketChips = document.getElementById('mobMarketChips');
 
-  function renderWatchlist(selectedSymbol){
-    elWatchlist.innerHTML = '';
+  // PRE-VPS-POLISH-03C.3.4 — Markets view state. Purely presentational:
+  // which row is "live" (mirrors session.currentSymbol/onQuote, never a
+  // second price authority), the last real onQuote() state (reused only
+  // to paint the selected row immediately on a structural rebuild —
+  // never recomputed), and the search/category filters — both survive
+  // every tick untouched because onQuote() never touches them.
+  let marketsSelectedSymbol = null;
+  let lastQuoteState = null;
+  let marketSearchQuery = '';
+  let marketCategoryFilter = 'ALL';
+
+  // Categories are derived from whichever asset_class values are
+  // actually present in MOBILE_SYMBOLS right now — never a hardcoded
+  // parallel list, so a catalog change never needs this file touched.
+  function getMarketCategories(){
+    const seen = [];
     MOBILE_SYMBOLS.forEach(function(item){
+      if(seen.indexOf(item.asset_class) === -1) seen.push(item.asset_class);
+    });
+    return seen;
+  }
+
+  function filteredMarketSymbols(){
+    const q = marketSearchQuery.trim().toLowerCase();
+    return MOBILE_SYMBOLS.filter(function(item){
+      if(marketCategoryFilter !== 'ALL' && item.asset_class !== marketCategoryFilter) return false;
+      if(q && item.symbol.toLowerCase().indexOf(q) === -1) return false;
+      return true;
+    });
+  }
+
+  // Chips are structural-only (never touched by onQuote()/ticks) — safe
+  // to fully rebuild on every deliberate category click, same "All" +
+  // one chip per real asset_class already present in MOBILE_SYMBOLS.
+  function renderMarketChips(){
+    elMarketChips.innerHTML = '';
+    ['ALL'].concat(getMarketCategories()).forEach(function(cat){
+      const chip = document.createElement('div');
+      chip.className = 'mob-market-chip' + (cat === marketCategoryFilter ? ' is-selected' : '');
+      chip.textContent = cat === 'ALL' ? 'All' : cat;
+      chip.setAttribute('data-category', cat);
+      chip.addEventListener('click', function(){
+        if(marketCategoryFilter === cat) return;
+        marketCategoryFilter = cat;
+        renderMarketChips();
+        renderWatchlist();
+      });
+      elMarketChips.appendChild(chip);
+    });
+  }
+
+  // Real, already-computed values only (the same state onQuote() just
+  // received from applyPriceTickState() inside MobileTradingSession) —
+  // '—' (never a fabricated/synthetic number) until a real tick for the
+  // currently-selected symbol has actually arrived.
+  function marketLiveValues(){
+    if(lastQuoteState && lastQuoteState.symbol === marketsSelectedSymbol){
+      return { price: fmt(lastQuoteState.liveMid), bid: fmt(lastQuoteState.bid), ask: fmt(lastQuoteState.ask) };
+    }
+    return { price: '—', bid: '—', ask: '—' };
+  }
+
+  // Structural rebuild — called on init, on search/category changes, and
+  // on a genuine symbol change (never on an ordinary same-symbol tick,
+  // see onQuote() above). Non-selected rows carry symbol + asset_class
+  // only, exactly as before 03C.3.4 — no price/Bid/Ask invented for them.
+  function renderWatchlist(){
+    elWatchlist.innerHTML = '';
+    filteredMarketSymbols().forEach(function(item){
+      const isSelected = item.symbol === marketsSelectedSymbol;
       const row = document.createElement('div');
-      row.className = 'mob-watchlist-item' + (item.symbol === selectedSymbol ? ' is-selected' : '');
+      row.className = 'mob-watchlist-item' + (isSelected ? ' is-selected' : '');
       row.setAttribute('data-symbol', item.symbol);
       const symEl = document.createElement('span');
       symEl.className = 'wl-sym';
       symEl.textContent = item.symbol;
-      const assetEl = document.createElement('span');
-      assetEl.className = 'wl-asset';
-      assetEl.textContent = item.asset_class;
       row.appendChild(symEl);
-      row.appendChild(assetEl);
-      row.addEventListener('click', function(){ mobileChart.clear(); session.selectSymbol(item.symbol); });
+      if(isSelected){
+        const vals = marketLiveValues();
+        const right = document.createElement('span');
+        right.className = 'wl-right';
+        const priceEl = document.createElement('span');
+        priceEl.className = 'wl-price';
+        priceEl.textContent = vals.price;
+        const bidaskEl = document.createElement('span');
+        bidaskEl.className = 'wl-bidask';
+        bidaskEl.textContent = 'B ' + vals.bid + ' · A ' + vals.ask;
+        right.appendChild(priceEl);
+        right.appendChild(bidaskEl);
+        row.appendChild(right);
+      } else {
+        const assetEl = document.createElement('span');
+        assetEl.className = 'wl-asset';
+        assetEl.textContent = item.asset_class;
+        row.appendChild(assetEl);
+      }
+      row.addEventListener('click', function(){
+        mobileChart.clear();
+        session.selectSymbol(item.symbol);
+        // MOBILE-DESIGN-INTEGRATION-01 — GRAPH — getCanonicalPositions()
+        // is already an in-memory, synchronously-readable store (no
+        // need to wait for the next backend push), so the chart's
+        // Entry/SL/TP lines are correct for the NEW symbol immediately
+        // — never a stale line from the previously-selected symbol.
+        refreshPositionLines();
+        // PRE-VPS-POLISH-03C.3.4 — reuses the EXISTING view-switcher
+        // wiring from 03C.3.2 (its own click listener on this same
+        // button) instead of calling/duplicating showView() or adding
+        // a second navigation mechanism.
+        const tradeNavBtn = document.querySelector('.mob-navitem[data-target="trade"]');
+        if(tradeNavBtn) tradeNavBtn.click();
+      });
       elWatchlist.appendChild(row);
     });
   }
+
+  // Live-only patch for an ordinary tick on the already-selected
+  // symbol's row — never innerHTML, never touches search/chips/any
+  // other row, so focus/scroll/typed text are all untouched.
+  function updateWatchlistLiveRow(state){
+    const row = elWatchlist.querySelector('.mob-watchlist-item.is-selected');
+    if(!row) return;
+    const priceEl = row.querySelector('.wl-price');
+    const bidaskEl = row.querySelector('.wl-bidask');
+    if(priceEl) priceEl.textContent = fmt(state.liveMid);
+    if(bidaskEl) bidaskEl.textContent = 'B ' + fmt(state.bid) + ' · A ' + fmt(state.ask);
+  }
+
+  elMarketSearch.addEventListener('input', function(){
+    marketSearchQuery = elMarketSearch.value;
+    renderWatchlist();
+  });
 
   // PRE-VPS-POLISH-03C.2.4 — Mobile-only chart presentation layer.
   // MobileTradingChart owns chart/candleSeries/volumeSeries/bars only —
@@ -526,7 +1146,31 @@ window.__TRADE_CONFIG__ = {
   const mobileChart = new MobileTradingChart(document.getElementById('mobChartContainer'));
   mobileChart.initialize();
 
-  function onHistory(data, phase){ mobileChart.applyHistory(data, phase); }
+  // 2nd correction round — reactive day/night for the chart's own
+  // canvas colors, satisfying "verifica ambos temas" without building
+  // Account: data-mb-theme is already-existing dormant infrastructure
+  // (no real switch sets it yet) — this MutationObserver just means
+  // that WHENEVER something does set it (a future Account toggle, or
+  // this block's own controlled verification), mobile_chart.js's
+  // applyThemeColors() (presentation-only — reads --bg/--muted/--line/
+  // --candle-up/--candle-down via getComputedStyle, never touches the
+  // engine) re-runs automatically. No polling, no new WS traffic.
+  if(typeof MutationObserver!=='undefined'){
+    const themeObserveEl=document.querySelector('.mob-foundation');
+    if(themeObserveEl){
+      new MutationObserver(function(){ mobileChart.applyThemeColors(); })
+        .observe(themeObserveEl,{attributes:true,attributeFilter:['data-mb-theme']});
+    }
+  }
+
+  // ISOLATED FIX — symbol/scale coherence for SL/TP editing. session.
+  // currentSymbol is read HERE, fresh, at the moment this callback
+  // actually fires — mobile_session.js's own _handleMsg already
+  // refused to call onHistory() at all if the message's own symbol no
+  // longer matched session.currentSymbol by the time it arrived (its
+  // existing, unchanged guard), so this value is always the real
+  // symbol this exact data belongs to, never a stale one.
+  function onHistory(data, phase){ mobileChart.applyHistory(data, phase, session.currentSymbol); }
   function onCandleNew(bar){ mobileChart.appendCandle(bar); }
   function onCandleUpdate(bar){ mobileChart.updateLastCandle(bar); }
   function onVolumeUpdate(point){ mobileChart.updateVolume(point); }
@@ -562,7 +1206,7 @@ window.__TRADE_CONFIG__ = {
     elTf.innerHTML = '';
     MOBILE_TIMEFRAMES.forEach(function(tf){
       const item = document.createElement('div');
-      item.className = 'mob-tf-item' + (tf === selectedTf ? ' is-selected' : '');
+      item.className = 'mbg-tf' + (tf === selectedTf ? ' is-selected' : '');
       item.textContent = MOBILE_TF_LABELS[tf] || tf;
       item.addEventListener('click', function(){
         mobileChart.clear();
@@ -583,8 +1227,6 @@ window.__TRADE_CONFIG__ = {
   // requestRiskPreview() send intention only; the backend's real
   // responses are displayed as-is.
   const elQty=document.getElementById('mobQtyInput');
-  const elSl=document.getElementById('mobSlInput');
-  const elTp=document.getElementById('mobTpInput');
   const elBuyBtn=document.getElementById('mobBuyBtn');
   const elSellBtn=document.getElementById('mobSellBtn');
   const elTicketStatus=document.getElementById('mobTicketStatus');
@@ -602,32 +1244,80 @@ window.__TRADE_CONFIG__ = {
     elSellBtn.disabled=sending;
   }
 
+  // Gráfico scope-removal round — the SL/TP-for-new-order inputs are
+  // gone from this screen (Owner decision: that configuration moves to
+  // a future, separately-designed order-creation screen; "no elimines
+  // la capacidad funcional subyacente" — session.submitOrder() below
+  // is UNCHANGED and still fully accepts sl/tp). This always returns
+  // {sl:null,tp:null} rather than reading any DOM element, so BUY/SELL
+  // can never pick up a stale/residual value from a removed, hidden,
+  // or orphaned input — item 3's explicit requirement.
   function readSlTp(){
-    const slV=elSl.value, tpV=elTp.value;
-    return { sl: slV!==''?Number(slV):null, tp: tpV!==''?Number(tpV):null };
+    return { sl: null, tp: null };
   }
 
   function submitTicket(side){
     if(!session.currentSymbol)return;
+    // SL/TP-on-open-position editing — refuse to start a brand-new
+    // order while a position's SL/TP modification is still pending:
+    // both order:new and the position-update action share the same
+    // generic 'error' type and some validation codes, so letting them
+    // overlap would reintroduce exactly the response-attribution
+    // ambiguity condition 5 (this round's authorization) requires
+    // avoiding.
+    if(pendingSlTp)return;
     const rawQty=parseFloat(elQty.value);
     const min=getLotMin(session.currentSymbol);
     const qty=rawQty>=min?+rawQty.toFixed(getLotDecimals(session.currentSymbol)):min;
     const{sl,tp}=readSlTp();
     setTicketSending(true);
-    elTicketStatus.textContent=side==='sell'?'Enviando SELL…':'Enviando BUY…';
+    // Item 4 (6-item correction round) — kept consistent with the
+    // VENDER/COMPRAR button labels above (same side concept, same
+    // screen) rather than leaving the English SELL/BUY tokens this
+    // feedback text used before.
+    elTicketStatus.textContent=side==='sell'?'Enviando VENTA…':'Enviando COMPRA…';
     session.submitOrder({side,qty,sl,tp});
   }
   elBuyBtn.addEventListener('click',function(){ submitTicket('buy'); });
   elSellBtn.addEventListener('click',function(){ submitTicket('sell'); });
 
-  elQty.addEventListener('input',function(){
+  // MOBILE-DESIGN-INTEGRATION-01 — GRAPH — extracted verbatim from the
+  // body of the old native elQty 'input' listener (still wired below,
+  // unchanged) so the new −/+ lot stepper buttons can trigger the SAME
+  // real risk-preview refresh without duplicating the logic. mobQtyInput
+  // is now readonly (Visual Contract V1 geometry: a stepper-driven
+  // readout, not free typing) — programmatic .value writes never fire a
+  // native 'input' event, so the stepper calls this function directly.
+  function refreshRiskPreviewForQty(){
     const qty=parseFloat(elQty.value);
     if(session.currentSymbol&&qty>0){
       session.requestRiskPreview(session.currentSymbol,qty);
     }else{
       elRiskPanel.hidden=true;
     }
-  });
+  }
+  elQty.addEventListener('input',refreshRiskPreviewForQty);
+
+  // MOBILE-DESIGN-INTEGRATION-01 — GRAPH — lot −/+ stepper. Reuses the
+  // REAL shared getLotStep()/getLotMin()/getLotDecimals() (trading_core.js,
+  // the exact same helpers submitTicket() above already clamps against)
+  // — no new lot-size concept, no preset array (the prototype's demo
+  // `lots` array is discarded per instruction, replaced by the real
+  // per-symbol continuous step).
+  const elLotDownBtn=document.getElementById('mobLotDownBtn');
+  const elLotUpBtn=document.getElementById('mobLotUpBtn');
+  function stepQty(direction){
+    if(!session.currentSymbol)return;
+    const sym=session.currentSymbol;
+    const step=getLotStep(sym), min=getLotMin(sym), dec=getLotDecimals(sym);
+    const current=parseFloat(elQty.value);
+    const base=isFinite(current)?current:min;
+    const next=Math.max(min, +(base+direction*step).toFixed(dec));
+    elQty.value=next.toFixed(dec);
+    refreshRiskPreviewForQty();
+  }
+  elLotDownBtn.addEventListener('click',function(){ stepQty(-1); });
+  elLotUpBtn.addEventListener('click',function(){ stepQty(1); });
 
   // PRE-VPS-POLISH-03C.2.5 — plain passthrough of the real backend
   // risk_preview response (consumers.py::_handle_risk_preview ->
@@ -635,6 +1325,8 @@ window.__TRADE_CONFIG__ = {
   // no Desktop-style instant local estimate (see 03C.2.5 preflight,
   // Section F — that estimate depends on a contract-size global that
   // only exists on desktop.html, not here).
+  // PRE-VPS-POLISH-03C.2.5 — mobRiskPanel is directly in the main flow
+  // (Gráfico scope-removal round — no panel to force open anymore).
   function onRiskPreview(msg){
     elRiskPanel.hidden=false;
     elRiskLevel.textContent=msg.risk_level||'—';
@@ -645,7 +1337,8 @@ window.__TRADE_CONFIG__ = {
   // risk_warning pauses for explicit user confirmation — never executes
   // automatically. Ticket buttons are re-enabled (setTicketSending(false))
   // the same way Desktop's own risk_warning handling releases its order
-  // ticket buttons while the confirm modal is open.
+  // ticket buttons while the confirm modal is open. This MANDATORY gate
+  // is never skipped — it is simply always in the main flow now.
   function onRiskWarning(msg){
     setTicketSending(false);
     elTicketStatus.textContent='';
@@ -666,7 +1359,7 @@ window.__TRADE_CONFIG__ = {
 
   function onOrderAck(msg){
     setTicketSending(false);
-    elTicketStatus.textContent=(String(msg.side||'').toLowerCase()==='sell'?'SELL':'BUY')+' ejecutado';
+    elTicketStatus.textContent=(String(msg.side||'').toLowerCase()==='sell'?'VENTA':'COMPRA')+' ejecutada';
   }
   function onOrderRejected(msg){
     setTicketSending(false);
@@ -690,6 +1383,24 @@ window.__TRADE_CONFIG__ = {
   function setCloseInFlight(v){
     closeInFlight=v;
     elPositionsList.querySelectorAll('.mob-close-btn').forEach(function(b){ b.disabled=v; });
+  }
+  // ISOLATED BUG FIX — a sent order:close carries no correlation id
+  // (same real-contract limitation updateSlTp()/pendingSlTp already
+  // deal with), so if the backend connection drops or simply never
+  // answers, nothing was ever going to call onOrderClose()/onCloseError
+  // to release closeInFlight — leaving Mobile's close controls stuck
+  // disabled forever with no feedback. This mirrors pendingSlTp's own
+  // UI-facing 8s timeout exactly: a real, already-sent attempt that
+  // gets no response within the window is reported as unconfirmed and
+  // the guard is released — it is NEVER declared a success, the
+  // position is NEVER removed locally, and nothing is ever resent
+  // automatically. A canonical snapshot that arrives later (even after
+  // this fires) still reconciles normally through the existing,
+  // unchanged refreshPositionLines()/onPositions() path.
+  let pendingClose=null;
+  function clearPendingClose(){
+    if(pendingClose&&pendingClose.timer)clearTimeout(pendingClose.timer);
+    pendingClose=null;
   }
   function renderPositions(items){
     if(!items.length){
@@ -717,19 +1428,291 @@ window.__TRADE_CONFIG__ = {
         +'</div>';
     }).join('');
   }
+  // Multi-position correction round — finds (never computes, never
+  // nets/averages/merges) EVERY open position for the symbol currently
+  // shown on Gráfico, from the REAL canonical positions store.
+  // mobileChart.setPositions() (mobile_chart.js) draws one Entry per
+  // position via Lightweight Charts' own createPriceLine() — no
+  // financial logic here or there, and no second store.
+  function currentSymbolPositions(){
+    return getCanonicalPositions().filter(function(p){ return p.symbol===session.currentSymbol; });
+  }
+
+  // Which canonical position id's full capsule + SL/TP controls are
+  // shown. Deliberately a single orchestrator-level variable (not
+  // chart-internal state) so mobile.html alone owns the stability rule
+  // below — mobile_chart.js only ever draws whatever id it is given.
+  let selectedPositionId=null;
+
+  // Multi-position correction round — the ONE place selectedPositionId
+  // is ever reassigned automatically. Rule (this round's explicit
+  // authorization):
+  //   - keep it if that id still exists in the fresh list, no matter
+  //     what (pending edit or not);
+  //   - otherwise, if a pending SL/TP edit exists for it, cancel that
+  //     edit first via the existing safe behavior (the edit's target no
+  //     longer exists) — resolveSlTpEdit() below already reverts the
+  //     chart-side UI; clearPendingSlTp() releases this orchestrator's
+  //     and the session's own bookkeeping;
+  //   - once nothing is pending for it, reselect deterministically (the
+  //     first position in canonical order) or null if the symbol has no
+  //     open positions left at all.
+  // NEVER changes selectedPositionId just because a DIFFERENT id's
+  // pending edit is unrelated — only the disappearance of the
+  // currently-selected id itself can ever trigger a reselect here.
+  // The chart's own setPositions() (called right after this, in
+  // refreshPositionLines()) already abandons any in-progress edit —
+  // including an already-'sending' one — whose target position is no
+  // longer in the fresh list (see its own class-level comment in
+  // mobile_chart.js), and redraws the newly-selected position's real
+  // SL/TP from scratch. This function only needs to release THIS
+  // orchestrator's own pendingSlTp bookkeeping for the disappeared id.
+  // ISOLATED FIX (symbol/scale coherence block) — the pendingSlTp
+  // abandon check below used to test "is pendingSlTp.id still in
+  // `items`" — but `items` is already SYMBOL-FILTERED
+  // (currentSymbolPositions()), so switching symbols alone (the
+  // position still exists, just for a different instrument now
+  // charted) looked identical to the position having actually closed,
+  // and silently dropped tracking of an update that was already SENT
+  // and awaiting the real backend's resolution — exactly the
+  // "convertir en edición de la nueva posición/símbolo" this fix must
+  // not do. Checking the FULL canonical store (never filtered by
+  // symbol) instead means this branch now only ever fires when the
+  // position has genuinely closed — a real instrument switch never
+  // touches pendingSlTp here; only onPositions()'s own match-check,
+  // onSlTpUpdateRejected(), or the UI timeout ever resolve it.
+  function reconcileSelection(items){
+    if(selectedPositionId!=null && items.some(function(p){ return String(p.id)===String(selectedPositionId); })){
+      return; // still exists — never touched automatically.
+    }
+    if(pendingSlTp && String(pendingSlTp.id)===String(selectedPositionId)
+       && !getCanonicalPositions().some(function(p){ return String(p.id)===String(pendingSlTp.id); })){
+      clearPendingSlTp();
+      setSlTpStatus('',false);
+    }
+    selectedPositionId = items.length ? items[0].id : null;
+  }
+
+  function refreshPositionLines(){
+    const items=currentSymbolPositions();
+    reconcileSelection(items);
+    mobileChart.setPositions(items, selectedPositionId);
+  }
+
+  // Multi-position correction round — fired only when the user taps a
+  // position's capsule/compact chip BODY (never its × — mobile_chart.js
+  // itself keeps those two handlers separate, see its own
+  // _renderEntryCapsule() comment). A deliberate, user-initiated
+  // selection change is always honored immediately, even while a
+  // DIFFERENT position has a pending edit (that edit keeps resolving on
+  // its own via mobile_session.js's real response — switching the
+  // visible selection never cancels an already-sent order-update, only
+  // the chart's own not-yet-sent local drag/tap preview for whichever
+  // position stops being shown).
+  mobileChart.onSelectPosition=function(id){
+    if(String(id)===String(selectedPositionId))return;
+    selectedPositionId=id;
+    mobileChart.setPositions(currentSymbolPositions(), selectedPositionId);
+  };
+
+  // ── SL/TP-on-open-position editing (audited-then-authorized sub-
+  // block). The real backend contract (consumers.py::_order_update,
+  // sent via session.updateSlTp()) carries no request/correlation id —
+  // "success" is only ever the generic 'positions' snapshot every other
+  // flow can also trigger. pendingSlTp is this orchestrator's own
+  // bookkeeping of what was actually requested (id/symbol/field/both
+  // levels sent), compared against each incoming snapshot at the
+  // instrument's real display precision — never raw equality, never
+  // "a snapshot merely arrived". At most one pending edit at a time.
+  const elSlTpStatus=document.getElementById('mobSlTpStatus');
+  let pendingSlTp=null;
+  function setSlTpStatus(text,isError){
+    if(!elSlTpStatus)return;
+    elSlTpStatus.textContent=text||'';
+    elSlTpStatus.hidden=!text;
+    elSlTpStatus.classList.toggle('is-error',!!isError);
+  }
+  // Releases BOTH this orchestrator's own bookkeeping AND the session-
+  // level single-slot guard (session.clearSlTpPending() — see its own
+  // comment in mobile_session.js) the moment THIS code has itself
+  // determined the real outcome (match/reject/timeout) — never leaving
+  // the user blocked from a new edit for mobile_session.js's own
+  // internal 20s safety-valve window, which exists purely so a lost/
+  // dropped response can't deadlock the slot forever, never as the
+  // normal resolution path.
+  function clearPendingSlTp(){
+    if(pendingSlTp){
+      if(pendingSlTp.timer)clearTimeout(pendingSlTp.timer);
+      session.clearSlTpPending(pendingSlTp.id);
+    }
+    pendingSlTp=null;
+  }
+  // Same real per-instrument precision the chart's own axis/labels
+  // already use (priceFormatFor(), trading_core.js) — required so a
+  // backend snapshot is compared against what was requested the same
+  // way a human reading the chart would, never a raw float ===.
+  function sameSlTpLevel(a,b,sym){
+    if(a==null||b==null)return a==null&&b==null;
+    const p=priceFormatFor(sym).precision;
+    return Number(a).toFixed(p)===Number(b).toFixed(p);
+  }
+
+  // The ONE path that can ever lead to a real send: fires only when the
+  // user explicitly taps Confirm on the chart (drag-release or the
+  // exact-price form) — mobile_chart.js itself never sends anything.
+  mobileChart.onSlTpConfirm=function(posId,field,price){
+    // Multi-position correction round — looked up by the EXACT
+    // canonical id the edit was for (never "whichever position happens
+    // to be first for this symbol") — this is what guarantees SL/TP
+    // never gets copied between positions sharing a symbol. Still the
+    // REAL canonical store, never a second one.
+    const pos=getCanonicalPositions().find(function(p){ return String(p.id)===String(posId); });
+    // Condition 1 (this round's authorization) — mandatory canonical
+    // id/symbol; currentSymbol is NEVER used as a silent substitute.
+    // If the position this edit started on is no longer open (or
+    // genuinely lacks an id/symbol), refuse and report state instead of
+    // sending anything.
+    if(!pos||pos.id==null||!pos.symbol||String(pos.id)!==String(posId)){
+      setSlTpStatus('No se pudo identificar la posición. Cambio no enviado.',true);
+      mobileChart.resolveSlTpEdit(field);
+      return;
+    }
+    if(pendingSlTp){
+      // Condition 5 — never a second simultaneous send from this UI.
+      setSlTpStatus('Ya hay un cambio de SL/TP en curso.',true);
+      mobileChart.resolveSlTpEdit(field);
+      return;
+    }
+    // Condition 2 — preserve the OTHER field's current CONFIRMED value
+    // verbatim; this method is only ever invoked with a real numeric
+    // price for the field actually being edited (drag/tap always
+    // supply one) — null here would only ever come from the position's
+    // own already-absent other field, never invented.
+    const sl=field==='sl'?price:(pos.sl!=null?pos.sl:null);
+    const tp=field==='tp'?price:(pos.tp!=null?pos.tp:null);
+    const sent=session.updateSlTp({id:pos.id,symbol:pos.symbol,sl,tp});
+    if(!sent){
+      setSlTpStatus('No se pudo enviar el cambio (otra operación en curso).',true);
+      mobileChart.resolveSlTpEdit(field);
+      return;
+    }
+    pendingSlTp={id:pos.id,symbol:pos.symbol,field,requestedSl:sl,requestedTp:tp};
+    setSlTpStatus('Enviando cambio de '+field.toUpperCase()+'…',false);
+    // UI-facing timeout only — shorter than mobile_session.js's own
+    // internal 20s safety-valve, and NOT a server-side cancellation
+    // (see that file's class-level comment). If nothing resolves this
+    // within the window, say so plainly and revert the visual; a later
+    // snapshot, if one ever arrives, still reconciles normally through
+    // onPositions() below — never a fabricated result either way.
+    pendingSlTp.timer=setTimeout(function(){
+      if(!pendingSlTp||String(pendingSlTp.id)!==String(pos.id)||pendingSlTp.field!==field)return;
+      clearPendingSlTp();
+      setSlTpStatus('Cambio no confirmado (sin respuesta).',true);
+      mobileChart.resolveSlTpEdit(field);
+    },8000);
+  };
+
+  // Real backend rejection (price_unavailable/invalid_sl_value/
+  // invalid_tp_value/invalid_sl_direction/invalid_tp_direction, or the
+  // not-found warn) — mobile_session.js already guarantees this is
+  // unambiguously attributable to the single pending order-update
+  // before this callback ever fires.
+  function onSlTpUpdateRejected(msg){
+    if(!pendingSlTp)return;
+    const field=pendingSlTp.field;
+    clearPendingSlTp();
+    setSlTpStatus(msg.message||msg.code||'Cambio rechazado',true);
+    mobileChart.resolveSlTpEdit(field);
+  }
+
   // PRE-VPS-POLISH-03C.2.6 — domain state already applied by
   // MobileTradingSession (replaceCanonicalPositions already ran) —
   // this callback only renders getCanonicalPositions(), never
   // recomputes anything from it.
-  function onPositions(items){ renderPositions(items); }
+  // MOBILE-DESIGN-INTEGRATION-01 — GRAPH — refreshPositionLines() added
+  // alongside the existing renderPositions() call: same real position
+  // push, now also redraws the chart's Entry/SL/TP lines (GRAPH screen)
+  // — never a second position store, never a recomputation.
+  // SL/TP editing — condition 4: a 'positions' snapshot only confirms
+  // this UI's own pending request when it contains the SAME position id
+  // AND both levels match exactly what was requested, at the real
+  // instrument precision. refreshPositionLines() (which updates the
+  // chart's own last-known-canonical position) always runs BEFORE
+  // resolveSlTpEdit() below, so a confirmed success redraws the NEW
+  // value, never the stale preview — and a non-matching snapshot
+  // (different position, or the same position but different levels,
+  // e.g. an unrelated qty/pnl-only refresh) leaves pendingSlTp
+  // untouched, exactly as condition 4 requires ("si no coinciden, no
+  // declares guardado").
+  function onPositions(items){
+    renderPositions(items);
+    let resolvedField=null;
+    if(pendingSlTp){
+      const match=items.find(function(it){return String(it.id)===String(pendingSlTp.id);});
+      if(match){
+        const sym=match.symbol||pendingSlTp.symbol;
+        if(sameSlTpLevel(match.sl,pendingSlTp.requestedSl,sym)&&sameSlTpLevel(match.tp,pendingSlTp.requestedTp,sym)){
+          resolvedField=pendingSlTp.field;
+          clearPendingSlTp();
+          setSlTpStatus('Cambio confirmado.',false);
+        }
+      }
+    }
+    refreshPositionLines();
+    if(resolvedField)mobileChart.resolveSlTpEdit(resolvedField);
+  }
+
+  // 2nd correction round — the chart overlay's entry-pill close (×)
+  // button reuses the EXACT SAME real close flow/guard as the
+  // Positions view's own Close button below (session.closePosition()
+  // + closeInFlight) — mobile_chart.js only ever calls this plain
+  // callback, it never touches session/WS itself.
+  // SL/TP editing — also refuses while THIS SAME position has a
+  // pending SL/TP modification in flight, so a close can never overlap
+  // with (and ambiguously share generic 'error'/'warn' attribution
+  // against) an outstanding order-update for the exact same position.
+  // ISOLATED BUG FIX — closeInFlight must only ever be set once a send
+  // has actually been confirmed to happen. Setting it unconditionally
+  // before calling session.closePosition() (the previous code) left
+  // Mobile permanently blocked whenever that call silently refused to
+  // send (disconnected, id missing, or an unrelated guard already
+  // busy) — no backend response was ever going to arrive to release
+  // it. closePosition() now reports true/false for exactly this
+  // reason (same discipline session.updateSlTp() already used).
+  // ISOLATED BUG FIX — starts the no-response safety timer (see
+  // pendingClose's own comment above) the moment a close is actually
+  // confirmed sent — identical bookkeeping for both real entry points
+  // into the SAME close flow (chart × and Posiciones' own Close).
+  function armPendingClose(id){
+    clearPendingClose();
+    pendingClose={id:id,timer:setTimeout(function(){
+      if(!pendingClose||String(pendingClose.id)!==String(id))return;
+      pendingClose=null;
+      setCloseInFlight(false);
+      elTicketStatus.textContent='Cierre no confirmado (sin respuesta).';
+    },8000)};
+  }
+  mobileChart.onCloseClick = function(id){
+    if(closeInFlight)return;
+    if(pendingSlTp&&String(pendingSlTp.id)===String(id))return;
+    const sent=session.closePosition(id);
+    if(!sent)return;
+    setCloseInFlight(true);
+    armPendingClose(id);
+  };
 
   elPositionsList.addEventListener('click',function(e){
     const btn=e.target.closest('.mob-close-btn');
     if(!btn||closeInFlight)return;
+    const closeId=btn.getAttribute('data-id');
+    if(pendingSlTp&&String(pendingSlTp.id)===String(closeId))return;
+    const sent=session.closePosition(closeId);
+    if(!sent)return;
     setCloseInFlight(true);
-    session.closePosition(btn.getAttribute('data-id'));
+    armPendingClose(closeId);
   });
   function onOrderClose(msg){
+    clearPendingClose();
     setCloseInFlight(false);
     // Real passthrough only — the backend already follows this with its
     // own account:update/positions pushes (03C.2.6 preflight, Section
@@ -737,6 +1720,7 @@ window.__TRADE_CONFIG__ = {
     // recomputes realized_pnl — it only waits for those real messages.
   }
   function onCloseError(msg){
+    clearPendingClose();
     setCloseInFlight(false);
   }
 
@@ -853,11 +1837,15 @@ window.__TRADE_CONFIG__ = {
     MOBILE_SYMBOLS.map(function(item){ return item.symbol; }),
     onHistory, onCandleNew, onCandleUpdate, onVolumeUpdate,
     onRiskPreview, onRiskWarning, onOrderAck, onOrderRejected, onTradingError, onPositions,
-    onPendingOrders, onOrderClose, onCloseError, onClosedTrades, onPendingOrderCancelled, onPendingCancelError
+    onPendingOrders, onOrderClose, onCloseError, onClosedTrades, onPendingOrderCancelled, onPendingCancelError,
+    onSlTpUpdateRejected
   );
-  renderWatchlist(session.currentSymbol);
+  marketsSelectedSymbol = session.currentSymbol;
+  renderMarketChips();
+  renderWatchlist();
   renderTfSelector(session.currentTF);
   renderPositions(getCanonicalPositions());
+  refreshPositionLines();
   session.connect();
 })();
 </script>
@@ -870,14 +1858,22 @@ window.__TRADE_CONFIG__ = {
      framework, no event bus, no new WebSocket traffic. Switching views
      never disconnects/reconnects the session and never clears chart/
      position/pending/closed state — they keep rendering into their
-     real DOM nodes regardless of which view is currently visible. -->
+     real DOM nodes regardless of which view is currently visible.
+     MOBILE-DESIGN-INTEGRATION-01 — GRAPH — one additive line: toggles
+     `.mbg-active` on .mob-foundation itself, purely so the generic
+     topbar can hide ONLY while Gráfico (trade) is the active view (see
+     `.mob-foundation.mbg-active .mob-topbar{display:none;}` above) —
+     still just a presentational [hidden]/class toggle, same mechanism,
+     same file, nothing new. -->
 <script>
 (function(){
   const views = document.querySelectorAll('.mob-view');
   const navItems = document.querySelectorAll('.mob-navitem');
+  const foundationEl = document.querySelector('.mob-foundation');
   function showView(name){
     views.forEach(function(v){ v.hidden = (v.getAttribute('data-mobile-view') !== name); });
     navItems.forEach(function(b){ b.classList.toggle('is-active', b.getAttribute('data-target') === name); });
+    if(foundationEl)foundationEl.classList.toggle('mbg-active', name === 'trade');
   }
   navItems.forEach(function(btn){
     btn.addEventListener('click', function(){ showView(btn.getAttribute('data-target')); });

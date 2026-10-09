@@ -305,8 +305,19 @@ class MobilePositionsHtmlWiringTests(TestCase):
         self.assertIn("session.requestClosedTrades()", html)
 
     def test_close_and_cancel_wired_to_session(self):
+        # OLD: self.assertIn("session.closePosition(btn.getAttribute('data-id'))", html)
+        # NEW: the id is now extracted to a local (closeId) before the
+        # call, so a SL/TP-on-open-position edit pending for that exact
+        # position can be checked first.
+        # WHY: SL/TP-on-open-position editing (audited-then-authorized
+        # sub-block) — refuses to close a position while ITS OWN SL/TP
+        # modification is still in flight (condition 5: avoid ambiguous
+        # simultaneous sends from this UI); the real session.
+        # closePosition() call is unchanged, only now reading from the
+        # extracted variable instead of the raw attribute expression.
         html = self._html()
-        self.assertIn("session.closePosition(btn.getAttribute('data-id'))", html)
+        self.assertIn("const closeId=btn.getAttribute('data-id');", html)
+        self.assertIn("session.closePosition(closeId)", html)
         self.assertIn("session.cancelPendingOrder(btn.getAttribute('data-id'))", html)
 
     def test_renders_initial_canonical_positions_on_load(self):
