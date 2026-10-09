@@ -4884,21 +4884,43 @@ class TradingConsumer(AsyncWebsocketConsumer):
             _rule = get_or_create_risk_rule(account)
 
             # 6. INVARIANTE 1 (PANEL-02 correction) — fresh_equity requires
-            # a REAL, fresh floating PnL for EVERY open position; a
+            # a REAL, usable floating PnL for EVERY open position; a
             # missing or stale price is NEVER treated as floating PnL=0.
             # Zero is not conservative: a losing position with no
             # available price would make fresh_equity look HIGHER than
             # reality (real equity = balance + true_floating, which could
             # be deeply negative), which could let an order through that a
             # correct equity read would have rejected. The only safe
-            # options are "use a real, fresh price" or "refuse to decide"
-            # — never invent a number. If ANY open position's symbol has
-            # no live/cached price, or that price is older than
-            # FeedManager.has_price()'s freshness TTL, the ENTIRE order is
-            # rejected here — before fresh_equity is even computed — with
-            # nothing written (no Position, no commission, no Trade/
-            # LedgerEntry/BrokerLedger), same as any other rejection path.
-            _unpriced_symbols = [p.symbol for p in open_positions if not self._feed.has_price(p.symbol)]
+            # options are "use a real price" or "refuse to decide" — never
+            # invent a number.
+            #
+            # CROSS-MARKET-GUARD-01 — reuses the SAME already-audited
+            # policy broker_exposure.py's own aggregate exposure read
+            # already uses (GOLDEN-WEEKEND-RISK-01), never a second
+            # implementation: _resolve_symbol_prices() resolves each open
+            # position's symbol to one of FRESH (live tick, FeedManager),
+            # MARKET_CLOSED_FROZEN (the symbol's market session is
+            # confirmed, via evaluate_market_session_for_symbol(), to be
+            # MARKET_CLOSED, AND a durable LastKnownMarketPrice row
+            # exists), STALE (no fresh tick during tradeable/uncertain
+            # hours — a live feed failure; LastKnownMarketPrice is NEVER
+            # consulted for this case), or UNAVAILABLE (market closed, no
+            # durable row either). Only FRESH/MARKET_CLOSED_FROZEN count
+            # as usable here — STALE/UNAVAILABLE still reject the whole
+            # order exactly as before. This fixes the cross-market block
+            # (an open FOREX position during its normal weekend/holiday
+            # closure no longer blocks an unrelated 24/7 BTCUSD order)
+            # without ever treating a genuinely broken feed during open
+            # hours as acceptable, and without touching whether a NEW
+            # order on a closed market is itself allowed (that remains
+            # _order_new's own, separate, unmodified
+            # evaluate_market_session_for_symbol() gate).
+            from .broker_exposure import _resolve_symbol_prices
+            _price_resolution = _resolve_symbol_prices({p.symbol for p in open_positions})
+            _unpriced_symbols = [
+                p.symbol for p in open_positions
+                if _price_resolution.get(p.symbol, (None, "UNAVAILABLE"))[1] not in ("FRESH", "MARKET_CLOSED_FROZEN")
+            ]
             if _unpriced_symbols:
                 log.warning(
                     "[atomic_guard] account=%s REJECTED — no fresh price for open "
@@ -4924,19 +4946,32 @@ class TradingConsumer(AsyncWebsocketConsumer):
                 }
 
             # 7. Fresh equity — PANEL-02 FASE 3: floating PnL of every open
-            # position, sourced from the shared, per-process FeedManager
-            # (self._feed) — the SAME cache _seed_price_state()/
-            # exec_price() already read from — never this connection's own
-            # _bid_state/_ask_state (only seeded for symbols THIS
-            # connection has viewed). Every position here is guaranteed
-            # freshly priced by step 6 above — no fallback/zero case
-            # remains to handle.
+            # position. Every position here is guaranteed usable by step 6
+            # above — no fallback/zero case remains to handle. FRESH
+            # positions still price off the shared, per-process
+            # FeedManager (self._feed) exactly as before — the SAME cache
+            # _seed_price_state()/exec_price() already read from, never
+            # this connection's own _bid_state/_ask_state (only seeded for
+            # symbols THIS connection has viewed). CROSS-MARKET-GUARD-01 —
+            # a MARKET_CLOSED_FROZEN position (its market is confirmed
+            # closed) instead uses the SAME durable mid price step 6's
+            # _resolve_symbol_prices() already resolved — no second
+            # LastKnownMarketPrice read, no bid/ask spread applied to a
+            # frozen price (mirroring exactly how broker_exposure.py's own
+            # calculate_position_pnl() call already treats a resolved
+            # MARKET_CLOSED_FROZEN price — a single mid, not bid/ask). The
+            # PnL formula itself (pnl_engine.position_pnl_float) is
+            # unchanged either way — only which real price feeds it.
             fresh_floating_pnl = 0.0
             for _p in open_positions:
-                _close_px = (
-                    self._feed.last_bid(_p.symbol) if _p.side == "BUY"
-                    else self._feed.last_ask(_p.symbol)
-                )
+                _price_value, _price_status = _price_resolution[_p.symbol]
+                if _price_status == "FRESH":
+                    _close_px = (
+                        self._feed.last_bid(_p.symbol) if _p.side == "BUY"
+                        else self._feed.last_ask(_p.symbol)
+                    )
+                else:
+                    _close_px = float(_price_value)
                 fresh_floating_pnl += pnl_engine.position_pnl_float(
                     _p.side.lower(), float(_p.avg_price), _close_px, float(_p.qty), _p.symbol,
                     account_currency=account.currency,
