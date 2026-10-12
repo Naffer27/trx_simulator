@@ -400,6 +400,28 @@
   .mob-view[data-mobile-view="trade"] .mbg-price{font-size:32px;font-weight:600;letter-spacing:-.03em;color:var(--text);}
   .mob-view[data-mobile-view="trade"] .mbg-stats{display:flex;gap:14px;font-size:var(--mb-text-xs);color:var(--muted);}
   .mob-view[data-mobile-view="trade"] .mbg-stats b{color:var(--text);font-weight:400;}
+  /* Balance / Profit-Loss strip — reproduces money-broker-movil 2/
+     grafico.html's own .account-strip (tema.css) verbatim: same grid/
+     radius/padding/divider, same --surface/--border/--muted/--text
+     tokens this file already defines identically to tema.css's own
+     noche/dia values (confirmed against tema.css lines 38-100) — no
+     new color introduced. is-pos/is-neg reuse --buy-text/--sell-text,
+     the SAME tokens the reference's own account-strip P/L uses
+     (grafico.html: className = 'buy-text'/'sell-text'), not this
+     file's unrelated generic --mb-positive/--mb-negative (a different
+     Design-System default that does not match the reference). */
+  .mob-view[data-mobile-view="trade"] .mbg-account-strip{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));margin-top:10px;border-radius:12px;background:var(--surface);border:1px solid var(--border);}
+  .mob-view[data-mobile-view="trade"] .mbg-account-strip div{display:flex;flex-direction:column;gap:2px;padding:8px 12px;}
+  .mob-view[data-mobile-view="trade"] .mbg-account-strip div:first-child{border-right:1px solid var(--border);}
+  .mob-view[data-mobile-view="trade"] .mbg-account-strip small{font-size:11px;color:var(--muted);}
+  .mob-view[data-mobile-view="trade"] .mbg-account-strip b{font-size:16px;font-weight:600;color:var(--text);}
+  .mob-view[data-mobile-view="trade"] .mbg-account-strip .is-pos{color:var(--buy-text);}
+  .mob-view[data-mobile-view="trade"] .mbg-account-strip .is-neg{color:var(--sell-text);}
+  /* tema.css: [data-theme="dia"] .account-strip { border-color:
+     transparent; } — the outer card border only, the inner divider
+     (div:first-child's own border-right) is a separate property and
+     stays visible, exactly like the reference. */
+  .mob-foundation[data-mb-theme="dia"] .mbg-account-strip{border-color:transparent;}
   .mob-view[data-mobile-view="trade"] .mbg-tf-row{display:flex;align-items:center;gap:2px;}
   /* Item 3 (6-item correction round) — tf items are plain <div>s (not
      <button>s), so they never got a <button>'s default centered-text
@@ -702,6 +724,17 @@
             <span>M&iacute;n <b>&mdash;</b></span>
             <span>Vol <b>&mdash;</b></span>
           </div>
+          <!-- Balance/Profit-Loss strip (money-broker-movil 2/grafico.html
+               .account-strip) — real account:update/account:snapshot
+               fields only (msg.balance, msg.upnl??msg.pnl_unreal — the
+               SAME backend-authoritative total floating P&L already
+               driving the Account tab's own #mobUpnl, never a client-
+               side sum). Filled by onAccount() below; genuine absence
+               (before the first account message) stays "—", never 0. -->
+          <div class="mbg-account-strip">
+            <div><small>Balance</small><b class="mbg-num" id="mobGraphBalance">&mdash;</b></div>
+            <div><small>Profit / Loss</small><b class="mbg-num" id="mobGraphPl">&mdash;</b></div>
+          </div>
         </section>
 
         <div class="mbg-tf-row" id="mobTfSelector"></div>
@@ -907,6 +940,36 @@ window.__TRADE_CONFIG__ = {
   const elFree=document.getElementById('mobFree');
   const elUpnl=document.getElementById('mobUpnl');
   const elLeverage=document.getElementById('mobLeverage');
+  // Balance/Profit-Loss strip on Gráfico — same onAccount() message,
+  // same two backend fields as above; see onAccount()'s own comment
+  // for why these are read independently of the existing upnl/elBalance
+  // handling (absence must stay "—", never defaulted to 0).
+  const elGraphBalance=document.getElementById('mobGraphBalance');
+  const elGraphPl=document.getElementById('mobGraphPl');
+  // Local-only display formatting for the Balance/Profit-Loss strip —
+  // deliberately NOT the shared usd() helper (trading_core.js,
+  // protected): usd()'s toLocaleString uses maximumFractionDigits:2
+  // with no minimum, so it drops trailing zeros ("$10,230", "$0") —
+  // this strip instead always shows exactly two decimals ("$10,230.00",
+  // "$0.00"), per its own approved visual spec. Pure string formatting
+  // of an already-real number this file already received verbatim from
+  // the account message — no rounding/calculation of any kind, no
+  // change to any value, no change to usd() or any other shared
+  // formatter. "No sign" (signed=false, Balance) means never prefixing
+  // '+' on a positive value — it must NEVER hide a real negative
+  // balance's own minus sign (fixed: the first version wrapped the
+  // whole result in Math.abs() regardless of `signed`, silently turning
+  // a negative balance positive). signed=true (Profit/Loss) additionally
+  // prefixes '+' for a positive value — the real minus sign '−', never
+  // a bare '-$', applies to a negative value either way; zero never
+  // gets any sign.
+  function mbgStripMoney(v, signed){
+    const n=Number(v);
+    const abs=Math.abs(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+    if(n<-0.000001) return '−$'+abs;
+    if(signed && n>0.000001) return '+$'+abs;
+    return '$'+abs;
+  }
 
   // PRE-VPS-POLISH-03C.2.1 — same display semantics as desktop.html's
   // renderAccount(): backend-authoritative fields only, the one
@@ -926,6 +989,31 @@ window.__TRADE_CONFIG__ = {
     elUpnl.classList.toggle('neg',upnl<-0.00001);
     if(Math.abs(upnl)<=0.00001)elUpnl.classList.remove('pos','neg');
     elLeverage.textContent=msg.leverage!=null?String(msg.leverage)+'x':'—';
+    // Balance/Profit-Loss strip (Gráfico) — same two real fields read
+    // above (msg.balance; msg.upnl??msg.pnl_unreal, consumers.py's own
+    // _unrealized_pnl_total(), already the sum over EVERY open position
+    // of the account, never just the selected one/visible symbol), but
+    // checked for genuine presence independently of the equity/upnl
+    // constants above (which already defaulted to 0 for the Account
+    // tab's own display) — this strip must show "—" instead of "$0.00"
+    // before the first account message ever arrives, never inventing a
+    // zero. Never touched by the lot stepper or any other UI control.
+    if(elGraphBalance){
+      elGraphBalance.textContent=msg.balance!=null?mbgStripMoney(msg.balance,false):'—';
+    }
+    if(elGraphPl){
+      const plRaw=msg.upnl!=null?msg.upnl:msg.pnl_unreal;
+      if(plRaw==null){
+        elGraphPl.textContent='—';
+        elGraphPl.classList.remove('is-pos','is-neg');
+      } else {
+        const plNum=Number(plRaw);
+        elGraphPl.textContent=mbgStripMoney(plNum,true);
+        elGraphPl.classList.toggle('is-pos',plNum>0.00001);
+        elGraphPl.classList.toggle('is-neg',plNum<-0.00001);
+        if(Math.abs(plNum)<=0.00001)elGraphPl.classList.remove('is-pos','is-neg');
+      }
+    }
   }
 
   const elQuoteSymbol=document.getElementById('mobQuoteSymbol');
