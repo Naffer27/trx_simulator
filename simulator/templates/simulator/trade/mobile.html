@@ -195,6 +195,13 @@
      the generic topbar exactly as before, since they have no header of
      their own yet (out of scope for this block). */
   .mob-foundation.mbg-active .mob-topbar{display:none;}
+  /* MOBILE-WATCH-INTEGRATION-01 — same technique as .mbg-active above,
+     this time for Watch's own header (Watchlist title + filter icon,
+     .mbw-head below) so the generic brand/connection topbar never
+     doubles up on top of it. Markets/Watch is the ONLY view this round
+     touches — Positions/History/Account are untouched, still showing
+     the generic topbar exactly as before. */
+  .mob-foundation.mbw-active .mob-topbar{display:none;}
   .mob-view-area{
     flex:1 1 auto;
     min-height:0;
@@ -276,38 +283,73 @@
   .mob-summary .cell .value{font-size:var(--mb-text-md);color:var(--mb-text-primary);margin-top:var(--mb-space-1);font-weight:600;}
   .mob-summary .cell .value.pos{color:var(--mb-positive);}
   .mob-summary .cell .value.neg{color:var(--mb-negative);}
-  /* watchlist/selector */
-  /* PRE-VPS-POLISH-03C.3.4V.1 — Markets visual contract correction: no
-     outer card (no border/radius/shadow) — a continuous full-width list
-     with hairline separators between rows only, matching the Visual
-     Contract V1 reference's "Mercados" screen. */
-  .mob-watchlist{width:100%;background:var(--mb-surface-1);overflow:hidden;}
-  .mob-watchlist-item{display:flex;justify-content:space-between;align-items:center;min-height:var(--mb-touch-min);padding:0 var(--mb-space-3);box-sizing:border-box;cursor:pointer;border-bottom:1px solid var(--mb-border);}
+  /* ===================== WATCH (Markets) =====================
+     MOBILE-WATCH-INTEGRATION-01 — faithful port of money-broker-movil
+     2/tema.css's own "WATCH" section (.page-head/.icon-btn/.search/
+     .chips/.chip/.list-head/.list/.row-link/.badge/.chg + the
+     per-category .b-btc/.b-eth/.b-fx/.b-gold/.b-idx icon colors),
+     classes renamed with an "mbw-" prefix and scoped to
+     [data-mobile-view="markets"] only — same convention
+     MOBILE-TRADE-FORM-01 already established for the Trade screen's
+     own "mbgt-" prefix. Same --bg/--surface/--surface-2/--border/
+     --line/--divider/--text/--text-2/--muted/--brand/--on-brand/
+     --buy/--buy-text/--sell/--sell-text tokens already defined once on
+     .mob-foundation above (Visual Contract V1, tema.css noche+día) —
+     zero new root-level colors. This view keeps the generic
+     .mob-view-area's existing 16/20px inset (same choice
+     MOBILE-DESIGN-INTEGRATION-01 already made for Gráfico's own .mbg)
+     rather than fighting it with negative margins — a deliberate,
+     documented departure from the reference's own edge-to-edge .app
+     (which has zero outer padding), not an oversight. */
+  .mob-view[data-mobile-view="markets"]{height:100%;box-sizing:border-box;align-items:stretch;gap:var(--mb-space-3);overflow:hidden;}
+  .mbw-head{display:flex;align-items:center;gap:var(--mb-space-2);width:100%;}
+  .mbw-head h1{margin:0;flex:1;font-size:22px;font-weight:600;letter-spacing:-.02em;color:var(--text);}
+  [data-mb-theme="dia"] .mbw-head h1{font-weight:700;letter-spacing:-.03em;}
+  .mbw-icon-btn{width:40px;height:40px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;color:var(--text-2);background:none;border:none;cursor:pointer;}
+  .mbw-icon-btn svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;}
+  .mbw-search{display:flex;align-items:center;gap:10px;height:44px;padding:0 14px;border-radius:var(--mb-radius-md);background:var(--surface);border:1px solid var(--border);box-sizing:border-box;width:100%;flex:0 0 auto;}
+  [data-mb-theme="dia"] .mbw-search{border-color:transparent;}
+  .mbw-search svg{flex:0 0 auto;color:var(--muted);}
+  .mbw-search input{flex:1;min-width:0;outline:none;font-size:15px;background:none;border:none;color:var(--text);font-family:inherit;}
+  .mbw-search input::placeholder{color:var(--muted);}
+  .mbw-chips{display:flex;gap:8px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;-webkit-overflow-scrolling:touch;flex:0 0 auto;width:100%;}
+  .mbw-chips::-webkit-scrollbar{display:none;}
+  .mbw-chip{flex-shrink:0;height:34px;padding:0 14px;border-radius:999px;font-size:13px;font-weight:500;background:var(--surface);color:var(--text-2);border:1px solid var(--border);cursor:pointer;font-family:inherit;white-space:nowrap;}
+  [data-mb-theme="dia"] .mbw-chip{background:#FFFFFF;}
+  .mbw-chip.is-selected{background:var(--brand-soft);color:var(--brand-text);border-color:rgba(245,197,24,.45);}
+  [data-mb-theme="dia"] .mbw-chip.is-selected{background:var(--brand);border-color:var(--brand);}
+  .mbw-list-head{display:flex;align-items:center;gap:12px;padding:0 0 8px;font-size:11px;color:var(--muted);letter-spacing:.04em;border-bottom:1px solid var(--divider);flex:0 0 auto;width:100%;}
+  .mbw-lh-instrument{flex:1;}
+  .mbw-lh-bidask{width:84px;text-align:right;}
+  .mbw-lh-24h{width:52px;text-align:center;}
+  .mob-watchlist{width:100%;flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;}
+  .mob-watchlist-item{display:flex;align-items:center;gap:12px;min-height:62px;border-bottom:1px solid var(--divider);cursor:pointer;box-sizing:border-box;}
   .mob-watchlist-item:last-child{border-bottom:none;}
-  .mob-watchlist-item.is-selected{background:var(--mb-brand-dim);}
-  .mob-watchlist-item .wl-sym{font-size:var(--mb-text-sm);color:var(--mb-text-primary);font-weight:600;}
-  .mob-watchlist-item .wl-asset{font-size:var(--mb-text-2xs);letter-spacing:var(--mb-tracking-label);text-transform:uppercase;color:var(--mb-text-muted);}
-  /* PRE-VPS-POLISH-03C.3.4 — Markets header (search + category chips) +
-     live price/Bid/Ask cell on the selected watchlist row only. Same
-     tokens as every other block above — no new palette.
-     PRE-VPS-POLISH-03C.3.4V.1 — width:100% now fills the full view
-     (max-width:360px removed, Markets-only — every other view's own
-     360px-capped components are untouched); h2 now reads as a real
-     screen title (no more eyebrow-label uppercase treatment). */
-  .mob-markets-head{width:100%;display:flex;flex-direction:column;gap:var(--mb-space-2);box-sizing:border-box;}
-  .mob-markets-head h2{font-size:var(--mb-text-lg);color:var(--mb-text-primary);margin:0;font-weight:700;}
-  .mob-search-input{width:100%;min-height:var(--mb-touch-min);background:var(--mb-surface-2);border:1px solid var(--mb-border);border-radius:var(--mb-radius-sm);color:var(--mb-text-primary);padding:0 var(--mb-space-3);font-size:var(--mb-text-sm);box-sizing:border-box;}
-  .mob-search-input::placeholder{color:var(--mb-text-muted);}
-  /* PRE-VPS-POLISH-03C.3.4V.1 — single horizontal line, never wraps to
-     a second row: overflow-x scroll instead, with the scrollbar itself
-     hidden (touch scrolling stays fully functional). */
-  .mob-market-chips{width:100%;display:flex;gap:var(--mb-space-2);flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;-webkit-overflow-scrolling:touch;}
-  .mob-market-chips::-webkit-scrollbar{display:none;}
-  .mob-market-chip{flex:0 0 auto;min-height:var(--mb-touch-sm);padding:0 var(--mb-space-3);display:flex;align-items:center;justify-content:center;background:var(--mb-surface-1);border:1px solid var(--mb-border);border-radius:var(--mb-radius-sm);font-size:var(--mb-text-xs);color:var(--mb-text-muted);cursor:pointer;text-transform:uppercase;letter-spacing:var(--mb-tracking-label);box-sizing:border-box;}
-  .mob-market-chip.is-selected{background:var(--mb-brand-dim);color:var(--mb-brand);border-color:var(--mb-brand-border);}
-  .mob-watchlist-item .wl-right{display:flex;flex-direction:column;align-items:flex-end;gap:2px;}
-  .mob-watchlist-item .wl-price{font-size:var(--mb-text-sm);color:var(--mb-text-primary);font-weight:600;}
-  .mob-watchlist-item .wl-bidask{font-size:var(--mb-text-2xs);color:var(--mb-text-muted);}
+  .mob-watchlist-item.is-selected{background:var(--brand-soft);}
+  .mbw-badge{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;}
+  .mbw-badge-crypto-btc{background:rgba(247,147,26,.14);color:#F7931A;}
+  .mbw-badge-crypto-eth{background:rgba(98,126,234,.16);color:#8EA2F2;}
+  .mbw-badge-crypto{background:rgba(245,197,24,.13);color:var(--brand);}
+  .mbw-badge-forex{background:rgba(110,168,254,.13);color:#6EA8FE;}
+  .mbw-badge-metal{background:rgba(245,197,24,.13);color:#F5C518;}
+  .mbw-badge-index{background:rgba(185,164,245,.13);color:#B9A4F5;}
+  [data-mb-theme="dia"] .mbw-badge-crypto-btc{background:#FDF0E1;color:#B45F06;}
+  [data-mb-theme="dia"] .mbw-badge-crypto-eth{background:#ECEFFC;color:#3F51B5;}
+  [data-mb-theme="dia"] .mbw-badge-crypto{background:#FBF4DC;color:#8A6A00;}
+  [data-mb-theme="dia"] .mbw-badge-forex,[data-mb-theme="dia"] .mbw-badge-index{background:#F1F2F4;color:#0A0A0A;}
+  [data-mb-theme="dia"] .mbw-badge-metal{background:#FBF4DC;color:#8A6A00;}
+  .mob-watchlist-item .wl-name{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;}
+  .mob-watchlist-item .wl-sym{font-size:15px;font-weight:600;color:var(--text);}
+  .mob-watchlist-item .wl-desc{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .mob-watchlist-item .wl-right{width:84px;flex:0 0 auto;text-align:right;display:flex;flex-direction:column;gap:3px;}
+  .mob-watchlist-item .wl-price{font-size:14px;font-weight:500;color:var(--text);font-family:'Geist Mono',var(--mb-font-sans);font-variant-numeric:tabular-nums;}
+  .mob-watchlist-item .wl-bidask{font-size:11px;color:var(--muted);font-family:'Geist Mono',var(--mb-font-sans);font-variant-numeric:tabular-nums;}
+  /* 24H: siempre "—" (sin color, sin fondo) — no existe una variación
+     real con periodo definido en el estado actual (ver onQuote()/
+     applyPriceTickState()); nunca se calcula desde las velas cargadas
+     ni se copia un porcentaje de la maqueta. */
+  .mob-watchlist-item .wl-chg{width:52px;flex:0 0 auto;text-align:center;font-size:12px;color:var(--muted);}
+  .mbw-empty{flex:1 1 auto;display:flex;align-items:center;justify-content:center;text-align:center;padding:var(--mb-space-5);font-size:var(--mb-text-sm);color:var(--muted);}
   /* ════════════════════════════════════════════════════════════════
      MOBILE-DESIGN-INTEGRATION-01 — GRAPH.
 
@@ -1001,16 +1043,33 @@
     </div>
 
     <div class="mob-view" data-mobile-view="markets" hidden>
-      <!-- PRE-VPS-POLISH-03C.3.4 — Markets header: search + asset_class
-           chips, both driven entirely by MOBILE_SYMBOLS (the same real
-           catalog the watchlist below already used since 03C.2.3) — no
-           second catalog, no fabricated field. -->
-      <div class="mob-markets-head">
-        <h2>Markets</h2>
-        <input type="text" id="mobMarketSearch" class="mob-search-input" placeholder="Search instrument…" autocomplete="off">
-        <div class="mob-market-chips" id="mobMarketChips"></div>
+      <!-- MOBILE-WATCH-INTEGRATION-01 — faithful port of money-broker-
+           movil 2/watch.html's own header/search/chips/list-head
+           markup (classes renamed "mbw-", see the matching CSS block
+           above). Search + category chips still driven entirely by
+           MOBILE_SYMBOLS (the same real catalog the watchlist below
+           already used since 03C.2.3) — no second catalog, no
+           fabricated field. The filter icon has one real, implemented
+           action (reset search+category — see mobMarketResetBtn below)
+           rather than being decorative. -->
+      <div class="mbw-head">
+        <h1>Watchlist</h1>
+        <button type="button" class="mbw-icon-btn" id="mobMarketResetBtn" aria-label="Restablecer búsqueda y filtros">
+          <svg viewBox="0 0 24 24"><path d="M4 7h16M7 12h10M10 17h4"/></svg>
+        </button>
+      </div>
+      <label class="mbw-search">
+        <svg width="18" height="18" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        <input type="search" id="mobMarketSearch" aria-label="Buscar instrumento" placeholder="Buscar BTC, EUR/USD…" autocomplete="off">
+      </label>
+      <div class="mbw-chips" id="mobMarketChips"></div>
+      <div class="mbw-list-head">
+        <span class="mbw-lh-instrument">Instrumento</span>
+        <span class="mbw-lh-bidask">Bid&nbsp;/&nbsp;Ask</span>
+        <span class="mbw-lh-24h">24H</span>
       </div>
       <div class="mob-watchlist" id="mobWatchlist"></div>
+      <div class="mbw-empty" id="mobMarketEmpty" hidden></div>
     </div>
 
     <div class="mob-view" data-mobile-view="positions" hidden>
@@ -1371,6 +1430,8 @@ window.__TRADE_CONFIG__ = {
   const elWatchlist = document.getElementById('mobWatchlist');
   const elMarketSearch = document.getElementById('mobMarketSearch');
   const elMarketChips = document.getElementById('mobMarketChips');
+  const elMarketEmpty = document.getElementById('mobMarketEmpty');
+  const elMarketResetBtn = document.getElementById('mobMarketResetBtn');
 
   // PRE-VPS-POLISH-03C.3.4 — Markets view state. Purely presentational:
   // which row is "live" (mirrors session.currentSymbol/onQuote, never a
@@ -1382,6 +1443,61 @@ window.__TRADE_CONFIG__ = {
   let lastQuoteState = null;
   let marketSearchQuery = '';
   let marketCategoryFilter = 'ALL';
+
+  // MOBILE-WATCH-INTEGRATION-01 — presentational-only labels for REAL,
+  // already-registered symbols (market_data/symbol_specs.py) — never a
+  // second instrument source: every key here must already exist in
+  // that registry (enabled or not), and any real symbol missing from
+  // this map still renders correctly (falls back to the bare symbol
+  // string below, never a blank/invented name). Purely cosmetic text,
+  // same discipline as the existing asset_class-only treatment it
+  // replaces — no price/classification/tradability implication.
+  const MOBILE_SYMBOL_NAMES = {
+    'EUR/USD':'Euro / Dólar', 'GBP/USD':'Libra / Dólar', 'USD/JPY':'Dólar / Yen',
+    'AUD/USD':'Dólar australiano / Dólar', 'USD/CAD':'Dólar / Dólar canadiense',
+    'USD/CHF':'Dólar / Franco suizo', 'NZD/USD':'Dólar neozelandés / Dólar',
+    'BTCUSD':'Bitcoin', 'ETHUSD':'Ethereum', 'SOLUSD':'Solana',
+    'XAU/USD':'Oro', 'XAG/USD':'Plata',
+    'US30':'Dow Jones', 'US500':'S&P 500', 'NAS100':'Nasdaq 100',
+  };
+  function symbolDisplayName(sym){ return MOBILE_SYMBOL_NAMES[sym] || sym; }
+
+  // Spanish labels for the 4 real asset_class values documented in
+  // symbol_specs.py ("forex"|"crypto"|"metal"|"index") — translating an
+  // existing, fixed-enum field is not the same as inventing a new
+  // classification; a value outside this map still renders (itself,
+  // uppercased) rather than disappearing.
+  const MOBILE_CATEGORY_LABELS = { forex:'Forex', crypto:'Cripto', metal:'Materias primas', index:'Índices' };
+  function categoryLabel(cat){
+    if(cat === 'ALL') return 'Todos';
+    if(cat === 'FAV') return 'Favoritos';
+    return MOBILE_CATEGORY_LABELS[cat] || cat.toUpperCase();
+  }
+
+  // Badge color bucket + initials — derived purely from the symbol
+  // string + its real asset_class, never a per-symbol invented field.
+  // BTC/ETH get their own reference colors (both real, currently-
+  // enabled symbols); any other/future crypto symbol falls back to a
+  // generic crypto color rather than guessing a new per-coin palette.
+  function symbolBadgeClass(item){
+    if(item.asset_class === 'crypto'){
+      if(item.symbol.indexOf('BTC') === 0) return 'mbw-badge-crypto-btc';
+      if(item.symbol.indexOf('ETH') === 0) return 'mbw-badge-crypto-eth';
+      return 'mbw-badge-crypto';
+    }
+    if(item.asset_class === 'metal') return 'mbw-badge-metal';
+    if(item.asset_class === 'index') return 'mbw-badge-index';
+    return 'mbw-badge-forex';
+  }
+  function symbolBadgeInitials(item){
+    if(item.asset_class === 'crypto') return item.symbol.replace(/USD$/,'').slice(0,3).toUpperCase();
+    const parts = item.symbol.split('/');
+    if(parts.length === 2){
+      const base = parts[0] === 'USD' ? parts[1] : parts[0];
+      return base.slice(0,2).toUpperCase();
+    }
+    return item.symbol.slice(0,2).toUpperCase();
+  }
 
   // Categories are derived from whichever asset_class values are
   // actually present in MOBILE_SYMBOLS right now — never a hardcoded
@@ -1397,21 +1513,31 @@ window.__TRADE_CONFIG__ = {
   function filteredMarketSymbols(){
     const q = marketSearchQuery.trim().toLowerCase();
     return MOBILE_SYMBOLS.filter(function(item){
-      if(marketCategoryFilter !== 'ALL' && item.asset_class !== marketCategoryFilter) return false;
-      if(q && item.symbol.toLowerCase().indexOf(q) === -1) return false;
+      // MOBILE-WATCH-INTEGRATION-01 — "Favoritos" reuses EXACTLY the
+      // same isFavoriteSymbol()/favoriteStorageKey() mechanism Gráfico's
+      // star button already writes to (defined above, same account-
+      // scoped localStorage key) — never a second favorites store.
+      if(marketCategoryFilter === 'FAV'){ if(!isFavoriteSymbol(item.symbol)) return false; }
+      else if(marketCategoryFilter !== 'ALL' && item.asset_class !== marketCategoryFilter) return false;
+      if(q && item.symbol.toLowerCase().indexOf(q) === -1 && symbolDisplayName(item.symbol).toLowerCase().indexOf(q) === -1) return false;
       return true;
     });
   }
 
   // Chips are structural-only (never touched by onQuote()/ticks) — safe
-  // to fully rebuild on every deliberate category click, same "All" +
-  // one chip per real asset_class already present in MOBILE_SYMBOLS.
+  // to fully rebuild on every deliberate category click, same "Todos" +
+  // "Favoritos" + one chip per real asset_class already present in
+  // MOBILE_SYMBOLS (today: Forex, Cripto — Materias primas/Índices will
+  // appear on their own the day those asset classes are enabled, no
+  // code change needed here).
   function renderMarketChips(){
     elMarketChips.innerHTML = '';
-    ['ALL'].concat(getMarketCategories()).forEach(function(cat){
-      const chip = document.createElement('div');
-      chip.className = 'mob-market-chip' + (cat === marketCategoryFilter ? ' is-selected' : '');
-      chip.textContent = cat === 'ALL' ? 'All' : cat;
+    ['ALL', 'FAV'].concat(getMarketCategories()).forEach(function(cat){
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'mbw-chip' + (cat === marketCategoryFilter ? ' is-selected' : '');
+      chip.textContent = categoryLabel(cat);
+      chip.setAttribute('aria-pressed', cat === marketCategoryFilter ? 'true' : 'false');
       chip.setAttribute('data-category', cat);
       chip.addEventListener('click', function(){
         if(marketCategoryFilter === cat) return;
@@ -1426,48 +1552,89 @@ window.__TRADE_CONFIG__ = {
   // Real, already-computed values only (the same state onQuote() just
   // received from applyPriceTickState() inside MobileTradingSession) —
   // '—' (never a fabricated/synthetic number) until a real tick for the
-  // currently-selected symbol has actually arrived.
-  function marketLiveValues(){
-    if(lastQuoteState && lastQuoteState.symbol === marketsSelectedSymbol){
-      return { price: fmt(lastQuoteState.liveMid), bid: fmt(lastQuoteState.bid), ask: fmt(lastQuoteState.ask) };
+  // currently-selected symbol has actually arrived. Per-instrument
+  // precision (priceFormatFor(), trading_core.js — same helper the
+  // chart/quote strip already use), never the generic 5-decimal default.
+  function marketLiveValues(sym){
+    // Explicit bid/ask != null check — the synchronous FIX-05C dummy
+    // state selectSymbol() itself dispatches (mobile_session.js,
+    // protected/unchanged) carries symbol===sym but bid/ask===null
+    // BEFORE any real tick arrives; without this check fmt(null) would
+    // render "0" here, a fabricated-looking number where honest "—" is
+    // required.
+    if(lastQuoteState && lastQuoteState.symbol === sym && sym === marketsSelectedSymbol
+       && lastQuoteState.bid != null && lastQuoteState.ask != null){
+      const p = priceFormatFor(sym).precision;
+      return { bid: fmt(lastQuoteState.bid, p), ask: fmt(lastQuoteState.ask, p) };
     }
-    return { price: '—', bid: '—', ask: '—' };
+    return { bid: '—', ask: '—' };
   }
 
-  // Structural rebuild — called on init, on search/category changes, and
-  // on a genuine symbol change (never on an ordinary same-symbol tick,
-  // see onQuote() above). Non-selected rows carry symbol + asset_class
-  // only, exactly as before 03C.3.4 — no price/Bid/Ask invented for them.
+  // Structural rebuild — called on init, on search/category changes, on
+  // a genuine symbol change (never on an ordinary same-symbol tick, see
+  // onQuote() above), and every time Watch becomes the visible view
+  // (see showView() — so a favorite toggled on Gráfico is reflected on
+  // return). Non-selected rows show Bid/Ask as "—" — the existing
+  // transport (onQuote()/applyPriceTickState()) only ever carries a
+  // quote for the ONE currently-selected symbol; this view never
+  // iterates symbols calling selectSymbol() to fetch more, and never
+  // shows the selected symbol's own price on any other row. The 24H
+  // column is always "—": no real variation-with-defined-period exists
+  // in the current state, and it is deliberately never derived from
+  // mobileChart's own loaded candles.
   function renderWatchlist(){
+    const items = filteredMarketSymbols();
     elWatchlist.innerHTML = '';
-    filteredMarketSymbols().forEach(function(item){
+    elWatchlist.hidden = items.length === 0;
+    if(elMarketEmpty){
+      elMarketEmpty.hidden = items.length !== 0;
+      if(items.length === 0){
+        elMarketEmpty.textContent = marketCategoryFilter === 'FAV'
+          ? 'Aún no tienes favoritos. Desde Gráfico, toca la estrella junto al símbolo para añadir uno.'
+          : 'No se encontraron instrumentos.';
+      }
+    }
+    items.forEach(function(item){
       const isSelected = item.symbol === marketsSelectedSymbol;
       const row = document.createElement('div');
       row.className = 'mob-watchlist-item' + (isSelected ? ' is-selected' : '');
       row.setAttribute('data-symbol', item.symbol);
-      const symEl = document.createElement('span');
+
+      const badgeEl = document.createElement('span');
+      badgeEl.className = 'mbw-badge ' + symbolBadgeClass(item);
+      badgeEl.textContent = symbolBadgeInitials(item);
+      row.appendChild(badgeEl);
+
+      const nameEl = document.createElement('span');
+      nameEl.className = 'wl-name';
+      const symEl = document.createElement('b');
       symEl.className = 'wl-sym';
       symEl.textContent = item.symbol;
-      row.appendChild(symEl);
-      if(isSelected){
-        const vals = marketLiveValues();
-        const right = document.createElement('span');
-        right.className = 'wl-right';
-        const priceEl = document.createElement('span');
-        priceEl.className = 'wl-price';
-        priceEl.textContent = vals.price;
-        const bidaskEl = document.createElement('span');
-        bidaskEl.className = 'wl-bidask';
-        bidaskEl.textContent = 'B ' + vals.bid + ' · A ' + vals.ask;
-        right.appendChild(priceEl);
-        right.appendChild(bidaskEl);
-        row.appendChild(right);
-      } else {
-        const assetEl = document.createElement('span');
-        assetEl.className = 'wl-asset';
-        assetEl.textContent = item.asset_class;
-        row.appendChild(assetEl);
-      }
+      const descEl = document.createElement('small');
+      descEl.className = 'wl-desc';
+      descEl.textContent = symbolDisplayName(item.symbol);
+      nameEl.appendChild(symEl);
+      nameEl.appendChild(descEl);
+      row.appendChild(nameEl);
+
+      const vals = marketLiveValues(item.symbol);
+      const right = document.createElement('span');
+      right.className = 'wl-right';
+      const priceEl = document.createElement('b');
+      priceEl.className = 'wl-price';
+      priceEl.textContent = vals.bid;
+      const bidaskEl = document.createElement('small');
+      bidaskEl.className = 'wl-bidask';
+      bidaskEl.textContent = vals.ask;
+      right.appendChild(priceEl);
+      right.appendChild(bidaskEl);
+      row.appendChild(right);
+
+      const chgEl = document.createElement('span');
+      chgEl.className = 'wl-chg';
+      chgEl.textContent = '—';
+      row.appendChild(chgEl);
+
       row.addEventListener('click', function(){
         mobileChart.clear();
         // MOBILE-GRAPH-POLISH-03 — the instant a symbol switch starts,
@@ -1488,13 +1655,19 @@ window.__TRADE_CONFIG__ = {
         // PRE-VPS-POLISH-03C.3.4 — reuses the EXISTING view-switcher
         // wiring from 03C.3.2 (its own click listener on this same
         // button) instead of calling/duplicating showView() or adding
-        // a second navigation mechanism.
+        // a second navigation mechanism. Never sends an order — this is
+        // navigation + symbol selection only.
         const tradeNavBtn = document.querySelector('.mob-navitem[data-target="trade"]');
         if(tradeNavBtn) tradeNavBtn.click();
       });
       elWatchlist.appendChild(row);
     });
   }
+  // MOBILE-WATCH-INTEGRATION-01 — one-line bridge, same technique
+  // window.__mobShowView already uses in the other direction, so
+  // showView() (a separate, later IIFE) can trigger a real refresh on
+  // every arrival at Watch without a second render mechanism.
+  window.__mobRefreshWatchlist = renderWatchlist;
 
   // Live-only patch for an ordinary tick on the already-selected
   // symbol's row — never innerHTML, never touches search/chips/any
@@ -1502,16 +1675,31 @@ window.__TRADE_CONFIG__ = {
   function updateWatchlistLiveRow(state){
     const row = elWatchlist.querySelector('.mob-watchlist-item.is-selected');
     if(!row) return;
+    const p = priceFormatFor(state.symbol).precision;
     const priceEl = row.querySelector('.wl-price');
     const bidaskEl = row.querySelector('.wl-bidask');
-    if(priceEl) priceEl.textContent = fmt(state.liveMid);
-    if(bidaskEl) bidaskEl.textContent = 'B ' + fmt(state.bid) + ' · A ' + fmt(state.ask);
+    if(priceEl) priceEl.textContent = fmt(state.bid, p);
+    if(bidaskEl) bidaskEl.textContent = fmt(state.ask, p);
   }
 
   elMarketSearch.addEventListener('input', function(){
     marketSearchQuery = elMarketSearch.value;
     renderWatchlist();
   });
+  if(elMarketResetBtn){
+    // MOBILE-WATCH-INTEGRATION-01 — the one real, implemented action
+    // behind the filter icon (money-broker-movil 2/watch.html's own
+    // "Ordenar y filtrar" icon-btn): clears the search text and returns
+    // the category filter to "Todos". Deliberately NOT wired to any
+    // sort/order control, since none exists yet — never a dead button.
+    elMarketResetBtn.addEventListener('click', function(){
+      marketSearchQuery = '';
+      elMarketSearch.value = '';
+      marketCategoryFilter = 'ALL';
+      renderMarketChips();
+      renderWatchlist();
+    });
+  }
 
   // PRE-VPS-POLISH-03C.2.4 — Mobile-only chart presentation layer.
   // MobileTradingChart owns chart/candleSeries/volumeSeries/bars only —
@@ -2537,6 +2725,17 @@ window.__TRADE_CONFIG__ = {
     // .mob-foundation.mbg-active CSS rule above, just also matched by
     // this one extra name.
     if(foundationEl)foundationEl.classList.toggle('mbg-active', name === 'trade' || name === 'tradeform');
+    // MOBILE-WATCH-INTEGRATION-01 — hides the generic topbar for Watch's
+    // own header (see .mob-foundation.mbw-active .mob-topbar above) and
+    // re-renders the watchlist on every arrival at this view, so a
+    // favorite toggled from Gráfico's star (same real localStorage
+    // mechanism, favoriteStorageKey()) is reflected immediately on
+    // return — never a stale snapshot from the last time Watch was
+    // visible. window.__mobRefreshWatchlist is the main orchestrator
+    // script's own renderWatchlist, exposed the same one-line-bridge
+    // way window.__mobShowView already is, just in the other direction.
+    if(foundationEl)foundationEl.classList.toggle('mbw-active', name === 'markets');
+    if(name === 'markets' && typeof window.__mobRefreshWatchlist === 'function') window.__mobRefreshWatchlist();
   }
   navItems.forEach(function(btn){
     btn.addEventListener('click', function(){ showView(btn.getAttribute('data-target')); });
