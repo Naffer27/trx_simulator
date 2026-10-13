@@ -342,6 +342,7 @@
     --text:#E8ECF2; --text-2:#C3CAD6; --muted:#8A94A6;
     --brand:#F5C518; --on-brand:#0B0E13; --brand-soft:rgba(245,197,24,.15); --brand-text:#F5C518; --brand-line:rgba(245,197,24,.7);
     --nav-active:#F5C518;
+    --trade-bg:#F5C518; --on-trade:#0B0E13;
     --buy:#2EBD85; --on-buy:#04130C; --buy-text:#2EBD85;
     --sell:#D92D4B; --on-sell:#FFFFFF; --sell-text:#F6465D;
     --candle-up:#2EBD85; --candle-down:#F6465D;
@@ -361,6 +362,7 @@
     --text:#0A0A0A; --text-2:#0A0A0A; --muted:#5F6672;
     --brand:#F5C518; --on-brand:#0A0A0A; --brand-soft:#FBF1C7; --brand-text:#0A0A0A; --brand-line:#C99A00;
     --nav-active:#0A0A0A;
+    --trade-bg:#0A0A0A; --on-trade:#FFFFFF;
     --buy:#0B7F57; --on-buy:#FFFFFF; --buy-text:#0B7F57;
     --sell:#D92D4B; --on-sell:#FFFFFF; --sell-text:#C42840;
     --candle-up:#10A36F; --candle-down:#E5364F;
@@ -378,12 +380,12 @@
      cursor, native [disabled] blocks any click — honest "control exists,
      not connected yet" instead of a silent gap. Favorites still have no
      real backend — unlike Trade below, this stays untouched. */
-  .mob-view[data-mobile-view="trade"] .mbg-star-btn{width:40px;height:44px;display:flex;align-items:center;justify-content:center;background:none;border:none;color:var(--muted);opacity:.45;cursor:default;}
+  .mob-view[data-mobile-view="trade"] .mbg-star-btn{width:40px;height:44px;display:flex;align-items:center;justify-content:center;background:none;border:none;color:var(--muted);cursor:pointer;}
   /* Gráfico scope-removal round — "Trade" reverts to the same honestly-
      disabled treatment as the star button above: the panel it used to
      open is gone from this screen (Owner decision — that configuration
      moves to a future, not-yet-built order-creation screen). */
-  .mob-view[data-mobile-view="trade"] .mbg-trade-link-btn{height:36px;padding:0 14px;border-radius:10px;background:var(--surface);color:var(--muted);border:1px solid var(--border);font-size:13px;font-weight:700;opacity:.55;cursor:default;font-family:inherit;}
+  .mob-view[data-mobile-view="trade"] .mbg-trade-btn{height:36px;padding:0 14px;border-radius:10px;background:var(--trade-bg);color:var(--on-trade);border:none;display:flex;align-items:center;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;}
   .mob-view[data-mobile-view="trade"] .mbg-sltp-status{min-height:16px;font-size:var(--mb-text-xs);color:var(--muted);}
   .mob-view[data-mobile-view="trade"] .mbg-sltp-status.is-error{color:var(--sell-text);}
   .mob-view[data-mobile-view="trade"] .mbg-symbol{font-size:var(--mb-text-lg);font-weight:600;color:var(--text);}
@@ -530,6 +532,15 @@
   .mob-view[data-mobile-view="trade"] .mbgc-zone{position:absolute;left:0;right:0;z-index:1;pointer-events:none;}
   .mob-view[data-mobile-view="trade"] .mbgc-zone-tp{background:var(--buy-zone);}
   .mob-view[data-mobile-view="trade"] .mbgc-zone-sl{background:var(--sell-zone);}
+  /* MOBILE-GRAPH-POLISH-03 — current-price yellow label/line, 1:1 with
+     tema.css's .last-line/.last-tag (--brand/--on-brand/--brand-line —
+     already defined once in .mob-foundation above, same values both
+     themes for --brand/--on-brand; --brand-line already differs
+     noche/día exactly like the reference). z-index below the SL/TP
+     pills (5) and Entry capsules, same layering precedent as the zone
+     bands above. */
+  .mob-view[data-mobile-view="trade"] .mbgc-last-line{position:absolute;z-index:2;border-top:1px dashed var(--brand-line);pointer-events:none;}
+  .mob-view[data-mobile-view="trade"] .mbgc-last-tag{position:absolute;z-index:4;font-family:'Geist Mono',var(--mb-font-sans);font-size:11px;font-weight:600;padding:2px 6px;border-radius:4px;background:var(--brand);color:var(--on-brand);pointer-events:none;white-space:nowrap;}
   /* SL/TP presentation correction round — interactive states layered on
      the EXISTING .mbgc-pill-tp/.mbgc-pill-sl geometry/colors above
      (same selectors, same base rule — these only add a ring/outline
@@ -618,6 +629,82 @@
   .mob-view[data-mobile-view="trade"] .mbg-risk-confirm{background:var(--surface-2);border:1px solid var(--brand-line);border-radius:var(--mb-radius-sm);padding:var(--mb-space-3);font-size:var(--mb-text-xs);color:var(--text);display:flex;flex-direction:column;gap:var(--mb-space-2);}
   .mob-view[data-mobile-view="trade"] .mbg-risk-confirm-buttons{display:flex;gap:var(--mb-space-2);}
   .mob-view[data-mobile-view="trade"] .mbg-risk-confirm-buttons button{flex:1;min-width:0;min-height:38px;border-radius:var(--mb-radius-sm);font-size:var(--mb-text-sm);border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-family:inherit;}
+
+  /* MOBILE-TRADE-FORM-01 — dedicated Trade screen. Faithful port of
+     money-broker-movil 2/tema.css's .page-head/.icon-btn/.content/
+     .instrument/.seg/.side-toggle/.type-tabs/.stepper/.risk-box/
+     .risk-row/.lbl/.rr/.kv/.cta/.badge rules (classes renamed with an
+     "mbgt-" prefix, scoped to [data-mobile-view="tradeform"] only, per
+     this round's own instruction) — same tokens as the rest of Gráfico
+     (--surface/--surface-2/--border/--line/--text/--text-2/--muted/
+     --brand/--on-brand/--buy/--on-buy/--buy-text/--sell/--on-sell/
+     --sell-text), already defined once in .mob-foundation above, so
+     both themes match the reference with zero new color values besides
+     --trade-bg/--on-trade (added to .mob-foundation itself, used by
+     mobOpenTradeFormBtn too). Non-scrolling outer height:100% + a
+     scrolling inner .mbgt-content, same split already used by the
+     Gráfico view itself — the keyboard/viewport resize that a focused
+     SL/TP number input triggers is handled by that inner scroll
+     container exactly like the reference's own .content does, nothing
+     new invented here. */
+  .mob-view[data-mobile-view="tradeform"]{height:100%;box-sizing:border-box;}
+  .mob-view[data-mobile-view="tradeform"] .mbgt{width:100%;height:100%;box-sizing:border-box;display:flex;flex-direction:column;font-family:'Geist',var(--mb-font-sans);}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-num{font-family:'Geist Mono',var(--mb-font-sans);font-variant-numeric:tabular-nums;letter-spacing:-.01em;}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-muted{color:var(--muted);}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-head{display:flex;align-items:center;padding:8px 8px 6px 16px;flex:0 0 auto;}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-head h1{margin:0;flex:1;font-size:26px;font-weight:600;letter-spacing:-.02em;color:var(--text);}
+  .mob-foundation[data-mb-theme="dia"] .mob-view[data-mobile-view="tradeform"] .mbgt-head h1{font-size:28px;font-weight:700;letter-spacing:-.03em;}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-close{width:44px;height:44px;display:flex;align-items:center;justify-content:center;color:var(--text-2);background:none;border:none;cursor:pointer;padding:0;}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-content{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding:6px 16px 16px;box-sizing:border-box;}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-instrument{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:14px;background:var(--surface);border:1px solid var(--border);text-align:left;width:100%;box-sizing:border-box;font-family:inherit;cursor:pointer;}
+  .mob-foundation[data-mb-theme="dia"] .mob-view[data-mobile-view="tradeform"] .mbgt-instrument{border-color:transparent;}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-badge{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;background:rgba(245,197,24,.13);color:var(--brand-text);}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-badge.mbgt-b-btc{background:rgba(247,147,26,.14);color:#F7931A;}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-badge.mbgt-b-eth{background:rgba(98,126,234,.16);color:#8EA2F2;}
+  .mob-foundation[data-mb-theme="dia"] .mob-view[data-mobile-view="tradeform"] .mbgt-badge.mbgt-b-btc{background:#FDF0E1;color:#B45F06;}
+  .mob-foundation[data-mb-theme="dia"] .mob-view[data-mobile-view="tradeform"] .mbgt-badge.mbgt-b-eth{background:#ECEFFC;color:#3F51B5;}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-instrument-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-instrument-main b{font-size:16px;font-weight:600;color:var(--text);}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-instrument-main small{font-size:12px;color:var(--muted);}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-instrument-price{display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex-shrink:0;}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-instrument-price b{font-size:15px;font-weight:600;color:var(--text);}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-seg{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:4px;padding:4px;border-radius:12px;background:var(--surface);}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-seg button{height:36px;border-radius:9px;font-size:13px;font-weight:500;color:var(--muted);background:none;border:none;cursor:pointer;font-family:inherit;}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-seg button[aria-selected="true"]{background:var(--surface-2);color:var(--text);font-weight:600;}
+  .mob-view[data-mobile-view="tradeform"] #mobTfSide button[data-side="buy"][aria-selected="true"]{background:var(--buy);color:var(--on-buy);}
+  .mob-view[data-mobile-view="tradeform"] #mobTfSide button[data-side="sell"][aria-selected="true"]{background:var(--sell);color:var(--on-sell);}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-type-tabs{display:flex;gap:20px;border-bottom:1px solid var(--line);}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-type-tabs button{height:38px;padding:0 2px;font-size:14px;font-weight:500;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px;background:none;border-left:none;border-right:none;border-top:none;cursor:pointer;font-family:inherit;}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-type-tabs button[aria-selected="true"]{color:var(--text);border-bottom-color:var(--brand);}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-type-tabs button:disabled{opacity:.4;cursor:not-allowed;}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-type-note{margin:4px 0 0;font-size:11px;color:var(--muted);}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-volume{display:flex;flex-direction:column;gap:8px;}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-volume-head{display:flex;justify-content:space-between;font-size:13px;color:var(--text-2);}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-stepper{display:flex;align-items:center;height:48px;border-radius:12px;background:var(--surface);border:1px solid var(--border);}
+  .mob-foundation[data-mb-theme="dia"] .mob-view[data-mobile-view="tradeform"] .mbgt-stepper{background:#FFFFFF;}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-stepper button{width:52px;height:46px;font-size:22px;color:var(--text-2);background:none;border:none;cursor:pointer;font-family:inherit;}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-stepper output{flex:1;text-align:center;font-size:19px;font-weight:600;color:var(--text);}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-risk-box{border-radius:14px;background:var(--surface);border:1px solid var(--border);}
+  .mob-foundation[data-mb-theme="dia"] .mob-view[data-mobile-view="tradeform"] .mbgt-risk-box{background:#FFFFFF;}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-risk-row{display:flex;align-items:center;gap:10px;padding:8px 8px 8px 14px;border-bottom:1px solid var(--line);}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-risk-row .mbgt-lbl{flex:1;display:flex;flex-direction:column;gap:2px;font-size:13px;color:var(--text-2);}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-risk-row .mbgt-lbl small{font-size:12px;}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-risk-input{width:120px;height:40px;text-align:center;font-size:15px;font-weight:500;color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-radius:8px;box-sizing:border-box;}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-rr{display:flex;justify-content:space-between;padding:10px 14px;font-size:12px;}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-kv{display:flex;flex-direction:column;gap:7px;padding:2px;font-size:13px;}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-kv div{display:flex;justify-content:space-between;color:var(--text);}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-kv div span:first-child{color:var(--muted);}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-ticket-status{min-height:18px;font-size:12px;color:var(--muted);}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-risk-confirm{background:var(--surface-2);border:1px solid var(--brand-line);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;font-size:12px;color:var(--text);}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-risk-confirm-buttons{display:flex;gap:8px;}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-risk-confirm-buttons button{flex:1;min-width:0;min-height:38px;border-radius:10px;font-size:13px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-family:inherit;}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-spacer{flex:0 0 8px;}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-cta{height:56px;border-radius:14px;display:flex;align-items:center;justify-content:center;gap:8px;font-size:15px;font-weight:600;width:100%;border:none;cursor:pointer;font-family:inherit;}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-cta .mbgt-num{font-weight:500;opacity:.85;}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-cta-buy{background:var(--buy);color:var(--on-buy);}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-cta-sell{background:var(--sell);color:var(--on-sell);}
+  .mob-view[data-mobile-view="tradeform"] .mbgt-cta:disabled{opacity:.5;cursor:not-allowed;}
+
   /* positions/pending/closed */
   .mob-pane-tabs{width:100%;max-width:360px;display:flex;gap:var(--mb-space-2);}
   .mob-pane-tab{flex:1;min-height:var(--mb-touch-sm);display:flex;align-items:center;justify-content:center;background:var(--mb-surface-1);border:1px solid var(--mb-border);border-radius:var(--mb-radius-sm);font-size:var(--mb-text-xs);color:var(--mb-text-muted);cursor:pointer;}
@@ -699,30 +786,42 @@
                exact literal text (grafico.html: <span class="live">EN
                VIVO</span>), not left as the prior round's "LIVE". -->
           <span class="mbg-live" id="mobLiveBadge" hidden>EN VIVO</span>
-          <button type="button" class="mbg-star-btn" disabled aria-disabled="true" title="Favorites are not available yet" aria-label="Favorite (not available yet)">
+          <!-- MOBILE-GRAPH-POLISH-03 — favorito local por cuenta+símbolo
+               (localStorage, ver renderFavoriteStar()/toggleFavorite()
+               más abajo — nunca sincroniza entre dispositivos, no hay
+               mecanismo de favoritos existente en el backend). -->
+          <button type="button" class="mbg-star-btn" id="mobStarBtn" aria-pressed="false" aria-label="Favorite">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/></svg>
           </button>
-          <!-- Gráfico scope-removal round — the new-order SL/TP panel
-               that briefly lived behind this button is REMOVED from
-               this screen (Owner decision: that configuration belongs
-               to a future, separately-designed order-creation screen,
-               not implemented yet). "Trade" reverts to its earlier
-               honestly-disabled state — same pattern as the star button
-               above — rather than staying wired to a panel that no
-               longer exists here. submitOrder()'s own sl/tp parameters
-               are UNCHANGED and still fully functional; only this
-               screen's current UI source for them is gone (see
-               readSlTp() below, which now always returns {sl:null,
-               tp:null} — never a stale/residual DOM value). -->
-          <button type="button" class="mbg-trade-link-btn" disabled aria-disabled="true" title="SL/TP for a new order will move to its own screen">Trade</button>
+          <!-- MOBILE-TRADE-FORM-01 — the "future, separately-designed
+               order-creation screen" referenced above now exists
+               (data-mobile-view="tradeform" below) — this button opens
+               it. Re-themed to tema.css's own .trade-btn (--trade-bg/
+               --on-trade, added to .mob-foundation's token set above —
+               yellow in noche, black-on-white in día, exactly matching
+               the reference in both themes). readSlTp()/the Gráfico
+               trade-bar's own BUY/SELL (null sl/tp) are UNCHANGED —
+               this button only navigates; it sends nothing itself. -->
+          <button type="button" class="mbg-trade-btn" id="mobOpenTradeFormBtn">Trade</button>
         </div>
 
         <section class="mbg-quote">
           <span class="mbg-num mbg-price" id="mobQuoteMid">—</span>
+          <!-- MOBILE-GRAPH-POLISH-03 — máx/mín: real, de las velas YA
+               cargadas (mobileChart.bars), filtradas a un período real
+               de 24h por timestamp (nunca "todo lo cargado" presentado
+               como si fuera 24h) — ver recomputeDailyStats() más abajo.
+               Volumen: mismo campo .volume real de esas velas, pero
+               mostrado SOLO para símbolos crypto (asset_class real de
+               MOBILE_SYMBOLS) — el significado exacto de "volume" para
+               forex (¿ticks? ¿unidades?) no está documentado en el
+               código del proveedor, así que queda "—" ahí en vez de
+               arriesgar una unidad equivocada. Nunca "$" (no es un
+               campo monetario). -->
           <div class="mbg-num mbg-stats">
-            <span>M&aacute;x <b>&mdash;</b></span>
-            <span>M&iacute;n <b>&mdash;</b></span>
-            <span>Vol <b>&mdash;</b></span>
+            <span>M&aacute;x <b id="mobStatHigh">&mdash;</b></span>
+            <span>M&iacute;n <b id="mobStatLow">&mdash;</b></span>
+            <span>Vol <b id="mobStatVol">&mdash;</b></span>
           </div>
           <!-- Balance/Profit-Loss strip (money-broker-movil 2/grafico.html
                .account-strip) — real account:update/account:snapshot
@@ -790,6 +889,113 @@
               <button id="mobRiskConfirmBtn" type="button">Confirm anyway</button>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MOBILE-TRADE-FORM-01 — dedicated order-creation screen, reached
+         only via mobOpenTradeFormBtn (Gráfico's own topbar). Reproduces
+         money-broker-movil 2/trade.html's composition (instrument /
+         Vender-Comprar / tipo de orden / volumen / SL-TP / info
+         disponible / CTA) — never the demo file itself, never its DATA/
+         QUOTES object. Every number here is either a REAL field already
+         received by this page (session.currentSymbol, lastQuoteState.*,
+         risk_preview's own margin_required/notional, onAccount's
+         leverage) or an honest "—" where no real contract provides one
+         (commission estimate, projected free-margin-after, and any SL/
+         TP-derived $ risk/reward — see this screen's own JS comment for
+         exactly why those three stay unavailable rather than computed
+         here). Submission funnels through the SAME session.submitOrder()/
+         requestRiskPreview()/confirmRiskWarning()/cancelRiskWarning()
+         this file's existing Gráfico trade-bar already uses — no new
+         WebSocket message, no second financial computation. SL/TP here
+         are NEW-ORDER composition fields only (passed straight into
+         submitOrder({sl,tp})) — entirely separate from the Gráfico
+         chart's own open-position SL/TP editing (updateSlTp()/
+         onSlTpConfirm), never touching an existing position. -->
+    <div class="mob-view" data-mobile-view="tradeform" hidden>
+      <div class="mbgt">
+        <div class="mbgt-head">
+          <h1>Trade</h1>
+          <button type="button" class="mbgt-close" id="mobTradeFormCloseBtn" aria-label="Cerrar">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </button>
+        </div>
+        <div class="mbgt-content" id="mobTradeFormContent">
+
+          <button type="button" class="mbgt-instrument" id="mobTfInstrumentBtn" aria-label="Change instrument">
+            <span class="mbgt-badge" id="mobTfBadge">—</span>
+            <span class="mbgt-instrument-main">
+              <b id="mobTfSymbolName">—</b>
+              <small id="mobTfSymbolMeta">Spread &mdash; &middot; Apalancamiento &mdash;</small>
+            </span>
+            <span class="mbgt-instrument-price">
+              <b class="mbgt-num" id="mobTfPrice">&mdash;</b>
+            </span>
+          </button>
+
+          <div class="mbgt-seg" id="mobTfSide" role="tablist" aria-label="Direcci&oacute;n">
+            <button type="button" role="tab" data-side="sell" aria-selected="false">Vender</button>
+            <button type="button" role="tab" data-side="buy" aria-selected="true">Comprar</button>
+          </div>
+
+          <div>
+            <div class="mbgt-type-tabs" id="mobTfType" role="tablist" aria-label="Tipo de orden">
+              <button type="button" role="tab" data-type="market" aria-selected="true">Mercado</button>
+              <button type="button" role="tab" data-type="limit" aria-selected="false" disabled aria-disabled="true" title="No disponible: Mobile a&uacute;n no tiene un contrato de creaci&oacute;n de &oacute;rdenes L&iacute;mite">L&iacute;mite</button>
+              <button type="button" role="tab" data-type="stop" aria-selected="false" disabled aria-disabled="true" title="No disponible: Mobile a&uacute;n no tiene un contrato de creaci&oacute;n de &oacute;rdenes Stop">Stop</button>
+            </div>
+            <p class="mbgt-type-note">Solo Mercado est&aacute; disponible. L&iacute;mite/Stop no tienen todav&iacute;a un contrato de creaci&oacute;n accesible desde Mobile.</p>
+          </div>
+
+          <div class="mbgt-volume">
+            <div class="mbgt-volume-head"><span>Volumen (lotes)</span><span class="mbgt-num mbgt-muted" id="mobTfNominal">&asymp; &mdash; nominal</span></div>
+            <div class="mbgt-stepper">
+              <button type="button" id="mobTfQtyDownBtn" aria-label="Bajar volumen">&minus;</button>
+              <output class="mbgt-num" id="mobTfQtyOut">0.01</output>
+              <button type="button" id="mobTfQtyUpBtn" aria-label="Subir volumen">+</button>
+            </div>
+          </div>
+
+          <div class="mbgt-risk-box">
+            <div class="mbgt-risk-row">
+              <span class="mbgt-lbl">Stop Loss<small class="mbgt-num mbgt-muted">Riesgo &mdash;</small></span>
+              <input type="number" inputmode="decimal" step="any" class="mbgt-num mbgt-risk-input" id="mobTfSlInput" placeholder="&mdash;">
+            </div>
+            <div class="mbgt-risk-row">
+              <span class="mbgt-lbl">Take Profit<small class="mbgt-num mbgt-muted">Objetivo &mdash;</small></span>
+              <input type="number" inputmode="decimal" step="any" class="mbgt-num mbgt-risk-input" id="mobTfTpInput" placeholder="&mdash;">
+            </div>
+            <div class="mbgt-rr"><span class="mbgt-muted">Riesgo : beneficio</span><b class="mbgt-num mbgt-muted">&mdash;</b></div>
+          </div>
+
+          <!-- Comisión estimada / Margen libre después: no existe un
+               campo real para ninguno de los dos en risk_preview (solo
+               risk_level/margin_required/exposure_pct/notional/...) ni en
+               ningún otro mensaje ya recibido — mostrarlos exigiría
+               calcularlos aquí mismo, explícitamente prohibido. Quedan
+               en "—" a propósito; ver informe de entrega. -->
+          <div class="mbgt-kv">
+            <div><span>Margen requerido</span><span class="mbgt-num" id="mobTfMargin">&mdash;</span></div>
+            <div><span>Comisi&oacute;n estimada</span><span class="mbgt-num mbgt-muted">&mdash;</span></div>
+            <div><span>Margen libre despu&eacute;s</span><span class="mbgt-num mbgt-muted">&mdash;</span></div>
+          </div>
+
+          <div class="mbgt-ticket-status" id="mobTfStatus"></div>
+          <div class="mbgt-risk-confirm" id="mobTfRiskConfirm" hidden>
+            <p id="mobTfRiskConfirmText"></p>
+            <div class="mbgt-risk-confirm-buttons">
+              <button type="button" id="mobTfRiskCancelBtn">Cancelar</button>
+              <button type="button" id="mobTfRiskConfirmBtn">Confirmar igual</button>
+            </div>
+          </div>
+
+          <span class="mbgt-spacer"></span>
+
+          <button type="button" class="mbgt-cta mbgt-cta-buy" id="mobTfCtaBtn">
+            <span id="mobTfCtaLabel">Comprar &mdash;</span>
+            <span class="mbgt-num" id="mobTfCtaPrice">@ &mdash;</span>
+          </button>
         </div>
       </div>
     </div>
@@ -976,7 +1182,14 @@ window.__TRADE_CONFIG__ = {
   // pre-existing free_margin fallback arithmetic preserved verbatim
   // (equity-margin_used when the backend doesn't send free_margin
   // explicitly), nothing else recalculated client-side.
+  // MOBILE-TRADE-FORM-01 — last real account message, kept verbatim
+  // (never recomputed) purely so renderTfInstrument() can read
+  // msg.leverage on demand (e.g. right when the Trade screen opens,
+  // without waiting for the next account push) — same field onAccount
+  // already reads below, just retained for that one extra reader.
+  let lastAccountMsg=null;
   function onAccount(msg){
+    lastAccountMsg=msg;
     const equity=Number(msg.equity??0), margin=Number(msg.margin_used??0);
     const free=msg.free_margin!=null?Number(msg.free_margin):equity-margin;
     const upnl=Number(msg.upnl??msg.pnl_unreal??0);
@@ -1014,6 +1227,9 @@ window.__TRADE_CONFIG__ = {
         if(Math.abs(plNum)<=0.00001)elGraphPl.classList.remove('is-pos','is-neg');
       }
     }
+    // MOBILE-TRADE-FORM-01 — leverage display only; see this function's
+    // own lastAccountMsg comment above.
+    renderTfInstrument();
   }
 
   const elQuoteSymbol=document.getElementById('mobQuoteSymbol');
@@ -1068,6 +1284,17 @@ window.__TRADE_CONFIG__ = {
     } else {
       updateWatchlistLiveRow(state);
     }
+    // MOBILE-TRADE-FORM-01 — keep the Trade screen's own instrument/
+    // price display live while it is open, same real tick stream as
+    // everywhere else on this page — no second subscription.
+    renderTfInstrument();
+    // MOBILE-GRAPH-POLISH-03 — onQuote() already fires right after
+    // EVERY real selectSymbol() (manual watchlist tap or the existing
+    // reload auto-select) with the new symbol's own state — the single
+    // correct place to refresh the star for whichever symbol just
+    // became current, without duplicating a call at every selectSymbol()
+    // call site.
+    renderFavoriteStar();
   }
 
   // MOBILE-DESIGN-INTEGRATION-01 — GRAPH — the topbar's symbol button
@@ -1080,6 +1307,56 @@ window.__TRADE_CONFIG__ = {
     elSymbolBtn.addEventListener('click',function(){
       const marketsNavBtn=document.querySelector('.mob-navitem[data-target="markets"]');
       if(marketsNavBtn)marketsNavBtn.click();
+    });
+  }
+
+  // MOBILE-GRAPH-POLISH-03 — favoritos locales, por cuenta real
+  // (window.__TRADE_CONFIG__.accountId, el mismo campo real que
+  // mobile_session.js ya usa para construir la URL del WebSocket) y
+  // símbolo. No existe ningún mecanismo de favoritos en el backend
+  // (confirmado: ni un campo en MOBILE_SYMBOLS, ni ninguna acción en
+  // mobile_session.js) — por eso se guarda exclusivamente en
+  // localStorage de este navegador. Se conserva al recargar (localStorage
+  // persiste) pero NUNCA sincroniza entre dispositivos/navegadores —
+  // limitación real, no un defecto.
+  const elStarBtn=document.getElementById('mobStarBtn');
+  function favoriteStorageKey(sym){
+    const acc=(window.__TRADE_CONFIG__&&window.__TRADE_CONFIG__.accountId!=null)?window.__TRADE_CONFIG__.accountId:'anon';
+    return 'mobFavorite:'+acc+':'+sym;
+  }
+  function isFavoriteSymbol(sym){
+    if(!sym)return false;
+    try{ return localStorage.getItem(favoriteStorageKey(sym))==='1'; }catch(e){ return false; }
+  }
+  function setFavoriteSymbol(sym,fav){
+    if(!sym)return;
+    try{
+      if(fav)localStorage.setItem(favoriteStorageKey(sym),'1');
+      else localStorage.removeItem(favoriteStorageKey(sym));
+    }catch(e){ /* private browsing / storage disabled — star simply won't persist */ }
+  }
+  function renderFavoriteStar(){
+    if(!elStarBtn)return;
+    const sym=session.currentSymbol;
+    const fav=isFavoriteSymbol(sym);
+    elStarBtn.setAttribute('aria-pressed',fav?'true':'false');
+    elStarBtn.disabled=!sym;
+    const svg=elStarBtn.querySelector('svg path');
+    if(svg){
+      // Mismos valores que money-broker-movil 2/grafico.html usa para
+      // su propio star-btn "favorito": fill #F5C518 / stroke #C99A00.
+      // No favorito: mismo contorno que ya tenía el botón deshabilitado
+      // (fill none, stroke currentColor).
+      svg.setAttribute('fill', fav?'#F5C518':'none');
+      svg.setAttribute('stroke', fav?'#C99A00':'currentColor');
+    }
+  }
+  if(elStarBtn){
+    elStarBtn.addEventListener('click',function(){
+      const sym=session.currentSymbol;
+      if(!sym)return;
+      setFavoriteSymbol(sym,!isFavoriteSymbol(sym));
+      renderFavoriteStar();
     });
   }
 
@@ -1192,7 +1469,15 @@ window.__TRADE_CONFIG__ = {
       }
       row.addEventListener('click', function(){
         mobileChart.clear();
+        // MOBILE-GRAPH-POLISH-03 — the instant a symbol switch starts,
+        // Máx/Mín/Vol must stop showing the PREVIOUS symbol's numbers
+        // (same "invalidate immediately" discipline clear() itself
+        // already applies to SL/TP editing) — real values return only
+        // once recomputeDailyStats() runs again for the NEW symbol's
+        // own real candles (wired into onHistory()/onCandleNew() below).
+        resetDailyStats();
         session.selectSymbol(item.symbol);
+        renderFavoriteStar();
         // MOBILE-DESIGN-INTEGRATION-01 — GRAPH — getCanonicalPositions()
         // is already an in-memory, synchronously-readable store (no
         // need to wait for the next backend push), so the chart's
@@ -1258,8 +1543,57 @@ window.__TRADE_CONFIG__ = {
   // longer matched session.currentSymbol by the time it arrived (its
   // existing, unchanged guard), so this value is always the real
   // symbol this exact data belongs to, never a stale one.
-  function onHistory(data, phase){ mobileChart.applyHistory(data, phase, session.currentSymbol); }
-  function onCandleNew(bar){ mobileChart.appendCandle(bar); }
+  // MOBILE-GRAPH-POLISH-03 — Máx/Mín/Vol, real data only.
+  // Fuente: mobileChart.bars — el MISMO array real que ya alimenta las
+  // velas (generate_history()/candle_new, nunca una segunda petición ni
+  // suscripción nueva — se reutiliza el campo ya público .bars).
+  // Período: una ventana real de 24h, filtrada por el timestamp real de
+  // cada vela — NUNCA "lo que esté cargado" presentado como si fuera
+  // 24h (generate_history() pide 200 velas fijas, que según la
+  // temporalidad pueden cubrir desde ~3h hasta más de 800h).
+  // Unidad: Máx/Mín son precios puros (misma unidad que el precio en
+  // vivo, sin ambigüedad). El volumen SOLO se muestra para símbolos
+  // crypto (asset_class real de MOBILE_SYMBOLS) — el significado exacto
+  // del campo "volume" del proveedor para forex/metal/índice (¿ticks?
+  // ¿unidades negociadas?) no está documentado en ningún sitio de este
+  // código, así que mostrar un número ahí arriesgaría exactamente la
+  // confusión tick/unidad/monetario que esta ronda pide evitar — queda
+  // "—". Nunca "$": no es un campo monetario.
+  const elStatHigh=document.getElementById('mobStatHigh');
+  const elStatLow=document.getElementById('mobStatLow');
+  const elStatVol=document.getElementById('mobStatVol');
+  function resetDailyStats(){
+    if(elStatHigh)elStatHigh.textContent='—';
+    if(elStatLow)elStatLow.textContent='—';
+    if(elStatVol)elStatVol.textContent='—';
+  }
+  function recomputeDailyStats(){
+    if(!elStatHigh||!elStatLow||!elStatVol)return;
+    const bars=mobileChart.bars;
+    if(!Array.isArray(bars)||!bars.length){ resetDailyStats(); return; }
+    const cutoff=Math.floor(Date.now()/1000)-86400;
+    const win=bars.filter(function(b){ return b.time>=cutoff; });
+    if(!win.length){ resetDailyStats(); return; }
+    let hi=-Infinity, lo=Infinity, vol=0, hasVol=false;
+    win.forEach(function(b){
+      if(b.high!=null&&b.high>hi)hi=b.high;
+      if(b.low!=null&&b.low<lo)lo=b.low;
+      if(b.volume!=null&&isFinite(b.volume)){ vol+=b.volume; hasVol=true; }
+    });
+    elStatHigh.textContent=isFinite(hi)?fmt(hi):'—';
+    elStatLow.textContent=isFinite(lo)?fmt(lo):'—';
+    const sym=session.currentSymbol;
+    const spec=MOBILE_SYMBOLS.find(function(s){ return s.symbol===sym; });
+    if(spec&&spec.asset_class==='crypto'&&hasVol){
+      const base=sym?sym.replace('USD',''):'';
+      elStatVol.textContent=vol.toLocaleString(undefined,{maximumFractionDigits:2})+(base?(' '+base):'');
+    } else {
+      elStatVol.textContent='—';
+    }
+  }
+
+  function onHistory(data, phase){ mobileChart.applyHistory(data, phase, session.currentSymbol); recomputeDailyStats(); }
+  function onCandleNew(bar){ mobileChart.appendCandle(bar); recomputeDailyStats(); }
   function onCandleUpdate(bar){ mobileChart.updateLastCandle(bar); }
   function onVolumeUpdate(point){ mobileChart.updateVolume(point); }
 
@@ -1298,6 +1632,10 @@ window.__TRADE_CONFIG__ = {
       item.textContent = MOBILE_TF_LABELS[tf] || tf;
       item.addEventListener('click', function(){
         mobileChart.clear();
+        // MOBILE-GRAPH-POLISH-03 — same invalidate-immediately rule as
+        // the watchlist handler above; a timeframe switch also empties
+        // this.bars until the new resolution's history arrives.
+        resetDailyStats();
         session.selectTimeframe(tf);
         renderTfSelector(session.currentTF);
       });
@@ -1420,6 +1758,22 @@ window.__TRADE_CONFIG__ = {
     elRiskLevel.textContent=msg.risk_level||'—';
     elRiskMargin.textContent=msg.margin_required!=null?usd(Number(msg.margin_required)):'—';
     elRiskExposure.textContent=msg.exposure_pct!=null?(msg.exposure_pct+'%'):'—';
+    // MOBILE-TRADE-FORM-01 — same real response, also mirrored onto the
+    // Trade screen's own margin/nominal display when present. notional
+    // is the SAME real field risk_engine.py already returns (never
+    // qty*price computed here).
+    if(elTfMargin){
+      // mbgStripMoney() (already built/approved for the Balance/P&L
+      // strip, unchanged here) instead of the shared usd() — same real
+      // margin_required value, just always two decimals, matching the
+      // reference's own "$42.30" convention for this screen. The
+      // Gráfico risk panel's own #mobRiskMargin (above) keeps usd()
+      // exactly as before — zero change there.
+      elTfMargin.textContent=msg.margin_required!=null?mbgStripMoney(Number(msg.margin_required),false):'—';
+    }
+    if(elTfNominal){
+      elTfNominal.textContent='≈ '+(msg.notional!=null?usd(Number(msg.notional)):'—')+' nominal';
+    }
   }
 
   // risk_warning pauses for explicit user confirmation — never executes
@@ -1427,10 +1781,23 @@ window.__TRADE_CONFIG__ = {
   // the same way Desktop's own risk_warning handling releases its order
   // ticket buttons while the confirm modal is open. This MANDATORY gate
   // is never skipped — it is simply always in the main flow now.
+  // MOBILE-TRADE-FORM-01 — routed to whichever screen is actually
+  // visible (tradeFormIsActive(), defined with the rest of the Trade
+  // screen's own code below): the single real session._pendingRiskOrder
+  // this gate protects is unchanged either way, only which DOM the
+  // confirm/cancel prompt renders into.
   function onRiskWarning(msg){
+    const text='Esta operación usa '+(msg.exposure_pct!=null?msg.exposure_pct+'%':'?')+' de tu equity. ¿Confirmar igualmente?';
+    if(typeof tradeFormIsActive==='function'&&tradeFormIsActive()&&elTfRiskConfirm){
+      setTfSending(false);
+      elTfStatus.textContent='';
+      elTfRiskConfirmText.textContent=text;
+      elTfRiskConfirm.hidden=false;
+      return;
+    }
     setTicketSending(false);
     elTicketStatus.textContent='';
-    elRiskConfirmText.textContent='Esta operación usa '+(msg.exposure_pct!=null?msg.exposure_pct+'%':'?')+' de tu equity. ¿Confirmar igualmente?';
+    elRiskConfirmText.textContent=text;
     elRiskConfirm.hidden=false;
   }
   elRiskConfirmBtn.addEventListener('click',function(){
@@ -1447,16 +1814,203 @@ window.__TRADE_CONFIG__ = {
 
   function onOrderAck(msg){
     setTicketSending(false);
-    elTicketStatus.textContent=(String(msg.side||'').toLowerCase()==='sell'?'VENTA':'COMPRA')+' ejecutada';
+    const text=(String(msg.side||'').toLowerCase()==='sell'?'VENTA':'COMPRA')+' ejecutada';
+    elTicketStatus.textContent=text;
+    if(elTfStatus){ setTfSending(false); elTfStatus.textContent=text; }
   }
   function onOrderRejected(msg){
     setTicketSending(false);
-    elTicketStatus.textContent='Orden rechazada: '+(msg.message||msg.code||'error');
+    const text='Orden rechazada: '+(msg.message||msg.code||'error');
+    elTicketStatus.textContent=text;
+    if(elTfStatus){ setTfSending(false); elTfStatus.textContent=text; }
   }
   function onTradingError(msg){
     setTicketSending(false);
-    elTicketStatus.textContent=msg.message||msg.code||'Error';
+    const text=msg.message||msg.code||'Error';
+    elTicketStatus.textContent=text;
+    if(elTfStatus){ setTfSending(false); elTfStatus.textContent=text; }
   }
+
+  // ── MOBILE-TRADE-FORM-01 — dedicated Trade screen ──────────────────
+  // Composition only reproduces money-broker-movil 2/trade.html's
+  // layout; every send still goes through session.submitOrder()/
+  // requestRiskPreview()/confirmRiskWarning()/cancelRiskWarning() —
+  // the SAME methods the Gráfico trade-bar above already calls. SL/TP
+  // here are local, new-order-only state (never read from or written
+  // to any open position) — submitFromTradeForm() is the ONLY place
+  // they are ever used, and only as submitOrder({sl,tp}) arguments.
+  const elOpenTradeFormBtn=document.getElementById('mobOpenTradeFormBtn');
+  const elTfCloseBtn=document.getElementById('mobTradeFormCloseBtn');
+  const elTfInstrumentBtn=document.getElementById('mobTfInstrumentBtn');
+  const elTfBadge=document.getElementById('mobTfBadge');
+  const elTfSymbolName=document.getElementById('mobTfSymbolName');
+  const elTfSymbolMeta=document.getElementById('mobTfSymbolMeta');
+  const elTfPrice=document.getElementById('mobTfPrice');
+  const elTfSide=document.getElementById('mobTfSide');
+  const elTfNominal=document.getElementById('mobTfNominal');
+  const elTfQtyOut=document.getElementById('mobTfQtyOut');
+  const elTfQtyDownBtn=document.getElementById('mobTfQtyDownBtn');
+  const elTfQtyUpBtn=document.getElementById('mobTfQtyUpBtn');
+  const elTfSlInput=document.getElementById('mobTfSlInput');
+  const elTfTpInput=document.getElementById('mobTfTpInput');
+  const elTfMargin=document.getElementById('mobTfMargin');
+  const elTfStatus=document.getElementById('mobTfStatus');
+  const elTfRiskConfirm=document.getElementById('mobTfRiskConfirm');
+  const elTfRiskConfirmText=document.getElementById('mobTfRiskConfirmText');
+  const elTfRiskConfirmBtn=document.getElementById('mobTfRiskConfirmBtn');
+  const elTfRiskCancelBtn=document.getElementById('mobTfRiskCancelBtn');
+  const elTfCtaBtn=document.getElementById('mobTfCtaBtn');
+  const elTfCtaLabel=document.getElementById('mobTfCtaLabel');
+  const elTfCtaPrice=document.getElementById('mobTfCtaPrice');
+
+  function tradeFormIsActive(){
+    const v=document.querySelector('.mob-view[data-mobile-view="tradeform"]');
+    return !!v && !v.hidden;
+  }
+
+  function tfCurrentSide(){
+    const btn=elTfSide.querySelector('button[aria-selected="true"]');
+    return btn ? btn.getAttribute('data-side') : 'buy';
+  }
+
+  function setTfSending(sending){
+    elTfCtaBtn.disabled=sending;
+  }
+
+  // Instrument header — session.currentSymbol (real, synchronous),
+  // lastQuoteState (the SAME shared tick state onQuote() above already
+  // maintains — no second subscription, no new price source),
+  // lastAccountMsg.leverage (same field onAccount() already reads).
+  // BTC/ETH get the reference's own exact badge colors (tema.css's
+  // .b-btc/.b-eth, hardcoded per-coin there too — not a generic
+  // asset_class-driven scheme); any other symbol gets a short neutral
+  // label from its own real name, never a fabricated classification.
+  function renderTfInstrument(){
+    const sym=session.currentSymbol;
+    elTfSymbolName.textContent=sym||'—';
+    let badgeTxt='—', badgeCls='';
+    if(sym){
+      if(sym==='BTCUSD'){ badgeTxt='BTC'; badgeCls='mbgt-b-btc'; }
+      else if(sym==='ETHUSD'){ badgeTxt='ETH'; badgeCls='mbgt-b-eth'; }
+      else { badgeTxt=sym.replace('/','').slice(0,3); }
+    }
+    elTfBadge.textContent=badgeTxt;
+    elTfBadge.className='mbgt-badge'+(badgeCls?' '+badgeCls:'');
+    const state=(lastQuoteState&&lastQuoteState.symbol===sym)?lastQuoteState:null;
+    const spreadTxt=(state&&state.bid!=null&&state.ask!=null)?fmt(state.ask-state.bid):'—';
+    const levTxt=(lastAccountMsg&&lastAccountMsg.leverage!=null)?('1:'+lastAccountMsg.leverage):'—';
+    elTfSymbolMeta.textContent='Spread '+spreadTxt+' · Apalancamiento '+levTxt;
+    elTfPrice.textContent=(state&&state.liveMid!=null)?fmt(state.liveMid):'—';
+    renderTfCta();
+  }
+
+  function renderTfCta(){
+    const side=tfCurrentSide();
+    const sym=session.currentSymbol;
+    elTfCtaBtn.className='mbgt-cta '+(side==='sell'?'mbgt-cta-sell':'mbgt-cta-buy');
+    elTfCtaLabel.textContent=(side==='sell'?'Vender ':'Comprar ')+tfQty.toFixed(2)+(sym?(' '+sym):'');
+    const state=(lastQuoteState&&lastQuoteState.symbol===sym)?lastQuoteState:null;
+    const px=state?(side==='sell'?state.bid:state.ask):null;
+    elTfCtaPrice.textContent='@ '+(px!=null?fmt(px):'—');
+    elTfCtaBtn.disabled=!sym;
+  }
+  elTfSide.querySelectorAll('button').forEach(function(b){
+    b.addEventListener('click',function(){
+      elTfSide.querySelectorAll('button').forEach(function(x){ x.setAttribute('aria-selected', x===b?'true':'false'); });
+      renderTfCta();
+    });
+  });
+
+  // Volume — same real getLotStep()/getLotMin()/getLotDecimals()
+  // (trading_core.js) the Gráfico trade-bar's own stepQty() already
+  // uses; tfQty is this screen's own local state (never shared with
+  // mobQtyInput) so the two trade surfaces can never read a stale
+  // value from one another.
+  let tfQty=0.01;
+  function tfSetQty(q){
+    tfQty=q;
+    elTfQtyOut.textContent=q.toFixed(2);
+    // Cleared until the next real risk_preview response actually
+    // confirms a notional for this exact qty — never qty*price
+    // computed here.
+    elTfNominal.textContent='≈ — nominal';
+    renderTfCta();
+  }
+  function tfRequestRiskPreview(){
+    if(session.currentSymbol&&tfQty>0){
+      session.requestRiskPreview(session.currentSymbol,tfQty);
+    }
+  }
+  function tfStepQty(direction){
+    if(!session.currentSymbol)return;
+    const sym=session.currentSymbol;
+    const step=getLotStep(sym), min=getLotMin(sym), dec=getLotDecimals(sym);
+    const base=isFinite(tfQty)?tfQty:min;
+    const next=Math.max(min, +(base+direction*step).toFixed(dec));
+    tfSetQty(next);
+    tfRequestRiskPreview();
+  }
+  elTfQtyDownBtn.addEventListener('click',function(){ tfStepQty(-1); });
+  elTfQtyUpBtn.addEventListener('click',function(){ tfStepQty(1); });
+
+  // SL/TP here are plain, unprefilled number inputs for the NEXT order
+  // only — never read from, never written to, any open position.
+  // Nothing auto-fills them (no pos.avg/live-price default) — an empty
+  // field means "no SL"/"no TP", exactly like leaving them blank in the
+  // real order:new contract already does.
+  function submitFromTradeForm(){
+    if(!session.currentSymbol)return;
+    // Same cross-flow guard submitTicket() (Gráfico trade-bar) already
+    // uses — never let a brand-new order and an in-flight position SL/TP
+    // edit share the generic 'error' attribution ambiguity.
+    if(pendingSlTp)return;
+    const side=tfCurrentSide();
+    const min=getLotMin(session.currentSymbol);
+    const qty=tfQty>=min?+tfQty.toFixed(getLotDecimals(session.currentSymbol)):min;
+    const slRaw=parseFloat(elTfSlInput.value);
+    const tpRaw=parseFloat(elTfTpInput.value);
+    const sl=(isFinite(slRaw)&&slRaw>0)?slRaw:null;
+    const tp=(isFinite(tpRaw)&&tpRaw>0)?tpRaw:null;
+    setTfSending(true);
+    elTfStatus.textContent=side==='sell'?'Enviando VENTA…':'Enviando COMPRA…';
+    session.submitOrder({side,qty,sl,tp});
+  }
+  elTfCtaBtn.addEventListener('click',submitFromTradeForm);
+  elTfRiskConfirmBtn.addEventListener('click',function(){
+    elTfRiskConfirm.hidden=true;
+    setTfSending(true);
+    elTfStatus.textContent='Enviando…';
+    session.confirmRiskWarning();
+  });
+  elTfRiskCancelBtn.addEventListener('click',function(){
+    elTfRiskConfirm.hidden=true;
+    elTfStatus.textContent='';
+    session.cancelRiskWarning();
+  });
+
+  // Open/close — reuses the EXISTING view-switcher (window.__mobShowView,
+  // exposed by the app-shell IIFE at the bottom of this file) instead of
+  // a second show/hide mechanism. Opening/closing never sends anything
+  // by itself — only submitFromTradeForm() (wired above, fires only on
+  // an explicit CTA tap) can ever call session.submitOrder().
+  elOpenTradeFormBtn.addEventListener('click',function(){
+    elTfStatus.textContent='';
+    tfSetQty(tfQty);
+    renderTfInstrument();
+    tfRequestRiskPreview();
+    if(window.__mobShowView)window.__mobShowView('tradeform');
+  });
+  elTfCloseBtn.addEventListener('click',function(){
+    // Cerrar con una confirmación de riesgo pendiente sin resolver debe
+    // cancelarla explícitamente (mismo cancelRiskWarning() real) — nunca
+    // dejarla pendiente en silencio ni reaparecer más tarde como una
+    // confirmación fantasma.
+    if(!elTfRiskConfirm.hidden){
+      elTfRiskConfirm.hidden=true;
+      session.cancelRiskWarning();
+    }
+    if(window.__mobShowView)window.__mobShowView('trade');
+  });
   // PRE-VPS-POLISH-03C.2.6 — Positions/Pending/Closed foundation. Reuses
   // the REAL canonical positions store (getCanonicalPositions(), already
   // updated by MobileTradingSession before this callback fires — see
@@ -1981,11 +2535,25 @@ window.__TRADE_CONFIG__ = {
   function showView(name){
     views.forEach(function(v){ v.hidden = (v.getAttribute('data-mobile-view') !== name); });
     navItems.forEach(function(b){ b.classList.toggle('is-active', b.getAttribute('data-target') === name); });
-    if(foundationEl)foundationEl.classList.toggle('mbg-active', name === 'trade');
+    // MOBILE-TRADE-FORM-01 — "tradeform" has no bottom-tabbar entry (it
+    // is only ever reached via Gráfico's own Trade button/the form's
+    // own × close), but it shares the exact same "no generic topbar,
+    // full-height view" treatment "trade" already gets — same
+    // .mob-foundation.mbg-active CSS rule above, just also matched by
+    // this one extra name.
+    if(foundationEl)foundationEl.classList.toggle('mbg-active', name === 'trade' || name === 'tradeform');
   }
   navItems.forEach(function(btn){
     btn.addEventListener('click', function(){ showView(btn.getAttribute('data-target')); });
   });
+  // MOBILE-TRADE-FORM-01 — exposed so the orchestrator script's own
+  // mobOpenTradeFormBtn/mobTradeFormCloseBtn handlers (defined earlier
+  // in the page, a separate closure) can reuse this EXACT switcher
+  // instead of a second show/hide implementation — same technique the
+  // watchlist row handler already uses elsewhere (simulating a real
+  // .mob-navitem click), made explicit here since "tradeform" has no
+  // nav item to click.
+  window.__mobShowView = showView;
   showView('trade');
 })();
 </script>

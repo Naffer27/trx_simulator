@@ -173,11 +173,18 @@ class MobileTradingChart {
     // approved Visual Contract V1 (money-broker-movil/tema.css's
     // --candle-up/--candle-down, "noche" values) exactly — presentation
     // only, same two hardcoded hex pairs as before, no data change.
+    // MOBILE-GRAPH-POLISH-03 — lastValueVisible:false added (priceLineVisible
+    // was already false): Lightweight Charts' own native last-value axis
+    // label has no per-series text-color option (always light-on-color),
+    // so it cannot reproduce the reference's yellow-background/dark-text
+    // treatment on its own. _renderLastPrice() below (a custom overlay,
+    // same technique as the existing Entry/SL/TP pills) replaces it —
+    // disabling the native one here is what prevents a duplicate label.
     this.candleSeries = this.chart.addCandlestickSeries({
       upColor: '#2EBD85', downColor: '#F6465D',
       wickUpColor: '#2EBD85', wickDownColor: '#F6465D',
       borderUpColor: '#2EBD85', borderDownColor: '#F6465D',
-      priceLineVisible: false,
+      priceLineVisible: false, lastValueVisible: false,
     });
     this.volumeSeries = this.chart.addHistogramSeries({
       priceScaleId: 'mob-vol', priceFormat: { type: 'volume' },
@@ -444,6 +451,12 @@ class MobileTradingChart {
     if (!this.candleSeries) return;
     this._clearAllLines();
     this._clearOverlay();
+    // MOBILE-GRAPH-POLISH-03 — _clearOverlay() just wiped the current-
+    // price tag/line along with every position overlay; redraw it here,
+    // unconditionally, BEFORE the empty-list return below — the
+    // current-price indicator is chart-level, never dependent on
+    // whether this symbol has any open position at all.
+    this._renderLastPrice();
     if (!list.length) return;
     this._renderAllEntries(list);
     const sel = this._selectedPos();
@@ -1124,6 +1137,48 @@ class MobileTradingChart {
     this._rerenderSelected();
   }
 
+  // MOBILE-GRAPH-POLISH-03 — current-price yellow label + line (Visual
+  // Contract, money-broker-movil 2/tema.css's .last-tag/.last-line —
+  // --brand/--on-brand/--brand-line, identical in both noche/día). The
+  // ONLY price source here is this.bars[last].close — the exact same
+  // close candleSeries itself is already rendering (appendCandle()/
+  // updateLastCandle() keep this.bars and the series in lockstep) —
+  // never bid/ask (onQuote()/mobile.html's own live-quote tracking,
+  // a separate field), never an average/entry price. Pure presentation:
+  // two small overlay elements via the SAME _ensureOverlayEl() helper
+  // Entry/SL/TP already use, positioned with priceToCoordinate() (pure
+  // coordinate math, no financial calculation). candleSeries' own
+  // native priceLineVisible/lastValueVisible are both off (see
+  // initialize()) specifically so this is the ONLY current-price
+  // indicator drawn — never a duplicate.
+  _renderLastPrice() {
+    if (!this.candleSeries || typeof this.containerEl.appendChild !== 'function') return;
+    if (!this.bars.length) {
+      if (this._posOverlayEls) {
+        if (this._posOverlayEls.lastPriceLine) { this._posOverlayEls.lastPriceLine.remove(); delete this._posOverlayEls.lastPriceLine; }
+        if (this._posOverlayEls.lastPriceTag) { this._posOverlayEls.lastPriceTag.remove(); delete this._posOverlayEls.lastPriceTag; }
+      }
+      return;
+    }
+    const price = this.bars[this.bars.length - 1].close;
+    const y = this.candleSeries.priceToCoordinate(Number(price));
+    if (y == null) return;
+    const line = this._ensureOverlayEl('lastPriceLine', 'mbgc-last-line');
+    if (line) {
+      line.style.left = '0';
+      line.style.right = '0';
+      line.style.top = Math.round(y) + 'px';
+    }
+    const tag = this._ensureOverlayEl('lastPriceTag', 'mbgc-last-tag');
+    if (tag) {
+      tag.style.left = 'auto';
+      tag.style.right = '4px';
+      const containerH = this.containerEl.clientHeight || 300;
+      tag.style.top = Math.max(2, Math.min(containerH - 18, Math.round(y - 9))) + 'px';
+      tag.textContent = this._fmtPx(price);
+    }
+  }
+
   // Coordinate conversion only (candleSeries.priceToCoordinate()) — the
   // same native Lightweight Charts API Desktop already uses for its own
   // position badges. Re-run after every candle_new/candle_update and
@@ -1142,6 +1197,12 @@ class MobileTradingChart {
   // setPositions()/_rerenderSelected() — so this is the ONE place all
   // of those hooks ultimately converge on.
   _repositionOverlay() {
+    // MOBILE-GRAPH-POLISH-03 — current-price yellow label/line. Runs
+    // FIRST and unconditionally (its own internal guards handle an
+    // empty/not-yet-ready chart) — it is a chart-level indicator, never
+    // dependent on a selected position, so it must not be skipped by
+    // either of the position-specific early-returns below.
+    this._renderLastPrice();
     if (!this._posOverlayEls || !this.candleSeries) return;
     this._layoutEntryCapsules();
     const sel = this._selectedPos();
