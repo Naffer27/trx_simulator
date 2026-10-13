@@ -1288,12 +1288,13 @@ window.__TRADE_CONFIG__ = {
     // price display live while it is open, same real tick stream as
     // everywhere else on this page — no second subscription.
     renderTfInstrument();
-    // MOBILE-GRAPH-POLISH-03 — onQuote() already fires right after
-    // EVERY real selectSymbol() (manual watchlist tap or the existing
-    // reload auto-select) with the new symbol's own state — the single
-    // correct place to refresh the star for whichever symbol just
-    // became current, without duplicating a call at every selectSymbol()
-    // call site.
+    // MOBILE-GRAPH-POLISH-03 (brecha 3, revisión) — ya NO es el único
+    // mecanismo: cada selectSymbol() real (tap de watchlist, auto-select
+    // de onPositions() tras reload) llama a renderFavoriteStar()
+    // directa e inmediatamente en su propio sitio, sin esperar a este
+    // round-trip. Esta llamada queda como red de seguridad redundante
+    // (idempotente — no hace daño repetirla en cada tick) para cualquier
+    // cambio de símbolo futuro que aún no tenga su propia llamada directa.
     renderFavoriteStar();
   }
 
@@ -1568,28 +1569,15 @@ window.__TRADE_CONFIG__ = {
     if(elStatVol)elStatVol.textContent='—';
   }
   function recomputeDailyStats(){
-    if(!elStatHigh||!elStatLow||!elStatVol)return;
-    const bars=mobileChart.bars;
-    if(!Array.isArray(bars)||!bars.length){ resetDailyStats(); return; }
-    const cutoff=Math.floor(Date.now()/1000)-86400;
-    const win=bars.filter(function(b){ return b.time>=cutoff; });
-    if(!win.length){ resetDailyStats(); return; }
-    let hi=-Infinity, lo=Infinity, vol=0, hasVol=false;
-    win.forEach(function(b){
-      if(b.high!=null&&b.high>hi)hi=b.high;
-      if(b.low!=null&&b.low<lo)lo=b.low;
-      if(b.volume!=null&&isFinite(b.volume)){ vol+=b.volume; hasVol=true; }
-    });
-    elStatHigh.textContent=isFinite(hi)?fmt(hi):'—';
-    elStatLow.textContent=isFinite(lo)?fmt(lo):'—';
-    const sym=session.currentSymbol;
-    const spec=MOBILE_SYMBOLS.find(function(s){ return s.symbol===sym; });
-    if(spec&&spec.asset_class==='crypto'&&hasVol){
-      const base=sym?sym.replace('USD',''):'';
-      elStatVol.textContent=vol.toLocaleString(undefined,{maximumFractionDigits:2})+(base?(' '+base):'');
-    } else {
-      elStatVol.textContent='—';
-    }
+    // Cálculo aproximado de 24h DESACTIVADO (cierre de bloque). Las
+    // comprobaciones de cobertura/continuidad que existían aquí
+    // demostraron que mobileChart.bars no permite afirmar una ventana
+    // de 24h completa y correctamente delimitada — ese problema no se
+    // resuelve en este bloque; Máx/Mín/Vol quedan "—" siempre, hasta
+    // que estas estadísticas se conecten en un bloque separado con una
+    // fuente de datos adecuada para esa ventana. No se añaden más
+    // comprobaciones, fórmulas ni investigación de datos aquí.
+    resetDailyStats();
   }
 
   function onHistory(data, phase){ mobileChart.applyHistory(data, phase, session.currentSymbol); recomputeDailyStats(); }
@@ -2306,6 +2294,13 @@ window.__TRADE_CONFIG__ = {
     // there is no open position to anchor a default to.
     if(!session.currentSymbol && items.length){
       session.selectSymbol(items[0].symbol);
+      // MOBILE-GRAPH-POLISH-03 (brecha 3) — llamada directa e
+      // inmediata, igual que el tap del watchlist: la estrella de
+      // favoritos no debe depender de que onQuote() llegue primero
+      // (requiere un round-trip real; aquí, además, selectSymbol()
+      // puede resolver antes de que exista ninguna cotización en
+      // absoluto si el mercado está cerrado).
+      renderFavoriteStar();
     }
     renderPositions(items);
     let resolvedField=null;

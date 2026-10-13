@@ -50,63 +50,48 @@ BODY = r"""
   function star(){ return document.getElementById('mobStarBtn'); }
   function starFill(){ const p = star().querySelector('svg path'); return p ? p.getAttribute('fill') : null; }
 
-  // ── 1. BTCUSD: 40 velas de 15m, TODAS dentro de las últimas 24h ────
+  // ── 1. Máx/Mín/Vol: cálculo de 24h DESACTIVADO en este bloque —
+  //      quedan "—" siempre: al limpiar, con poca historia, con mucha
+  //      historia (48h) y tras cambiar de símbolo. Se conectarán en un
+  //      bloque separado con una fuente de datos adecuada para esa
+  //      ventana; esta prueba solo verifica el apagado, no investiga
+  //      cobertura/continuidad.
   hooks.mobileChart.clear();
   hooks.session.selectSymbol('BTCUSD');
   await sleep(10);
-  assertEqual(statHigh(), '—', '1: Máx vuelve a "—" inmediatamente al limpiar (clear()), antes de que llegue nada nuevo');
-  const btc40 = """ + _bars_js_window("63000", 40, 900, 1) + """; // 40*900s = 10h -> todas dentro de 24h
+  assertEqual(statHigh(), '—', '1: Máx queda "—" al limpiar, antes de que llegue nada nuevo');
+  assertEqual(statLow(), '—', '1: Mín queda "—" al limpiar');
+  assertEqual(statVol(), '—', '1: Vol queda "—" al limpiar');
+  const btc40 = """ + _bars_js_window("63000", 40, 900, 1) + """;
   ws().emit({ type:'history', symbol:'BTCUSD', timeframe: hooks.session.currentTF, phase:'complete', data: btc40 });
   await sleep(40);
-  const expHi = Math.max.apply(null, btc40.map(function(b){return b.high;}));
-  const expLo = Math.min.apply(null, btc40.map(function(b){return b.low;}));
-  const expVol = btc40.reduce(function(s,b){return s+b.volume;}, 0);
-  assert(Math.abs(Number(statHigh()) - expHi) < 1, '1: Máx numéricamente correcto (±1) frente al máximo real de las 40 velas (todas < 24h)');
-  assert(Math.abs(Number(statLow()) - expLo) < 1, '1: Mín numéricamente correcto (±1) frente al mínimo real');
-  assert(statVol().indexOf('$') === -1, '1: el volumen NUNCA lleva "$" (no es un campo monetario)');
-  assert(statVol().indexOf('BTC') !== -1, '1: BTCUSD es crypto -> el volumen SÍ se muestra, con el activo base real (BTC)');
-  const volNum = parseFloat(statVol().replace(/,/g, ''));
-  assert(Math.abs(volNum - expVol) < 0.01, '1: volumen mostrado es la suma real de las velas de la ventana de 24h (' + volNum + ' vs ' + expVol + ')');
+  assertEqual(statHigh(), '—', '1: Máx sigue "—" con historia real ya cargada (cálculo desactivado en este bloque)');
+  assertEqual(statLow(), '—', '1: Mín sigue "—" por el mismo motivo');
+  assertEqual(statVol(), '—', '1: Vol sigue "—" por el mismo motivo');
 
-  // ── 2. Cambio a EUR/USD: no deben verse las estadísticas de BTC ────
-  // Clic real sobre la fila del watchlist (no hooks.mobileChart.clear()
-  // suelto) — así se ejercita el MISMO flujo real que ya llama a
-  // resetDailyStats()/renderFavoriteStar() justo al limpiar.
-  function clickWatchlistRow(sym){
-    const marketsNavBtn = document.querySelector('.mob-navitem[data-target="markets"]');
-    if (marketsNavBtn) marketsNavBtn.click();
-    const row = document.querySelector('.mob-watchlist-item[data-symbol="' + sym + '"]');
-    if (!row) throw new Error('watchlist row not found for ' + sym);
-    realClick(row);
-  }
-  clickWatchlistRow('EUR/USD');
-  assertEqual(statHigh(), '—', '2: Máx vuelve a "—" en cuanto empieza el cambio de símbolo (antes de llegar nada de EUR/USD)');
-  assertEqual(statVol(), '—', '2: Vol vuelve a "—" en cuanto empieza el cambio de símbolo');
+  const btc48h = """ + _bars_js_window("63000", 48, 3600, 6) + """;
+  ws().emit({ type:'history', symbol:'BTCUSD', timeframe: hooks.session.currentTF, phase:'complete', data: btc48h });
+  await sleep(40);
+  assertEqual(statHigh(), '—', '1: Máx sigue "—" incluso con 48h de historia cargada — el cálculo está desactivado, no es un problema de cobertura');
+  assertEqual(statLow(), '—', '1: Mín sigue "—" por el mismo motivo');
+
+  hooks.mobileChart.clear();
+  hooks.session.selectSymbol('EUR/USD');
   await sleep(10);
-  const eurBars = """ + _bars_js_window("1.1200", 30, 900, 2) + """;
+  assertEqual(statHigh(), '—', '1: Máx queda "—" tras cambiar de símbolo');
+  const eurBars = """ + _bars_js_window("1.1200", 30, 3600, 2) + """;
   ws().emit({ type:'history', symbol:'EUR/USD', timeframe: hooks.session.currentTF, phase:'complete', data: eurBars });
   await sleep(40);
-  const expHiEur = Math.max.apply(null, eurBars.map(function(b){return b.high;}));
-  assert(Math.abs(Number(statHigh()) - expHiEur) < 0.01, '2: Máx ahora refleja EUR/USD, nunca el BTCUSD anterior');
-  assert(statHigh() !== '—', '2: Máx tiene un valor real para EUR/USD');
-  assertEqual(statVol(), '—', '2: EUR/USD no es crypto -> volumen queda "—" (unidad del proveedor no documentada), nunca un número inventado');
+  assertEqual(statHigh(), '—', '1: Máx sigue "—" para EUR/USD con historia real cargada');
+  assertEqual(statVol(), '—', '1: Vol sigue "—" para EUR/USD');
 
-  // ── 3. Ventana de 24h real: velas viejas (>24h) quedan EXCLUIDAS ───
+  // Vuelve a BTCUSD con btc40 cargado — precondición para los bloques
+  // 4 (favoritos) y 5 (precio amarillo) que siguen a continuación.
   hooks.mobileChart.clear();
   hooks.session.selectSymbol('BTCUSD');
   await sleep(10);
-  // 10 velas de 1h "antiguas" (centradas ~30h atrás) + 5 velas de 1h
-  // "recientes" (última hora) — solo las 5 recientes deben contar.
-  const oldBars = """ + _bars_js_window("60000", 10, 3600, 3, 30 * 3600) + """;
-  const recentBars = """ + _bars_js_window("63000", 5, 3600, 4, 0) + """;
-  const mixed = oldBars.concat(recentBars);
-  ws().emit({ type:'history', symbol:'BTCUSD', timeframe: hooks.session.currentTF, phase:'complete', data: mixed });
+  ws().emit({ type:'history', symbol:'BTCUSD', timeframe: hooks.session.currentTF, phase:'complete', data: btc40 });
   await sleep(40);
-  const expHiRecentOnly = Math.max.apply(null, recentBars.map(function(b){return b.high;}));
-  const expVolRecentOnly = recentBars.reduce(function(s,b){return s+b.volume;}, 0);
-  assert(Math.abs(Number(statHigh()) - expHiRecentOnly) < 1, '3: Máx excluye velas de más de 24h (usa solo la ventana real reciente)');
-  assert(Math.abs(parseFloat(statVol()) - expVolRecentOnly) < 0.01, '3: Vol excluye velas de más de 24h en la suma');
-  assert(Math.abs(Number(statHigh()) - Math.max.apply(null, oldBars.map(function(b){return b.high;}))) > 100, '3: Máx NO es el máximo de las velas viejas (prueba de que sí se filtró por tiempo)');
 
   // ── 4. Favoritos: alternar, independencia por símbolo, persistencia
   //      del mecanismo subyacente (localStorage) ────────────────────
@@ -189,6 +174,43 @@ BODY = r"""
 """
 
 
+# ── Brecha 3 — la estrella de favoritos no debe depender de onQuote() ──
+# Este body nunca emite un mensaje 'price'/'tick' (la única vía real de
+# onQuote() fuera de la llamada síncrona que selectSymbol() ya dispara
+# por diseño — mobile_session.js, protegido, sin cambios). Reproduce
+# exactamente la ruta de auto-selección tras un reload real:
+# onPositions() recibe un snapshot con una posición abierta ANTES de que
+# el usuario haya elegido ningún símbolo (session.currentSymbol es
+# null), y debe reflejar el favorito correcto para ese símbolo auto-
+# seleccionado de inmediato — a través de la llamada directa añadida en
+# el propio sitio de onPositions(), nunca solo porque onQuote() llegó.
+FAVORITE_ONPOSITIONS_BODY = r"""
+  await waitFor(function(){ return !!window.__TEST_HOOKS__ && !!window.__LAST_FAKE_WS__; }, 3000);
+  const hooks = window.__TEST_HOOKS__;
+  function ws(){ return window.__LAST_FAKE_WS__; }
+  await waitFor(function(){ return ws() && ws().readyState === 1; }, 3000);
+  function star(){ return document.getElementById('mobStarBtn'); }
+
+  assertEqual(hooks.session.currentSymbol, null, 'precondición: ningún símbolo elegido todavía (página recién cargada)');
+
+  // Favorito pre-existente para BTCUSD, guardado como si una sesión
+  // anterior ya lo hubiera marcado (mismo formato real de
+  // favoriteStorageKey(): 'mobFavorite:<accountId>:<symbol>').
+  const acc = (window.__TRADE_CONFIG__ && window.__TRADE_CONFIG__.accountId != null) ? window.__TRADE_CONFIG__.accountId : 'anon';
+  localStorage.setItem('mobFavorite:' + acc + ':BTCUSD', '1');
+
+  // Snapshot de posiciones real con BTCUSD abierta — dispara la rama
+  // de auto-select de onPositions() (currentSymbol era null). Ningún
+  // 'price'/'tick' se emite nunca en este test.
+  const B1 = { id:'B1', symbol:'BTCUSD', side:'buy', avg:63000, sl:null, tp:null, qty:0.01, pnl:0 };
+  ws().emit({ type:'positions', items:[B1] });
+  await sleep(15);
+
+  assertEqual(hooks.session.currentSymbol, 'BTCUSD', 'onPositions() auto-seleccionó BTCUSD (la única posición abierta)');
+  assertEqual(star().getAttribute('aria-pressed'), 'true', 'brecha 3: la estrella ya refleja el favorito guardado, inmediatamente tras el auto-select — nunca se emitió ningún tick/onQuote real en este test');
+"""
+
+
 class MobileGraphPolish03Tests(TestCase):
     def setUp(self):
         if not CHROME_PATH:
@@ -203,6 +225,19 @@ class MobileGraphPolish03Tests(TestCase):
         driver = _driver_wrap(BODY, "results")
         data = _run_driver_and_extract(
             self, html, driver, window_size="390,844", virtual_time_budget=20000, result_id="results",
+        )
+        for r in data["results"]:
+            print("RESULT:", r)
+        failures = [r for r in data["results"] if not r["pass"]]
+        self.assertEqual(failures, [], f"{data['failCount']} of {len(data['results'])} assertions failed: {failures}")
+
+    def test_favorite_star_onpositions_autoselect_without_onquote(self):
+        html = _dump_mobile_html(self)
+        html = _inline_real_sources(html, REAL_LWC_SOURCE)
+        html = _inject_fake_ws_and_hooks(html, self)
+        driver = _driver_wrap(FAVORITE_ONPOSITIONS_BODY, "results2")
+        data = _run_driver_and_extract(
+            self, html, driver, window_size="390,844", virtual_time_budget=10000, result_id="results2",
         )
         for r in data["results"]:
             print("RESULT:", r)

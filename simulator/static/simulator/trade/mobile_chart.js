@@ -209,7 +209,24 @@ class MobileTradingChart {
     if (this.chart && typeof this.chart.timeScale === 'function') {
       const ts = this.chart.timeScale();
       if (ts && typeof ts.subscribeVisibleLogicalRangeChange === 'function') {
-        ts.subscribeVisibleLogicalRangeChange(() => this._repositionOverlay());
+        // FIX (brecha 2, ronda de ajuste) — confirmado por reproducción
+        // real contra Lightweight Charts real (no FAKE_LWC): este evento
+        // se dispara SÍNCRONAMENTE justo al cambiar el rango visible,
+        // pero candleSeries.priceToCoordinate() consultado en ese mismo
+        // instante aún devuelve la escala de precio ANTERIOR — el
+        // autoscale del price-scale para el nuevo rango todavía no
+        // terminó de aplicarse. Reposicionar ahí mismo deja la línea/
+        // etiqueta amarilla clavada en el pixel viejo tras un pan/zoom
+        // real, hasta el siguiente evento que la fuerce a recalcular.
+        // Seguro diferir un frame (requestAnimationFrame, typeof-
+        // guardado para el harness Node) — es la única forma de leer
+        // esa misma priceToCoordinate() YA con el price-scale resuelto;
+        // no cambia qué se pinta, solo CUÁNDO se lee la coordenada.
+        const reposition = () => this._repositionOverlay();
+        ts.subscribeVisibleLogicalRangeChange(() => {
+          if (typeof requestAnimationFrame === 'function') requestAnimationFrame(reposition);
+          else reposition();
+        });
       }
     }
     // typeof-guarded: getComputedStyle is a browser-only global, absent
