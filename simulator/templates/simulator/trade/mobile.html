@@ -206,6 +206,10 @@
      for Posiciones' own header (.mbp-head below). History/Account are
      still untouched, still showing the generic topbar as before. */
   .mob-foundation.mbp-active .mob-topbar{display:none;}
+  /* MOBILE-HISTORY-INTEGRATION-01 — same technique again, this time for
+     Historial's own header (.mbh-head below). Account is still
+     untouched, still showing the generic topbar as before. */
+  .mob-foundation.mbh-active .mob-topbar{display:none;}
   .mob-view-area{
     flex:1 1 auto;
     min-height:0;
@@ -870,6 +874,60 @@
   [data-mb-theme="dia"] .mbp-btn-soft{background:#F3F4F6;}
   .mbp-btn-danger{background:var(--sell-soft);color:var(--sell-text);border:1px solid rgba(246,70,93,.4) !important;font-weight:600;}
   [data-mb-theme="dia"] .mbp-btn-danger{background:#FFFFFF;border-color:#E8A3AE !important;}
+  /* ===================== HISTORIAL =====================
+     MOBILE-HISTORY-INTEGRATION-01 - faithful port of money-broker-movil
+     2/tema.css's own "HISTORIAL" section (.page-head/.icon-btn/.seg/
+     .summary/.day-label/.trade-row/.badge/.tag), classes renamed with
+     an "mbh-" prefix and scoped to [data-mobile-view="history"] only -
+     same convention mbgt-/mbw-/mbp- already established. Same tokens
+     already defined on .mob-foundation above - zero new colors added
+     by this block. */
+  .mob-view[data-mobile-view="history"]{height:100%;box-sizing:border-box;align-items:stretch;gap:var(--mb-space-3);overflow:hidden;}
+  .mbh-head{display:flex;align-items:center;gap:var(--mb-space-2);width:100%;flex:0 0 auto;}
+  .mbh-head h1{margin:0;flex:1;font-size:22px;font-weight:600;letter-spacing:-.02em;color:var(--text);}
+  [data-mb-theme="dia"] .mbh-head h1{font-weight:700;letter-spacing:-.03em;}
+  .mbh-icon-btn{width:40px;height:40px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;color:var(--text-2);background:none;border:none;cursor:pointer;}
+  .mbh-icon-btn svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
+  .mbh-date-filter{display:flex;align-items:center;gap:8px;flex:0 0 auto;}
+  .mbh-date-filter input{flex:1;min-width:0;min-height:40px;background:var(--surface);border:1px solid var(--border);border-radius:10px;color:var(--text);padding:0 10px;font-size:13px;font-family:inherit;box-sizing:border-box;}
+  .mbh-date-filter button{flex:0 0 auto;min-height:40px;padding:0 12px;border-radius:10px;background:var(--line);color:var(--text);font-size:12px;border:none;cursor:pointer;font-family:inherit;}
+  [data-mb-theme="dia"] .mbh-date-filter button{background:#F3F4F6;}
+  .mbh-tabs{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:4px;padding:4px;border-radius:12px;background:var(--surface);flex:0 0 auto;}
+  .mbh-tab{height:36px;border-radius:9px;font-size:13px;font-weight:500;color:var(--muted);background:none;border:none;cursor:pointer;font-family:inherit;}
+  .mbh-tab:disabled{opacity:.4;cursor:default;}
+  .mbh-tab.is-selected{background:var(--surface-2);color:var(--text);font-weight:600;}
+  [data-mb-theme="dia"] .mbh-tab.is-selected{box-shadow:0 1px 3px rgba(10,10,10,.12);}
+  .mbh-summary{flex:0 0 auto;width:100%;box-sizing:border-box;display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:8px;padding:14px 16px;border-radius:16px;background:var(--summary-bg);border:1px solid var(--summary-border);color:var(--summary-text);}
+  [data-mb-theme="dia"] .mbh-summary{border-radius:18px;}
+  .mbh-summary .cell{display:flex;flex-direction:column;gap:4px;min-width:0;}
+  .mbh-summary .label{font-size:11px;color:var(--summary-muted);}
+  .mbh-summary .val{font-size:20px;font-weight:600;font-family:'Geist Mono',var(--mb-font-sans);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .mbh-summary .val.good{color:var(--summary-good);}
+  .mbh-summary .val.accent{color:var(--summary-accent);}
+  .mbh-scope-note{flex:0 0 auto;font-size:11px;color:var(--muted);padding:0 2px;}
+  /* Compacta a propósito (nunca flex:1 como .mbh-state) — es un aviso
+     SOBRE una lista que sigue visible debajo, nunca una pantalla
+     completa que la reemplaza. */
+  .mbh-stale-note{flex:0 0 auto;font-size:12px;color:var(--sell-text);background:var(--sell-soft);border-radius:10px;padding:8px 10px;margin:4px 0;}
+  .mbh-pane{flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;display:flex;flex-direction:column;}
+  .mbh-day-label{font-size:12px;font-weight:600;color:var(--muted);letter-spacing:.04em;padding:10px 0 6px;}
+  .mbh-day-label:first-child{padding-top:0;}
+  .mbh-row{display:flex;align-items:center;gap:12px;min-height:58px;border-bottom:1px solid var(--divider);box-sizing:border-box;}
+  .mbh-row:last-child{border-bottom:none;}
+  .mbh-badge{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;}
+  .mbh-name{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;}
+  .mbh-symrow{display:flex;align-items:center;gap:8px;}
+  .mbh-symrow b{font-size:14px;font-weight:600;color:var(--text);}
+  .mbh-tag{font-size:10px;font-weight:700;letter-spacing:.06em;padding:3px 7px;border-radius:5px;}
+  .mbh-tag.buy{background:var(--buy-soft);color:var(--buy-text);}
+  .mbh-tag.sell{background:var(--sell-soft);color:var(--sell-text);}
+  .mbh-sub{font-size:12px;color:var(--muted);font-family:'Geist Mono',var(--mb-font-sans);font-variant-numeric:tabular-nums;}
+  .mbh-pl{font-size:15px;font-weight:600;flex:0 0 auto;font-family:'Geist Mono',var(--mb-font-sans);font-variant-numeric:tabular-nums;}
+  .mbh-pl.pos{color:var(--buy-text);}
+  .mbh-pl.neg{color:var(--sell-text);}
+  .mbh-state{flex:1 1 auto;display:flex;align-items:center;justify-content:center;text-align:center;padding:var(--mb-space-5);font-size:var(--mb-text-sm);color:var(--muted);}
+  .mbh-state.is-error{color:var(--sell-text);}
+  .mbh-unavailable{flex:1 1 auto;display:flex;align-items:center;justify-content:center;text-align:center;padding:var(--mb-space-6);font-size:var(--mb-text-sm);color:var(--muted);}
 </style>
 <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
 {% endblock %}
@@ -1246,13 +1304,80 @@
       </div>
     </div>
 
-    <!-- PRE-VPS-POLISH-03C.3.2 — History view: structural placeholder
-         only (design lock Section 13). Closed Trades data/authority
-         stays exactly where 03C.2.6 put it — inside the Positions
-         view's own "Closed" tab above. This is a deliberately empty
-         container, not a second data source. -->
+    <!-- MOBILE-HISTORY-INTEGRATION-01 — faithful port of money-broker-
+         movil 2/historial.html. Operaciones reuses EXACTLY the existing
+         closed-trades flow (session.requestClosedTrades()/
+         onClosedTrades(), the same 03C.2.6 contract Posiciones' own
+         Cerradas tab already uses — see reconcileHistorialTrades()
+         below) — never a second request mechanism, never a duplicate
+         WS connection, never a second financial computation (pnl is
+         used exactly as the backend sends it). Depósitos/Retiros have
+         no real data flow anywhere in this codebase (confirmed: no WS
+         message type, no JSON endpoint — deposit_history_view exists
+         but renders a full HTML page tied to the separate crypto-
+         deposit Wallet system, not fetchable/parseable here without
+         inventing a new backend surface — protected/out of scope) —
+         both tabs stay disabled with a brief real explanation, never a
+         derived/estimated balance-diff substitute. -->
     <div class="mob-view" data-mobile-view="history" hidden>
-      <div class="mob-empty">History — coming soon</div>
+      <div class="mbh-head">
+        <h1>Historial</h1>
+        <button type="button" class="mbh-icon-btn" id="mobHistDateBtn" aria-label="Filtrar por fecha">
+          <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>
+        </button>
+      </div>
+      <!-- El calendario solo filtra DENTRO de las operaciones ya
+           cargadas en este cliente (como mucho las últimas 50 reales,
+           ver mobHistScopeNote) — nunca simula una consulta al backend
+           por un rango de fechas que el contrato real no admite
+           (get_closed_trades no acepta parámetros de fecha). -->
+      <div class="mbh-date-filter" id="mobHistDateFilter" hidden>
+        <input type="date" id="mobHistDateInput" aria-label="Filtrar por fecha entre las operaciones ya cargadas">
+        <button type="button" id="mobHistDateClear">Quitar</button>
+      </div>
+
+      <div class="mbh-tabs" id="mobHistTabs">
+        <button type="button" class="mbh-tab is-selected" data-htab="trades">Operaciones</button>
+        <button type="button" class="mbh-tab" data-htab="deposits" disabled title="Depósitos: sin registros disponibles en este flujo todavía">Depósitos</button>
+        <button type="button" class="mbh-tab" data-htab="withdrawals" disabled title="Retiros: sin registros disponibles en este flujo todavía">Retiros</button>
+      </div>
+      <div class="mbh-scope-note">Depósitos y Retiros no están disponibles en esta pantalla todavía — este flujo no expone sus registros aquí.</div>
+
+      <div class="mbh-pane" id="mobHistTradesPane">
+        <!-- "Neto" y "Acierto" quedan "—": no existe en el contrato
+             real (account:update del tick normal, consumers.py) ningún
+             campo de P/L realizado con periodo definido ni de
+             porcentaje de acierto — solo msg.upnl (flotante, no
+             realizado) y, exclusivamente durante una liquidación real
+             (_do_retail_liquidation, un evento excepcional, nunca
+             disponible en uso normal), msg.daily_pnl/msg.margin_level.
+             Ninguno es una estadística con periodo/significado
+             demostrado y disponible de forma fiable — no se inventan
+             aquí. "Operaciones" sí es real: el recuento de operaciones
+             realmente cargadas/visibles (nunca un periodo fabricado). -->
+        <section class="mbh-summary" aria-label="Resumen del periodo">
+          <div class="cell"><span class="label">Neto</span><span class="val" id="mobHistNet">—</span></div>
+          <!-- La etiqueta cambia según lo que realmente representa el
+               número: "Operaciones" = todo lo cargado en este cliente;
+               "Filtradas" = el subconjunto que coincide con el filtro
+               de fecha activo — nunca la misma etiqueta para dos
+               significados distintos (ver renderHistorialSummary()). -->
+          <div class="cell"><span class="label" id="mobHistCountLabel">Operaciones</span><span class="val" id="mobHistCount">—</span></div>
+          <div class="cell"><span class="label">Acierto</span><span class="val accent" id="mobHistWinRate">—</span></div>
+        </section>
+        <div class="mbh-scope-note" id="mobHistScopeNote"></div>
+        <!-- Ante desconexión/timeout CON registros ya cargados: la
+             lista (#mobHistDays, abajo) se conserva tal cual estaba —
+             nunca se oculta ni se presenta como recién sincronizada —
+             y este aviso se muestra como una nota adicional, nunca en
+             su lugar. Solo sin ningún registro previo se usa la
+             pantalla de error completa (#mobHistError). -->
+        <div class="mbh-stale-note" id="mobHistStale" hidden>No se pudo actualizar (sin conexión o sin respuesta) — mostrando los últimos datos cargados.</div>
+        <div id="mobHistDays"></div>
+        <div class="mbh-state" id="mobHistLoading" hidden>Cargando operaciones…</div>
+        <div class="mbh-state" id="mobHistEmpty" hidden>Sin operaciones cerradas.</div>
+        <div class="mbh-state is-error" id="mobHistError" hidden>No se pudieron cargar las operaciones (sin conexión o sin respuesta). Vuelve a intentarlo entrando de nuevo a esta pantalla.</div>
+      </div>
     </div>
 
     <!-- PRE-VPS-POLISH-03C.3.2 — Account view: the already-authorized
@@ -1333,10 +1458,22 @@ window.__TRADE_CONFIG__ = {
   // only while truly connected, hidden otherwise — never a hardcoded
   // claim.
   const elLiveBadge=document.getElementById('mobLiveBadge');
+  // MOBILE-HISTORY-INTEGRATION-01 — plain connection-status flag, same
+  // real authority as elLiveBadge above (never a second status source,
+  // never reads session.ws directly) — requestHistorial() below uses
+  // this to tell "sin conexión" apart from "sin operaciones" BEFORE
+  // even sending the request, and to fail fast if the connection drops
+  // while a request is still in flight.
+  let mobConnected=false;
   function onStatusChange(state){
     statusLabel.textContent=state;
     statusEl.className='mob-status is-'+state.toLowerCase();
     if(elLiveBadge)elLiveBadge.hidden=(String(state).toLowerCase()!=='connected');
+    mobConnected=(String(state).toLowerCase()==='connected');
+    if(!mobConnected && historialState==='loading'){
+      historialState='error';
+      renderHistorialState();
+    }
     // ISOLATED FIX (Mobile desconexión/reconexión) — any state other
     // than a genuinely established connection means the chart's own
     // history can no longer be trusted as current: invalidate SL/TP
@@ -2999,7 +3136,254 @@ window.__TRADE_CONFIG__ = {
         +'</div>';
     }).join('');
   }
-  function onClosedTrades(trades){ renderClosed(trades); }
+  // MOBILE-HISTORY-INTEGRATION-01 — Historial's own "Operaciones" tab.
+  // Fed by the EXACT SAME real message as Posiciones' own Cerradas tab
+  // above (onClosedTrades() now calls both renderClosed() — unchanged —
+  // and reconcileHistorialTrades() below) — never a second WS request
+  // path, never a second subscription. historialTrades is a local,
+  // presentation-only reconciliation store (merge by real trade.id,
+  // newest-first, never wipe on an empty/degraded response) — the same
+  // discipline desktop.html's own reconcileClosedTrades() already
+  // established for this identical contract (FIX-HISTORY-AUTO-CLOSE-
+  // SYNC-01), reimplemented here fresh (desktop.html is protected,
+  // never touched) rather than copied. No P&L/commission recomputation
+  // anywhere — t.pnl/t.entry/t.close/t.qty/t.ts are used exactly as the
+  // backend already sends them (services/history.py's
+  // closed_trades_for_account(): {id,symbol,side,qty,entry,close,pnl,ts}).
+  let historialTrades=[];
+  let historialState='idle'; // idle | loading | loaded | error
+  let historialRequestTimer=null;
+  let historialDateFilter=''; // 'YYYY-MM-DD' (local calendar date) or '' = sin filtro
+
+  function reconcileHistorialTrades(trades){
+    if(!Array.isArray(trades)||!trades.length)return; // documented no-op — ver comentario de arriba
+    const idx=new Map(historialTrades.map(function(t,i){ return [String(t.id), i]; }));
+    trades.forEach(function(t){
+      const key=String(t.id);
+      const i=idx.get(key);
+      if(i==null){ historialTrades.push(t); idx.set(key, historialTrades.length-1); }
+      else { historialTrades[i]=Object.assign({}, historialTrades[i], t); } // misma id real -> se sobrescribe en el mismo lugar, nunca una fila duplicada
+    });
+    // Más reciente primero; id real como desempate determinista cuando
+    // dos operaciones comparten el mismo segundo — mismo criterio que
+    // desktop.html's reconcileClosedTrades().
+    historialTrades.sort(function(a,b){ return (b.ts||0)-(a.ts||0) || (Number(b.id)||0)-(Number(a.id)||0); });
+    // Límite de seguridad del lado del cliente (mismo valor que
+    // desktop.html usa) — en la práctica esto nunca se alcanza aquí: el
+    // backend real (services/history.py, CLOSED_TRADES_DEFAULT_LIMIT)
+    // ya tope a 50 operaciones por respuesta y esta reconciliación
+    // siempre fusiona la MISMA cuenta/fuente, nunca varias distintas.
+    while(historialTrades.length>100)historialTrades.pop();
+  }
+
+  const elHistTabs=document.getElementById('mobHistTabs');
+  const elHistDays=document.getElementById('mobHistDays');
+  const elHistLoading=document.getElementById('mobHistLoading');
+  const elHistEmpty=document.getElementById('mobHistEmpty');
+  const elHistError=document.getElementById('mobHistError');
+  const elHistStale=document.getElementById('mobHistStale');
+  const elHistCountLabel=document.getElementById('mobHistCountLabel');
+  const elHistCount=document.getElementById('mobHistCount');
+  const elHistScopeNote=document.getElementById('mobHistScopeNote');
+  const elHistDateBtn=document.getElementById('mobHistDateBtn');
+  const elHistDateFilterRow=document.getElementById('mobHistDateFilter');
+  const elHistDateInput=document.getElementById('mobHistDateInput');
+  const elHistDateClear=document.getElementById('mobHistDateClear');
+
+  // Mismas iniciales de mes en español que el resto de la UI (Watch/
+  // Posiciones) — solo formatea una fecha real (t.ts), nunca inventa
+  // una.
+  const MOBILE_MONTH_ABBR=['ENE','FEB','MAR','ABR','MAY','JUN','JUL','AGO','SEP','OCT','NOV','DIC'];
+  function histLocalDateKey(ts){
+    // Zona horaria LOCAL del navegador — misma elección ya usada por
+    // desktop.html's _syncHistorialPanel() (new Date(ts).getFullYear()/
+    // getMonth()/getDate()) — "zona horaria explícita, coherente con el
+    // resto de la aplicación", nunca UTC forzado ni comparar solo el
+    // día del mes.
+    const d=new Date(ts);
+    return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  }
+  function histDayLabel(ts){
+    const d=new Date(ts);
+    const now=new Date();
+    const today=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+    const yesterday=new Date(today); yesterday.setDate(today.getDate()-1);
+    const thisDay=new Date(d.getFullYear(),d.getMonth(),d.getDate());
+    const dayNum=d.getDate(), monAbbr=MOBILE_MONTH_ABBR[d.getMonth()];
+    if(thisDay.getTime()===today.getTime())return 'HOY · '+dayNum+' '+monAbbr;
+    if(thisDay.getTime()===yesterday.getTime())return 'AYER · '+dayNum+' '+monAbbr;
+    // Más de un día de distancia: incluye el año si no es el actual —
+    // nunca compara solo el número del día (p. ej. 31 oct vs 1 nov no
+    // deben verse como "mismo día").
+    return dayNum+' '+monAbbr+(d.getFullYear()!==now.getFullYear()?' '+d.getFullYear():'');
+  }
+  function histTimeLabel(ts){
+    const d=new Date(ts);
+    return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+  }
+
+  function renderHistorialState(){
+    const filtered=historialFilteredTrades();
+    const hasData=historialTrades.length>0;
+    // "Cargando" a pantalla completa solo cuando no hay nada real que
+    // conservar todavía — una recarga posterior con datos ya cargados
+    // nunca los oculta tras un spinner.
+    elHistLoading.hidden=!(historialState==='loading' && !hasData);
+    // "Error" a pantalla completa solo sin ningún registro previo. Ante
+    // desconexión/timeout CON registros ya cargados, la lista se
+    // conserva tal cual estaba (ver elHistDays abajo) y en su lugar se
+    // muestra únicamente el aviso compacto elHistStale, nunca
+    // reemplazando la lista ni presentándola como recién sincronizada.
+    elHistError.hidden=!(historialState==='error' && !hasData);
+    elHistStale.hidden=!(historialState==='error' && hasData);
+    // "vacío" solo se declara una vez que una respuesta real ya llegó
+    // (historialState==='loaded') Y no hay ninguna operación — nunca
+    // mientras aún se está cargando o tras un error/desconexión (eso
+    // sería presentar un fallo como "sin operaciones").
+    elHistEmpty.hidden=!(historialState==='loaded' && filtered.length===0);
+    // La lista se muestra siempre que haya algo real que mostrar,
+    // independientemente del estado actual de la solicitud — así es
+    // como se "conserva" ante un error/timeout posterior.
+    elHistDays.hidden=(filtered.length===0);
+    if(filtered.length>0)renderHistorialDays(filtered);
+    else elHistDays.innerHTML='';
+    renderHistorialSummary(filtered);
+  }
+
+  function historialFilteredTrades(){
+    if(!historialDateFilter)return historialTrades;
+    return historialTrades.filter(function(t){ return t.ts!=null && histLocalDateKey(t.ts)===historialDateFilter; });
+  }
+
+  function renderHistorialSummary(filtered){
+    // El número y SU ETIQUETA deben coincidir siempre: sin filtro de
+    // fecha activo, representa todo lo cargado en este cliente
+    // ("Operaciones"); con un filtro activo, representa solo el
+    // subconjunto que coincide ("Filtradas") — nunca la misma etiqueta
+    // para dos significados distintos. "Neto"/"Acierto" quedan "—"
+    // siempre — ver el comentario junto a la cabecera HTML de esta
+    // pestaña.
+    const hasData=historialTrades.length>0;
+    elHistCountLabel.textContent=historialDateFilter?'Filtradas':'Operaciones';
+    elHistCount.textContent=hasData?String(filtered.length):'—';
+    // "Cada consulta recupera hasta 50 operaciones recientes" — nunca
+    // "se muestran como máximo 50": al fusionar por trade.id a través
+    // de varias respuestas reales (p. ej. una operación nueva se cierra
+    // entre una consulta y otra), el total acumulado en este cliente
+    // puede superar las 50 de una sola respuesta — el límite real es
+    // POR CONSULTA, nunca un tope del total mostrado, y nunca implica
+    // que la lista sea el historial completo.
+    elHistScopeNote.textContent=hasData
+      ? 'Cada consulta recupera hasta 50 operaciones recientes. Puedes filtrar las operaciones cargadas.'
+      : '';
+  }
+
+  function renderHistorialDays(trades){
+    if(!trades.length){ elHistDays.innerHTML=''; return; }
+    const groups=[]; // [{key, label, trades:[]}] en el mismo orden (más reciente primero) que `trades` ya trae
+    const byKey={};
+    trades.forEach(function(t){
+      if(t.ts==null)return; // sin fecha real -> no se agrupa a ciegas bajo "hoy"
+      const key=histLocalDateKey(t.ts);
+      if(!byKey[key]){ byKey[key]={key:key, label:histDayLabel(t.ts), trades:[]}; groups.push(byKey[key]); }
+      byKey[key].trades.push(t);
+    });
+    elHistDays.innerHTML=groups.map(function(g){
+      const rows=g.trades.map(function(t){
+        const side=String(t.side||'buy').toLowerCase();
+        const buy=side==='buy';
+        const pnlOk=t.pnl!=null&&isFinite(Number(t.pnl));
+        const pnlVal=pnlOk?Number(t.pnl):null;
+        const pnlText=pnlOk?mbgStripMoney(pnlVal,true):'—';
+        const pnlCls=pnlOk?(pnlVal>0.00001?'pos':pnlVal<-0.00001?'neg':''):'';
+        const spec=specForSymbol(t.symbol);
+        const badgeItem={symbol:t.symbol, asset_class: spec?spec.asset_class:'forex'};
+        const qtyFmt=t.qty!=null?(Number(t.qty)+' lot'):'—';
+        const timeFmt=t.ts!=null?histTimeLabel(t.ts):'—';
+        return '<div class="mbh-row">'
+          +'<span class="mbh-badge '+symbolBadgeClass(badgeItem)+'">'+symbolBadgeInitials(badgeItem)+'</span>'
+          +'<span class="mbh-name">'
+          +'<span class="mbh-symrow"><b>'+(t.symbol||'')+'</b><span class="mbh-tag '+(buy?'buy':'sell')+'">'+(buy?'COMPRA':'VENTA')+'</span></span>'
+          +'<small class="mbh-sub">'+qtyFmt+' · '+timeFmt+'</small>'
+          +'</span>'
+          +'<span class="mbh-pl '+pnlCls+'">'+pnlText+'</span>'
+          +'</div>';
+      }).join('');
+      return '<div class="mbh-day-label">'+g.label+'</div>'+rows;
+    }).join('');
+  }
+
+  function clearHistorialTimer(){ if(historialRequestTimer){ clearTimeout(historialRequestTimer); historialRequestTimer=null; } }
+
+  // Dispara EXACTAMENTE session.requestClosedTrades() — el mismo
+  // método real que Posiciones' Cerradas ya usa, nunca una segunda
+  // conexión/suscripción. "sin conexión" se distingue de "cargando" (y
+  // de "sin operaciones") desde el primer instante, usando el mismo
+  // mobConnected real que ya gobierna el badge LIVE — nunca a ciegas.
+  function requestHistorial(){
+    if(historialState==='loading')return; // evita una solicitud duplicada mientras otra ya está en vuelo
+    if(!mobConnected){
+      historialState='error';
+      renderHistorialState();
+      return;
+    }
+    historialState='loading';
+    renderHistorialState();
+    session.requestClosedTrades();
+    clearHistorialTimer();
+    historialRequestTimer=setTimeout(function(){
+      if(historialState==='loading'){ historialState='error'; renderHistorialState(); }
+    }, 8000);
+  }
+  // MOBILE-HISTORY-INTEGRATION-01 — one-line bridge, same technique
+  // window.__mobRefreshWatchlist already uses, so showView() (a
+  // separate, later IIFE) can trigger a real request on every arrival
+  // at Historial without a second request mechanism.
+  window.__mobRequestHistorial = requestHistorial;
+
+  if(elHistDateBtn){
+    elHistDateBtn.addEventListener('click',function(){
+      elHistDateFilterRow.hidden=!elHistDateFilterRow.hidden;
+    });
+  }
+  if(elHistDateInput){
+    elHistDateInput.addEventListener('change',function(){
+      // Filtra EXCLUSIVAMENTE entre las operaciones ya cargadas en este
+      // cliente — nunca simula una consulta de fecha al backend (el
+      // contrato real de get_closed_trades no admite parámetros de
+      // fecha).
+      historialDateFilter=elHistDateInput.value||'';
+      renderHistorialState();
+    });
+  }
+  if(elHistDateClear){
+    elHistDateClear.addEventListener('click',function(){
+      historialDateFilter='';
+      elHistDateInput.value='';
+      renderHistorialState();
+    });
+  }
+  // Depósitos/Retiros son botones [disabled] reales — nunca disparan
+  // 'click' — este listener solo existe para la pestaña Operaciones:
+  // re-seleccionarla (p. ej. tras un error) vuelve a pedir el snapshot
+  // real, igual que reabrir Cerradas en Posiciones ya hace.
+  if(elHistTabs){
+    elHistTabs.querySelectorAll('.mbh-tab').forEach(function(tab){
+      tab.addEventListener('click',function(){
+        if(tab.disabled)return;
+        elHistTabs.querySelectorAll('.mbh-tab').forEach(function(t){ t.classList.toggle('is-selected', t===tab); });
+        if(tab.getAttribute('data-htab')==='trades')requestHistorial();
+      });
+    });
+  }
+
+  function onClosedTrades(trades){
+    renderClosed(trades);
+    reconcileHistorialTrades(trades);
+    clearHistorialTimer();
+    historialState='loaded';
+    renderHistorialState();
+  }
 
   // PRE-VPS-POLISH-03C.2.6 — tab switcher. Closed trades are requested
   // explicitly, only when this tab is actually activated (never
@@ -3056,6 +3440,7 @@ window.__TRADE_CONFIG__ = {
   renderTfSelector(session.currentTF);
   renderPositions(getCanonicalPositions());
   refreshPositionLines();
+  renderHistorialState();
   session.connect();
 })();
 </script>
@@ -3108,6 +3493,14 @@ window.__TRADE_CONFIG__ = {
     // 'pending_orders' push regardless of which view is visible, so the
     // Abiertas/Pendientes counters and cards are never stale on arrival.
     if(foundationEl)foundationEl.classList.toggle('mbp-active', name === 'positions');
+    // MOBILE-HISTORY-INTEGRATION-01 — hides the generic topbar for
+    // Historial's own header (.mbh-head) and requests the real
+    // closed-trades snapshot on every arrival at this view — the exact
+    // same session.requestClosedTrades() Posiciones' Cerradas tab
+    // already triggers on its own activation (see that tab's own click
+    // handler) — user-driven only, never periodic/automatic.
+    if(foundationEl)foundationEl.classList.toggle('mbh-active', name === 'history');
+    if(name === 'history' && typeof window.__mobRequestHistorial === 'function') window.__mobRequestHistorial();
   }
   navItems.forEach(function(btn){
     btn.addEventListener('click', function(){ showView(btn.getAttribute('data-target')); });
