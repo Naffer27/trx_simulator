@@ -202,6 +202,10 @@
      touches — Positions/History/Account are untouched, still showing
      the generic topbar exactly as before. */
   .mob-foundation.mbw-active .mob-topbar{display:none;}
+  /* MOBILE-POSITIONS-INTEGRATION-01 — same technique again, this time
+     for Posiciones' own header (.mbp-head below). History/Account are
+     still untouched, still showing the generic topbar as before. */
+  .mob-foundation.mbp-active .mob-topbar{display:none;}
   .mob-view-area{
     flex:1 1 auto;
     min-height:0;
@@ -397,6 +401,16 @@
        directly against money-broker-movil/tema.css. */
     --entry-bg:#1F2733; --entry-line:#E8ECF2; --entry-close:#2C3442;
     --buy-zone:rgba(46,189,133,.08); --sell-zone:rgba(246,70,93,.08);
+    /* MOBILE-POSITIONS-INTEGRATION-01 — Posiciones' own summary card
+       (tema.css's .summary/.sum-grid) and COMPRA/VENTA tag pills
+       (.tag.buy/.tag.sell) — exact hex/rgba values re-verified against
+       money-broker-movil 2/tema.css. --summary-* intentionally does NOT
+       flip the same way as --surface/--text (tema.css's own .summary is
+       a deliberately darker card in BOTH themes, same discipline as
+       --entry-bg above). */
+    --summary-bg:#11161E; --summary-border:#1F2632; --summary-text:#E8ECF2;
+    --summary-muted:#8A94A6; --summary-good:#2EBD85; --summary-accent:#F5C518;
+    --buy-soft:rgba(46,189,133,.14); --sell-soft:rgba(246,70,93,.14);
   }
   .mob-foundation[data-mb-theme="dia"]{
     --bg:#FFFFFF; --surface:#F3F4F6; --surface-2:#FFFFFF; --surface-3:#26292E;
@@ -410,6 +424,9 @@
     --candle-up:#10A36F; --candle-down:#E5364F;
     --entry-bg:#0A0A0A; --entry-line:#0A0A0A; --entry-close:#26292E;
     --buy-zone:rgba(16,163,111,.08); --sell-zone:rgba(229,54,79,.07);
+    --summary-bg:#0A0A0A; --summary-border:#0A0A0A; --summary-text:#FFFFFF;
+    --summary-muted:#A3A9B3; --summary-good:#3DDC97; --summary-accent:#F5C518;
+    --buy-soft:#E3F6EE; --sell-soft:#FDE8EB;
   }
   .mob-view[data-mobile-view="trade"] .mbg{width:100%;height:100%;max-width:none;box-sizing:border-box;display:flex;flex-direction:column;gap:var(--mb-space-2);font-family:'Geist',var(--mb-font-sans);}
   .mob-view[data-mobile-view="trade"] .mbg-num{font-family:'Geist Mono',var(--mb-font-sans);font-variant-numeric:tabular-nums;letter-spacing:-.01em;}
@@ -764,6 +781,95 @@
   .mob-row-card button{min-height:var(--mb-touch-sm);border-radius:var(--mb-radius-sm);font-size:var(--mb-text-xs);border:1px solid var(--mb-sell-border);background:var(--mb-sell-dim);color:var(--mb-sell);cursor:pointer;}
   .mob-row-card button:disabled{opacity:.5;cursor:default;}
   .mob-empty{min-height:var(--mb-touch-min);display:flex;align-items:center;justify-content:center;color:var(--mb-text-muted);font-size:var(--mb-text-sm);background:var(--mb-surface-1);border:1px solid var(--mb-border);border-radius:var(--mb-radius-md);}
+  /* ===================== POSICIONES =====================
+     MOBILE-POSITIONS-INTEGRATION-01 — faithful port of money-broker-
+     movil 2/tema.css's own "POSICIONES" section (.page-head/.icon-btn/
+     .summary/.sum-grid/.seg/.card/.badge/.tag/.range/.btn-row/.btn-soft/
+     .btn-danger), classes renamed with an "mbp-" prefix and scoped to
+     [data-mobile-view="positions"] only — same convention "mbgt-"
+     (Trade-form) and "mbw-" (Watch) already established. Same --bg/
+     --surface/--border/--text/--text-2/--muted/--brand/--buy/--buy-
+     text/--buy-soft/--sell/--sell-text/--sell-soft/--summary- (group)
+     tokens already defined once on .mob-foundation above (Visual
+     Contract V1, tema.css noche+día) — zero new colors beyond the
+     --summary- (group) and --buy-soft / --sell-soft additions above,
+     which themselves are the reference's own values. Deliberately a
+     SEPARATE class namespace from .mob-row-card / .rc- (group) /
+     .mob-pane (unchanged, still exactly what
+     Pending/Cerradas render — this round's redesign only ever applies
+     to the Abiertas tab's own cards). */
+  .mob-view[data-mobile-view="positions"]{height:100%;box-sizing:border-box;align-items:stretch;gap:var(--mb-space-3);overflow:hidden;}
+  .mob-view[data-mobile-view="positions"] .mob-pane-tabs,
+  .mob-view[data-mobile-view="positions"] .mob-pane{max-width:none;}
+  .mbp-head{display:flex;align-items:center;gap:var(--mb-space-2);width:100%;flex:0 0 auto;}
+  .mbp-head h1{margin:0;flex:1;font-size:22px;font-weight:600;letter-spacing:-.02em;color:var(--text);}
+  [data-mb-theme="dia"] .mbp-head h1{font-weight:700;letter-spacing:-.03em;}
+  .mbp-icon-btn{width:40px;height:40px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;color:var(--text-2);background:none;border:none;cursor:pointer;}
+  .mbp-icon-btn:disabled{opacity:.4;cursor:default;}
+  .mbp-icon-btn svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
+  .mbp-summary{flex:0 0 auto;width:100%;box-sizing:border-box;padding:16px;border-radius:16px;background:var(--summary-bg);border:1px solid var(--summary-border);color:var(--summary-text);}
+  [data-mb-theme="dia"] .mbp-summary{border-radius:18px;}
+  .mbp-summary-top{display:flex;justify-content:space-between;align-items:flex-end;gap:var(--mb-space-2);}
+  .mbp-summary-top .label{font-size:12px;color:var(--summary-muted);}
+  .mbp-equity{font-size:26px;font-weight:600;letter-spacing:-.02em;font-family:'Geist Mono',var(--mb-font-sans);font-variant-numeric:tabular-nums;}
+  .mbp-pl{font-size:16px;font-weight:600;font-family:'Geist Mono',var(--mb-font-sans);font-variant-numeric:tabular-nums;}
+  .mbp-pl.pos{color:var(--summary-good);}
+  .mbp-pl.neg{color:var(--sell-text);}
+  .mbp-sum-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 16px;margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,.08);font-size:13px;}
+  [data-mb-theme="dia"] .mbp-sum-grid{border-top-color:#26292E;}
+  .mbp-sum-grid div{display:flex;justify-content:space-between;}
+  .mbp-sum-grid span:first-child{color:var(--summary-muted);}
+  .mbp-sum-grid span:last-child{font-family:'Geist Mono',var(--mb-font-sans);font-variant-numeric:tabular-nums;}
+  .mbp-sum-grid .mbp-level{color:var(--summary-accent);}
+  .mob-view[data-mobile-view="positions"] .mob-pane-tabs{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:4px;padding:4px;border-radius:12px;background:var(--surface);flex:0 0 auto;}
+  .mob-view[data-mobile-view="positions"] .mob-pane-tab{height:36px;min-height:0;border-radius:9px;font-size:13px;font-weight:500;color:var(--muted);background:none;border:none;}
+  .mob-view[data-mobile-view="positions"] .mob-pane-tab.is-selected{background:var(--surface-2);color:var(--text);font-weight:600;}
+  [data-mb-theme="dia"] .mob-view[data-mobile-view="positions"] .mob-pane-tab.is-selected{box-shadow:0 1px 3px rgba(10,10,10,.12);}
+  .mob-view[data-mobile-view="positions"] .mob-pane{flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;gap:12px;}
+  /* #mobPositionsList (Abiertas) is a plain wrapper .mob-pane already
+     gives its OWN gap to, but that gap only separates .mob-pane's direct
+     children (the list wrapper + the empty-state div) — never the
+     individual cards rendered inside the wrapper via innerHTML. This id
+     rule is scoped to Abiertas only; Pendientes/Cerradas (#mobPendingList/
+     #mobClosedList) are untouched, out of scope this round. */
+  #mobPositionsList{display:flex;flex-direction:column;gap:12px;}
+  .mbp-card{display:flex;flex-direction:column;gap:12px;padding:14px;border-radius:16px;background:var(--surface);border:1px solid var(--border);box-sizing:border-box;}
+  [data-mb-theme="dia"] .mbp-card{background:#FFFFFF;}
+  .mbp-top{display:flex;align-items:center;gap:10px;}
+  .mbp-badge{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0;}
+  .mbp-name{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;}
+  .mbp-symrow{display:flex;align-items:center;gap:8px;}
+  .mbp-symrow b{font-size:15px;font-weight:600;color:var(--text);}
+  .mbp-tag{font-size:10px;font-weight:700;letter-spacing:.06em;padding:3px 7px;border-radius:5px;}
+  .mbp-tag.buy{background:var(--buy-soft);color:var(--buy-text);}
+  .mbp-tag.sell{background:var(--sell-soft);color:var(--sell-text);}
+  .mbp-sub{font-size:12px;color:var(--muted);font-family:'Geist Mono',var(--mb-font-sans);font-variant-numeric:tabular-nums;}
+  .mbp-pl-cell{display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex:0 0 auto;}
+  .mbp-pl-cell b{font-size:16px;font-weight:600;font-family:'Geist Mono',var(--mb-font-sans);font-variant-numeric:tabular-nums;}
+  .mbp-pl-cell b.pos{color:var(--buy-text);}
+  .mbp-pl-cell b.neg{color:var(--sell-text);}
+  /* Barra SL↔TP — PRESENTACIÓN únicamente: una coordenada derivada de
+     sl/tp/precio real ya existentes (clamped 0-100%), nunca un control
+     arrastrable y nunca una fuente de verdad para SL/TP (esos solo se
+     modifican vía el editor real del Gráfico). Sin sl/tp/precio real
+     ambos disponibles, queda en estado neutro (barra vacía, sin punto)
+     — nunca un extremo inventado. */
+  .mbp-range{position:relative;height:6px;border-radius:3px;background:var(--line);}
+  [data-mb-theme="dia"] .mbp-range{background:#EEF0F2;}
+  .mbp-range-fill{position:absolute;left:0;top:0;height:6px;border-radius:3px;background:var(--surface-3);}
+  [data-mb-theme="dia"] .mbp-range-fill{background:#C9CDD3;}
+  .mbp-range-dot{position:absolute;top:-4px;width:14px;height:14px;margin-left:-7px;border-radius:50%;background:#F5F7FA;border:3px solid var(--surface);}
+  [data-mb-theme="dia"] .mbp-range-dot{background:#0A0A0A;border-color:#FFFFFF;box-shadow:0 0 0 1px #0A0A0A;}
+  .mbp-range-labels{display:flex;justify-content:space-between;font-size:11px;font-family:'Geist Mono',var(--mb-font-sans);font-variant-numeric:tabular-nums;}
+  .mbp-range-labels .sell{color:var(--sell-text);}
+  .mbp-range-labels .buy{color:var(--buy-text);}
+  .mbp-btnrow{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
+  .mbp-btnrow button{height:40px;border-radius:10px;font-size:13px;font-weight:500;border:none;cursor:pointer;font-family:inherit;}
+  .mbp-btnrow button:disabled{opacity:.5;cursor:default;}
+  .mbp-btn-soft{background:var(--line);color:var(--text);}
+  [data-mb-theme="dia"] .mbp-btn-soft{background:#F3F4F6;}
+  .mbp-btn-danger{background:var(--sell-soft);color:var(--sell-text);border:1px solid rgba(246,70,93,.4) !important;font-weight:600;}
+  [data-mb-theme="dia"] .mbp-btn-danger{background:#FFFFFF;border-color:#E8A3AE !important;}
 </style>
 <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
 {% endblock %}
@@ -1073,10 +1179,55 @@
     </div>
 
     <div class="mob-view" data-mobile-view="positions" hidden>
+      <!-- MOBILE-POSITIONS-INTEGRATION-01 — faithful port of money-
+           broker-movil 2/posiciones.html's own header + summary card.
+           Equidad/P&L/Balance/Margen/Libre read the SAME real
+           account:update fields onAccount() already derives for the
+           Account tab/Gráfico strip (msg.equity/msg.balance/msg.
+           margin_used/free, msg.upnl) — zero recomputation. "Nivel"
+           (margin level %) has no real field anywhere in the
+           account:update contract (confirmed: balance/equity/pnl_unreal/
+           upnl/margin_used/free_margin/used_margin_pct/maintenance_
+           margin/liquidation_distance/leverage/netting_mode/status/
+           account_type/total_dd_pct/daily_dd_pct — no margin_level) —
+           stays "—" always, never equity/margin*100 computed here. -->
+      <div class="mbp-head">
+        <h1>Posiciones</h1>
+        <!-- El icono de actualización solo hace algo real cuando la
+             pestaña Cerradas está activa (reutiliza exactamente
+             session.requestClosedTrades(), la misma llamada que ya se
+             dispara al abrir esa pestaña — ver el tab-switcher debajo).
+             Abiertas/Pendientes llegan solo por push del backend — no
+             existe un mecanismo real de "refrescar" para ellas, así que
+             el botón queda deshabilitado en esas pestañas en vez de
+             simular una acción sin función. -->
+        <button type="button" class="mbp-icon-btn" id="mobPosRefreshBtn" aria-label="Actualizar" disabled>
+          <svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>
+        </button>
+      </div>
+      <section class="mbp-summary" aria-label="Resumen de cuenta">
+        <div class="mbp-summary-top">
+          <div style="display:flex;flex-direction:column;gap:4px">
+            <span class="label">Equidad</span>
+            <span class="mbp-equity" id="mobPosEquity">—</span>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+            <span class="label">P&amp;L flotante</span>
+            <span class="mbp-pl" id="mobPosPl">—</span>
+          </div>
+        </div>
+        <div class="mbp-sum-grid">
+          <div><span>Balance</span><span id="mobPosBalance">—</span></div>
+          <div><span>Margen</span><span id="mobPosMargin">—</span></div>
+          <div><span>Libre</span><span id="mobPosFree">—</span></div>
+          <div><span>Nivel</span><span class="mbp-level" id="mobPosLevel">—</span></div>
+        </div>
+      </section>
+
       <div class="mob-pane-tabs" id="mobPaneTabs">
-        <div class="mob-pane-tab is-selected" data-pane="positions">Positions</div>
-        <div class="mob-pane-tab" data-pane="pending">Pending</div>
-        <div class="mob-pane-tab" data-pane="closed">Closed</div>
+        <div class="mob-pane-tab is-selected" data-pane="positions">Abiertas · <span id="mobPosCount">0</span></div>
+        <div class="mob-pane-tab" data-pane="pending">Pendientes · <span id="mobPendingCount">0</span></div>
+        <div class="mob-pane-tab" data-pane="closed">Cerradas</div>
       </div>
 
       <div class="mob-pane" id="mobPositionsPane">
@@ -1211,6 +1362,16 @@ window.__TRADE_CONFIG__ = {
   // handling (absence must stay "—", never defaulted to 0).
   const elGraphBalance=document.getElementById('mobGraphBalance');
   const elGraphPl=document.getElementById('mobGraphPl');
+  // MOBILE-POSITIONS-INTEGRATION-01 — Posiciones' own summary card.
+  // Same real account:update fields as elBalance/elEquity/elMargin/
+  // elFree/elUpnl above, written a second time into this card's own
+  // ids (mob-summary already owns mobBalance/mobEquity/mobMargin —
+  // ids must be unique per document) — zero recomputation.
+  const elPosEquity=document.getElementById('mobPosEquity');
+  const elPosPl=document.getElementById('mobPosPl');
+  const elPosBalance=document.getElementById('mobPosBalance');
+  const elPosMargin=document.getElementById('mobPosMargin');
+  const elPosFree=document.getElementById('mobPosFree');
   // Local-only display formatting for the Balance/Profit-Loss strip —
   // deliberately NOT the shared usd() helper (trading_core.js,
   // protected): usd()'s toLocaleString uses maximumFractionDigits:2
@@ -1286,6 +1447,35 @@ window.__TRADE_CONFIG__ = {
         if(Math.abs(plNum)<=0.00001)elGraphPl.classList.remove('is-pos','is-neg');
       }
     }
+    // MOBILE-POSITIONS-INTEGRATION-01 — Posiciones' summary card. Same
+    // equity/margin/free/upnl constants already derived above (never
+    // recomputed again) — only Balance/P&L flotante need the explicit-
+    // presence check (never default to 0 before the first real message),
+    // same discipline elGraphBalance/elGraphPl already apply.
+    if(elPosEquity)elPosEquity.textContent=usd(equity);
+    if(elPosBalance)elPosBalance.textContent=msg.balance!=null?usd(msg.balance):'—';
+    if(elPosMargin)elPosMargin.textContent=usd(margin);
+    if(elPosFree)elPosFree.textContent=usd(free);
+    if(elPosPl){
+      const plRaw=msg.upnl!=null?msg.upnl:msg.pnl_unreal;
+      if(plRaw==null){
+        elPosPl.textContent='—';
+        elPosPl.classList.remove('pos','neg');
+      } else {
+        const plNum=Number(plRaw);
+        // mbgStripMoney() — mismo motivo que renderPositions() (ver su
+        // propio comentario): conserva el signo negativo real con '−' y
+        // dos decimales siempre.
+        elPosPl.textContent=mbgStripMoney(plNum,true);
+        elPosPl.classList.toggle('pos',plNum>0.00001);
+        elPosPl.classList.toggle('neg',plNum<-0.00001);
+        if(Math.abs(plNum)<=0.00001)elPosPl.classList.remove('pos','neg');
+      }
+    }
+    // "Nivel" (margin level %) intentionally left as the static "—"
+    // already in the markup — no margin_level field exists anywhere in
+    // this real account:update contract (confirmed against consumers.py);
+    // never computed here as equity/margin*100.
     // MOBILE-TRADE-FORM-01 — leverage display only; see this function's
     // own lastAccountMsg comment above.
     renderTfInstrument();
@@ -1340,6 +1530,21 @@ window.__TRADE_CONFIG__ = {
     if(state.symbol && state.symbol !== marketsSelectedSymbol){
       marketsSelectedSymbol = state.symbol;
       renderWatchlist();
+      // MOBILE-POSITIONS-INTEGRATION-01 (ajuste) — ISOLATED FIX: un
+      // cambio REAL de símbolo (nunca un tick ordinario, ver la rama
+      // else) debe invalidar de inmediato el precio actual/barra de
+      // CUALQUIER tarjeta del símbolo anterior — si no, quedaban
+      // congeladas en su último valor real, textualmente indistinguible
+      // de un precio recién actualizado ("una cotización antigua como
+      // si estuviera actualizándose en vivo", confirmado por
+      // reproducción real antes de este ajuste). renderPositions() ya
+      // recalcula positionCurrentPrice()/positionRangeFraction() para
+      // CADA posición contra el lastQuoteState recién asignado arriba —
+      // mismos datos canónicos reales, nunca una segunda fuente; vuelve
+      // a "—"/neutro para el símbolo que ya no se cotiza y refleja el
+      // nuevo símbolo donde corresponda. getCanonicalPositions() es la
+      // misma lista real que onPositions() ya usa, nunca inventada.
+      renderPositions(getCanonicalPositions());
     } else {
       updateWatchlistLiveRow(state);
     }
@@ -1355,6 +1560,11 @@ window.__TRADE_CONFIG__ = {
     // (idempotente — no hace daño repetirla en cada tick) para cualquier
     // cambio de símbolo futuro que aún no tenga su propia llamada directa.
     renderFavoriteStar();
+    // MOBILE-POSITIONS-INTEGRATION-01 — incremental live patch for any
+    // open-position card(s) whose real symbol matches this tick (see
+    // updatePositionsLiveFields()'s own comment) — never a full
+    // renderPositions() rebuild per tick.
+    updatePositionsLiveFields(state);
   }
 
   // MOBILE-DESIGN-INTEGRATION-01 — GRAPH — the topbar's symbol button
@@ -2220,7 +2430,84 @@ window.__TRADE_CONFIG__ = {
     if(pendingClose&&pendingClose.timer)clearTimeout(pendingClose.timer);
     pendingClose=null;
   }
+  // MOBILE-POSITIONS-INTEGRATION-01 — real catalog lookup (same
+  // MOBILE_SYMBOLS Watch already uses) purely to pick the right badge
+  // color bucket for a position's symbol — never a second instrument
+  // source, never invented for a symbol missing from the catalog
+  // (falls back to the generic forex bucket, same as Watch's own
+  // fallback for an unmapped item).
+  function specForSymbol(sym){
+    return MOBILE_SYMBOLS.find(function(s){ return s.symbol===sym; }) || null;
+  }
+  // Same real-data-only discipline Watch's marketLiveValues() already
+  // established: the current transport only ever carries a live quote
+  // for whichever ONE symbol the session is presently subscribed to
+  // (lastQuoteState/onQuote()) — this never iterates symbols calling
+  // selectSymbol() to fetch more, and a position whose symbol does not
+  // match the live quote's own symbol gets null here (rendered "—"),
+  // never another position's/symbol's price.
+  function positionCurrentPrice(pos){
+    if(lastQuoteState && lastQuoteState.symbol===pos.symbol && lastQuoteState.liveMid!=null){
+      return Number(lastQuoteState.liveMid);
+    }
+    return null;
+  }
+  // Presentation-only coordinate for the SL<->TP bar — clamped 0-100,
+  // never a financial calculation and never fed back into SL/TP. Real
+  // sl/tp/current price all required; missing ANY of them returns null
+  // (caller renders a neutral/empty bar — no invented extremes).
+  function positionRangeFraction(pos, current){
+    if(pos.sl==null||pos.tp==null||current==null)return null;
+    const sl=Number(pos.sl), tp=Number(pos.tp), px=Number(current);
+    if(!isFinite(sl)||!isFinite(tp)||!isFinite(px)||sl===tp)return null;
+    let frac=((px-sl)/(tp-sl))*100;
+    if(frac<0)frac=0; if(frac>100)frac=100;
+    return frac;
+  }
+  // MOBILE-POSITIONS-INTEGRATION-01 — incremental live patch, same
+  // discipline updateWatchlistLiveRow() already established for Watch:
+  // an ordinary onQuote() tick must never trigger a full renderPositions()
+  // rebuild (that would be the fabricated-liveness the Owner explicitly
+  // warned against — "no presentes una cotización antigua como si
+  // estuviera actualizándose en vivo" cuts both ways: never stale-
+  // looking-live AND never a wasteful full rebuild on every tick either).
+  // Only ever patches cards whose REAL canonical position symbol matches
+  // this exact tick's own symbol — a position of a different symbol is
+  // never touched, exactly like positionCurrentPrice()'s own guard.
+  function updatePositionsLiveFields(state){
+    if(!elPositionsList||state.liveMid==null)return;
+    const cards=elPositionsList.querySelectorAll('.mbp-card');
+    cards.forEach(function(cardEl){
+      const id=cardEl.getAttribute('data-id');
+      const pos=getCanonicalPositions().find(function(p){ return String(p.id)===String(id); });
+      if(!pos||pos.symbol!==state.symbol)return;
+      const p=priceFormatFor(pos.symbol).precision;
+      const current=Number(state.liveMid);
+      const subEl=cardEl.querySelector('.mbp-sub');
+      if(subEl){
+        const qtyFmt=pos.qty!=null?(Number(pos.qty)+' lot'):'—';
+        const entryFmt=pos.avg!=null?fmt(pos.avg,p):'—';
+        subEl.textContent=qtyFmt+' · '+entryFmt+' → '+fmt(current,p);
+      }
+      const frac=positionRangeFraction(pos,current);
+      const rangeEl=cardEl.querySelector('.mbp-range');
+      if(!rangeEl)return;
+      let fillEl=rangeEl.querySelector('.mbp-range-fill');
+      let dotEl=rangeEl.querySelector('.mbp-range-dot');
+      if(frac==null){
+        if(fillEl)fillEl.remove();
+        if(dotEl)dotEl.remove();
+        return;
+      }
+      if(!fillEl){ fillEl=document.createElement('div'); fillEl.className='mbp-range-fill'; rangeEl.appendChild(fillEl); }
+      if(!dotEl){ dotEl=document.createElement('div'); dotEl.className='mbp-range-dot'; rangeEl.appendChild(dotEl); }
+      fillEl.style.width=frac+'%';
+      dotEl.style.left=frac+'%';
+    });
+  }
   function renderPositions(items){
+    const elPosCount=document.getElementById('mobPosCount');
+    if(elPosCount)elPosCount.textContent=String(items.length);
     if(!items.length){
       elPositionsList.innerHTML='';
       elPositionsEmpty.hidden=false;
@@ -2229,21 +2516,47 @@ window.__TRADE_CONFIG__ = {
     elPositionsEmpty.hidden=true;
     elPositionsList.innerHTML=items.map(function(pos){
       const side=String(pos.side||'buy').toLowerCase();
+      const buy=side==='buy';
       const pnlOk=pos.pnl!=null&&isFinite(Number(pos.pnl));
       const pnlVal=pnlOk?Number(pos.pnl):null;
-      const pnlText=pnlOk?(pnlVal>=0?'+':'')+usd(pnlVal):'—';
+      // mbgStripMoney() (already used by the Gráfico P&L strip) —
+      // conserva el signo negativo real con el menos tipográfico '−' y
+      // dos decimales siempre, a diferencia de usd()+'+' manual, que
+      // deja "$-5" (toLocaleString pone el guion dentro del número,
+      // antes del '$', y sin mínimo de decimales).
+      const pnlText=pnlOk?mbgStripMoney(pnlVal,true):'—';
       const pnlCls=pnlOk?(pnlVal>0.00001?'pos':pnlVal<-0.00001?'neg':''):'';
-      return '<div class="mob-row-card" data-id="'+pos.id+'">'
-        +'<div class="rc-top"><span class="rc-sym">'+(pos.symbol||'')+' <span class="rc-side-'+side+'">'+side.toUpperCase()+'</span></span>'
-        +'<span class="rc-pnl '+pnlCls+'">'+pnlText+'</span></div>'
-        +'<div class="rc-fields">'
-        +'<span>Qty <b>'+(pos.qty!=null?Number(pos.qty):'—')+'</b></span>'
-        +'<span>Entry <b>'+(pos.avg!=null?fmt(pos.avg):'—')+'</b></span>'
-        +'<span>SL <b>'+(pos.sl!=null?fmt(pos.sl):'—')+'</b></span>'
-        +'<span>TP <b>'+(pos.tp!=null?fmt(pos.tp):'—')+'</b></span>'
+      const spec=specForSymbol(pos.symbol);
+      const badgeItem={symbol:pos.symbol, asset_class: spec?spec.asset_class:'forex'};
+      const p=priceFormatFor(pos.symbol).precision;
+      const current=positionCurrentPrice(pos);
+      const frac=positionRangeFraction(pos, current);
+      const entryFmt=pos.avg!=null?fmt(pos.avg,p):'—';
+      const currentFmt=current!=null?fmt(current,p):'—';
+      const slFmt=pos.sl!=null?fmt(pos.sl,p):'—';
+      const tpFmt=pos.tp!=null?fmt(pos.tp,p):'—';
+      const qtyFmt=pos.qty!=null?(Number(pos.qty)+' lot'):'—';
+      const rangeHtml=frac==null
+        ? '<div class="mbp-range"></div>'
+        : '<div class="mbp-range"><div class="mbp-range-fill" style="width:'+frac+'%"></div><div class="mbp-range-dot" style="left:'+frac+'%"></div></div>';
+      return '<article class="mbp-card" data-id="'+pos.id+'">'
+        +'<div class="mbp-top">'
+        +'<span class="mbp-badge '+symbolBadgeClass(badgeItem)+'">'+symbolBadgeInitials(badgeItem)+'</span>'
+        +'<span class="mbp-name">'
+        +'<span class="mbp-symrow"><b>'+(pos.symbol||'')+'</b><span class="mbp-tag '+(buy?'buy':'sell')+'">'+(buy?'COMPRA':'VENTA')+'</span></span>'
+        +'<small class="mbp-sub">'+qtyFmt+' · '+entryFmt+' → '+currentFmt+'</small>'
+        +'</span>'
+        +'<span class="mbp-pl-cell"><b class="'+pnlCls+'">'+pnlText+'</b></span>'
         +'</div>'
-        +'<button type="button" class="mob-close-btn" data-id="'+pos.id+'"'+(closeInFlight?' disabled':'')+'>Close</button>'
-        +'</div>';
+        +'<div style="display:flex;flex-direction:column;gap:6px">'
+        +rangeHtml
+        +'<div class="mbp-range-labels"><span class="sell">SL '+slFmt+'</span><span class="buy">TP '+tpFmt+'</span></div>'
+        +'</div>'
+        +'<div class="mbp-btnrow">'
+        +'<button type="button" class="mbp-btn-soft mob-sltp-edit-btn" data-id="'+pos.id+'">Modificar SL/TP</button>'
+        +'<button type="button" class="mbp-btn-danger mob-close-btn" data-id="'+pos.id+'"'+(closeInFlight?' disabled':'')+'>Cerrar</button>'
+        +'</div>'
+        +'</article>';
     }).join('');
   }
   // Multi-position correction round — finds (never computes, never
@@ -2556,6 +2869,36 @@ window.__TRADE_CONFIG__ = {
     setCloseInFlight(true);
     armPendingClose(closeId);
   });
+  // MOBILE-POSITIONS-INTEGRATION-01 — "Modificar SL/TP" reutiliza
+  // EXACTAMENTE el editor real (drag/tap sobre el Gráfico — mobile_
+  // chart.js's own _edit state + onSlTpConfirm -> session.updateSlTp(),
+  // protegidos/sin cambios) — nunca un segundo editor financiero, nunca
+  // el formulario de nueva orden. Este botón solo navega y selecciona
+  // la posición real por su id; abrir el editor nunca envía nada por sí
+  // mismo. Si el símbolo de la posición no es el que ya está cargado en
+  // el Gráfico, reutiliza el MISMO flujo real de cambio de símbolo que
+  // el tap de una fila de Watch ya usa — nunca se fuerza la selección
+  // antes de que isSlTpEditableFor() (mobile_chart.js, protegido)
+  // confirme que la historia/escala real del símbolo ya cargó;
+  // refreshPositionLines() (mismo camino que ya gobierna esa espera)
+  // corre siempre, con o sin cambio de símbolo.
+  elPositionsList.addEventListener('click',function(e){
+    const btn=e.target.closest('.mob-sltp-edit-btn');
+    if(!btn)return;
+    const id=btn.getAttribute('data-id');
+    const pos=getCanonicalPositions().find(function(p){ return String(p.id)===String(id); });
+    if(!pos)return;
+    selectedPositionId=pos.id;
+    if(session.currentSymbol!==pos.symbol){
+      mobileChart.clear();
+      resetDailyStats();
+      session.selectSymbol(pos.symbol);
+      renderFavoriteStar();
+    }
+    refreshPositionLines();
+    const tradeNavBtn=document.querySelector('.mob-navitem[data-target="trade"]');
+    if(tradeNavBtn) tradeNavBtn.click();
+  });
   function onOrderClose(msg){
     clearPendingClose();
     setCloseInFlight(false);
@@ -2583,6 +2926,8 @@ window.__TRADE_CONFIG__ = {
     elPendingList.querySelectorAll('.mob-cancel-btn').forEach(function(b){ b.disabled=v; });
   }
   function renderPending(items){
+    const elPendingCount=document.getElementById('mobPendingCount');
+    if(elPendingCount)elPendingCount.textContent=String(items.length);
     if(!items.length){
       elPendingList.innerHTML='';
       elPendingEmpty.hidden=false;
@@ -2668,11 +3013,31 @@ window.__TRADE_CONFIG__ = {
     pending: document.getElementById('mobPendingPane'),
     closed: document.getElementById('mobClosedPane'),
   };
+  // MOBILE-POSITIONS-INTEGRATION-01 — the header's refresh icon (money-
+  // broker-movil 2/posiciones.html's own "Actualizar" icon-btn) only
+  // gets a real function on the Cerradas tab, reusing EXACTLY
+  // session.requestClosedTrades() — the same real call the tab switch
+  // below already makes. Abiertas/Pendientes arrive push-only from the
+  // backend; no pull/refresh action exists for them in the real
+  // contract, so the icon stays disabled there rather than simulating
+  // one. No new connection, subscription or polling of any kind.
+  const elPosRefreshBtn=document.getElementById('mobPosRefreshBtn');
+  function updatePosRefreshBtn(key){
+    if(!elPosRefreshBtn)return;
+    elPosRefreshBtn.disabled=(key!=='closed');
+  }
+  if(elPosRefreshBtn){
+    elPosRefreshBtn.addEventListener('click',function(){
+      if(elPosRefreshBtn.disabled)return;
+      session.requestClosedTrades();
+    });
+  }
   elPaneTabs.querySelectorAll('.mob-pane-tab').forEach(function(tab){
     tab.addEventListener('click',function(){
       const key=tab.getAttribute('data-pane');
       elPaneTabs.querySelectorAll('.mob-pane-tab').forEach(function(t){ t.classList.toggle('is-selected', t===tab); });
       Object.keys(mobPanes).forEach(function(k){ mobPanes[k].hidden=(k!==key); });
+      updatePosRefreshBtn(key);
       if(key==='closed') session.requestClosedTrades();
     });
   });
@@ -2736,6 +3101,13 @@ window.__TRADE_CONFIG__ = {
     // way window.__mobShowView already is, just in the other direction.
     if(foundationEl)foundationEl.classList.toggle('mbw-active', name === 'markets');
     if(name === 'markets' && typeof window.__mobRefreshWatchlist === 'function') window.__mobRefreshWatchlist();
+    // MOBILE-POSITIONS-INTEGRATION-01 — hides the generic topbar for
+    // Posiciones' own header (.mbp-head). No re-render hook is needed
+    // here the way Watch needed one for favorites: renderPositions()/
+    // renderPending() already run on every real 'positions'/
+    // 'pending_orders' push regardless of which view is visible, so the
+    // Abiertas/Pendientes counters and cards are never stale on arrival.
+    if(foundationEl)foundationEl.classList.toggle('mbp-active', name === 'positions');
   }
   navItems.forEach(function(btn){
     btn.addEventListener('click', function(){ showView(btn.getAttribute('data-target')); });
