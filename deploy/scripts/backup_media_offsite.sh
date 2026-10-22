@@ -296,7 +296,7 @@ ARCHIVE_PATH="${SCRATCH_DIR}/${ARCHIVE_FILENAME}"
 # walk of its own — this is what makes ordering fully controlled by the
 # sorted list rather than tar's own directory-read order.
 log "Building archive: $ARCHIVE_FILENAME (file_count=$FILE_COUNT)"
-tar --null -T "$FILELIST" --no-recursion -C "$MEDIA_ROOT" -cf "$ARCHIVE_PATH" \
+tar -C "$MEDIA_ROOT" --no-recursion --null -cf "$ARCHIVE_PATH" -T "$FILELIST" \
     || die "tar archive creation failed"
 chmod 600 "$ARCHIVE_PATH" || die "Failed to set restrictive permissions on archive"
 
