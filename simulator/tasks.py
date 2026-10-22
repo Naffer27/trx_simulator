@@ -156,7 +156,7 @@ def reconcile_deposits_task(self, hours_back: int = 24) -> dict:
     pending = Deposit.objects.filter(
         created_at__lte=cutoff,
         credited=False,
-    ).values("id", "order_id", "amount_usd", "created_at")
+    ).values("id", "amount_usd", "created_at")
 
     ids = [d["id"] for d in pending]
     if ids:
