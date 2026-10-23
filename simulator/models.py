@@ -2218,6 +2218,11 @@ class TOTPDevice(models.Model):
     created_at  = models.DateTimeField(auto_now_add=True)
     confirmed_at = models.DateTimeField(null=True, blank=True)
 
+    # Login-only counters: independent of withdrawal/dashboard verification.
+    login_last_step = models.BigIntegerField(default=-1)
+    login_failures = models.PositiveIntegerField(default=0)
+    login_locked_until = models.DateTimeField(null=True, blank=True)
+
     class Meta:
         indexes = [models.Index(fields=["user"], name="totpdevice_user_idx")]
 

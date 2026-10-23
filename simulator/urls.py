@@ -1,6 +1,7 @@
 # simulator/urls.py
 from django.contrib.auth import views as auth_views
 from django.urls import path, reverse_lazy
+from .login_2fa import login_2fa_view
 from .auth_password_views import (
     AuditedPasswordChangeView,
     AuditedPasswordResetConfirmView,
@@ -118,6 +119,7 @@ urlpatterns = [
     # Autenticación
     path("register/", register_view, name="register"),
     path("login/", login_view, name="login"),
+    path("login/2fa/", login_2fa_view, name="login_2fa"),
     path("logout/", logout_view, name="logout"),
 
     # Home dashboard (after login)

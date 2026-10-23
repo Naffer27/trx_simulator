@@ -163,7 +163,6 @@ def landing_view(request):
 # REGISTRO DE USUARIO
 # -----------------------
 def register_view(request):
-    access_code_required = bool(getattr(settings, "BROKER_ACCESS_CODE", "").strip())
     if request.method == "POST":
         form = RegisterForm(request.POST)
         if form.is_valid():
@@ -218,7 +217,6 @@ def register_view(request):
         form = RegisterForm()
     return render(request, "simulator/register.html", {
         "form": form,
-        "access_code_required": access_code_required,
     })
 
 
@@ -250,6 +248,10 @@ def login_view(request):
                       f"Login failed (bad credentials) for {username}",
                       detail={"username": username, "ip": ip, "reason": "bad_credentials"})
         else:
+            from .login_2fa import begin_login_challenge
+            challenge = begin_login_challenge(request, user)
+            if challenge is not None:
+                return challenge
             auth_login(request, user)
             security_log("auth.login_success", level="info", ip=ip,
                          username=username, user_id=user.pk)

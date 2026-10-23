@@ -28,7 +28,7 @@
 <body>
 <div class="card">
   <h1>🔐 Verificación 2FA</h1>
-  <div class="sub">Ingresa el código de 6 dígitos de tu app autenticadora.</div>
+  <div class="sub">Ingresa el código de 6 dígitos de Authy, Google Authenticator u otra app compatible.</div>
 
   <form method="post">
     {% csrf_token %}
@@ -40,6 +40,7 @@
   </form>
 
   <div class="hint">El código cambia cada 30 segundos.</div>
+  {% if login_challenge %}<p><a href="{% url 'simulator:login' %}">Volver al inicio de sesión</a></p>{% endif %}
 </div>
 </body>
 </html>

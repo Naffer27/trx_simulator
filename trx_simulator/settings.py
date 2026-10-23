@@ -100,7 +100,7 @@ if APP_ENV in {"staging", "production"}:
                 f"get_random_secret_key; print(get_random_secret_key())\""
             )
 
-# Acceso con código (usado por LoginForm para requerirlo en PROD)
+# Legacy configuration, ignored by public registration and login.
 BROKER_ACCESS_CODE = os.getenv("BROKER_ACCESS_CODE", "").strip()
 
 _BASE_HOSTS = ["0.0.0.0", "127.0.0.1", "localhost", ".ngrok-free.dev", ".ngrok-free.app"]
