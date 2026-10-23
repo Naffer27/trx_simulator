@@ -116,8 +116,9 @@ def _admin_request(admin_user):
 def _run_locked_retry(fn, barrier, results, index, max_retries=40):
     """Same pattern as the Challenge Revenue Writer's ConcurrencyTests —
     real threads, real SQLite locking, retry-on-locked."""
-    with connection.cursor() as cur:
-        cur.execute("PRAGMA busy_timeout = 30000;")
+    if connection.vendor == "sqlite":
+        with connection.cursor() as cur:
+            cur.execute("PRAGMA busy_timeout = 30000;")
     barrier.wait(timeout=5)
     attempt = 0
     try:
