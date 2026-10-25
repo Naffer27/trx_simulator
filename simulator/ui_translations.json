@@ -1,0 +1,3722 @@
+{
+  "Dashboard": {
+    "es": "Panel",
+    "en": "Dashboard"
+  },
+  "History": {
+    "es": "Historial",
+    "en": "History"
+  },
+  "Deposit": {
+    "es": "Depositar",
+    "en": "Deposit"
+  },
+  "Logout": {
+    "es": "Cerrar sesión",
+    "en": "Logout"
+  },
+  "Login": {
+    "es": "Iniciar sesión",
+    "en": "Login"
+  },
+  "Open Account": {
+    "es": "Abrir cuenta",
+    "en": "Open Account"
+  },
+  "Colapsar menú": {
+    "es": "Colapsar menú",
+    "en": "Collapse menu"
+  },
+  "Cuenta": {
+    "es": "Cuenta",
+    "en": "Account"
+  },
+  "Mis Cuentas": {
+    "es": "Mis cuentas",
+    "en": "My accounts"
+  },
+  "Abrir Cuenta": {
+    "es": "Abrir cuenta",
+    "en": "Open account"
+  },
+  "Cartera": {
+    "es": "Cartera",
+    "en": "Wallet"
+  },
+  "Depositar": {
+    "es": "Depositar",
+    "en": "Deposit"
+  },
+  "Historial depósitos": {
+    "es": "Historial de depósitos",
+    "en": "Deposit history"
+  },
+  "Retirar": {
+    "es": "Retirar",
+    "en": "Withdraw"
+  },
+  "Historial retiros": {
+    "es": "Historial de retiros",
+    "en": "Withdrawal history"
+  },
+  "Transferencia interna": {
+    "es": "Transferencia interna",
+    "en": "Internal transfer"
+  },
+  "Mercados": {
+    "es": "Mercados",
+    "en": "Markets"
+  },
+  "Panel de Trading": {
+    "es": "Panel de operaciones",
+    "en": "Trading terminal"
+  },
+  "Análisis": {
+    "es": "Análisis",
+    "en": "Analysis"
+  },
+  "Calendario": {
+    "es": "Calendario",
+    "en": "Calendar"
+  },
+  "Asociados": {
+    "es": "Asociados",
+    "en": "Partners"
+  },
+  "Clientes": {
+    "es": "Clientes",
+    "en": "Clients"
+  },
+  "Programa": {
+    "es": "Programa",
+    "en": "Program"
+  },
+  "Bonos": {
+    "es": "Bonos",
+    "en": "Bonuses"
+  },
+  "New": {
+    "es": "Nuevo",
+    "en": "New"
+  },
+  "Pronto": {
+    "es": "Pronto",
+    "en": "Coming soon"
+  },
+  "Archivos": {
+    "es": "Archivos",
+    "en": "Files"
+  },
+  "Expertos (EAs)": {
+    "es": "Asesores expertos (EAs)",
+    "en": "Expert advisors (EAs)"
+  },
+  "Mi Perfil": {
+    "es": "Mi perfil",
+    "en": "My profile"
+  },
+  "Verificación KYC": {
+    "es": "Verificación KYC",
+    "en": "KYC verification"
+  },
+  "Revisión": {
+    "es": "Revisión",
+    "en": "Review"
+  },
+  "Cambiar Contraseña": {
+    "es": "Cambiar contraseña",
+    "en": "Change password"
+  },
+  "Autenticación 2FA": {
+    "es": "Autenticación 2FA",
+    "en": "2FA authentication"
+  },
+  "Soporte": {
+    "es": "Soporte",
+    "en": "Support"
+  },
+  "Ops": {
+    "es": "Operaciones",
+    "en": "Operations"
+  },
+  "Trader": {
+    "es": "Operador",
+    "en": "Trader"
+  },
+  "Cerrar sesión": {
+    "es": "Cerrar sesión",
+    "en": "Log out"
+  },
+  "Abrir menú": {
+    "es": "Abrir menú",
+    "en": "Open menu"
+  },
+  "Cambiar tema": {
+    "es": "Cambiar tema",
+    "en": "Change theme"
+  },
+  "Cambiar a modo claro": {
+    "es": "Cambiar a modo claro",
+    "en": "Switch to light mode"
+  },
+  "Notificaciones": {
+    "es": "Notificaciones",
+    "en": "Notifications"
+  },
+  "Configuración": {
+    "es": "Configuración",
+    "en": "Settings"
+  },
+  "Chat de soporte": {
+    "es": "Chat de soporte",
+    "en": "Support chat"
+  },
+  "Money Broker Support": {
+    "es": "Soporte de Money Broker",
+    "en": "Money Broker Support"
+  },
+  "Abrir centro de soporte completo": {
+    "es": "Abrir centro de soporte completo",
+    "en": "Open full support center"
+  },
+  "Cerrar chat": {
+    "es": "Cerrar chat",
+    "en": "Close chat"
+  },
+  "Cargando…": {
+    "es": "Cargando…",
+    "en": "Loading…"
+  },
+  "Login — Money Broker": {
+    "es": "Iniciar sesión — Money Broker",
+    "en": "Login — Money Broker"
+  },
+  "Welcome back": {
+    "es": "Bienvenido de nuevo",
+    "en": "Welcome back"
+  },
+  "Sign in to your trading account": {
+    "es": "Accede a tu cuenta de operaciones",
+    "en": "Sign in to your trading account"
+  },
+  "Username": {
+    "es": "Usuario",
+    "en": "Username"
+  },
+  "your username": {
+    "es": "tu usuario",
+    "en": "your username"
+  },
+  "Password": {
+    "es": "Contraseña",
+    "en": "Password"
+  },
+  "Sign In →": {
+    "es": "Iniciar sesión →",
+    "en": "Sign In →"
+  },
+  "Don't have an account?": {
+    "es": "¿No tienes una cuenta?",
+    "en": "Don't have an account?"
+  },
+  "Forgot password?": {
+    "es": "¿Olvidaste tu contraseña?",
+    "en": "Forgot password?"
+  },
+  "← Volver": {
+    "es": "← Volver",
+    "en": "← Back"
+  },
+  "Open Account — Money Broker": {
+    "es": "Abrir cuenta — Money Broker",
+    "en": "Open Account — Money Broker"
+  },
+  "Create your trading account in minutes": {
+    "es": "Crea tu cuenta de operaciones en minutos",
+    "en": "Create your trading account in minutes"
+  },
+  "Personal Info": {
+    "es": "Datos personales",
+    "en": "Personal Info"
+  },
+  "choose a username": {
+    "es": "elige un usuario",
+    "en": "choose a username"
+  },
+  "Email Address": {
+    "es": "Correo electrónico",
+    "en": "Email Address"
+  },
+  "Security": {
+    "es": "Seguridad",
+    "en": "Security"
+  },
+  "min. 8 characters": {
+    "es": "mín. 8 caracteres",
+    "en": "min. 8 characters"
+  },
+  "Confirm Password": {
+    "es": "Confirmar contraseña",
+    "en": "Confirm Password"
+  },
+  "repeat password": {
+    "es": "repite la contraseña",
+    "en": "repeat password"
+  },
+  "Create Account →": {
+    "es": "Crear cuenta →",
+    "en": "Create Account →"
+  },
+  "Already have an account?": {
+    "es": "¿Ya tienes una cuenta?",
+    "en": "Already have an account?"
+  },
+  "Sign In": {
+    "es": "Iniciar sesión",
+    "en": "Sign In"
+  },
+  "Dashboard — Money Broker": {
+    "es": "Panel — Money Broker",
+    "en": "Dashboard — Money Broker"
+  },
+  "Cuenta activa:": {
+    "es": "Cuenta activa:",
+    "en": "Active account:"
+  },
+  "Tradear →": {
+    "es": "Operar →",
+    "en": "Trade →"
+  },
+  "Welcome back,": {
+    "es": "Bienvenido de nuevo,",
+    "en": "Welcome back,"
+  },
+  "Here’s your account activity and performance overview.": {
+    "es": "Este es el resumen de la actividad y el rendimiento de tu cuenta.",
+    "en": "Here’s your account activity and performance overview."
+  },
+  "Balance": {
+    "es": "Saldo",
+    "en": "Balance"
+  },
+  "Equity": {
+    "es": "Patrimonio",
+    "en": "Equity"
+  },
+  "posición": {
+    "es": "posición",
+    "en": "position"
+  },
+  "abiert": {
+    "es": "abiert",
+    "en": "open"
+  },
+  "P&L Hoy": {
+    "es": "Ganancias/pérdidas de hoy",
+    "en": "Today's P&L"
+  },
+  "Ganancias/pérdidas realizadas hoy": {
+    "es": "Ganancias/pérdidas realizadas hoy",
+    "en": "Today's realized profit/loss"
+  },
+  "Margen Usado": {
+    "es": "Margen utilizado",
+    "en": "Used margin"
+  },
+  "Apalancamiento 1:": {
+    "es": "Apalancamiento 1:",
+    "en": "Leverage 1:"
+  },
+  "Challenge Progress": {
+    "es": "Progreso del desafío",
+    "en": "Challenge Progress"
+  },
+  "Trading Activity": {
+    "es": "Actividad de operaciones",
+    "en": "Trading Activity"
+  },
+  "Profit Target": {
+    "es": "Objetivo de beneficio",
+    "en": "Profit Target"
+  },
+  "Daily Drawdown": {
+    "es": "Pérdida máxima diaria",
+    "en": "Daily Drawdown"
+  },
+  "Max Drawdown": {
+    "es": "Pérdida máxima acumulada",
+    "en": "Max Drawdown"
+  },
+  "Total Trades": {
+    "es": "Total de operaciones",
+    "en": "Total Trades"
+  },
+  "Open Positions": {
+    "es": "Posiciones abiertas",
+    "en": "Open Positions"
+  },
+  "Win Rate (": {
+    "es": "Porcentaje de aciertos (",
+    "en": "Win Rate ("
+  },
+  "Challenge Goal": {
+    "es": "Objetivo del desafío",
+    "en": "Challenge Goal"
+  },
+  "Account Goal": {
+    "es": "Objetivo de la cuenta",
+    "en": "Account Goal"
+  },
+  "Progress": {
+    "es": "Progreso",
+    "en": "Progress"
+  },
+  "Target": {
+    "es": "Objetivo",
+    "en": "Target"
+  },
+  "No active goal for this account.": {
+    "es": "Esta cuenta no tiene un objetivo activo.",
+    "en": "No active goal for this account."
+  },
+  "Challenge/Funded accounts show their profit target here.": {
+    "es": "Las cuentas de desafío y financiadas muestran aquí su objetivo de beneficio.",
+    "en": "Challenge/Funded accounts show their profit target here."
+  },
+  "Performance Overview": {
+    "es": "Resumen de rendimiento",
+    "en": "Performance Overview"
+  },
+  "Equity ·": {
+    "es": "Patrimonio ·",
+    "en": "Equity ·"
+  },
+  "No data yet for this period.": {
+    "es": "Todavía no hay datos para este período.",
+    "en": "No data yet for this period."
+  },
+  "Total Deposited ·": {
+    "es": "Total depositado ·",
+    "en": "Total Deposited ·"
+  },
+  "Total Withdrawn ·": {
+    "es": "Total retirado ·",
+    "en": "Total Withdrawn ·"
+  },
+  "Available Funds": {
+    "es": "Fondos disponibles",
+    "en": "Available Funds"
+  },
+  "Performance ·": {
+    "es": "Rendimiento ·",
+    "en": "Performance ·"
+  },
+  "Winning trades": {
+    "es": "Operaciones ganadoras",
+    "en": "Winning trades"
+  },
+  "Losing trades": {
+    "es": "Operaciones perdedoras",
+    "en": "Losing trades"
+  },
+  "Average win": {
+    "es": "Ganancia media",
+    "en": "Average win"
+  },
+  "Average loss": {
+    "es": "Pérdida media",
+    "en": "Average loss"
+  },
+  "No closed trades yet for this period.": {
+    "es": "Todavía no hay operaciones cerradas en este período.",
+    "en": "No closed trades yet for this period."
+  },
+  "Top Instruments ·": {
+    "es": "Instrumentos principales ·",
+    "en": "Top Instruments ·"
+  },
+  "trade": {
+    "es": "operación",
+    "en": "trade"
+  },
+  "No instruments traded yet for this period.": {
+    "es": "Todavía no hay instrumentos negociados en este período.",
+    "en": "No instruments traded yet for this period."
+  },
+  "Depositar Fondos": {
+    "es": "Depositar fondos",
+    "en": "Deposit funds"
+  },
+  "Ir al Terminal": {
+    "es": "Ir al terminal",
+    "en": "Open terminal"
+  },
+  "Ver Historial": {
+    "es": "Ver historial",
+    "en": "View history"
+  },
+  "Completa tu cuenta": {
+    "es": "Completa tu cuenta",
+    "en": "Complete your account"
+  },
+  "paso": {
+    "es": "paso",
+    "en": "step"
+  },
+  "pendiente": {
+    "es": "pendiente",
+    "en": "pending"
+  },
+  "Completa los siguientes pasos para habilitar los retiros.": {
+    "es": "Completa los siguientes pasos para habilitar los retiros.",
+    "en": "Complete the following steps to enable withdrawals."
+  },
+  "Email verificado": {
+    "es": "Correo verificado",
+    "en": "Email verified"
+  },
+  "Verificar email →": {
+    "es": "Verificar correo →",
+    "en": "Verify email →"
+  },
+  "Términos y condiciones aceptados": {
+    "es": "Términos y condiciones aceptados",
+    "en": "Terms and conditions accepted"
+  },
+  "Aceptar términos →": {
+    "es": "Aceptar términos →",
+    "en": "Accept terms →"
+  },
+  "KYC aprobado": {
+    "es": "KYC aprobado",
+    "en": "KYC approved"
+  },
+  "KYC en revisión — aguarda aprobación": {
+    "es": "KYC en revisión — aguarda aprobación",
+    "en": "KYC under review — awaiting approval"
+  },
+  "KYC rechazado — vuelve a enviar →": {
+    "es": "KYC rechazado — vuelve a enviar →",
+    "en": "KYC rejected — resubmit →"
+  },
+  "Completar verificación KYC →": {
+    "es": "Completar verificación KYC →",
+    "en": "Complete KYC verification →"
+  },
+  "Autenticación 2FA activada": {
+    "es": "Autenticación 2FA activada",
+    "en": "2FA authentication enabled"
+  },
+  "Activar 2FA →": {
+    "es": "Activar 2FA →",
+    "en": "Enable 2FA →"
+  },
+  "Estado de Cuenta": {
+    "es": "Estado de cuenta",
+    "en": "Account status"
+  },
+  "Tipo de cuenta": {
+    "es": "Tipo de cuenta",
+    "en": "Account type"
+  },
+  "Fase": {
+    "es": "Fase",
+    "en": "Phase"
+  },
+  "Apalancamiento": {
+    "es": "Apalancamiento",
+    "en": "Leverage"
+  },
+  "Trades realizados": {
+    "es": "Operaciones realizadas",
+    "en": "Trades placed"
+  },
+  "Posiciones abiertas": {
+    "es": "Posiciones abiertas",
+    "en": "Open positions"
+  },
+  "Drawdown diario": {
+    "es": "Pérdida máxima diaria",
+    "en": "Daily drawdown"
+  },
+  "Límite: 5%": {
+    "es": "Límite: 5%",
+    "en": "Limit: 5%"
+  },
+  "Últimos Movimientos": {
+    "es": "Últimos movimientos",
+    "en": "Recent transactions"
+  },
+  "Ver todo →": {
+    "es": "Ver todo →",
+    "en": "View all →"
+  },
+  "Tipo": {
+    "es": "Tipo",
+    "en": "Type"
+  },
+  "Descripción": {
+    "es": "Descripción",
+    "en": "Description"
+  },
+  "Monto": {
+    "es": "Monto",
+    "en": "Amount"
+  },
+  "Fecha": {
+    "es": "Fecha",
+    "en": "Date"
+  },
+  "P&L": {
+    "es": "Gan./pérd.",
+    "en": "P&L"
+  },
+  "Comis.": {
+    "es": "Comis.",
+    "en": "Comm."
+  },
+  "Dep.": {
+    "es": "Dep.",
+    "en": "Dep."
+  },
+  "Ret.": {
+    "es": "Ret.",
+    "en": "Wdr."
+  },
+  "Sin movimientos todavía.": {
+    "es": "Sin movimientos todavía.",
+    "en": "No transactions yet."
+  },
+  "Haz tu primer depósito →": {
+    "es": "Haz tu primer depósito →",
+    "en": "Make your first deposit →"
+  },
+  "Últimas Operaciones": {
+    "es": "Últimas operaciones",
+    "en": "Recent trades"
+  },
+  "Ver historial completo →": {
+    "es": "Ver historial completo →",
+    "en": "View full history →"
+  },
+  "Símbolo": {
+    "es": "Símbolo",
+    "en": "Symbol"
+  },
+  "Dirección": {
+    "es": "Dirección",
+    "en": "Direction"
+  },
+  "Lotes": {
+    "es": "Lotes",
+    "en": "Lots"
+  },
+  "Entrada": {
+    "es": "Entrada",
+    "en": "Entry"
+  },
+  "Salida": {
+    "es": "Salida",
+    "en": "Exit"
+  },
+  "Cerrado": {
+    "es": "Cerrado",
+    "en": "Closed"
+  },
+  "▲ BUY": {
+    "es": "▲ COMPRA",
+    "en": "▲ BUY"
+  },
+  "▼ SELL": {
+    "es": "▼ VENTA",
+    "en": "▼ SELL"
+  },
+  "open": {
+    "es": "abierta",
+    "en": "open"
+  },
+  "Ecosistema broker": {
+    "es": "Ecosistema del broker",
+    "en": "Broker ecosystem"
+  },
+  "evento": {
+    "es": "evento",
+    "en": "event"
+  },
+  "próximo": {
+    "es": "próximo",
+    "en": "upcoming"
+  },
+  "Sin eventos próximos": {
+    "es": "Sin eventos próximos",
+    "en": "No upcoming events"
+  },
+  "click": {
+    "es": "clic",
+    "en": "click"
+  },
+  "registro": {
+    "es": "registro",
+    "en": "registration"
+  },
+  "Comisión: $": {
+    "es": "Comisión: $",
+    "en": "Commission: $"
+  },
+  "Activa tu programa IB": {
+    "es": "Activa tu programa IB",
+    "en": "Activate your IB program"
+  },
+  "bono": {
+    "es": "bono",
+    "en": "bonus"
+  },
+  "activo": {
+    "es": "activo",
+    "en": "active"
+  },
+  "Sin bonos activos": {
+    "es": "Sin bonos activos",
+    "en": "No active bonuses"
+  },
+  "archivo": {
+    "es": "archivo",
+    "en": "file"
+  },
+  "reciente": {
+    "es": "reciente",
+    "en": "recent"
+  },
+  "Sin archivos publicados": {
+    "es": "Sin archivos publicados",
+    "en": "No published files"
+  },
+  "disponible": {
+    "es": "disponible",
+    "en": "available"
+  },
+  "Sin EAs publicados": {
+    "es": "Sin EAs publicados",
+    "en": "No published EAs"
+  },
+  "Mis Cuentas — Money Broker": {
+    "es": "Mis cuentas — Money Broker",
+    "en": "My accounts — Money Broker"
+  },
+  "Tu email aún no está verificado.": {
+    "es": "Tu correo aún no está verificado.",
+    "en": "Your email is not verified yet."
+  },
+  "Verifica tu correo para activar depósitos, retiros, cuentas reales y challenges.": {
+    "es": "Verifica tu correo para activar depósitos, retiros, cuentas reales y desafíos.",
+    "en": "Verify your email to enable deposits, withdrawals, live accounts and challenges."
+  },
+  "Reenviar email de verificación": {
+    "es": "Reenviar correo de verificación",
+    "en": "Resend verification email"
+  },
+  "Wallet Balance": {
+    "es": "Saldo de la cartera",
+    "en": "Wallet balance"
+  },
+  "Pendiente: $": {
+    "es": "Pendiente: $",
+    "en": "Pending: $"
+  },
+  "Historial": {
+    "es": "Historial",
+    "en": "History"
+  },
+  "Abrir Nueva Cuenta": {
+    "es": "Abrir nueva cuenta",
+    "en": "Open new account"
+  },
+  "Creada": {
+    "es": "Creada",
+    "en": "Created"
+  },
+  "Tradear": {
+    "es": "Operar",
+    "en": "Trade"
+  },
+  "Fund": {
+    "es": "Añadir fondos",
+    "en": "Fund"
+  },
+  "Withdraw": {
+    "es": "Retirar",
+    "en": "Withdraw"
+  },
+  "Aún no tienes cuentas de trading.": {
+    "es": "Aún no tienes cuentas de operaciones.",
+    "en": "You do not have any trading accounts yet."
+  },
+  "Abre tu primera cuenta para empezar.": {
+    "es": "Abre tu primera cuenta para empezar.",
+    "en": "Open your first account to get started."
+  },
+  "Abrir Primera Cuenta": {
+    "es": "Abrir primera cuenta",
+    "en": "Open first account"
+  },
+  "Transferir al Account": {
+    "es": "Transferir a la cuenta",
+    "en": "Transfer to account"
+  },
+  "Wallet disponible:": {
+    "es": "Disponible en la cartera:",
+    "en": "Available in wallet:"
+  },
+  "Monto (USD)": {
+    "es": "Monto (USD)",
+    "en": "Amount (USD)"
+  },
+  "Transferir": {
+    "es": "Transferir",
+    "en": "Transfer"
+  },
+  "Retirar al Wallet": {
+    "es": "Retirar a la cartera",
+    "en": "Withdraw to wallet"
+  },
+  "Cierra todas las posiciones antes de retirar.": {
+    "es": "Cierra todas las posiciones antes de retirar.",
+    "en": "Close all positions before withdrawing."
+  },
+  "Deposit — Money Broker": {
+    "es": "Depositar — Money Broker",
+    "en": "Deposit — Money Broker"
+  },
+  "Deposit Funds": {
+    "es": "Depositar fondos",
+    "en": "Deposit Funds"
+  },
+  "Depósito instantáneo con criptomonedas · Sin comisiones · Desde $20": {
+    "es": "Depósito instantáneo con criptomonedas · Sin comisiones · Desde $20",
+    "en": "Instant cryptocurrency deposit · No fees · From $20"
+  },
+  "Monto en USD": {
+    "es": "Monto en USD",
+    "en": "Amount in USD"
+  },
+  "Criptomoneda": {
+    "es": "Criptomoneda",
+    "en": "Cryptocurrency"
+  },
+  "CONTINUAR AL PAGO": {
+    "es": "CONTINUAR AL PAGO",
+    "en": "CONTINUE TO PAYMENT"
+  },
+  "Serás redirigido a NowPayments para completar el pago de forma segura.": {
+    "es": "Serás redirigido a NowPayments para completar el pago de forma segura.",
+    "en": "You will be redirected to NOWPayments to complete your payment securely."
+  },
+  "Confirmación en ~15 minutos · Balance acreditado automáticamente.": {
+    "es": "Confirmación en ~15 minutos · Saldo acreditado automáticamente.",
+    "en": "Confirmation in ~15 minutes · Balance credited automatically."
+  },
+  "Ver historial de depósitos →": {
+    "es": "Ver historial de depósitos →",
+    "en": "View deposit history →"
+  },
+  "Pago en progreso — Money Broker": {
+    "es": "Pago en progreso — Money Broker",
+    "en": "Payment in progress — Money Broker"
+  },
+  "Depósito": {
+    "es": "Depósito",
+    "en": "Deposit"
+  },
+  "Challenge activado": {
+    "es": "Desafío activado",
+    "en": "Challenge activated"
+  },
+  "Depósito acreditado": {
+    "es": "Depósito acreditado",
+    "en": "Deposit credited"
+  },
+  "Esperando confirmación del pago": {
+    "es": "Esperando confirmación del pago",
+    "en": "Awaiting payment confirmation"
+  },
+  "Esperando pago": {
+    "es": "Esperando pago",
+    "en": "Awaiting payment"
+  },
+  "Confirmando en blockchain": {
+    "es": "Confirmando en blockchain",
+    "en": "Confirming on the blockchain"
+  },
+  "Tu cuenta Phase 1 está lista. ¡Comienza a operar!": {
+    "es": "Tu cuenta de fase 1 está lista. ¡Comienza a operar!",
+    "en": "Your Phase 1 account is ready. Start trading!"
+  },
+  "añadidos a tu wallet.": {
+    "es": "añadidos a tu cartera.",
+    "en": "added to your wallet."
+  },
+  "Tu challenge se activará automáticamente cuando confirmemos el pago.": {
+    "es": "Tu desafío se activará automáticamente cuando confirmemos el pago.",
+    "en": "Your challenge will activate automatically when we confirm the payment."
+  },
+  "Envía exactamente el monto indicado a la dirección de abajo.": {
+    "es": "Envía exactamente el monto indicado a la dirección de abajo.",
+    "en": "Send the exact amount shown to the address below."
+  },
+  "Pago recibido — tu challenge se activará en breve.": {
+    "es": "Pago recibido — tu desafío se activará en breve.",
+    "en": "Payment received — your challenge will activate shortly."
+  },
+  "Pago recibido — esperando confirmaciones en blockchain.": {
+    "es": "Pago recibido — esperando confirmaciones en blockchain.",
+    "en": "Payment received — awaiting blockchain confirmations."
+  },
+  "Resumen del depósito · #": {
+    "es": "Resumen del depósito · #",
+    "en": "Deposit summary · #"
+  },
+  "Monto a depositar": {
+    "es": "Monto a depositar",
+    "en": "Deposit amount"
+  },
+  "Monto exacto a enviar": {
+    "es": "Monto exacto a enviar",
+    "en": "Exact amount to send"
+  },
+  "Dirección de pago (": {
+    "es": "Dirección de pago (",
+    "en": "Payment address ("
+  },
+  "Copiar": {
+    "es": "Copiar",
+    "en": "Copy"
+  },
+  "Estado": {
+    "es": "Estado",
+    "en": "Status"
+  },
+  "Expira en": {
+    "es": "Expira en",
+    "en": "Expires in"
+  },
+  "Abrir página de pago externo": {
+    "es": "Abrir página de pago externo",
+    "en": "Open external payment page"
+  },
+  "Envía únicamente": {
+    "es": "Envía únicamente",
+    "en": "Send only"
+  },
+  "a esta dirección.": {
+    "es": "a esta dirección.",
+    "en": "to this address."
+  },
+  "Tu challenge se activará automáticamente al confirmar el pago.": {
+    "es": "Tu desafío se activará automáticamente al confirmar el pago.",
+    "en": "Your challenge will activate automatically once the payment is confirmed."
+  },
+  "El balance se acredita automáticamente en tu wallet al confirmar.": {
+    "es": "El saldo se acredita automáticamente en tu cartera al confirmar.",
+    "en": "The balance is credited automatically to your wallet upon confirmation."
+  },
+  "Confirmación ~15 min · No cierres esta página.": {
+    "es": "Confirmación ~15 min · No cierres esta página.",
+    "en": "Confirmation ~15 min · Keep this page open."
+  },
+  "Ir a mi cuenta Challenge": {
+    "es": "Ir a mi cuenta de desafío",
+    "en": "Open my challenge account"
+  },
+  "Ir al Panel de Trading": {
+    "es": "Ir al panel de operaciones",
+    "en": "Open trading terminal"
+  },
+  "Ver Mis Cuentas": {
+    "es": "Ver mis cuentas",
+    "en": "View my accounts"
+  },
+  "Ver Challenges": {
+    "es": "Ver desafíos",
+    "en": "View challenges"
+  },
+  "Nuevo depósito": {
+    "es": "Nuevo depósito",
+    "en": "New deposit"
+  },
+  "Deposit History — Money Broker": {
+    "es": "Historial de depósitos — Money Broker",
+    "en": "Deposit History — Money Broker"
+  },
+  "Historial de Depósitos": {
+    "es": "Historial de depósitos",
+    "en": "Deposit history"
+  },
+  "+ NUEVO DEPÓSITO": {
+    "es": "+ NUEVO DEPÓSITO",
+    "en": "+ NEW DEPOSIT"
+  },
+  "Cripto": {
+    "es": "Cripto",
+    "en": "Crypto"
+  },
+  "Payment ID": {
+    "es": "ID del pago",
+    "en": "Payment ID"
+  },
+  "Confirmado": {
+    "es": "Confirmado",
+    "en": "Confirmed"
+  },
+  "Completado": {
+    "es": "Completado",
+    "en": "Completed"
+  },
+  "Ver pago →": {
+    "es": "Ver pago →",
+    "en": "View payment →"
+  },
+  "Aún no tienes depósitos registrados.": {
+    "es": "Aún no tienes depósitos registrados.",
+    "en": "You do not have any deposits yet."
+  },
+  "Hacer primer depósito": {
+    "es": "Hacer primer depósito",
+    "en": "Make first deposit"
+  },
+  "Withdraw — Money Broker": {
+    "es": "Retirar — Money Broker",
+    "en": "Withdraw — Money Broker"
+  },
+  "Withdraw Funds": {
+    "es": "Retirar fondos",
+    "en": "Withdraw Funds"
+  },
+  "Retiro a tu wallet crypto personal · Revisión manual en 24-48h": {
+    "es": "Retiro a tu cartera de criptomonedas · Revisión manual en 24-48h",
+    "en": "Withdrawal to your personal crypto wallet · Manual review in 24–48h"
+  },
+  "Balance disponible:": {
+    "es": "Saldo disponible:",
+    "en": "Available balance:"
+  },
+  "  Información de retiros": {
+    "es": "Información de retiros",
+    "en": "Withdrawal information"
+  },
+  "Retirado hoy": {
+    "es": "Retirado hoy",
+    "en": "Withdrawn today"
+  },
+  "Los retiros pueden estar sujetos a revisión manual por seguridad.": {
+    "es": "Los retiros pueden estar sujetos a revisión manual por seguridad.",
+    "en": "Withdrawals may be subject to manual security review."
+  },
+  "Requisitos pendientes para retirar": {
+    "es": "Requisitos pendientes para retirar",
+    "en": "Requirements to complete before withdrawing"
+  },
+  "Email no verificado —": {
+    "es": "Correo no verificado —",
+    "en": "Email not verified —"
+  },
+  "Reenviar verificación →": {
+    "es": "Reenviar verificación →",
+    "en": "Resend verification →"
+  },
+  "Términos no aceptados —": {
+    "es": "Términos no aceptados —",
+    "en": "Terms not accepted —"
+  },
+  "Aceptar ahora →": {
+    "es": "Aceptar ahora →",
+    "en": "Accept now →"
+  },
+  "Verificación KYC requerida — en revisión, aguarda aprobación": {
+    "es": "Verificación KYC requerida — en revisión, aguarda aprobación",
+    "en": "KYC verification required — under review, awaiting approval"
+  },
+  "Verificación KYC requerida — KYC rechazado,": {
+    "es": "Verificación KYC requerida — KYC rechazado,",
+    "en": "KYC verification required — KYC rejected,"
+  },
+  "vuelve a enviar →": {
+    "es": "vuelve a enviar →",
+    "en": "resubmit →"
+  },
+  "Verificación KYC requerida —": {
+    "es": "Verificación KYC requerida —",
+    "en": "KYC verification required —"
+  },
+  "completar verificación →": {
+    "es": "completar verificación →",
+    "en": "complete verification →"
+  },
+  "2FA no activado —": {
+    "es": "2FA no activado —",
+    "en": "2FA not enabled —"
+  },
+  "Activar ahora →": {
+    "es": "Activar ahora →",
+    "en": "Enable now →"
+  },
+  "No tienes ninguna wallet verificada todavía. Debes registrar y verificar una dirección de retiro antes de poder solicitar un retiro —": {
+    "es": "Todavía no tienes una cartera verificada. Debes registrar y verificar una dirección antes de solicitar un retiro —",
+    "en": "You do not have a verified wallet yet. Register and verify a withdrawal address before requesting a withdrawal —"
+  },
+  "registrar wallet →": {
+    "es": "registrar cartera →",
+    "en": "register wallet →"
+  },
+  "Retirar todo el balance disponible ($": {
+    "es": "Retirar todo el saldo disponible ($",
+    "en": "Withdraw all available balance ($"
+  },
+  "Wallet destino verificada": {
+    "es": "Cartera de destino verificada",
+    "en": "Verified destination wallet"
+  },
+  "Solo puedes retirar a una wallet previamente verificada.": {
+    "es": "Solo puedes retirar a una cartera previamente verificada.",
+    "en": "You can only withdraw to a previously verified wallet."
+  },
+  "Gestionar wallets →": {
+    "es": "Gestionar carteras →",
+    "en": "Manage wallets →"
+  },
+  "⚠ Verifica tu dirección antes de continuar.": {
+    "es": "⚠ Verifica tu dirección antes de continuar.",
+    "en": "⚠ Check your address before continuing."
+  },
+  "Los retiros crypto son": {
+    "es": "Los retiros de criptomonedas son",
+    "en": "Crypto withdrawals are"
+  },
+  "irreversibles": {
+    "es": "irreversibles",
+    "en": "irreversible"
+  },
+  ". Una dirección incorrecta significa pérdida permanente de fondos. El equipo NO puede recuperar envíos a direcciones equivocadas.": {
+    "es": ". Una dirección incorrecta significa pérdida permanente de fondos. El equipo NO puede recuperar envíos a direcciones equivocadas.",
+    "en": ". An incorrect address means permanent loss of funds. The team CANNOT recover transfers sent to the wrong address."
+  },
+  "Código de autenticación (2FA)": {
+    "es": "Código de autenticación (2FA)",
+    "en": "Authentication code (2FA)"
+  },
+  "Ingresa el código de 6 dígitos de tu app de autenticación.": {
+    "es": "Ingresa el código de 6 dígitos de tu app de autenticación.",
+    "en": "Enter the 6-digit code from your authenticator app."
+  },
+  "Completa los requisitos antes de retirar": {
+    "es": "Completa los requisitos antes de retirar",
+    "en": "Complete the requirements before withdrawing"
+  },
+  "SOLICITAR RETIRO": {
+    "es": "SOLICITAR RETIRO",
+    "en": "REQUEST WITHDRAWAL"
+  },
+  "Recibirás un código de verificación por email antes de confirmar el retiro.": {
+    "es": "Recibirás un código por correo antes de confirmar el retiro.",
+    "en": "You will receive a verification code by email before confirming the withdrawal."
+  },
+  "Tiempo de procesamiento: retiros hasta $1,000 se procesan automáticamente · Retiros mayores requieren doble aprobación.": {
+    "es": "Tiempo de procesamiento: retiros hasta $1,000 se procesan automáticamente · Retiros mayores requieren doble aprobación.",
+    "en": "Processing time: withdrawals up to $1,000 are processed automatically · Larger withdrawals require two approvals."
+  },
+  "Ver historial de retiros →": {
+    "es": "Ver historial de retiros →",
+    "en": "View withdrawal history →"
+  },
+  "Withdrawal History — Money Broker": {
+    "es": "Historial de retiros — Money Broker",
+    "en": "Withdrawal History — Money Broker"
+  },
+  "Historial de Retiros": {
+    "es": "Historial de retiros",
+    "en": "Withdrawal history"
+  },
+  "+ NUEVO RETIRO": {
+    "es": "+ NUEVO RETIRO",
+    "en": "+ NEW WITHDRAWAL"
+  },
+  "· Pendiente: $": {
+    "es": "· Pendiente: $",
+    "en": "· Pending: $"
+  },
+  "Status": {
+    "es": "Estado",
+    "en": "Status"
+  },
+  "Estimado": {
+    "es": "Estimado",
+    "en": "Estimated"
+  },
+  "Pendiente": {
+    "es": "Pendiente",
+    "en": "Pending"
+  },
+  "Aprobado": {
+    "es": "Aprobado",
+    "en": "Approved"
+  },
+  "En proceso": {
+    "es": "En proceso",
+    "en": "Processing"
+  },
+  "Rechazado": {
+    "es": "Rechazado",
+    "en": "Rejected"
+  },
+  "Fallido": {
+    "es": "Fallido",
+    "en": "Failed"
+  },
+  "No tienes solicitudes de retiro aún.": {
+    "es": "No tienes solicitudes de retiro aún.",
+    "en": "You do not have any withdrawal requests yet."
+  },
+  "Crear primer retiro": {
+    "es": "Crear primer retiro",
+    "en": "Create first withdrawal"
+  },
+  "Pendiente — en revisión": {
+    "es": "Pendiente — en revisión",
+    "en": "Pending — under review"
+  },
+  "En proceso — enviando": {
+    "es": "En proceso — enviando",
+    "en": "Processing — sending"
+  },
+  "Completado — crypto enviado": {
+    "es": "Completado — criptomonedas enviadas",
+    "en": "Completed — crypto sent"
+  },
+  "Rechazado — fondos devueltos": {
+    "es": "Rechazado — fondos devueltos",
+    "en": "Rejected — funds returned"
+  },
+  "Mis wallets — Money Broker": {
+    "es": "Mis carteras — Money Broker",
+    "en": "My wallets — Money Broker"
+  },
+  "Wallets de retiro": {
+    "es": "Carteras de retiro",
+    "en": "Withdrawal wallets"
+  },
+  "Mis wallets de retiro": {
+    "es": "Mis carteras de retiro",
+    "en": "My withdrawal wallets"
+  },
+  "Disponible desde": {
+    "es": "Disponible desde",
+    "en": "Available from"
+  },
+  "No tienes wallets registradas todavía.": {
+    "es": "Todavía no tienes carteras registradas.",
+    "en": "You do not have any registered wallets yet."
+  },
+  "REGISTRAR NUEVA WALLET": {
+    "es": "REGISTRAR NUEVA CARTERA",
+    "en": "REGISTER NEW WALLET"
+  },
+  "Registrar wallet — Money Broker": {
+    "es": "Registrar cartera — Money Broker",
+    "en": "Register wallet — Money Broker"
+  },
+  "Registrar wallet": {
+    "es": "Registrar cartera",
+    "en": "Register wallet"
+  },
+  "Registrar wallet de retiro": {
+    "es": "Registrar cartera de retiro",
+    "en": "Register withdrawal wallet"
+  },
+  "La nueva dirección entra en cooldown de seguridad antes de poder usarse.": {
+    "es": "La nueva dirección debe cumplir un período de espera de seguridad antes de poder usarse.",
+    "en": "The new address must complete a security waiting period before it can be used."
+  },
+  "Nueva dirección": {
+    "es": "Nueva dirección",
+    "en": "New address"
+  },
+  "Código TOTP (2FA)": {
+    "es": "Código TOTP (2FA)",
+    "en": "TOTP code (2FA)"
+  },
+  "CONTINUAR": {
+    "es": "CONTINUAR",
+    "en": "CONTINUE"
+  },
+  "⚠ La wallet nueva no queda disponible de inmediato.": {
+    "es": "⚠ La cartera nueva no estará disponible de inmediato.",
+    "en": "⚠ The new wallet is not available immediately."
+  },
+  "Debe pasar el período de cooldown de seguridad antes de poder retirar hacia ella. Tu wallet anterior (si tienes una) sigue activa mientras tanto.": {
+    "es": "Debe cumplir el período de espera de seguridad antes de recibir retiros. Tu cartera anterior (si tienes una) sigue activa mientras tanto.",
+    "en": "The security waiting period must pass before withdrawals to this wallet. Your previous wallet (if any) remains active in the meantime."
+  },
+  "Ver mis wallets →": {
+    "es": "Ver mis carteras →",
+    "en": "View my wallets →"
+  },
+  "Verificación — Money Broker": {
+    "es": "Verificación — Money Broker",
+    "en": "Verification — Money Broker"
+  },
+  "Verificación": {
+    "es": "Verificación",
+    "en": "Verification"
+  },
+  "Verificar nueva wallet": {
+    "es": "Verificar nueva cartera",
+    "en": "Verify new wallet"
+  },
+  "Verificar retiro": {
+    "es": "Verificar retiro",
+    "en": "Verify withdrawal"
+  },
+  "Ingresa el código de 6 dígitos que enviamos a tu email.": {
+    "es": "Ingresa el código de 6 dígitos que enviamos a tu correo.",
+    "en": "Enter the 6-digit code sent to your email."
+  },
+  "Balance completo ($": {
+    "es": "Saldo completo ($",
+    "en": "Full balance ($"
+  },
+  "al momento de la solicitud)": {
+    "es": "al momento de la solicitud)",
+    "en": "at the time of the request)"
+  },
+  "Red": {
+    "es": "Red",
+    "en": "Network"
+  },
+  "CONFIRMAR": {
+    "es": "CONFIRMAR",
+    "en": "CONFIRM"
+  },
+  "Reenviar código": {
+    "es": "Reenviar código",
+    "en": "Resend code"
+  },
+  "Reenviar disponible en": {
+    "es": "Reenviar disponible en",
+    "en": "Resend available in"
+  },
+  "Verificación KYC — Money Broker": {
+    "es": "Verificación KYC — Money Broker",
+    "en": "KYC verification — Money Broker"
+  },
+  "Sin verificar": {
+    "es": "Sin verificar",
+    "en": "Not verified"
+  },
+  "En revisión": {
+    "es": "En revisión",
+    "en": "Under review"
+  },
+  "Verificado": {
+    "es": "Verificado",
+    "en": "Verified"
+  },
+  "Identidad Verificada": {
+    "es": "Identidad verificada",
+    "en": "Identity verified"
+  },
+  "Tu identidad ha sido verificada exitosamente.": {
+    "es": "Tu identidad ha sido verificada exitosamente.",
+    "en": "Your identity has been successfully verified."
+  },
+  "Puedes realizar retiros y abrir cuentas reales sin restricciones.": {
+    "es": "Puedes realizar retiros y abrir cuentas reales sin restricciones.",
+    "en": "You can make withdrawals and open live accounts without restrictions."
+  },
+  "Verificación en Proceso": {
+    "es": "Verificación en proceso",
+    "en": "Verification in progress"
+  },
+  "Hemos recibido tus documentos y están siendo revisados por nuestro equipo.": {
+    "es": "Hemos recibido tus documentos y están siendo revisados por nuestro equipo.",
+    "en": "We have received your documents and our team is reviewing them."
+  },
+  "El proceso normalmente tarda": {
+    "es": "El proceso normalmente tarda",
+    "en": "The process usually takes"
+  },
+  "1–2 días hábiles": {
+    "es": "1–2 días hábiles",
+    "en": "1–2 business days"
+  },
+  "Te notificaremos por email cuando esté listo.": {
+    "es": "Te notificaremos por correo cuando esté listo.",
+    "en": "We will notify you by email when it is ready."
+  },
+  "Verificación Rechazada": {
+    "es": "Verificación rechazada",
+    "en": "Verification rejected"
+  },
+  "Motivo:": {
+    "es": "Motivo:",
+    "en": "Reason:"
+  },
+  "Por favor corrige los problemas indicados y envía tus documentos nuevamente.": {
+    "es": "Por favor corrige los problemas indicados y envía tus documentos nuevamente.",
+    "en": "Please fix the issues listed and submit your documents again."
+  },
+  "Verificación de Identidad": {
+    "es": "Verificación de identidad",
+    "en": "Identity verification"
+  },
+  "Para acceder a retiros y cuentas reales, debemos verificar tu identidad.": {
+    "es": "Para acceder a retiros y cuentas reales, debemos verificar tu identidad.",
+    "en": "We must verify your identity to enable withdrawals and live accounts."
+  },
+  "Sube un documento de identidad válido y un selfie. Tus datos están protegidos y se usan solo para cumplimiento regulatorio.": {
+    "es": "Sube un documento de identidad válido y un selfie. Tus datos están protegidos y se usan solo para cumplimiento regulatorio.",
+    "en": "Upload a valid identity document and a selfie. Your data is protected and used only for regulatory compliance."
+  },
+  "Por favor corrige los errores indicados abajo.": {
+    "es": "Por favor corrige los errores indicados abajo.",
+    "en": "Please correct the errors below."
+  },
+  "Nombre legal completo": {
+    "es": "Nombre legal completo",
+    "en": "Full legal name"
+  },
+  "Ej: Juan Carlos Pérez Rodríguez": {
+    "es": "Ej: Juan Carlos Pérez Rodríguez",
+    "en": "E.g. Juan Carlos Pérez Rodríguez"
+  },
+  "País de residencia": {
+    "es": "País de residencia",
+    "en": "Country of residence"
+  },
+  "Ej: Venezuela": {
+    "es": "Ej: Venezuela",
+    "en": "E.g. Venezuela"
+  },
+  "Tipo de documento": {
+    "es": "Tipo de documento",
+    "en": "Document type"
+  },
+  "— Selecciona —": {
+    "es": "— Selecciona —",
+    "en": "— Select —"
+  },
+  "Número de documento": {
+    "es": "Número de documento",
+    "en": "Document number"
+  },
+  "(opcional)": {
+    "es": "(opcional)",
+    "en": "(optional)"
+  },
+  "Ej: V-12345678": {
+    "es": "Ej: V-12345678",
+    "en": "E.g. V-12345678"
+  },
+  "Frente del documento": {
+    "es": "Frente del documento",
+    "en": "Front of document"
+  },
+  "JPG, PNG o PDF — máx. 5 MB": {
+    "es": "JPG, PNG o PDF — máx. 5 MB",
+    "en": "JPG, PNG or PDF — max. 5 MB"
+  },
+  "Reverso del documento": {
+    "es": "Reverso del documento",
+    "en": "Back of document"
+  },
+  "Selfie sosteniendo el documento": {
+    "es": "Selfie sosteniendo el documento",
+    "en": "Selfie holding the document"
+  },
+  "Enviar verificación →": {
+    "es": "Enviar verificación →",
+    "en": "Submit verification →"
+  },
+  "Mi Perfil — Money Broker": {
+    "es": "Mi Perfil — Money Broker",
+    "en": "My profile — Money Broker"
+  },
+  "Información de Cuenta": {
+    "es": "Información de cuenta",
+    "en": "Account information"
+  },
+  "Usuario": {
+    "es": "Usuario",
+    "en": "Username"
+  },
+  "Email": {
+    "es": "Correo electrónico",
+    "en": "Email"
+  },
+  "Miembro desde": {
+    "es": "Miembro desde",
+    "en": "Member since"
+  },
+  "Nombre": {
+    "es": "Nombre",
+    "en": "First name"
+  },
+  "Cambios guardados.": {
+    "es": "Cambios guardados.",
+    "en": "Changes saved."
+  },
+  "Apellido": {
+    "es": "Apellido",
+    "en": "Last name"
+  },
+  "Guardar cambios": {
+    "es": "Guardar cambios",
+    "en": "Save changes"
+  },
+  "Estado de Seguridad": {
+    "es": "Estado de seguridad",
+    "en": "Security status"
+  },
+  "Reenviar →": {
+    "es": "Reenviar →",
+    "en": "Resend →"
+  },
+  "Activado": {
+    "es": "Activado",
+    "en": "Enabled"
+  },
+  "Desactivar →": {
+    "es": "Desactivar →",
+    "en": "Disable →"
+  },
+  "Desactivado": {
+    "es": "Desactivado",
+    "en": "Disabled"
+  },
+  "Activar →": {
+    "es": "Activar →",
+    "en": "Enable →"
+  },
+  "Verificar →": {
+    "es": "Verificar →",
+    "en": "Verify →"
+  },
+  "Configurar 2FA — Money Broker": {
+    "es": "Configurar 2FA — Money Broker",
+    "en": "Set up 2FA — Money Broker"
+  },
+  "🔐 Autenticación de dos factores": {
+    "es": "🔐 Autenticación de dos factores",
+    "en": "🔐 Two-factor authentication"
+  },
+  "Protege tu cuenta con un código TOTP.": {
+    "es": "Protege tu cuenta con un código TOTP.",
+    "en": "Protect your account with a TOTP code."
+  },
+  "✓ 2FA activo desde": {
+    "es": "✓ 2FA activo desde",
+    "en": "✓ 2FA enabled since"
+  },
+  "Para desactivar 2FA, ingresa tu código actual:": {
+    "es": "Para desactivar 2FA, ingresa tu código actual:",
+    "en": "To disable 2FA, enter your current code:"
+  },
+  "Código TOTP (6 dígitos)": {
+    "es": "Código TOTP (6 dígitos)",
+    "en": "TOTP code (6 digits)"
+  },
+  "Desactivar 2FA": {
+    "es": "Desactivar 2FA",
+    "en": "Disable 2FA"
+  },
+  "Escanea el QR con tu app (Google Authenticator, Authy, etc.) y luego ingresa el código de 6 dígitos.": {
+    "es": "Escanea el QR con tu app (Google Authenticator, Authy, etc.) y luego ingresa el código de 6 dígitos.",
+    "en": "Scan the QR code with your app (Google Authenticator, Authy, etc.), then enter the 6-digit code."
+  },
+  "O ingresa la clave manualmente:": {
+    "es": "O ingresa la clave manualmente:",
+    "en": "Or enter the key manually:"
+  },
+  "Confirma con tu código TOTP": {
+    "es": "Confirma con tu código TOTP",
+    "en": "Confirm with your TOTP code"
+  },
+  "Activar 2FA": {
+    "es": "Activar 2FA",
+    "en": "Enable 2FA"
+  },
+  "⚠ Guarda la clave manual en un lugar seguro.": {
+    "es": "⚠ Guarda la clave manual en un lugar seguro.",
+    "en": "⚠ Store the manual key in a safe place."
+  },
+  "Si pierdes acceso a tu app, contacta al administrador.": {
+    "es": "Si pierdes acceso a tu app, contacta al administrador.",
+    "en": "If you lose access to your app, contact the administrator."
+  },
+  "Verificar 2FA — Money Broker": {
+    "es": "Verificar 2FA — Money Broker",
+    "en": "Verify 2FA — Money Broker"
+  },
+  "🔐 Verificación 2FA": {
+    "es": "🔐 Verificación 2FA",
+    "en": "🔐 2FA verification"
+  },
+  "Ingresa el código de 6 dígitos de Authy, Google Authenticator u otra app compatible.": {
+    "es": "Ingresa el código de 6 dígitos de Authy, Google Authenticator u otra app compatible.",
+    "en": "Enter the 6-digit code from Authy, Google Authenticator or another compatible app."
+  },
+  "Código TOTP": {
+    "es": "Código TOTP",
+    "en": "TOTP code"
+  },
+  "Verificar": {
+    "es": "Verificar",
+    "en": "Verify"
+  },
+  "El código cambia cada 30 segundos.": {
+    "es": "El código cambia cada 30 segundos.",
+    "en": "The code changes every 30 seconds."
+  },
+  "Volver al inicio de sesión": {
+    "es": "Volver al inicio de sesión",
+    "en": "Back to sign in"
+  },
+  "Verificación de Email — TRX Simulator": {
+    "es": "Verificación de correo — TRX Simulator",
+    "en": "Email verification — TRX Simulator"
+  },
+  "Verificación de Email": {
+    "es": "Verificación de correo",
+    "en": "Email verification"
+  },
+  "✓ Email verificado": {
+    "es": "✓ Correo verificado",
+    "en": "✓ Email verified"
+  },
+  "Ir al inicio": {
+    "es": "Ir al inicio",
+    "en": "Go to home"
+  },
+  "✗ Enlace inválido": {
+    "es": "✗ Enlace inválido",
+    "en": "✗ Invalid link"
+  },
+  "Volver al inicio": {
+    "es": "Volver al inicio",
+    "en": "Back to home"
+  },
+  "Reset Password — Money Broker": {
+    "es": "Restablecer contraseña — Money Broker",
+    "en": "Reset Password — Money Broker"
+  },
+  "Reset Password": {
+    "es": "Restablecer contraseña",
+    "en": "Reset Password"
+  },
+  "Enter your email and we'll send you a reset link.": {
+    "es": "Introduce tu correo y te enviaremos un enlace para restablecer la contraseña.",
+    "en": "Enter your email and we'll send you a reset link."
+  },
+  "Email address": {
+    "es": "Correo electrónico",
+    "en": "Email address"
+  },
+  "Send Reset Link →": {
+    "es": "Enviar enlace →",
+    "en": "Send Reset Link →"
+  },
+  "← Back to Login": {
+    "es": "← Volver al inicio de sesión",
+    "en": "← Back to Login"
+  },
+  "Email Sent — Money Broker": {
+    "es": "Correo enviado — Money Broker",
+    "en": "Email Sent — Money Broker"
+  },
+  "Check Your Email": {
+    "es": "Revisa tu correo",
+    "en": "Check Your Email"
+  },
+  "If an account exists for that email address, you will receive a password reset link shortly. Please check your inbox (and spam folder).": {
+    "es": "Si existe una cuenta con ese correo, recibirás pronto un enlace para restablecer la contraseña. Revisa tu bandeja de entrada y la carpeta de correo no deseado.",
+    "en": "If an account exists for that email address, you will receive a password reset link shortly. Please check your inbox (and spam folder)."
+  },
+  "Set New Password — Money Broker": {
+    "es": "Establecer nueva contraseña — Money Broker",
+    "en": "Set New Password — Money Broker"
+  },
+  "Set New Password": {
+    "es": "Establecer nueva contraseña",
+    "en": "Set New Password"
+  },
+  "Choose a strong password for your account.": {
+    "es": "Elige una contraseña segura para tu cuenta.",
+    "en": "Choose a strong password for your account."
+  },
+  "Please correct the errors below.": {
+    "es": "Corrige los errores indicados.",
+    "en": "Please correct the errors below."
+  },
+  "New Password": {
+    "es": "Nueva contraseña",
+    "en": "New Password"
+  },
+  "Set New Password →": {
+    "es": "Establecer nueva contraseña →",
+    "en": "Set New Password →"
+  },
+  "Link Expired": {
+    "es": "Enlace caducado",
+    "en": "Link Expired"
+  },
+  "This password reset link is invalid or has already been used. Please request a new one.": {
+    "es": "Este enlace no es válido o ya se ha utilizado. Solicita uno nuevo.",
+    "en": "This password reset link is invalid or has already been used. Please request a new one."
+  },
+  "Request New Link": {
+    "es": "Solicitar nuevo enlace",
+    "en": "Request New Link"
+  },
+  "Password Updated — Money Broker": {
+    "es": "Contraseña actualizada — Money Broker",
+    "en": "Password Updated — Money Broker"
+  },
+  "Password Updated": {
+    "es": "Contraseña actualizada",
+    "en": "Password Updated"
+  },
+  "Your password has been successfully changed. You can now sign in with your new credentials.": {
+    "es": "Tu contraseña se ha cambiado correctamente. Ya puedes iniciar sesión con tus nuevas credenciales.",
+    "en": "Your password has been successfully changed. You can now sign in with your new credentials."
+  },
+  "Cambiar Contraseña — Money Broker": {
+    "es": "Cambiar Contraseña — Money Broker",
+    "en": "Change password — Money Broker"
+  },
+  "Ingresa tu contraseña actual y elige una nueva.": {
+    "es": "Ingresa tu contraseña actual y elige una nueva.",
+    "en": "Enter your current password and choose a new one."
+  },
+  "Contraseña actual": {
+    "es": "Contraseña actual",
+    "en": "Current password"
+  },
+  "Nueva contraseña": {
+    "es": "Nueva contraseña",
+    "en": "New password"
+  },
+  "Confirmar nueva contraseña": {
+    "es": "Confirmar nueva contraseña",
+    "en": "Confirm new password"
+  },
+  "Cambiar Contraseña →": {
+    "es": "Cambiar contraseña →",
+    "en": "Change password →"
+  },
+  "← Volver al dashboard": {
+    "es": "← Volver al panel",
+    "en": "← Back to dashboard"
+  },
+  "Contraseña Actualizada — Money Broker": {
+    "es": "Contraseña actualizada — Money Broker",
+    "en": "Password updated — Money Broker"
+  },
+  "Contraseña Actualizada": {
+    "es": "Contraseña actualizada",
+    "en": "Password updated"
+  },
+  "Tu contraseña fue cambiada exitosamente.": {
+    "es": "Tu contraseña fue cambiada exitosamente.",
+    "en": "Your password has been successfully changed."
+  },
+  "Usa tus nuevas credenciales la próxima vez que inicies sesión.": {
+    "es": "Usa tus nuevas credenciales la próxima vez que inicies sesión.",
+    "en": "Use your new credentials the next time you sign in."
+  },
+  "Ir al Dashboard →": {
+    "es": "Ir al panel →",
+    "en": "Go to dashboard →"
+  },
+  "Idioma": {
+    "es": "Idioma",
+    "en": "Language"
+  },
+  "Cambiar a modo oscuro": {
+    "es": "Cambiar a modo oscuro",
+    "en": "Switch to dark mode"
+  },
+  "Copiado": {
+    "es": "Copiado",
+    "en": "Copied"
+  },
+  "Expirado": {
+    "es": "Expirado",
+    "en": "Expired"
+  },
+  "Confirmando": {
+    "es": "Confirmando",
+    "en": "Confirming"
+  },
+  "Enviando": {
+    "es": "Enviando",
+    "en": "Sending"
+  },
+  "Pago parcial": {
+    "es": "Pago parcial",
+    "en": "Partially paid"
+  },
+  "Reembolsado": {
+    "es": "Reembolsado",
+    "en": "Refunded"
+  },
+  "El pago expiró. Crea un nuevo depósito.": {
+    "es": "El pago expiró. Crea un nuevo depósito.",
+    "en": "The payment expired. Create a new deposit."
+  },
+  "El pago no pudo completarse.": {
+    "es": "El pago no pudo completarse.",
+    "en": "The payment could not be completed."
+  },
+  "No se pudo cargar el chat. Intenta de nuevo.": {
+    "es": "No se pudo cargar el chat. Intenta de nuevo.",
+    "en": "Unable to load the chat. Try again."
+  },
+  "El monto excede tu balance disponible ($": {
+    "es": "El monto excede tu balance disponible ($",
+    "en": "The amount exceeds your available balance ($"
+  },
+  "Hoy": {
+    "es": "Hoy",
+    "en": "Today"
+  },
+  "Semana": {
+    "es": "Semana",
+    "en": "Week"
+  },
+  "Mes": {
+    "es": "Mes",
+    "en": "Month"
+  },
+  "Año": {
+    "es": "Año",
+    "en": "Year"
+  },
+  "Todo": {
+    "es": "Todo",
+    "en": "All time"
+  },
+  "7 días": {
+    "es": "7 días",
+    "en": "7 days"
+  },
+  "30 días": {
+    "es": "30 días",
+    "en": "30 days"
+  },
+  "90 días": {
+    "es": "90 días",
+    "en": "90 days"
+  },
+  "Pasaporte": {
+    "es": "Pasaporte",
+    "en": "Passport"
+  },
+  "Cédula / DNI": {
+    "es": "Cédula / DNI",
+    "en": "National ID"
+  },
+  "Licencia de conducir": {
+    "es": "Licencia de conducir",
+    "en": "Driving license"
+  },
+  "posición abierta": {
+    "es": "posición abierta",
+    "en": "open position"
+  },
+  "posiciones abiertas": {
+    "es": "posiciones abiertas",
+    "en": "open positions"
+  },
+  "paso pendiente": {
+    "es": "paso pendiente",
+    "en": "pending step"
+  },
+  "pasos pendientes": {
+    "es": "pasos pendientes",
+    "en": "pending steps"
+  },
+  "evento próximo": {
+    "es": "evento próximo",
+    "en": "upcoming event"
+  },
+  "eventos próximos": {
+    "es": "eventos próximos",
+    "en": "upcoming events"
+  },
+  "bono activo": {
+    "es": "bono activo",
+    "en": "active bonus"
+  },
+  "bonos activos": {
+    "es": "bonos activos",
+    "en": "active bonuses"
+  },
+  "archivo reciente": {
+    "es": "archivo reciente",
+    "en": "recent file"
+  },
+  "archivos recientes": {
+    "es": "archivos recientes",
+    "en": "recent files"
+  },
+  "EA disponible": {
+    "es": "EA disponible",
+    "en": "available EA"
+  },
+  "EAs disponibles": {
+    "es": "EAs disponibles",
+    "en": "available EAs"
+  },
+  "operación": {
+    "es": "operación",
+    "en": "trade"
+  },
+  "operaciones": {
+    "es": "operaciones",
+    "en": "trades"
+  },
+  "Pending Cooldown": {
+    "es": "En espera de seguridad",
+    "en": "Pending security waiting period"
+  },
+  "Active": {
+    "es": "Activa",
+    "en": "Active"
+  },
+  "Deactivated": {
+    "es": "Desactivada",
+    "en": "Deactivated"
+  },
+  "Rejected": {
+    "es": "Rechazada",
+    "en": "Rejected"
+  },
+  "Money Broker — Trade the World": {
+    "es": "Money Broker — Opera en los mercados del mundo",
+    "en": "Money Broker — Trade the World"
+  },
+  "Your Global Trading Partner": {
+    "es": "Tu socio global de operaciones",
+    "en": "Your Global Trading Partner"
+  },
+  "Trade the": {
+    "es": "Opera en los",
+    "en": "Trade the"
+  },
+  "World's Markets.": {
+    "es": "mercados del mundo.",
+    "en": "World's Markets."
+  },
+  "From One Account.": {
+    "es": "Desde una sola cuenta.",
+    "en": "From One Account."
+  },
+  "Access Forex, crypto, commodities and indices with tight spreads, deep liquidity, and lightning-fast execution.": {
+    "es": "Accede a divisas, criptomonedas, materias primas e índices con diferenciales ajustados, amplia liquidez y ejecución ultrarrápida.",
+    "en": "Access Forex, crypto, commodities and indices with tight spreads, deep liquidity, and lightning-fast execution."
+  },
+  "Open Account →": {
+    "es": "Abrir cuenta →",
+    "en": "Open Account →"
+  },
+  "View Account Types": {
+    "es": "Ver tipos de cuenta",
+    "en": "View Account Types"
+  },
+  "Active Traders": {
+    "es": "Operadores activos",
+    "en": "Active Traders"
+  },
+  "Instruments": {
+    "es": "Instrumentos",
+    "en": "Instruments"
+  },
+  "Monthly Volume": {
+    "es": "Volumen mensual",
+    "en": "Monthly Volume"
+  },
+  "Support": {
+    "es": "Soporte",
+    "en": "Support"
+  },
+  "SCROLL": {
+    "es": "DESPLAZAR",
+    "en": "SCROLL"
+  },
+  "Instruments Available": {
+    "es": "Instrumentos disponibles",
+    "en": "Instruments Available"
+  },
+  "Max Leverage": {
+    "es": "Apalancamiento máximo",
+    "en": "Max Leverage"
+  },
+  "Avg Execution Speed": {
+    "es": "Velocidad media de ejecución",
+    "en": "Avg Execution Speed"
+  },
+  "Spreads From (pips)": {
+    "es": "Diferenciales desde (pips)",
+    "en": "Spreads From (pips)"
+  },
+  "Min Deposit": {
+    "es": "Depósito mínimo",
+    "en": "Min Deposit"
+  },
+  "Why Us": {
+    "es": "Por qué elegirnos",
+    "en": "Why Us"
+  },
+  "Built for serious traders.": {
+    "es": "Diseñado para operadores serios.",
+    "en": "Built for serious traders."
+  },
+  "Not for gamblers.": {
+    "es": "No para apostadores.",
+    "en": "Not for gamblers."
+  },
+  "Instant Execution": {
+    "es": "Ejecución instantánea",
+    "en": "Instant Execution"
+  },
+  "Market orders filled in under 50ms. No requotes, no slippage abuse. Your entry is your entry.": {
+    "es": "Órdenes de mercado ejecutadas en menos de 50 ms. Sin recotizaciones ni abuso del deslizamiento. Tu entrada es tu entrada.",
+    "en": "Market orders filled in under 50ms. No requotes, no slippage abuse. Your entry is your entry."
+  },
+  "Secure & Regulated": {
+    "es": "Seguro y regulado",
+    "en": "Secure & Regulated"
+  },
+  "Client funds held in segregated accounts. SSL-encrypted platform, two-factor authentication, and full audit trail.": {
+    "es": "Fondos de clientes en cuentas segregadas. Plataforma con cifrado SSL, autenticación de dos factores y registro completo de auditoría.",
+    "en": "Client funds held in segregated accounts. SSL-encrypted platform, two-factor authentication, and full audit trail."
+  },
+  "Real Market Data": {
+    "es": "Datos reales de mercado",
+    "en": "Real Market Data"
+  },
+  "Live feeds from Binance and Finnhub. Forex, crypto, indices — all instruments, one platform.": {
+    "es": "Datos en vivo de Binance y Finnhub. Divisas, criptomonedas e índices: todos los instrumentos en una plataforma.",
+    "en": "Live feeds from Binance and Finnhub. Forex, crypto, indices — all instruments, one platform."
+  },
+  "Fast Withdrawals": {
+    "es": "Retiros rápidos",
+    "en": "Fast Withdrawals"
+  },
+  "Request withdrawals anytime. Processed within 24 hours via crypto — no banks, no delays, no hidden fees.": {
+    "es": "Solicita retiros en cualquier momento. Procesados en 24 horas mediante criptomonedas: sin bancos, demoras ni comisiones ocultas.",
+    "en": "Request withdrawals anytime. Processed within 24 hours via crypto — no banks, no delays, no hidden fees."
+  },
+  "Account Types": {
+    "es": "Tipos de cuenta",
+    "en": "Account Types"
+  },
+  "Choose your": {
+    "es": "Elige tu",
+    "en": "Choose your"
+  },
+  "account type.": {
+    "es": "tipo de cuenta.",
+    "en": "account type."
+  },
+  "Standard": {
+    "es": "Estándar",
+    "en": "Standard"
+  },
+  "From $10": {
+    "es": "Desde $10",
+    "en": "From $10"
+  },
+  "Spreads from 1.2 pips": {
+    "es": "Diferenciales desde 1.2 pips",
+    "en": "Spreads from 1.2 pips"
+  },
+  "No commission per trade": {
+    "es": "Sin comisión por operación",
+    "en": "No commission per trade"
+  },
+  "Leverage up to 1:200": {
+    "es": "Apalancamiento de hasta 1:200",
+    "en": "Leverage up to 1:200"
+  },
+  "All instruments": {
+    "es": "Todos los instrumentos",
+    "en": "All instruments"
+  },
+  "Instant withdrawals": {
+    "es": "Retiros instantáneos",
+    "en": "Instant withdrawals"
+  },
+  "Open Standard": {
+    "es": "Abrir Estándar",
+    "en": "Open Standard"
+  },
+  "From $200": {
+    "es": "Desde $200",
+    "en": "From $200"
+  },
+  "Spreads from 0.0 pips": {
+    "es": "Diferenciales desde 0.0 pips",
+    "en": "Spreads from 0.0 pips"
+  },
+  "$3.50 commission / lot": {
+    "es": "Comisión de $3.50 por lote",
+    "en": "$3.50 commission / lot"
+  },
+  "Leverage up to 1:500": {
+    "es": "Apalancamiento de hasta 1:500",
+    "en": "Leverage up to 1:500"
+  },
+  "Priority routing": {
+    "es": "Enrutamiento prioritario",
+    "en": "Priority routing"
+  },
+  "VPS hosting included": {
+    "es": "Alojamiento VPS incluido",
+    "en": "VPS hosting included"
+  },
+  "Open ECN": {
+    "es": "Abrir ECN",
+    "en": "Open ECN"
+  },
+  "From $5,000": {
+    "es": "Desde $5,000",
+    "en": "From $5,000"
+  },
+  "$2.00 commission / lot": {
+    "es": "Comisión de $2.00 por lote",
+    "en": "$2.00 commission / lot"
+  },
+  "All instruments + indices": {
+    "es": "Todos los instrumentos e índices",
+    "en": "All instruments + indices"
+  },
+  "Dedicated account manager": {
+    "es": "Gestor de cuenta dedicado",
+    "en": "Dedicated account manager"
+  },
+  "Custom rebate program": {
+    "es": "Programa personalizado de reembolsos",
+    "en": "Custom rebate program"
+  },
+  "Open VIP": {
+    "es": "Abrir VIP",
+    "en": "Open VIP"
+  },
+  "Feature": {
+    "es": "Característica",
+    "en": "Feature"
+  },
+  "Spreads": {
+    "es": "Diferenciales",
+    "en": "Spreads"
+  },
+  "From 1.2 pips": {
+    "es": "Desde 1.2 pips",
+    "en": "From 1.2 pips"
+  },
+  "From 0.0 pips": {
+    "es": "Desde 0.0 pips",
+    "en": "From 0.0 pips"
+  },
+  "Commission / lot": {
+    "es": "Comisión por lote",
+    "en": "Commission / lot"
+  },
+  "None": {
+    "es": "Ninguna",
+    "en": "None"
+  },
+  "Leverage": {
+    "es": "Apalancamiento",
+    "en": "Leverage"
+  },
+  "Forex Trading": {
+    "es": "Operaciones en divisas",
+    "en": "Forex Trading"
+  },
+  "Crypto Trading": {
+    "es": "Operaciones con criptomonedas",
+    "en": "Crypto Trading"
+  },
+  "Commodities & Indices": {
+    "es": "Materias primas e índices",
+    "en": "Commodities & Indices"
+  },
+  "VPS Hosting": {
+    "es": "Alojamiento VPS",
+    "en": "VPS Hosting"
+  },
+  "Account Manager": {
+    "es": "Gestor de cuenta",
+    "en": "Account Manager"
+  },
+  "Custom Rebates": {
+    "es": "Reembolsos personalizados",
+    "en": "Custom Rebates"
+  },
+  "The Platform": {
+    "es": "La plataforma",
+    "en": "The Platform"
+  },
+  "One platform.": {
+    "es": "Una plataforma.",
+    "en": "One platform."
+  },
+  "Every market.": {
+    "es": "Todos los mercados.",
+    "en": "Every market."
+  },
+  "Real-Time Charts": {
+    "es": "Gráficos en tiempo real",
+    "en": "Real-Time Charts"
+  },
+  "Professional candlestick charts with multiple timeframes, multi-chart layouts, and live bid/ask feeds.": {
+    "es": "Gráficos profesionales de velas con múltiples temporalidades, diseños de varios gráficos y precios de compra/venta en vivo.",
+    "en": "Professional candlestick charts with multiple timeframes, multi-chart layouts, and live bid/ask feeds."
+  },
+  "Advanced Orders": {
+    "es": "Órdenes avanzadas",
+    "en": "Advanced Orders"
+  },
+  "Market orders with automatic SL/TP, trailing stops, and one-click trading from the chart.": {
+    "es": "Órdenes de mercado con SL/TP automático, stops dinámicos y operaciones con un clic desde el gráfico.",
+    "en": "Market orders with automatic SL/TP, trailing stops, and one-click trading from the chart."
+  },
+  "Multi-Asset": {
+    "es": "Múltiples activos",
+    "en": "Multi-Asset"
+  },
+  "Forex majors, BTC, ETH, Gold, and indices — all in one terminal, powered by Binance and Finnhub feeds.": {
+    "es": "Principales divisas, BTC, ETH, oro e índices en un solo terminal, con datos de Binance y Finnhub.",
+    "en": "Forex majors, BTC, ETH, Gold, and indices — all in one terminal, powered by Binance and Finnhub feeds."
+  },
+  "Mobile Ready": {
+    "es": "Preparado para móviles",
+    "en": "Mobile Ready"
+  },
+  "Full PWA — install on iOS or Android. Trade from anywhere with the same desktop experience.": {
+    "es": "Aplicación web progresiva completa: instálala en iOS o Android. Opera desde cualquier lugar con la misma experiencia del escritorio.",
+    "en": "Full PWA — install on iOS or Android. Trade from anywhere with the same desktop experience."
+  },
+  "LIVE MARKET": {
+    "es": "MERCADO EN VIVO",
+    "en": "LIVE MARKET"
+  },
+  "BTCUSD · 1m · LIVE": {
+    "es": "BTCUSD · 1m · EN VIVO",
+    "en": "BTCUSD · 1m · LIVE"
+  },
+  "Affiliates": {
+    "es": "Afiliados",
+    "en": "Affiliates"
+  },
+  "Earn while others": {
+    "es": "Gana mientras otros",
+    "en": "Earn while others"
+  },
+  "trade.": {
+    "es": "operan.",
+    "en": "trade."
+  },
+  "Refer traders to Money Broker and earn a commission on every deposit they make. No cap, no expiry.": {
+    "es": "Recomienda Money Broker a otros operadores y gana una comisión por cada depósito que hagan. Sin límite ni caducidad.",
+    "en": "Refer traders to Money Broker and earn a commission on every deposit they make. No cap, no expiry."
+  },
+  "Get your link": {
+    "es": "Obtén tu enlace",
+    "en": "Get your link"
+  },
+  "Sign up and receive a unique referral link from your dashboard instantly.": {
+    "es": "Regístrate y recibe al instante un enlace de referido único desde tu panel.",
+    "en": "Sign up and receive a unique referral link from your dashboard instantly."
+  },
+  "Share everywhere": {
+    "es": "Comparte en todas partes",
+    "en": "Share everywhere"
+  },
+  "Post on social media, Discord, YouTube, or anywhere traders hang out.": {
+    "es": "Publica en redes sociales, Discord, YouTube o donde se reúnan los operadores.",
+    "en": "Post on social media, Discord, YouTube, or anywhere traders hang out."
+  },
+  "Get paid in crypto": {
+    "es": "Cobra en criptomonedas",
+    "en": "Get paid in crypto"
+  },
+  "Commissions credited monthly to your wallet. Minimum payout $20.": {
+    "es": "Comisiones acreditadas mensualmente en tu cartera. Retiro mínimo de $20.",
+    "en": "Commissions credited monthly to your wallet. Minimum payout $20."
+  },
+  "Commission on referred trader deposits": {
+    "es": "Comisión sobre los depósitos de operadores referidos",
+    "en": "Commission on referred trader deposits"
+  },
+  "Join Affiliate Program": {
+    "es": "Únete al programa de afiliados",
+    "en": "Join Affiliate Program"
+  },
+  "Deposits": {
+    "es": "Depósitos",
+    "en": "Deposits"
+  },
+  "Crypto deposits": {
+    "es": "Depósitos en criptomonedas",
+    "en": "Crypto deposits"
+  },
+  "from $10.": {
+    "es": "desde $10.",
+    "en": "from $10."
+  },
+  "No banks, no wires, no waiting. Fund your account instantly with your preferred cryptocurrency.": {
+    "es": "Sin bancos, transferencias bancarias ni esperas. Añade fondos al instante con tu criptomoneda preferida.",
+    "en": "No banks, no wires, no waiting. Fund your account instantly with your preferred cryptocurrency."
+  },
+  "from $10": {
+    "es": "desde $10",
+    "en": "from $10"
+  },
+  "Average confirmation time": {
+    "es": "Tiempo medio de confirmación",
+    "en": "Average confirmation time"
+  },
+  "Deposit fees": {
+    "es": "Comisiones de depósito",
+    "en": "Deposit fees"
+  },
+  "Minimum deposit": {
+    "es": "Depósito mínimo",
+    "en": "Minimum deposit"
+  },
+  "Withdrawal processing": {
+    "es": "Procesamiento de retiros",
+    "en": "Withdrawal processing"
+  },
+  "FAQ": {
+    "es": "Preguntas frecuentes",
+    "en": "FAQ"
+  },
+  "Common": {
+    "es": "Preguntas",
+    "en": "Common"
+  },
+  "questions.": {
+    "es": "frecuentes.",
+    "en": "questions."
+  },
+  "How do I open an account?": {
+    "es": "¿Cómo abro una cuenta?",
+    "en": "How do I open an account?"
+  },
+  "Click \"Open Account\", fill in your details, choose your account type (Standard, ECN, or VIP), and make your first deposit. The whole process takes under 5 minutes.": {
+    "es": "Pulsa «Abrir cuenta», completa tus datos, elige el tipo de cuenta (Estándar, ECN o VIP) y haz tu primer depósito. El proceso completo tarda menos de 5 minutos.",
+    "en": "Click \"Open Account\", fill in your details, choose your account type (Standard, ECN, or VIP), and make your first deposit. The whole process takes under 5 minutes."
+  },
+  "What is the difference between Standard and ECN accounts?": {
+    "es": "¿Qué diferencia hay entre las cuentas Estándar y ECN?",
+    "en": "What is the difference between Standard and ECN accounts?"
+  },
+  "Standard accounts have wider spreads (from 1.2 pips) but zero commission per trade — ideal for beginners. ECN accounts offer raw spreads from 0.0 pips with a $3.50/lot commission, best suited for high-volume and algorithmic traders.": {
+    "es": "Las cuentas Estándar tienen diferenciales más amplios (desde 1.2 pips), pero no cobran comisión por operación: ideales para principiantes. Las ECN ofrecen diferenciales desde 0.0 pips con una comisión de $3.50 por lote, adecuadas para operadores de alto volumen y estrategias algorítmicas.",
+    "en": "Standard accounts have wider spreads (from 1.2 pips) but zero commission per trade — ideal for beginners. ECN accounts offer raw spreads from 0.0 pips with a $3.50/lot commission, best suited for high-volume and algorithmic traders."
+  },
+  "When can I withdraw my funds?": {
+    "es": "¿Cuándo puedo retirar mis fondos?",
+    "en": "When can I withdraw my funds?"
+  },
+  "You can request a withdrawal at any time, as long as you have no open margin positions. Withdrawals are processed within 24 hours via the same crypto method used to deposit.": {
+    "es": "Puedes solicitar un retiro en cualquier momento, siempre que no tengas posiciones de margen abiertas. Los retiros se procesan en 24 horas por el mismo método de criptomonedas usado para depositar.",
+    "en": "You can request a withdrawal at any time, as long as you have no open margin positions. Withdrawals are processed within 24 hours via the same crypto method used to deposit."
+  },
+  "What are the margin requirements?": {
+    "es": "¿Cuáles son los requisitos de margen?",
+    "en": "What are the margin requirements?"
+  },
+  "Margin call is triggered at 80% margin level. Stop-out occurs at 50%. We recommend keeping free margin above 200% to withstand normal market volatility.": {
+    "es": "La llamada de margen se activa al 80% del nivel de margen. El cierre forzoso ocurre al 50%. Recomendamos mantener el margen libre por encima del 200% para soportar la volatilidad normal del mercado.",
+    "en": "Margin call is triggered at 80% margin level. Stop-out occurs at 50%. We recommend keeping free margin above 200% to withstand normal market volatility."
+  },
+  "Which instruments can I trade?": {
+    "es": "¿Qué instrumentos puedo operar?",
+    "en": "Which instruments can I trade?"
+  },
+  "Forex majors (EUR/USD, GBP/USD, USD/JPY, AUD/USD), cryptocurrencies (BTC, ETH), Gold (XAU/USD), and indices (NAS100) — all available in the platform with live data feeds.": {
+    "es": "Principales divisas (EUR/USD, GBP/USD, USD/JPY, AUD/USD), criptomonedas (BTC, ETH), oro (XAU/USD) e índices (NAS100), disponibles en la plataforma con datos en vivo.",
+    "en": "Forex majors (EUR/USD, GBP/USD, USD/JPY, AUD/USD), cryptocurrencies (BTC, ETH), Gold (XAU/USD), and indices (NAS100) — all available in the platform with live data feeds."
+  },
+  "Is crypto the only deposit method?": {
+    "es": "¿Las criptomonedas son el único método de depósito?",
+    "en": "Is crypto the only deposit method?"
+  },
+  "Currently yes — we accept BTC, ETH, USDT, USDC, SOL, and BNB. Crypto allows instant global payments with no bank intermediaries. Additional methods are coming soon.": {
+    "es": "Actualmente sí: aceptamos BTC, ETH, USDT, USDC, SOL y BNB. Las criptomonedas permiten pagos globales instantáneos sin intermediarios bancarios. Próximamente habrá más métodos.",
+    "en": "Currently yes — we accept BTC, ETH, USDT, USDC, SOL, and BNB. Crypto allows instant global payments with no bank intermediaries. Additional methods are coming soon."
+  },
+  "Can I use a trading bot or EA?": {
+    "es": "¿Puedo usar un robot de operaciones o un asesor experto?",
+    "en": "Can I use a trading bot or EA?"
+  },
+  "Yes, automated strategies and Expert Advisors are fully supported. We provide VPS hosting on ECN and VIP accounts to ensure low-latency execution for algorithmic strategies.": {
+    "es": "Sí, se admiten estrategias automatizadas y asesores expertos. Las cuentas ECN y VIP incluyen alojamiento VPS para ofrecer una ejecución de baja latencia.",
+    "en": "Yes, automated strategies and Expert Advisors are fully supported. We provide VPS hosting on ECN and VIP accounts to ensure low-latency execution for algorithmic strategies."
+  },
+  "Start Today": {
+    "es": "Empieza hoy",
+    "en": "Start Today"
+  },
+  "Open an account.": {
+    "es": "Abre una cuenta.",
+    "en": "Open an account."
+  },
+  "Start trading today.": {
+    "es": "Empieza a operar hoy.",
+    "en": "Start trading today."
+  },
+  "Join thousands of traders on Money Broker. Deposit from $10, no hidden fees.": {
+    "es": "Únete a miles de operadores en Money Broker. Deposita desde $10, sin comisiones ocultas.",
+    "en": "Join thousands of traders on Money Broker. Deposit from $10, no hidden fees."
+  },
+  "Open Your Account →": {
+    "es": "Abre tu cuenta →",
+    "en": "Open Your Account →"
+  },
+  "Online CFD and Forex broker offering tight spreads, deep liquidity, and multi-asset access from a single trading account.": {
+    "es": "Broker de CFD y divisas en línea con diferenciales ajustados, amplia liquidez y acceso a múltiples activos desde una sola cuenta.",
+    "en": "Online CFD and Forex broker offering tight spreads, deep liquidity, and multi-asset access from a single trading account."
+  },
+  "Platform": {
+    "es": "Plataforma",
+    "en": "Platform"
+  },
+  "Accounts": {
+    "es": "Cuentas",
+    "en": "Accounts"
+  },
+  "Company": {
+    "es": "Empresa",
+    "en": "Company"
+  },
+  "About Us": {
+    "es": "Sobre nosotros",
+    "en": "About Us"
+  },
+  "© 2025 Money Broker. All rights reserved.": {
+    "es": "© 2025 Money Broker. Todos los derechos reservados.",
+    "en": "© 2025 Money Broker. All rights reserved."
+  },
+  "Risk Disclaimer: Trading CFDs and Forex involves substantial risk and is not suitable for all investors. Leverage can work against you. Past performance is not indicative of future results. Money Broker does not provide financial advice. Please ensure you fully understand the risks involved before trading.": {
+    "es": "Aviso de riesgo: operar CFD y divisas implica un riesgo considerable y no es adecuado para todos los inversores. El apalancamiento puede actuar en tu contra. Los resultados pasados no indican resultados futuros. Money Broker no ofrece asesoramiento financiero. Asegúrate de comprender los riesgos antes de operar.",
+    "en": "Risk Disclaimer: Trading CFDs and Forex involves substantial risk and is not suitable for all investors. Leverage can work against you. Past performance is not indicative of future results. Money Broker does not provide financial advice. Please ensure you fully understand the risks involved before trading."
+  },
+  "Abrir Cuenta — Money Broker": {
+    "es": "Abrir cuenta — Money Broker",
+    "en": "Open account — Money Broker"
+  },
+  "Abre tu cuenta Money Broker": {
+    "es": "Abre tu cuenta Money Broker",
+    "en": "Open your Money Broker account"
+  },
+  "Elige entre cuentas reales con fondos de tu wallet, programas de fondeo con capital evaluado, o cuentas demo para practicar sin riesgo.": {
+    "es": "Elige entre cuentas reales con fondos de tu cartera, programas de fondeo con capital evaluado o cuentas de demostración para practicar sin riesgo.",
+    "en": "Choose a live account funded from your wallet, a funding evaluation program, or a demo account to practice without risk."
+  },
+  "Plataforma segura": {
+    "es": "Plataforma segura",
+    "en": "Secure platform"
+  },
+  "Activación inmediata": {
+    "es": "Activación inmediata",
+    "en": "Instant activation"
+  },
+  "Todos los instrumentos": {
+    "es": "Todos los instrumentos",
+    "en": "All instruments"
+  },
+  "Fondos desde tu wallet": {
+    "es": "Fondos desde tu cartera",
+    "en": "Funds from your wallet"
+  },
+  "Cuentas Reales": {
+    "es": "Cuentas reales",
+    "en": "Live accounts"
+  },
+  "Opera con fondos reales de tu wallet": {
+    "es": "Opera con fondos reales de tu cartera",
+    "en": "Trade with real funds from your wallet"
+  },
+  "Transfiere desde tu wallet interna. Depósito mínimo según el tipo de cuenta.": {
+    "es": "Transfiere desde tu cartera interna. Depósito mínimo según el tipo de cuenta.",
+    "en": "Transfer from your internal wallet. Minimum deposit depends on account type."
+  },
+  "Real": {
+    "es": "Real",
+    "en": "Live"
+  },
+  "Depósito mín.": {
+    "es": "Depósito mín.",
+    "en": "Min. deposit"
+  },
+  "Spread típico": {
+    "es": "Diferencial típico",
+    "en": "Typical spread"
+  },
+  "Comisión/lote": {
+    "es": "Comisión/lote",
+    "en": "Commission/lot"
+  },
+  "Abrir Cuenta Real": {
+    "es": "Abrir cuenta real",
+    "en": "Open live account"
+  },
+  "Programas de Fondeo": {
+    "es": "Programas de fondeo",
+    "en": "Funding programs"
+  },
+  "Demuestra tu habilidad. Accede a capital fondeado.": {
+    "es": "Demuestra tu habilidad. Accede a capital fondeado.",
+    "en": "Prove your skills. Access funded capital."
+  },
+  "Supera las fases de evaluación y opera con capital de Money Broker sin arriesgar tus fondos.": {
+    "es": "Supera las fases de evaluación y opera con capital de Money Broker sin arriesgar tus fondos.",
+    "en": "Pass the evaluation phases and trade with Money Broker capital without risking your funds."
+  },
+  "Ver todos": {
+    "es": "Ver todos",
+    "en": "View all"
+  },
+  "Capital de evaluación: $": {
+    "es": "Capital de evaluación: $",
+    "en": "Evaluation capital: $"
+  },
+  "Pago único · acceso inmediato": {
+    "es": "Pago único · acceso inmediato",
+    "en": "One-time payment · Instant access"
+  },
+  "Phase 1": {
+    "es": "Fase 1",
+    "en": "Phase 1"
+  },
+  "Profit target": {
+    "es": "Objetivo de beneficio",
+    "en": "Profit target"
+  },
+  "Daily loss": {
+    "es": "Pérdida diaria",
+    "en": "Daily loss"
+  },
+  "Drawdown": {
+    "es": "Pérdida máxima acumulada",
+    "en": "Drawdown"
+  },
+  "Min días": {
+    "es": "Min días",
+    "en": "Min. days"
+  },
+  "Phase 2": {
+    "es": "Fase 2",
+    "en": "Phase 2"
+  },
+  "profit split al fondear": {
+    "es": "de reparto de beneficios al obtener fondeo",
+    "en": "profit split once funded"
+  },
+  "Empezar Challenge": {
+    "es": "Empezar desafío",
+    "en": "Start challenge"
+  },
+  "Los programas de fondeo estarán disponibles próximamente.": {
+    "es": "Los programas de fondeo estarán disponibles próximamente.",
+    "en": "Funding programs will be available soon."
+  },
+  "Explora el catálogo completo para más opciones.": {
+    "es": "Explora el catálogo completo para más opciones.",
+    "en": "Explore the full catalog for more options."
+  },
+  "Cuentas Demo": {
+    "es": "Cuentas de demostración",
+    "en": "Demo accounts"
+  },
+  "Practica sin arriesgar capital": {
+    "es": "Practica sin arriesgar capital",
+    "en": "Practice without risking capital"
+  },
+  "Capital de práctica de $10,000. Mismos instrumentos y condiciones que la cuenta real. No se debita tu wallet.": {
+    "es": "Capital de práctica de $10,000. Mismos instrumentos y condiciones que la cuenta real. No se descuenta de tu cartera.",
+    "en": "$10,000 in practice capital. Same instruments and conditions as a live account. Your wallet is not debited."
+  },
+  "Demo": {
+    "es": "Demostración",
+    "en": "Demo"
+  },
+  "Balance inicial": {
+    "es": "Saldo inicial",
+    "en": "Initial balance"
+  },
+  "Abrir Cuenta Demo": {
+    "es": "Abrir cuenta de demostración",
+    "en": "Open demo account"
+  },
+  "No hay productos disponibles en este momento.": {
+    "es": "No hay productos disponibles en este momento.",
+    "en": "No products are available at this time."
+  },
+  "Depósito inicial (USD)": {
+    "es": "Depósito inicial (USD)",
+    "en": "Initial deposit (USD)"
+  },
+  "Confirmar — Abrir Cuenta Real": {
+    "es": "Confirmar — Abrir cuenta real",
+    "en": "Confirm — Open live account"
+  },
+  "Las cuentas Demo usan capital de práctica. Tu wallet no se verá afectado.": {
+    "es": "Las cuentas de demostración usan capital de práctica. Tu cartera no se verá afectada.",
+    "en": "Demo accounts use practice capital. Your wallet will not be affected."
+  },
+  "Confirmar — Abrir Cuenta Demo": {
+    "es": "Confirmar — Abrir cuenta de demostración",
+    "en": "Confirm — Open demo account"
+  },
+  "History — Money Broker": {
+    "es": "Historial — Money Broker",
+    "en": "History — Money Broker"
+  },
+  "Win Rate": {
+    "es": "Porcentaje de aciertos",
+    "en": "Win Rate"
+  },
+  "W / L": {
+    "es": "Ganadas / Perdidas",
+    "en": "W / L"
+  },
+  "Net P&L": {
+    "es": "Ganancia/pérdida neta",
+    "en": "Net P&L"
+  },
+  "Best Trade": {
+    "es": "Mejor operación",
+    "en": "Best Trade"
+  },
+  "Worst Trade": {
+    "es": "Peor operación",
+    "en": "Worst Trade"
+  },
+  "Phase": {
+    "es": "Fase",
+    "en": "Phase"
+  },
+  "Closed Trades": {
+    "es": "Operaciones cerradas",
+    "en": "Closed Trades"
+  },
+  "Symbol": {
+    "es": "Símbolo",
+    "en": "Symbol"
+  },
+  "Side": {
+    "es": "Dirección",
+    "en": "Side"
+  },
+  "Lots": {
+    "es": "Lotes",
+    "en": "Lots"
+  },
+  "Entry": {
+    "es": "Entrada",
+    "en": "Entry"
+  },
+  "Exit": {
+    "es": "Salida",
+    "en": "Exit"
+  },
+  "Opened": {
+    "es": "Apertura",
+    "en": "Opened"
+  },
+  "Closed": {
+    "es": "Cierre",
+    "en": "Closed"
+  },
+  "No trades yet. Open your first position from the dashboard.": {
+    "es": "Todavía no hay operaciones. Abre tu primera posición desde el panel.",
+    "en": "No trades yet. Open your first position from the dashboard."
+  },
+  "Account Ledger": {
+    "es": "Registro de la cuenta",
+    "en": "Account Ledger"
+  },
+  "(last 50 events)": {
+    "es": "(últimos 50 eventos)",
+    "en": "(last 50 events)"
+  },
+  "Date": {
+    "es": "Fecha",
+    "en": "Date"
+  },
+  "Event": {
+    "es": "Evento",
+    "en": "Event"
+  },
+  "Amount": {
+    "es": "Monto",
+    "en": "Amount"
+  },
+  "Balance After": {
+    "es": "Saldo posterior",
+    "en": "Balance After"
+  },
+  "Notes": {
+    "es": "Notas",
+    "en": "Notes"
+  },
+  "No ledger entries yet.": {
+    "es": "Todavía no hay movimientos registrados.",
+    "en": "No ledger entries yet."
+  },
+  "Soporte — Money Broker": {
+    "es": "Soporte — Money Broker",
+    "en": "Support — Money Broker"
+  },
+  "Nuevo ticket": {
+    "es": "Nuevo ticket",
+    "en": "New ticket"
+  },
+  "Tu ticket fue enviado. Nuestro equipo te responderá pronto.": {
+    "es": "Tu ticket fue enviado. Nuestro equipo te responderá pronto.",
+    "en": "Your ticket has been sent. Our team will reply soon."
+  },
+  "Categoría": {
+    "es": "Categoría",
+    "en": "Category"
+  },
+  "— Selecciona una categoría —": {
+    "es": "— Selecciona una categoría —",
+    "en": "— Select a category —"
+  },
+  "Asunto": {
+    "es": "Asunto",
+    "en": "Subject"
+  },
+  "Describe brevemente el problema": {
+    "es": "Describe brevemente el problema",
+    "en": "Briefly describe the issue"
+  },
+  "Mensaje": {
+    "es": "Mensaje",
+    "en": "Message"
+  },
+  "Explica el problema con el mayor detalle posible…": {
+    "es": "Explica el problema con el mayor detalle posible…",
+    "en": "Explain the issue in as much detail as possible…"
+  },
+  "  Enviar ticket": {
+    "es": "Enviar ticket",
+    "en": "Send ticket"
+  },
+  "Mis tickets recientes": {
+    "es": "Mis tickets recientes",
+    "en": "My recent tickets"
+  },
+  " Respuesta disponible": {
+    "es": "Respuesta disponible",
+    "en": "Reply available"
+  },
+  "No tienes tickets aún.": {
+    "es": "No tienes tickets aún.",
+    "en": "You do not have any tickets yet."
+  },
+  "Usa el formulario para abrir uno.": {
+    "es": "Usa el formulario para abrir uno.",
+    "en": "Use the form to open one."
+  },
+  "Ticket #": {
+    "es": "Ticket #",
+    "en": "Ticket #"
+  },
+  "— Soporte": {
+    "es": "— Soporte",
+    "en": "— Support"
+  },
+  "· Creado": {
+    "es": "· Creado",
+    "en": "· Created"
+  },
+  "· Actualizado": {
+    "es": "· Actualizado",
+    "en": "· Updated"
+  },
+  "Este ticket fue marcado como resuelto. Si el problema persiste, responde abajo o reábrelo.": {
+    "es": "Este ticket fue marcado como resuelto. Si el problema persiste, responde abajo o reábrelo.",
+    "en": "This ticket was marked as resolved. If the issue persists, reply below or reopen it."
+  },
+  "Este ticket está cerrado. Puedes reabrirlo si necesitas continuar la conversación.": {
+    "es": "Este ticket está cerrado. Puedes reabrirlo si necesitas continuar la conversación.",
+    "en": "This ticket is closed. You can reopen it to continue the conversation."
+  },
+  "Tu caso está siendo revisado por nuestro equipo. Puedes seguir respondiendo mientras se resuelve.": {
+    "es": "Tu caso está siendo revisado por nuestro equipo. Puedes seguir respondiendo mientras se resuelve.",
+    "en": "Our team is reviewing your case. You can keep replying while it is being resolved."
+  },
+  "Tú": {
+    "es": "Tú",
+    "en": "You"
+  },
+  "Escribe tu respuesta…": {
+    "es": "Escribe tu respuesta…",
+    "en": "Write your reply…"
+  },
+  "Enviar respuesta": {
+    "es": "Enviar respuesta",
+    "en": "Send reply"
+  },
+  "Cerrar ticket": {
+    "es": "Cerrar ticket",
+    "en": "Close ticket"
+  },
+  "Reabrir ticket": {
+    "es": "Reabrir ticket",
+    "en": "Reopen ticket"
+  },
+  "Términos y Aviso de Riesgo — TRX Simulator": {
+    "es": "Términos y Aviso de Riesgo — TRX Simulator",
+    "en": "Terms and Risk Notice — TRX Simulator"
+  },
+  "Aceptación de Términos": {
+    "es": "Aceptación de términos",
+    "en": "Accept terms"
+  },
+  "Términos y Aviso de Riesgo": {
+    "es": "Términos y aviso de riesgo",
+    "en": "Terms and risk notice"
+  },
+  "Versión términos:": {
+    "es": "Versión términos:",
+    "en": "Terms version:"
+  },
+  " |  Versión riesgo:": {
+    "es": " | Versión riesgo:",
+    "en": " | Risk version:"
+  },
+  "He leído y acepto los": {
+    "es": "He leído y acepto los",
+    "en": "I have read and accept the"
+  },
+  "Términos y Condiciones": {
+    "es": "Términos y condiciones",
+    "en": "Terms and conditions"
+  },
+  "del servicio.": {
+    "es": "del servicio.",
+    "en": "of the service."
+  },
+  "He leído y acepto la": {
+    "es": "He leído y acepto la",
+    "en": "I have read and accept the"
+  },
+  "Política de Divulgación de Riesgo": {
+    "es": "Política de divulgación de riesgo",
+    "en": "Risk disclosure policy"
+  },
+  "Política de Retiros": {
+    "es": "Política de retiros",
+    "en": "Withdrawal policy"
+  },
+  "Entiendo": {
+    "es": "Entiendo",
+    "en": "I understand"
+  },
+  "que el trading de instrumentos financieros implica un riesgo significativo de pérdida de capital y podría no ser adecuado para todos los inversores.": {
+    "es": "que el trading de instrumentos financieros implica un riesgo significativo de pérdida de capital y podría no ser adecuado para todos los inversores.",
+    "en": "that trading financial instruments involves a significant risk of loss of capital and may not be suitable for all investors."
+  },
+  "Aceptar y continuar": {
+    "es": "Aceptar y continuar",
+    "en": "Accept and continue"
+  },
+  "Archivos — Money Broker": {
+    "es": "Archivos — Money Broker",
+    "en": "Files — Money Broker"
+  },
+  "Documentos y archivos oficiales de Money Broker. Gestiona desde el panel de administración.": {
+    "es": "Documentos y archivos oficiales de Money Broker. Gestiona desde el panel de administración.",
+    "en": "Official Money Broker documents and files. Managed from the administration panel."
+  },
+  "No hay archivos disponibles en este momento.": {
+    "es": "No hay archivos disponibles en este momento.",
+    "en": "No files are available at this time."
+  },
+  "Los documentos serán publicados por el equipo de Money Broker.": {
+    "es": "Los documentos serán publicados por el equipo de Money Broker.",
+    "en": "Documents will be published by the Money Broker team."
+  },
+  "Expertos (EAs) — Money Broker": {
+    "es": "Asesores expertos (EAs) — Money Broker",
+    "en": "Expert advisors (EAs) — Money Broker"
+  },
+  "Robots de trading y asesores expertos (EAs) disponibles para Money Broker.": {
+    "es": "Robots de operaciones y asesores expertos (EAs) disponibles para Money Broker.",
+    "en": "Trading robots and expert advisors (EAs) available for Money Broker."
+  },
+  "Gestionado desde el panel de administración.": {
+    "es": "Gestionado desde el panel de administración.",
+    "en": "Managed from the administration panel."
+  },
+  "Próximamente": {
+    "es": "Próximamente",
+    "en": "Coming soon"
+  },
+  "Descargar": {
+    "es": "Descargar",
+    "en": "Download"
+  },
+  "Disponible pronto": {
+    "es": "Disponible pronto",
+    "en": "Available soon"
+  },
+  "No hay expertos disponibles en este momento.": {
+    "es": "No hay expertos disponibles en este momento.",
+    "en": "No expert advisors are available at this time."
+  },
+  "Los EAs serán publicados próximamente por el equipo de Money Broker.": {
+    "es": "Los EAs serán publicados próximamente por el equipo de Money Broker.",
+    "en": "EAs will be published soon by the Money Broker team."
+  },
+  "Bonos y Promociones — Money Broker": {
+    "es": "Bonos y promociones — Money Broker",
+    "en": "Bonuses and promotions — Money Broker"
+  },
+  "Bonos y Promociones": {
+    "es": "Bonos y promociones",
+    "en": "Bonuses and promotions"
+  },
+  "Promociones y bonos activos disponibles para tu cuenta. Gestionados desde el panel de administración.": {
+    "es": "Promociones y bonos activos disponibles para tu cuenta. Gestionados desde el panel de administración.",
+    "en": "Active promotions and bonuses available for your account. Managed from the administration panel."
+  },
+  "Bonos activos": {
+    "es": "Bonos activos",
+    "en": "Active bonuses"
+  },
+  "en crédito": {
+    "es": "en crédito",
+    "en": "in credit"
+  },
+  "sobre depósito": {
+    "es": "sobre depósito",
+    "en": "on deposit"
+  },
+  "cashback": {
+    "es": "reembolso",
+    "en": "cashback"
+  },
+  "Vence:": {
+    "es": "Vence:",
+    "en": "Expires:"
+  },
+  "Sin fecha de vencimiento": {
+    "es": "Sin fecha de vencimiento",
+    "en": "No expiration date"
+  },
+  "ACTIVO": {
+    "es": "ACTIVO",
+    "en": "ACTIVE"
+  },
+  "Consultar →": {
+    "es": "Consultar →",
+    "en": "Enquire →"
+  },
+  "No hay bonos activos en este momento.": {
+    "es": "No hay bonos activos en este momento.",
+    "en": "No active bonuses at this time."
+  },
+  "Próximamente nuevas promociones.": {
+    "es": "Próximamente nuevas promociones.",
+    "en": "New promotions coming soon."
+  },
+  "Promociones anteriores": {
+    "es": "Promociones anteriores",
+    "en": "Previous promotions"
+  },
+  "INACTIVO": {
+    "es": "INACTIVO",
+    "en": "INACTIVE"
+  },
+  "Calendario Económico — Money Broker": {
+    "es": "Calendario económico — Money Broker",
+    "en": "Economic calendar — Money Broker"
+  },
+  "Calendario Económico": {
+    "es": "Calendario económico",
+    "en": "Economic calendar"
+  },
+  "Eventos macroeconómicos relevantes para los mercados. Administra desde el panel de administración.": {
+    "es": "Eventos macroeconómicos relevantes para los mercados. Administra desde el panel de administración.",
+    "en": "Macroeconomic events relevant to the markets. Managed from the administration panel."
+  },
+  "Próximos eventos": {
+    "es": "Próximos eventos",
+    "en": "Upcoming events"
+  },
+  "Fecha / Hora": {
+    "es": "Fecha / Hora",
+    "en": "Date / Time"
+  },
+  "Evento": {
+    "es": "Evento",
+    "en": "Event"
+  },
+  "Divisa": {
+    "es": "Divisa",
+    "en": "Currency"
+  },
+  "Impacto": {
+    "es": "Impacto",
+    "en": "Impact"
+  },
+  "Anterior": {
+    "es": "Anterior",
+    "en": "Previous"
+  },
+  "Pronóstico": {
+    "es": "Pronóstico",
+    "en": "Forecast"
+  },
+  "Actual": {
+    "es": "Actual",
+    "en": "Actual"
+  },
+  "No hay eventos económicos próximos programados.": {
+    "es": "No hay eventos económicos próximos programados.",
+    "en": "No upcoming economic events scheduled."
+  },
+  "Eventos recientes": {
+    "es": "Eventos recientes",
+    "en": "Recent events"
+  },
+  "Programas de Fondeo — Money Broker": {
+    "es": "Programas de fondeo — Money Broker",
+    "en": "Funding programs — Money Broker"
+  },
+  "Prop Firm Challenge": {
+    "es": "Desafío de fondeo",
+    "en": "Prop Firm Challenge"
+  },
+  "Programas de": {
+    "es": "Programas de",
+    "en": "Funding"
+  },
+  "Fondeo": {
+    "es": "Fondeo",
+    "en": "programs"
+  },
+  "Demuestra tu habilidad. Supera el challenge. Accede a capital fondeado sin arriesgar tus fondos propios.": {
+    "es": "Demuestra tu habilidad. Supera el desafío. Accede a capital fondeado sin arriesgar tus fondos propios.",
+    "en": "Prove your skills. Pass the challenge. Access funded capital without risking your own funds."
+  },
+  "  Cómo funciona": {
+    "es": "Cómo funciona",
+    "en": "How it works"
+  },
+  "Elige tu challenge": {
+    "es": "Elige tu desafío",
+    "en": "Choose your challenge"
+  },
+  "Opera respetando las reglas": {
+    "es": "Opera respetando las reglas",
+    "en": "Trade within the rules"
+  },
+  "Pasa Phase 1 y Phase 2": {
+    "es": "Supera las fases 1 y 2",
+    "en": "Pass Phase 1 and Phase 2"
+  },
+  "Recibe una cuenta funded": {
+    "es": "Recibe una cuenta fondeada",
+    "en": "Receive a funded account"
+  },
+  "Solicita tu payout": {
+    "es": "Solicita tu retiro",
+    "en": "Request your payout"
+  },
+  "Max drawdown": {
+    "es": "Pérdida máxima acumulada",
+    "en": "Max drawdown"
+  },
+  "días": {
+    "es": "días",
+    "en": "days"
+  },
+  "Duración máx": {
+    "es": "Duración máx",
+    "en": "Max. duration"
+  },
+  "Cuenta Fondeada": {
+    "es": "Cuenta fondeada",
+    "en": "Funded account"
+  },
+  "profit split": {
+    "es": "reparto de beneficios",
+    "en": "profit split"
+  },
+  "Al alcanzar la cuenta funded": {
+    "es": "Al alcanzar la cuenta fondeada",
+    "en": "Once you reach the funded account"
+  },
+  "Lot size máx": {
+    "es": "Tamaño máximo de lote",
+    "en": "Max. lot size"
+  },
+  "Posiciones abiertas máx": {
+    "es": "Posiciones abiertas máx",
+    "en": "Max. open positions"
+  },
+  "No hay programas de fondeo disponibles en este momento.": {
+    "es": "No hay programas de fondeo disponibles en este momento.",
+    "en": "No funding programs are available at this time."
+  },
+  "Vuelve pronto.": {
+    "es": "Vuelve pronto.",
+    "en": "Check back soon."
+  },
+  "Checkout —": {
+    "es": "Pago —",
+    "en": "Checkout —"
+  },
+  "Checkout Challenge": {
+    "es": "Pago del desafío",
+    "en": "Challenge checkout"
+  },
+  "Pago seguro": {
+    "es": "Pago seguro",
+    "en": "Secure payment"
+  },
+  "Confirma tu programa de fondeo y completa el pago de forma segura.": {
+    "es": "Confirma tu programa de fondeo y completa el pago de forma segura.",
+    "en": "Confirm your funding program and complete the payment securely."
+  },
+  "Precio del challenge": {
+    "es": "Precio del desafío",
+    "en": "Challenge price"
+  },
+  "Profit split": {
+    "es": "Reparto de beneficios",
+    "en": "Profit split"
+  },
+  "Posiciones máx": {
+    "es": "Posiciones máx",
+    "en": "Max. positions"
+  },
+  "Pagar con balance interno": {
+    "es": "Pagar con saldo interno",
+    "en": "Pay with internal balance"
+  },
+  "Tu balance disponible": {
+    "es": "Tu saldo disponible",
+    "en": "Your available balance"
+  },
+  "Tu balance es suficiente para activar este challenge inmediatamente.": {
+    "es": "Tu saldo es suficiente para activar este desafío inmediatamente.",
+    "en": "Your balance is sufficient to activate this challenge immediately."
+  },
+  "Pagar con mi balance": {
+    "es": "Pagar con mi saldo",
+    "en": "Pay with my balance"
+  },
+  "Te faltan $": {
+    "es": "Te faltan $",
+    "en": "You need $"
+  },
+  "para activar con tu balance.": {
+    "es": "para activar con tu saldo.",
+    "en": "more to activate with your balance."
+  },
+  "Depositar para empezar": {
+    "es": "Depositar para empezar",
+    "en": "Deposit to get started"
+  },
+  "o paga con crypto": {
+    "es": "o paga con criptomonedas",
+    "en": "or pay with crypto"
+  },
+  "  Pago seguro": {
+    "es": "Pago seguro",
+    "en": "Secure payment"
+  },
+  "Total a pagar": {
+    "es": "Total a pagar",
+    "en": "Total to pay"
+  },
+  "Elige tu criptomoneda": {
+    "es": "Elige tu criptomoneda",
+    "en": "Choose your cryptocurrency"
+  },
+  "Pagar Challenge": {
+    "es": "Pagar desafío",
+    "en": "Pay for challenge"
+  },
+  "El challenge se activará automáticamente cuando el pago sea confirmado.": {
+    "es": "El desafío se activará automáticamente cuando se confirme el pago.",
+    "en": "The challenge will activate automatically once the payment is confirmed."
+  },
+  "  Después del pago": {
+    "es": "Después del pago",
+    "en": "After payment"
+  },
+  "Pago": {
+    "es": "Pago",
+    "en": "Payment"
+  },
+  "enviado": {
+    "es": "enviado",
+    "en": "sent"
+  },
+  "Confirmación": {
+    "es": "Confirmación",
+    "en": "Confirmation"
+  },
+  "de pago": {
+    "es": "de pago",
+    "en": "of payment"
+  },
+  "Phase 1 activa": {
+    "es": "Fase 1 activa",
+    "en": "Phase 1 active"
+  },
+  "Ir al panel": {
+    "es": "Ir al panel",
+    "en": "Open the"
+  },
+  "de trading": {
+    "es": "de operaciones",
+    "en": "trading terminal"
+  },
+  "Programa de Asociados — Money Broker": {
+    "es": "Programa de asociados — Money Broker",
+    "en": "Partner program — Money Broker"
+  },
+  "Programa de Asociados": {
+    "es": "Programa de asociados",
+    "en": "Partner program"
+  },
+  "Programa de Asociados (IB)": {
+    "es": "Programa de asociados (IB)",
+    "en": "Partner program (IB)"
+  },
+  "Comparte tu enlace de referido y gana comisiones por cada trader que se registre y opere.": {
+    "es": "Comparte tu enlace de referido y gana comisiones por cada operador que se registre y opere.",
+    "en": "Share your referral link and earn commissions for every trader who registers and trades."
+  },
+  "Comisiones acumuladas son reportadas y gestionadas por el equipo de Money Broker.": {
+    "es": "Comisiones acumuladas son reportadas y gestionadas por el equipo de Money Broker.",
+    "en": "Accrued commissions are reported and managed by the Money Broker team."
+  },
+  "Programa IB temporalmente congelado.": {
+    "es": "Programa IB temporalmente congelado.",
+    "en": "IB program temporarily frozen."
+  },
+  "Tu historial y comisiones anteriores siguen disponibles abajo. No se generan nuevas comisiones mientras el programa esté congelado. Contacta a soporte para más información.": {
+    "es": "Tu historial y comisiones anteriores siguen disponibles abajo. No se generan nuevas comisiones mientras el programa esté congelado. Contacta a soporte para más información.",
+    "en": "Your history and previous commissions remain available below. No new commissions accrue while the program is frozen. Contact support for more information."
+  },
+  "Associates": {
+    "es": "Asociados",
+    "en": "Associates"
+  },
+  "Performance": {
+    "es": "Rendimiento",
+    "en": "Performance"
+  },
+  "Acquisition and commission overview for traders attributed to your referral link.": {
+    "es": "Resumen de captación y comisiones de operadores atribuidos a tu enlace de referido.",
+    "en": "Acquisition and commission overview for traders attributed to your referral link."
+  },
+  "Registered": {
+    "es": "Registrados",
+    "en": "Registered"
+  },
+  "Demo Accounts": {
+    "es": "Cuentas de demostración",
+    "en": "Demo Accounts"
+  },
+  "Live Accounts": {
+    "es": "Cuentas reales",
+    "en": "Live Accounts"
+  },
+  "First-Time Deposit": {
+    "es": "Primer depósito",
+    "en": "First-Time Deposit"
+  },
+  "Acquisition Funnel": {
+    "es": "Embudo de captación",
+    "en": "Acquisition Funnel"
+  },
+  "All-time": {
+    "es": "Histórico",
+    "en": "All-time"
+  },
+  "Monthly Goal": {
+    "es": "Objetivo mensual",
+    "en": "Monthly Goal"
+  },
+  "No goal configured.": {
+    "es": "No hay un objetivo configurado.",
+    "en": "No goal configured."
+  },
+  "Goal setup is not available yet for IB accounts.": {
+    "es": "La configuración de objetivos aún no está disponible para cuentas IB.",
+    "en": "Goal setup is not available yet for IB accounts."
+  },
+  "Live": {
+    "es": "Real",
+    "en": "Live"
+  },
+  "Deposits ·": {
+    "es": "Depósitos ·",
+    "en": "Deposits ·"
+  },
+  "Withdrawals ·": {
+    "es": "Retiros ·",
+    "en": "Withdrawals ·"
+  },
+  "Traded Volume ·": {
+    "es": "Volumen operado ·",
+    "en": "Traded Volume ·"
+  },
+  "Lifetime:": {
+    "es": "Histórico:",
+    "en": "Lifetime:"
+  },
+  "lots": {
+    "es": "lotes",
+    "en": "lots"
+  },
+  "Conversion Rates": {
+    "es": "Tasas de conversión",
+    "en": "Conversion Rates"
+  },
+  "Registration": {
+    "es": "Registro",
+    "en": "Registration"
+  },
+  "Live Account": {
+    "es": "Cuenta real",
+    "en": "Live Account"
+  },
+  "Top Channels": {
+    "es": "Canales principales",
+    "en": "Top Channels"
+  },
+  "No channel attribution data available.": {
+    "es": "No hay datos de atribución de canales.",
+    "en": "No channel attribution data available."
+  },
+  "Commission Overview": {
+    "es": "Resumen de comisiones",
+    "en": "Commission Overview"
+  },
+  "Generated": {
+    "es": "Generadas",
+    "en": "Generated"
+  },
+  "Pending": {
+    "es": "Pendientes",
+    "en": "Pending"
+  },
+  "On Hold": {
+    "es": "Retenidas",
+    "en": "On Hold"
+  },
+  "Subset of Pending": {
+    "es": "Incluidas en pendientes",
+    "en": "Subset of Pending"
+  },
+  "Credited": {
+    "es": "Acreditadas",
+    "en": "Credited"
+  },
+  "Reversed/adjusted: $": {
+    "es": "Revertidas/ajustadas: $",
+    "en": "Reversed/adjusted: $"
+  },
+  "Current Commission Rule (PER_LOT):": {
+    "es": "Regla de comisión actual (PER_LOT):",
+    "en": "Current Commission Rule (PER_LOT):"
+  },
+  "/lot": {
+    "es": "/lote",
+    "en": "/lot"
+  },
+  "Not configured": {
+    "es": "Sin configurar",
+    "en": "Not configured"
+  },
+  "Tu enlace de referido": {
+    "es": "Tu enlace de referido",
+    "en": "Your referral link"
+  },
+  "Código de referido:": {
+    "es": "Código de referido:",
+    "en": "Referral code:"
+  },
+  "Actividad / Historial de comisiones": {
+    "es": "Actividad / Historial de comisiones",
+    "en": "Activity / Commission history"
+  },
+  "Tarifa aplicada": {
+    "es": "Tarifa aplicada",
+    "en": "Applied rate"
+  },
+  "Comisión": {
+    "es": "Comisión",
+    "en": "Commission"
+  },
+  "« Anterior": {
+    "es": "« Anterior",
+    "en": "« Previous"
+  },
+  "Página": {
+    "es": "Página",
+    "en": "Page"
+  },
+  "de": {
+    "es": "de",
+    "en": "of"
+  },
+  "Siguiente »": {
+    "es": "Siguiente »",
+    "en": "Next »"
+  },
+  "Aún no hay comisiones generadas.": {
+    "es": "Aún no hay comisiones generadas.",
+    "en": "No commissions generated yet."
+  },
+  "Cómo funciona": {
+    "es": "Cómo funciona",
+    "en": "How it works"
+  },
+  "Comparte tu enlace en redes sociales, grupos o directamente con traders.": {
+    "es": "Comparte tu enlace en redes sociales, grupos o directamente con traders.",
+    "en": "Share your link on social media, in groups or directly with traders."
+  },
+  "Cada vez que alguien se registra usando tu enlace,": {
+    "es": "Cada vez que alguien se registra usando tu enlace,",
+    "en": "Whenever someone registers using your link,"
+  },
+  "se registra un nuevo asociado": {
+    "es": "se registra un nuevo asociado",
+    "en": "a new partner is registered"
+  },
+  "bajo tu cuenta IB.": {
+    "es": "bajo tu cuenta IB.",
+    "en": "under your IB account."
+  },
+  "Al realizar depósitos y operar,": {
+    "es": "Al realizar depósitos y operar,",
+    "en": "When they deposit and trade,"
+  },
+  "generas comisiones": {
+    "es": "generas comisiones",
+    "en": "you earn commissions"
+  },
+  "según tu contrato vigente, que el equipo revisa y acredita periódicamente.": {
+    "es": "según tu contrato vigente, que el equipo revisa y acredita periódicamente.",
+    "en": "under your current contract, which the team reviews and credits periodically."
+  },
+  "Contacta con soporte para retirar tus comisiones o solicitar información de tu programa IB.": {
+    "es": "Contacta con soporte para retirar tus comisiones o solicitar información de tu programa IB.",
+    "en": "Contact support to withdraw your commissions or request information about your IB program."
+  },
+  "Programa de Afiliados — Money Broker": {
+    "es": "Programa de afiliados — Money Broker",
+    "en": "Affiliate program — Money Broker"
+  },
+  "Los detalles de tu programa siguen disponibles abajo en modo de solo lectura.": {
+    "es": "Los detalles de tu programa siguen disponibles abajo en modo de solo lectura.",
+    "en": "Your program details remain available below in read-only mode."
+  },
+  "Tu": {
+    "es": "Tu",
+    "en": "Your"
+  },
+  "Programa IB": {
+    "es": "Programa IB",
+    "en": "IB program"
+  },
+  "Tu contrato económico vigente con Money Broker.": {
+    "es": "Tu contrato económico vigente con Money Broker.",
+    "en": "Your current compensation agreement with Money Broker."
+  },
+  "Estado del Programa": {
+    "es": "Estado del programa",
+    "en": "Program status"
+  },
+  "Congelado": {
+    "es": "Congelado",
+    "en": "Frozen"
+  },
+  "Activo": {
+    "es": "Activo",
+    "en": "Active"
+  },
+  "Modalidades Activas": {
+    "es": "Modalidades activas",
+    "en": "Active components"
+  },
+  "configurada": {
+    "es": "configurada",
+    "en": "configured"
+  },
+  "totales": {
+    "es": "totales",
+    "en": "total"
+  },
+  "Ninguna configurada": {
+    "es": "Ninguna configurada",
+    "en": "None configured"
+  },
+  "Compensation Components": {
+    "es": "Componentes de remuneración",
+    "en": "Compensation Components"
+  },
+  "Origen": {
+    "es": "Origen",
+    "en": "Source"
+  },
+  "IB-Specific": {
+    "es": "Específica del IB",
+    "en": "IB-Specific"
+  },
+  "Global": {
+    "es": "Global",
+    "en": "Global"
+  },
+  "Vigente desde": {
+    "es": "Vigente desde",
+    "en": "Effective from"
+  },
+  "Vigente hasta": {
+    "es": "Vigente hasta",
+    "en": "Effective until"
+  },
+  "No compensation rule is currently configured for your account.": {
+    "es": "No hay ninguna regla de remuneración configurada para tu cuenta.",
+    "en": "No compensation rule is currently configured for your account."
+  },
+  "Contact support if you believe this is unexpected.": {
+    "es": "Contacta con soporte si crees que es un error.",
+    "en": "Contact support if you believe this is unexpected."
+  },
+  "Special Conditions": {
+    "es": "Condiciones especiales",
+    "en": "Special Conditions"
+  },
+  "Each compensation component above may be a": {
+    "es": "Cada componente de remuneración anterior puede ser una tarifa",
+    "en": "Each compensation component above may be a"
+  },
+  "rate (applies to all IBs by default) or an": {
+    "es": "global (aplicada a todos los IB de forma predeterminada) o una",
+    "en": "rate (applies to all IBs by default) or an"
+  },
+  "override configured for your account specifically — the badge on each card shows which one is currently effective for you.": {
+    "es": "excepción configurada para tu cuenta: la etiqueta de cada tarjeta indica cuál se aplica actualmente.",
+    "en": "override configured for your account specifically — the badge on each card shows which one is currently effective for you."
+  },
+  "Rates are time-bound (": {
+    "es": "Las tarifas tienen un período de vigencia (",
+    "en": "Rates are time-bound ("
+  },
+  "effective from": {
+    "es": "vigente desde",
+    "en": "effective from"
+  },
+  ", and optionally an": {
+    "es": "y, opcionalmente, una fecha",
+    "en": ", and optionally an"
+  },
+  "effective until": {
+    "es": "vigente hasta",
+    "en": "effective until"
+  },
+  "date) — only the rate the system currently considers effective is shown above, never a past or future one.": {
+    "es": "): arriba se muestra solo la tarifa que el sistema considera vigente, nunca una pasada o futura.",
+    "en": "date) — only the rate the system currently considers effective is shown above, never a past or future one."
+  },
+  "Programa Sub-IB": {
+    "es": "Programa Sub-IB",
+    "en": "Sub-IB program"
+  },
+  "Programa multinivel aún no configurado.": {
+    "es": "Programa multinivel aún no configurado.",
+    "en": "Multilevel program not configured yet."
+  },
+  "Esta funcionalidad estará disponible cuando el programa Sub-IB correspondiente sea habilitado por Money Broker.": {
+    "es": "Esta funcionalidad estará disponible cuando el programa Sub-IB correspondiente sea habilitado por Money Broker.",
+    "en": "This feature will be available when Money Broker enables the corresponding Sub-IB program."
+  },
+  "Clientes — Asociados — Money Broker": {
+    "es": "Clientes — Asociados — Money Broker",
+    "en": "Clients — Partners — Money Broker"
+  },
+  "Los datos de tus clientes siguen disponibles abajo en modo de solo lectura.": {
+    "es": "Los datos de tus clientes siguen disponibles abajo en modo de solo lectura.",
+    "en": "Your client data remains available below in read-only mode."
+  },
+  "My": {
+    "es": "Mis",
+    "en": "My"
+  },
+  "Clients": {
+    "es": "clientes",
+    "en": "Clients"
+  },
+  "Traders attributed to your referral link.": {
+    "es": "Operadores atribuidos a tu enlace de referido.",
+    "en": "Traders attributed to your referral link."
+  },
+  "client": {
+    "es": "cliente",
+    "en": "client"
+  },
+  "Search by username…": {
+    "es": "Buscar por usuario…",
+    "en": "Search by username…"
+  },
+  "Apply": {
+    "es": "Aplicar",
+    "en": "Apply"
+  },
+  "Joined": {
+    "es": "Registro",
+    "en": "Joined"
+  },
+  "Client": {
+    "es": "Cliente",
+    "en": "Client"
+  },
+  "Traded Volume": {
+    "es": "Volumen operado",
+    "en": "Traded Volume"
+  },
+  "Commission": {
+    "es": "Comisión",
+    "en": "Commission"
+  },
+  "Yes": {
+    "es": "Sí",
+    "en": "Yes"
+  },
+  "Page": {
+    "es": "Página",
+    "en": "Page"
+  },
+  "of": {
+    "es": "de",
+    "en": "of"
+  },
+  "total": {
+    "es": "total",
+    "en": "total"
+  },
+  "« Previous": {
+    "es": "« Anterior",
+    "en": "« Previous"
+  },
+  "Next »": {
+    "es": "Siguiente »",
+    "en": "Next »"
+  },
+  "No clients match your current filters.": {
+    "es": "Ningún cliente coincide con los filtros actuales.",
+    "en": "No clients match your current filters."
+  },
+  "No clients yet — share your referral link from the Dashboard to start.": {
+    "es": "Todavía no tienes clientes: comparte tu enlace de referido desde el panel para empezar.",
+    "en": "No clients yet — share your referral link from the Dashboard to start."
+  },
+  "Usuario o contraseña inválidos": {
+    "es": "Usuario o contraseña inválidos",
+    "en": "Invalid username or password"
+  },
+  "Las contraseñas no coinciden.": {
+    "es": "Las contraseñas no coinciden.",
+    "en": "The passwords do not match."
+  },
+  "Ya existe un usuario con este email.": {
+    "es": "Ya existe un usuario con este correo.",
+    "en": "An account with this email already exists."
+  },
+  "El código debe ser numérico.": {
+    "es": "El código debe ser numérico.",
+    "en": "The code must be numeric."
+  },
+  "El monto debe ser mayor a cero.": {
+    "es": "El monto debe ser mayor a cero.",
+    "en": "The amount must be greater than zero."
+  },
+  "This field is required.": {
+    "es": "Este campo es obligatorio.",
+    "en": "This field is required."
+  },
+  "Enter a valid email address.": {
+    "es": "Introduce un correo electrónico válido.",
+    "en": "Enter a valid email address."
+  },
+  "The two password fields didn’t match.": {
+    "es": "Las contraseñas no coinciden.",
+    "en": "The two password fields didn’t match."
+  },
+  "This password is too common.": {
+    "es": "Esta contraseña es demasiado común.",
+    "en": "This password is too common."
+  },
+  "This password is entirely numeric.": {
+    "es": "Esta contraseña es completamente numérica.",
+    "en": "This password is entirely numeric."
+  },
+  "This password is too short. It must contain at least 8 characters.": {
+    "es": "Esta contraseña es demasiado corta. Debe contener al menos 8 caracteres.",
+    "en": "This password is too short. It must contain at least 8 characters."
+  },
+  "Enter a number.": {
+    "es": "Introduce un número.",
+    "en": "Enter a number."
+  },
+  "Enter a whole number.": {
+    "es": "Introduce un número entero.",
+    "en": "Enter a whole number."
+  },
+  "Select a valid choice. That choice is not one of the available choices.": {
+    "es": "Selecciona una opción válida. Esa opción no está disponible.",
+    "en": "Select a valid choice. That choice is not one of the available choices."
+  },
+  "Passport": {
+    "es": "Pasaporte",
+    "en": "Passport"
+  },
+  "National ID": {
+    "es": "Documento nacional de identidad",
+    "en": "National ID"
+  },
+  "Driver's License": {
+    "es": "Licencia de conducir",
+    "en": "Driver's License"
+  },
+  "Residence Permit": {
+    "es": "Permiso de residencia",
+    "en": "Residence Permit"
+  },
+  "Este mes": {
+    "es": "Este mes",
+    "en": "This month"
+  },
+  "1A": {
+    "es": "1A",
+    "en": "1Y"
+  }
+}

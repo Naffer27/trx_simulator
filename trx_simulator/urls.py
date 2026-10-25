@@ -6,6 +6,8 @@ from django.conf import settings
 from django.conf.urls.static import static
 
 urlpatterns = [
+    # Presentation preference only; no locale-prefixed business routes.
+    path('i18n/', include('django.conf.urls.i18n')),
     # Admin — path controlled by ADMIN_URL env var (default: admin/)
     path(settings.ADMIN_URL, admin.site.urls),
 

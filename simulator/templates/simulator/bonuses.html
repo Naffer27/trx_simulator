@@ -1,6 +1,7 @@
 {% extends "simulator/base_app.html" %}
-{% block title %}Bonos y Promociones — Money Broker{% endblock %}
-{% block page_title %}Bonos y Promociones{% endblock %}
+{% load ui_language %}
+{% block title %}{% ui "Bonos y Promociones — Money Broker" %}{% endblock %}
+{% block page_title %}{% ui "Bonos y Promociones" %}{% endblock %}
 
 {% block extra_styles %}
 .bonus-grid {
@@ -92,11 +93,11 @@
 {% block content %}
 <div>
   <p style="color:var(--muted-2);font-size:.85rem;margin-bottom:22px;">
-    Promociones y bonos activos disponibles para tu cuenta. Gestionados desde el panel de administración.
+    {% ui "Promociones y bonos activos disponibles para tu cuenta. Gestionados desde el panel de administración." %}
   </p>
 
   <!-- Activos -->
-  <div class="section-label">Bonos activos</div>
+  <div class="section-label">{% ui "Bonos activos" %}</div>
 
   {% if bonuses %}
   <div class="bonus-grid">
@@ -123,25 +124,25 @@
             {% else %}${{ bonus.value|floatformat:2 }}{% endif %}
           </div>
           <div class="bonus-amount-label">
-            {% if bonus.bonus_type == 'CREDIT' %}en crédito
-            {% elif bonus.bonus_type == 'PERCENTAGE' %}sobre depósito
-            {% else %}cashback{% endif %}
+            {% if bonus.bonus_type == 'CREDIT' %}{% ui "en crédito" %}
+            {% elif bonus.bonus_type == 'PERCENTAGE' %}{% ui "sobre depósito" %}
+            {% else %}{% ui "cashback" %}{% endif %}
           </div>
         </div>
         {% if bonus.expires_at %}
         <div class="bonus-expiry">
           <i class="fa-regular fa-clock"></i>
-          Vence: {{ bonus.expires_at|date:"d/m/Y H:i" }} UTC
+          {% ui "Vence:" %} {{ bonus.expires_at|date:"d/m/Y H:i" }} UTC
         </div>
         {% else %}
-        <div class="bonus-expiry"><i class="fa-solid fa-infinity"></i> Sin fecha de vencimiento</div>
+        <div class="bonus-expiry"><i class="fa-solid fa-infinity"></i> {% ui "Sin fecha de vencimiento" %}</div>
         {% endif %}
       </div>
       <div class="bonus-card-footer">
         <div class="bonus-status-active">
-          <span class="bonus-status-dot"></span> ACTIVO
+          <span class="bonus-status-dot"></span> {% ui "ACTIVO" %}
         </div>
-        <a href="#" class="bonus-cta">Consultar →</a>
+        <a href="#" class="bonus-cta">{% ui "Consultar →" %}</a>
       </div>
     </div>
     {% endfor %}
@@ -149,19 +150,19 @@
   {% else %}
   <div class="empty-state">
     <div class="empty-icon"><i class="fa-solid fa-gift"></i></div>
-    <div class="empty-msg">No hay bonos activos en este momento.</div>
-    <div style="font-size:.75rem;color:var(--muted);margin-top:6px">Próximamente nuevas promociones.</div>
+    <div class="empty-msg">{% ui "No hay bonos activos en este momento." %}</div>
+    <div style="font-size:.75rem;color:var(--muted);margin-top:6px">{% ui "Próximamente nuevas promociones." %}</div>
   </div>
   {% endif %}
 
   <!-- Inactivos/expirados -->
   {% if expired %}
-  <div class="section-label" style="margin-top:32px;opacity:.6">Promociones anteriores</div>
+  <div class="section-label" style="margin-top:32px;opacity:.6">{% ui "Promociones anteriores" %}</div>
   <div style="display:flex;flex-direction:column;gap:8px;opacity:.55">
     {% for bonus in expired %}
     <div style="background:var(--bg-card-2);border:1px solid rgba(255,255,255,.05);border-radius:10px;padding:12px 16px;display:flex;align-items:center;gap:12px;">
       <div style="font-size:.85rem;color:var(--muted-2);">{{ bonus.title }}</div>
-      <div style="margin-left:auto;font-size:.7rem;color:var(--muted)">INACTIVO</div>
+      <div style="margin-left:auto;font-size:.7rem;color:var(--muted)">{% ui "INACTIVO" %}</div>
     </div>
     {% endfor %}
   </div>

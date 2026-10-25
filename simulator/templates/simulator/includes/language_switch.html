@@ -1,0 +1,16 @@
+{% load ui_language %}
+{% ui_language as selected_language %}
+<form class="mb-language-switch" action="{% url 'set_language' %}" method="post" aria-label="{% ui 'Idioma' %}">
+  {% csrf_token %}
+  <input type="hidden" name="next" value="{{ request.get_full_path }}">
+  <button type="submit" name="language" value="es" lang="es" aria-label="Español" aria-pressed="{% if selected_language == 'es' %}true{% else %}false{% endif %}">ES</button>
+  <button type="submit" name="language" value="en" lang="en" aria-label="English" aria-pressed="{% if selected_language == 'en' %}true{% else %}false{% endif %}">EN</button>
+</form>
+<style>
+  .mb-language-switch { display:inline-flex; flex-shrink:0; gap:2px; margin:0; padding:3px; border:1px solid #8b762c; border-radius:8px; background:#15151d; }
+  .mb-language-switch button { appearance:none; width:auto; min-width:34px; min-height:36px; padding:5px 7px; margin:0; border:0; border-radius:5px; background:transparent; color:#eee; font:600 12px/1.2 system-ui,sans-serif; cursor:pointer; }
+  .mb-language-switch button[aria-pressed="true"] { background:#ffd700; color:#15151d; }
+  .mb-language-switch button:focus-visible { outline:2px solid #fff; outline-offset:2px; }
+  .mb-auth-language { position:absolute; top:12px; right:12px; z-index:10; }
+  @media (max-width:480px) { .app-topbar .tb-right { gap:6px; } .app-topbar .tb-breadcrumb { min-width:0; } }
+</style>

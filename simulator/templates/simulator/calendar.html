@@ -1,6 +1,7 @@
 {% extends "simulator/base_app.html" %}
-{% block title %}Calendario Económico — Money Broker{% endblock %}
-{% block page_title %}Calendario Económico{% endblock %}
+{% load ui_language %}
+{% block title %}{% ui "Calendario Económico — Money Broker" %}{% endblock %}
+{% block page_title %}{% ui "Calendario Económico" %}{% endblock %}
 
 {% block extra_styles %}
 .cal-section-title {
@@ -67,23 +68,23 @@
 {% block content %}
 <div>
   <p style="color:var(--muted-2);font-size:.85rem;margin-bottom:20px;">
-    Eventos macroeconómicos relevantes para los mercados. Administra desde el panel de administración.
+    {% ui "Eventos macroeconómicos relevantes para los mercados. Administra desde el panel de administración." %}
   </p>
 
   <!-- Próximos eventos -->
-  <div class="cal-section-title">Próximos eventos</div>
+  <div class="cal-section-title">{% ui "Próximos eventos" %}</div>
 
   {% if upcoming %}
   <table class="cal-table">
     <thead>
       <tr>
-        <th>Fecha / Hora</th>
-        <th>Evento</th>
-        <th>Divisa</th>
-        <th>Impacto</th>
-        <th>Anterior</th>
-        <th>Pronóstico</th>
-        <th>Actual</th>
+        <th>{% ui "Fecha / Hora" %}</th>
+        <th>{% ui "Evento" %}</th>
+        <th>{% ui "Divisa" %}</th>
+        <th>{% ui "Impacto" %}</th>
+        <th>{% ui "Anterior" %}</th>
+        <th>{% ui "Pronóstico" %}</th>
+        <th>{% ui "Actual" %}</th>
       </tr>
     </thead>
     <tbody>
@@ -102,7 +103,7 @@
         </td>
         <td class="cal-previous">{{ ev.previous|default:"—" }}</td>
         <td class="cal-forecast">{{ ev.forecast|default:"—" }}</td>
-        <td class="cal-actual">{% if ev.actual %}{{ ev.actual }}{% else %}<span style="color:var(--muted)">Pendiente</span>{% endif %}</td>
+        <td class="cal-actual">{% if ev.actual %}{{ ev.actual }}{% else %}<span style="color:var(--muted)">{% ui "Pendiente" %}</span>{% endif %}</td>
       </tr>
       {% endfor %}
     </tbody>
@@ -110,23 +111,23 @@
   {% else %}
   <div class="empty-state">
     <div class="empty-icon"><i class="fa-solid fa-calendar-days"></i></div>
-    <div class="empty-msg">No hay eventos económicos próximos programados.</div>
+    <div class="empty-msg">{% ui "No hay eventos económicos próximos programados." %}</div>
   </div>
   {% endif %}
 
   <!-- Eventos pasados -->
   {% if past %}
-  <div class="cal-section-title" style="margin-top:32px">Eventos recientes</div>
+  <div class="cal-section-title" style="margin-top:32px">{% ui "Eventos recientes" %}</div>
   <table class="cal-table" style="opacity:.75">
     <thead>
       <tr>
-        <th>Fecha / Hora</th>
-        <th>Evento</th>
-        <th>Divisa</th>
-        <th>Impacto</th>
-        <th>Anterior</th>
-        <th>Pronóstico</th>
-        <th>Actual</th>
+        <th>{% ui "Fecha / Hora" %}</th>
+        <th>{% ui "Evento" %}</th>
+        <th>{% ui "Divisa" %}</th>
+        <th>{% ui "Impacto" %}</th>
+        <th>{% ui "Anterior" %}</th>
+        <th>{% ui "Pronóstico" %}</th>
+        <th>{% ui "Actual" %}</th>
       </tr>
     </thead>
     <tbody>

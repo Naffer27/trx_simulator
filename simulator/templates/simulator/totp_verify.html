@@ -1,9 +1,11 @@
+{% load ui_language %}
 <!DOCTYPE html>
-<html lang="es">
+{% ui_language as ui_lang %}
+<html lang="{{ ui_lang }}">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Verificar 2FA — Money Broker</title>
+<title>{% ui "Verificar 2FA — Money Broker" %}</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Courier New', monospace; background: #0d0d0d; color: #c8c8c8;
@@ -26,21 +28,22 @@
 </style>
 </head>
 <body>
+<div class="mb-auth-language">{% include "simulator/includes/language_switch.html" %}</div>
 <div class="card">
-  <h1>🔐 Verificación 2FA</h1>
-  <div class="sub">Ingresa el código de 6 dígitos de Authy, Google Authenticator u otra app compatible.</div>
+  <h1>{% ui "🔐 Verificación 2FA" %}</h1>
+  <div class="sub">{% ui "Ingresa el código de 6 dígitos de Authy, Google Authenticator u otra app compatible." %}</div>
 
   <form method="post">
     {% csrf_token %}
-    <label>Código TOTP</label>
+    <label>{% ui "Código TOTP" %}</label>
     <input type="text" name="code" maxlength="6" inputmode="numeric"
            autocomplete="one-time-code" placeholder="000000" autofocus>
-    {% if error %}<div class="error">{{ error }}</div>{% endif %}
-    <button type="submit">Verificar</button>
+    {% if error %}<div class="error">{% ui error %}</div>{% endif %}
+    <button type="submit">{% ui "Verificar" %}</button>
   </form>
 
-  <div class="hint">El código cambia cada 30 segundos.</div>
-  {% if login_challenge %}<p><a href="{% url 'simulator:login' %}">Volver al inicio de sesión</a></p>{% endif %}
+  <div class="hint">{% ui "El código cambia cada 30 segundos." %}</div>
+  {% if login_challenge %}<p><a href="{% url 'simulator:login' %}">{% ui "Volver al inicio de sesión" %}</a></p>{% endif %}
 </div>
 </body>
 </html>

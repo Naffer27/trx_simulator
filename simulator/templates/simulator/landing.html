@@ -1,7 +1,8 @@
 {% extends "simulator/base.html" %}
+{% load ui_language %}
 {% load static %}
 
-{% block title %}Money Broker — Trade the World{% endblock %}
+{% block title %}{% ui "Money Broker — Trade the World" %}{% endblock %}
 
 {% block extra_head %}
 <style>
@@ -477,48 +478,47 @@ html { scroll-behavior: smooth; }
      1. HERO
      ══════════════════════════════════════ -->
 <section class="hero lp">
-  <p class="hero-eyebrow"><span></span>Your Global Trading Partner<span></span></p>
+  <p class="hero-eyebrow"><span></span>{% ui "Your Global Trading Partner" %}<span></span></p>
 
   <h1 class="hero-title">
-    Trade the<br>
-    <span class="hl">World's Markets.</span><br>
-    From One Account.
+    {% ui "Trade the" %}<br>
+    <span class="hl">{% ui "World's Markets." %}</span><br>
+    {% ui "From One Account." %}
   </h1>
 
   <p class="hero-sub">
-    Access Forex, crypto, commodities and indices with tight spreads,
-    deep liquidity, and lightning-fast execution.
+    {% ui "Access Forex, crypto, commodities and indices with tight spreads, deep liquidity, and lightning-fast execution." %}
   </p>
 
   <div class="hero-ctas">
     <a href="{% url 'simulator:register' %}" class="btn-gold">
-      Open Account &rarr;
+      {% ui "Open Account →" %}
     </a>
     <a href="#accounts" class="btn-outline-gold">
-      View Account Types
+      {% ui "View Account Types" %}
     </a>
   </div>
 
   <div class="hero-trust">
     <div class="trust-item">
       <span class="trust-num counter" data-target="4800">0</span>
-      <span class="trust-label">Active Traders</span>
+      <span class="trust-label">{% ui "Active Traders" %}</span>
     </div>
     <div class="trust-item">
       <span class="trust-num counter" data-target="50">0</span>
-      <span class="trust-label">Instruments</span>
+      <span class="trust-label">{% ui "Instruments" %}</span>
     </div>
     <div class="trust-item">
       <span class="trust-num">$850M+</span>
-      <span class="trust-label">Monthly Volume</span>
+      <span class="trust-label">{% ui "Monthly Volume" %}</span>
     </div>
     <div class="trust-item">
       <span class="trust-num">24/7</span>
-      <span class="trust-label">Support</span>
+      <span class="trust-label">{% ui "Support" %}</span>
     </div>
   </div>
 
-  <div class="hero-scroll">SCROLL</div>
+  <div class="hero-scroll">{% ui "SCROLL" %}</div>
 </section>
 
 <!-- ══════════════════════════════════════
@@ -529,23 +529,23 @@ html { scroll-behavior: smooth; }
     <div class="stats-grid">
       <div class="stat-box">
         <span class="stat-num counter" data-target="50">0</span>
-        <span class="stat-desc">Instruments Available</span>
+        <span class="stat-desc">{% ui "Instruments Available" %}</span>
       </div>
       <div class="stat-box">
         <span class="stat-num">1:500</span>
-        <span class="stat-desc">Max Leverage</span>
+        <span class="stat-desc">{% ui "Max Leverage" %}</span>
       </div>
       <div class="stat-box">
         <span class="stat-num">&lt;50ms</span>
-        <span class="stat-desc">Avg Execution Speed</span>
+        <span class="stat-desc">{% ui "Avg Execution Speed" %}</span>
       </div>
       <div class="stat-box">
         <span class="stat-num">0.0</span>
-        <span class="stat-desc">Spreads From (pips)</span>
+        <span class="stat-desc">{% ui "Spreads From (pips)" %}</span>
       </div>
       <div class="stat-box">
         <span class="stat-num">$10</span>
-        <span class="stat-desc">Min Deposit</span>
+        <span class="stat-desc">{% ui "Min Deposit" %}</span>
       </div>
     </div>
   </div>
@@ -556,32 +556,32 @@ html { scroll-behavior: smooth; }
      ══════════════════════════════════════ -->
 <section class="lp-section lp" id="why">
   <div class="lp-container">
-    <p class="lp-label">Why Us</p>
+    <p class="lp-label">{% ui "Why Us" %}</p>
     <h2 style="font-family:'Orbitron',sans-serif;font-size:clamp(1.5rem,4vw,2.4rem);font-weight:900;margin-bottom:0;">
-      Built for serious traders.<br>
-      <span class="gold">Not for gamblers.</span>
+      {% ui "Built for serious traders." %}<br>
+      <span class="gold">{% ui "Not for gamblers." %}</span>
     </h2>
 
     <div class="why-grid">
       <div class="why-card">
         <span class="why-icon">⚡</span>
-        <p class="why-title">Instant Execution</p>
-        <p class="why-body">Market orders filled in under 50ms. No requotes, no slippage abuse. Your entry is your entry.</p>
+        <p class="why-title">{% ui "Instant Execution" %}</p>
+        <p class="why-body">{% ui "Market orders filled in under 50ms. No requotes, no slippage abuse. Your entry is your entry." %}</p>
       </div>
       <div class="why-card">
         <span class="why-icon">🔒</span>
-        <p class="why-title">Secure & Regulated</p>
-        <p class="why-body">Client funds held in segregated accounts. SSL-encrypted platform, two-factor authentication, and full audit trail.</p>
+        <p class="why-title">{% ui "Secure & Regulated" %}</p>
+        <p class="why-body">{% ui "Client funds held in segregated accounts. SSL-encrypted platform, two-factor authentication, and full audit trail." %}</p>
       </div>
       <div class="why-card">
         <span class="why-icon">📊</span>
-        <p class="why-title">Real Market Data</p>
-        <p class="why-body">Live feeds from Binance and Finnhub. Forex, crypto, indices — all instruments, one platform.</p>
+        <p class="why-title">{% ui "Real Market Data" %}</p>
+        <p class="why-body">{% ui "Live feeds from Binance and Finnhub. Forex, crypto, indices — all instruments, one platform." %}</p>
       </div>
       <div class="why-card">
         <span class="why-icon">💸</span>
-        <p class="why-title">Fast Withdrawals</p>
-        <p class="why-body">Request withdrawals anytime. Processed within 24 hours via crypto — no banks, no delays, no hidden fees.</p>
+        <p class="why-title">{% ui "Fast Withdrawals" %}</p>
+        <p class="why-body">{% ui "Request withdrawals anytime. Processed within 24 hours via crypto — no banks, no delays, no hidden fees." %}</p>
       </div>
     </div>
   </div>
@@ -592,51 +592,51 @@ html { scroll-behavior: smooth; }
      ══════════════════════════════════════ -->
 <section class="lp-section lp" id="accounts">
   <div class="lp-container">
-    <p class="lp-label">Account Types</p>
+    <p class="lp-label">{% ui "Account Types" %}</p>
     <h2 style="font-family:'Orbitron',sans-serif;font-size:clamp(1.5rem,4vw,2.4rem);font-weight:900;">
-      Choose your<br><span class="gold">account type.</span>
+      {% ui "Choose your" %}<br><span class="gold">{% ui "account type." %}</span>
     </h2>
 
     <div class="accounts-grid">
       <div class="acct-card">
-        <p class="acct-tier">Standard</p>
-        <p class="acct-balance">From $10</p>
+        <p class="acct-tier">{% ui "Standard" %}</p>
+        <p class="acct-balance">{% ui "From $10" %}</p>
         <ul class="acct-features">
-          <li>Spreads from 1.2 pips</li>
-          <li>No commission per trade</li>
-          <li>Leverage up to 1:200</li>
-          <li>All instruments</li>
-          <li>Instant withdrawals</li>
+          <li>{% ui "Spreads from 1.2 pips" %}</li>
+          <li>{% ui "No commission per trade" %}</li>
+          <li>{% ui "Leverage up to 1:200" %}</li>
+          <li>{% ui "All instruments" %}</li>
+          <li>{% ui "Instant withdrawals" %}</li>
         </ul>
-        <a href="{% url 'simulator:register' %}" class="btn-gold">Open Standard</a>
+        <a href="{% url 'simulator:register' %}" class="btn-gold">{% ui "Open Standard" %}</a>
       </div>
 
       <div class="acct-card featured">
         <p class="acct-tier">ECN</p>
-        <p class="acct-balance">From $200</p>
+        <p class="acct-balance">{% ui "From $200" %}</p>
         <ul class="acct-features">
-          <li>Spreads from 0.0 pips</li>
-          <li>$3.50 commission / lot</li>
-          <li>Leverage up to 1:500</li>
-          <li>All instruments</li>
-          <li>Priority routing</li>
-          <li>VPS hosting included</li>
+          <li>{% ui "Spreads from 0.0 pips" %}</li>
+          <li>{% ui "$3.50 commission / lot" %}</li>
+          <li>{% ui "Leverage up to 1:500" %}</li>
+          <li>{% ui "All instruments" %}</li>
+          <li>{% ui "Priority routing" %}</li>
+          <li>{% ui "VPS hosting included" %}</li>
         </ul>
-        <a href="{% url 'simulator:register' %}" class="btn-gold">Open ECN</a>
+        <a href="{% url 'simulator:register' %}" class="btn-gold">{% ui "Open ECN" %}</a>
       </div>
 
       <div class="acct-card">
         <p class="acct-tier">VIP</p>
-        <p class="acct-balance">From $5,000</p>
+        <p class="acct-balance">{% ui "From $5,000" %}</p>
         <ul class="acct-features">
-          <li>Spreads from 0.0 pips</li>
-          <li>$2.00 commission / lot</li>
-          <li>Leverage up to 1:500</li>
-          <li>All instruments + indices</li>
-          <li>Dedicated account manager</li>
-          <li>Custom rebate program</li>
+          <li>{% ui "Spreads from 0.0 pips" %}</li>
+          <li>{% ui "$2.00 commission / lot" %}</li>
+          <li>{% ui "Leverage up to 1:500" %}</li>
+          <li>{% ui "All instruments + indices" %}</li>
+          <li>{% ui "Dedicated account manager" %}</li>
+          <li>{% ui "Custom rebate program" %}</li>
         </ul>
-        <a href="{% url 'simulator:register' %}" class="btn-gold">Open VIP</a>
+        <a href="{% url 'simulator:register' %}" class="btn-gold">{% ui "Open VIP" %}</a>
       </div>
     </div>
 
@@ -645,23 +645,23 @@ html { scroll-behavior: smooth; }
       <table class="cmp-table">
         <thead>
           <tr>
-            <th>Feature</th>
-            <th>Standard</th>
+            <th>{% ui "Feature" %}</th>
+            <th>{% ui "Standard" %}</th>
             <th>ECN</th>
             <th>VIP</th>
           </tr>
         </thead>
         <tbody>
-          <tr><td>Min Deposit</td><td>$10</td><td>$200</td><td>$5,000</td></tr>
-          <tr><td>Spreads</td><td>From 1.2 pips</td><td>From 0.0 pips</td><td>From 0.0 pips</td></tr>
-          <tr><td>Commission / lot</td><td class="ok">None</td><td>$3.50</td><td>$2.00</td></tr>
-          <tr><td>Leverage</td><td>1:200</td><td>1:500</td><td>1:500</td></tr>
-          <tr><td>Forex Trading</td><td class="ok">✓</td><td class="ok">✓</td><td class="ok">✓</td></tr>
-          <tr><td>Crypto Trading</td><td class="ok">✓</td><td class="ok">✓</td><td class="ok">✓</td></tr>
-          <tr><td>Commodities &amp; Indices</td><td class="no">—</td><td class="ok">✓</td><td class="ok">✓</td></tr>
-          <tr><td>VPS Hosting</td><td class="no">—</td><td class="ok">✓</td><td class="ok">✓</td></tr>
-          <tr><td>Account Manager</td><td class="no">—</td><td class="no">—</td><td class="ok">✓</td></tr>
-          <tr><td>Custom Rebates</td><td class="no">—</td><td class="no">—</td><td class="ok">✓</td></tr>
+          <tr><td>{% ui "Min Deposit" %}</td><td>$10</td><td>$200</td><td>$5,000</td></tr>
+          <tr><td>{% ui "Spreads" %}</td><td>{% ui "From 1.2 pips" %}</td><td>{% ui "From 0.0 pips" %}</td><td>{% ui "From 0.0 pips" %}</td></tr>
+          <tr><td>{% ui "Commission / lot" %}</td><td class="ok">{% ui "None" %}</td><td>$3.50</td><td>$2.00</td></tr>
+          <tr><td>{% ui "Leverage" %}</td><td>1:200</td><td>1:500</td><td>1:500</td></tr>
+          <tr><td>{% ui "Forex Trading" %}</td><td class="ok">✓</td><td class="ok">✓</td><td class="ok">✓</td></tr>
+          <tr><td>{% ui "Crypto Trading" %}</td><td class="ok">✓</td><td class="ok">✓</td><td class="ok">✓</td></tr>
+          <tr><td>{% ui "Commodities & Indices" %}</td><td class="no">—</td><td class="ok">✓</td><td class="ok">✓</td></tr>
+          <tr><td>{% ui "VPS Hosting" %}</td><td class="no">—</td><td class="ok">✓</td><td class="ok">✓</td></tr>
+          <tr><td>{% ui "Account Manager" %}</td><td class="no">—</td><td class="no">—</td><td class="ok">✓</td></tr>
+          <tr><td>{% ui "Custom Rebates" %}</td><td class="no">—</td><td class="no">—</td><td class="ok">✓</td></tr>
         </tbody>
       </table>
     </div>
@@ -673,9 +673,9 @@ html { scroll-behavior: smooth; }
      ══════════════════════════════════════ -->
 <section class="lp-section lp" id="platform">
   <div class="lp-container">
-    <p class="lp-label">The Platform</p>
+    <p class="lp-label">{% ui "The Platform" %}</p>
     <h2 style="font-family:'Orbitron',sans-serif;font-size:clamp(1.5rem,4vw,2.4rem);font-weight:900;">
-      One platform.<br><span class="gold">Every market.</span>
+      {% ui "One platform." %}<br><span class="gold">{% ui "Every market." %}</span>
     </h2>
 
     <div class="platform-layout">
@@ -683,43 +683,43 @@ html { scroll-behavior: smooth; }
         <div class="pf-item">
           <div class="pf-icon">📈</div>
           <div>
-            <p class="pf-title">Real-Time Charts</p>
-            <p class="pf-body">Professional candlestick charts with multiple timeframes, multi-chart layouts, and live bid/ask feeds.</p>
+            <p class="pf-title">{% ui "Real-Time Charts" %}</p>
+            <p class="pf-body">{% ui "Professional candlestick charts with multiple timeframes, multi-chart layouts, and live bid/ask feeds." %}</p>
           </div>
         </div>
         <div class="pf-item">
           <div class="pf-icon">⚙️</div>
           <div>
-            <p class="pf-title">Advanced Orders</p>
-            <p class="pf-body">Market orders with automatic SL/TP, trailing stops, and one-click trading from the chart.</p>
+            <p class="pf-title">{% ui "Advanced Orders" %}</p>
+            <p class="pf-body">{% ui "Market orders with automatic SL/TP, trailing stops, and one-click trading from the chart." %}</p>
           </div>
         </div>
         <div class="pf-item">
           <div class="pf-icon">🌐</div>
           <div>
-            <p class="pf-title">Multi-Asset</p>
-            <p class="pf-body">Forex majors, BTC, ETH, Gold, and indices — all in one terminal, powered by Binance and Finnhub feeds.</p>
+            <p class="pf-title">{% ui "Multi-Asset" %}</p>
+            <p class="pf-body">{% ui "Forex majors, BTC, ETH, Gold, and indices — all in one terminal, powered by Binance and Finnhub feeds." %}</p>
           </div>
         </div>
         <div class="pf-item">
           <div class="pf-icon">📱</div>
           <div>
-            <p class="pf-title">Mobile Ready</p>
-            <p class="pf-body">Full PWA — install on iOS or Android. Trade from anywhere with the same desktop experience.</p>
+            <p class="pf-title">{% ui "Mobile Ready" %}</p>
+            <p class="pf-body">{% ui "Full PWA — install on iOS or Android. Trade from anywhere with the same desktop experience." %}</p>
           </div>
         </div>
       </div>
 
       <div class="platform-screen">
         <div class="platform-screen-inner">
-          <p class="ps-label">LIVE MARKET</p>
+          <p class="ps-label">{% ui "LIVE MARKET" %}</p>
           <div class="ps-bars">
             <div class="ps-bar"></div><div class="ps-bar"></div>
             <div class="ps-bar"></div><div class="ps-bar"></div>
             <div class="ps-bar"></div><div class="ps-bar"></div>
             <div class="ps-bar"></div><div class="ps-bar"></div>
           </div>
-          <p style="font-size:.68rem;color:rgba(255,215,0,.5);letter-spacing:.1em;margin-top:8px;">BTCUSD · 1m · LIVE</p>
+          <p style="font-size:.68rem;color:rgba(255,215,0,.5);letter-spacing:.1em;margin-top:8px;">{% ui "BTCUSD · 1m · LIVE" %}</p>
         </div>
       </div>
     </div>
@@ -731,36 +731,36 @@ html { scroll-behavior: smooth; }
      ══════════════════════════════════════ -->
 <section class="lp-section lp" id="affiliates">
   <div class="lp-container">
-    <p class="lp-label">Affiliates</p>
+    <p class="lp-label">{% ui "Affiliates" %}</p>
     <h2 style="font-family:'Orbitron',sans-serif;font-size:clamp(1.5rem,4vw,2.4rem);font-weight:900;">
-      Earn while others<br><span class="gold">trade.</span>
+      {% ui "Earn while others" %}<br><span class="gold">{% ui "trade." %}</span>
     </h2>
 
     <div class="aff-layout">
       <div>
         <p style="color:var(--muted);line-height:1.7;margin-bottom:0;">
-          Refer traders to Money Broker and earn a commission on every deposit they make. No cap, no expiry.
+          {% ui "Refer traders to Money Broker and earn a commission on every deposit they make. No cap, no expiry." %}
         </p>
         <div class="aff-steps">
           <div class="aff-step">
             <span class="aff-n">01</span>
             <div>
-              <p class="aff-step-title">Get your link</p>
-              <p class="aff-step-body">Sign up and receive a unique referral link from your dashboard instantly.</p>
+              <p class="aff-step-title">{% ui "Get your link" %}</p>
+              <p class="aff-step-body">{% ui "Sign up and receive a unique referral link from your dashboard instantly." %}</p>
             </div>
           </div>
           <div class="aff-step">
             <span class="aff-n">02</span>
             <div>
-              <p class="aff-step-title">Share everywhere</p>
-              <p class="aff-step-body">Post on social media, Discord, YouTube, or anywhere traders hang out.</p>
+              <p class="aff-step-title">{% ui "Share everywhere" %}</p>
+              <p class="aff-step-body">{% ui "Post on social media, Discord, YouTube, or anywhere traders hang out." %}</p>
             </div>
           </div>
           <div class="aff-step">
             <span class="aff-n">03</span>
             <div>
-              <p class="aff-step-title">Get paid in crypto</p>
-              <p class="aff-step-body">Commissions credited monthly to your wallet. Minimum payout $20.</p>
+              <p class="aff-step-title">{% ui "Get paid in crypto" %}</p>
+              <p class="aff-step-body">{% ui "Commissions credited monthly to your wallet. Minimum payout $20." %}</p>
             </div>
           </div>
         </div>
@@ -768,9 +768,9 @@ html { scroll-behavior: smooth; }
 
       <div class="aff-highlight">
         <p class="aff-rate">20%</p>
-        <p class="aff-rate-label">Commission on referred trader deposits</p>
+        <p class="aff-rate-label">{% ui "Commission on referred trader deposits" %}</p>
         <a href="{% url 'simulator:register' %}" class="btn-gold" style="width:100%;justify-content:center;">
-          Join Affiliate Program
+          {% ui "Join Affiliate Program" %}
         </a>
       </div>
     </div>
@@ -782,49 +782,49 @@ html { scroll-behavior: smooth; }
      ══════════════════════════════════════ -->
 <section class="lp-section lp" id="deposits">
   <div class="lp-container">
-    <p class="lp-label">Deposits</p>
+    <p class="lp-label">{% ui "Deposits" %}</p>
     <h2 style="font-family:'Orbitron',sans-serif;font-size:clamp(1.5rem,4vw,2.4rem);font-weight:900;">
-      Crypto deposits<br><span class="gold">from $10.</span>
+      {% ui "Crypto deposits" %}<br><span class="gold">{% ui "from $10." %}</span>
     </h2>
     <p style="color:var(--muted);max-width:520px;line-height:1.7;margin-top:12px;">
-      No banks, no wires, no waiting. Fund your account instantly with your preferred cryptocurrency.
+      {% ui "No banks, no wires, no waiting. Fund your account instantly with your preferred cryptocurrency." %}
     </p>
 
     <div class="crypto-grid">
       <div class="crypto-card">
         <span class="crypto-icon">₿</span>
         <p class="crypto-name">Bitcoin</p>
-        <p class="crypto-min">from $10</p>
+        <p class="crypto-min">{% ui "from $10" %}</p>
         <p class="crypto-min-label">BTC</p>
       </div>
       <div class="crypto-card">
         <span class="crypto-icon">Ξ</span>
         <p class="crypto-name">Ethereum</p>
-        <p class="crypto-min">from $10</p>
+        <p class="crypto-min">{% ui "from $10" %}</p>
         <p class="crypto-min-label">ETH</p>
       </div>
       <div class="crypto-card">
         <span class="crypto-icon">◎</span>
         <p class="crypto-name">USDT</p>
-        <p class="crypto-min">from $10</p>
+        <p class="crypto-min">{% ui "from $10" %}</p>
         <p class="crypto-min-label">TRC-20 / ERC-20</p>
       </div>
       <div class="crypto-card">
         <span class="crypto-icon">◈</span>
         <p class="crypto-name">USDC</p>
-        <p class="crypto-min">from $10</p>
+        <p class="crypto-min">{% ui "from $10" %}</p>
         <p class="crypto-min-label">ERC-20</p>
       </div>
       <div class="crypto-card">
         <span class="crypto-icon">◉</span>
         <p class="crypto-name">Solana</p>
-        <p class="crypto-min">from $10</p>
+        <p class="crypto-min">{% ui "from $10" %}</p>
         <p class="crypto-min-label">SOL</p>
       </div>
       <div class="crypto-card">
         <span class="crypto-icon">⬡</span>
         <p class="crypto-name">BNB</p>
-        <p class="crypto-min">from $10</p>
+        <p class="crypto-min">{% ui "from $10" %}</p>
         <p class="crypto-min-label">BEP-20</p>
       </div>
     </div>
@@ -832,19 +832,19 @@ html { scroll-behavior: smooth; }
     <div class="crypto-info">
       <div class="ci-item">
         <p class="ci-val">~15 min</p>
-        <p class="ci-label">Average confirmation time</p>
+        <p class="ci-label">{% ui "Average confirmation time" %}</p>
       </div>
       <div class="ci-item">
         <p class="ci-val">0%</p>
-        <p class="ci-label">Deposit fees</p>
+        <p class="ci-label">{% ui "Deposit fees" %}</p>
       </div>
       <div class="ci-item">
         <p class="ci-val">$10</p>
-        <p class="ci-label">Minimum deposit</p>
+        <p class="ci-label">{% ui "Minimum deposit" %}</p>
       </div>
       <div class="ci-item">
         <p class="ci-val">24h</p>
-        <p class="ci-label">Withdrawal processing</p>
+        <p class="ci-label">{% ui "Withdrawal processing" %}</p>
       </div>
     </div>
   </div>
@@ -855,9 +855,9 @@ html { scroll-behavior: smooth; }
      ══════════════════════════════════════ -->
 <section class="lp-section lp" id="faq">
   <div class="lp-container">
-    <p class="lp-label">FAQ</p>
+    <p class="lp-label">{% ui "FAQ" %}</p>
     <h2 style="font-family:'Orbitron',sans-serif;font-size:clamp(1.5rem,4vw,2.4rem);font-weight:900;">
-      Common <span class="gold">questions.</span>
+      {% ui "Common" %} <span class="gold">{% ui "questions." %}</span>
     </h2>
 
     <div class="faq-list">
@@ -873,32 +873,32 @@ html { scroll-behavior: smooth; }
       </div>
       {% empty %}
       <div class="faq-item">
-        <button class="faq-q" aria-expanded="false">How do I open an account?<span class="faq-icon">+</span></button>
-        <div class="faq-a"><p class="faq-a-inner">Click "Open Account", fill in your details, choose your account type (Standard, ECN, or VIP), and make your first deposit. The whole process takes under 5 minutes.</p></div>
+        <button class="faq-q" aria-expanded="false">{% ui "How do I open an account?" %}<span class="faq-icon">+</span></button>
+        <div class="faq-a"><p class="faq-a-inner">{% ui "Click \"Open Account\", fill in your details, choose your account type (Standard, ECN, or VIP), and make your first deposit. The whole process takes under 5 minutes." %}</p></div>
       </div>
       <div class="faq-item">
-        <button class="faq-q" aria-expanded="false">What is the difference between Standard and ECN accounts?<span class="faq-icon">+</span></button>
-        <div class="faq-a"><p class="faq-a-inner">Standard accounts have wider spreads (from 1.2 pips) but zero commission per trade — ideal for beginners. ECN accounts offer raw spreads from 0.0 pips with a $3.50/lot commission, best suited for high-volume and algorithmic traders.</p></div>
+        <button class="faq-q" aria-expanded="false">{% ui "What is the difference between Standard and ECN accounts?" %}<span class="faq-icon">+</span></button>
+        <div class="faq-a"><p class="faq-a-inner">{% ui "Standard accounts have wider spreads (from 1.2 pips) but zero commission per trade — ideal for beginners. ECN accounts offer raw spreads from 0.0 pips with a $3.50/lot commission, best suited for high-volume and algorithmic traders." %}</p></div>
       </div>
       <div class="faq-item">
-        <button class="faq-q" aria-expanded="false">When can I withdraw my funds?<span class="faq-icon">+</span></button>
-        <div class="faq-a"><p class="faq-a-inner">You can request a withdrawal at any time, as long as you have no open margin positions. Withdrawals are processed within 24 hours via the same crypto method used to deposit.</p></div>
+        <button class="faq-q" aria-expanded="false">{% ui "When can I withdraw my funds?" %}<span class="faq-icon">+</span></button>
+        <div class="faq-a"><p class="faq-a-inner">{% ui "You can request a withdrawal at any time, as long as you have no open margin positions. Withdrawals are processed within 24 hours via the same crypto method used to deposit." %}</p></div>
       </div>
       <div class="faq-item">
-        <button class="faq-q" aria-expanded="false">What are the margin requirements?<span class="faq-icon">+</span></button>
-        <div class="faq-a"><p class="faq-a-inner">Margin call is triggered at 80% margin level. Stop-out occurs at 50%. We recommend keeping free margin above 200% to withstand normal market volatility.</p></div>
+        <button class="faq-q" aria-expanded="false">{% ui "What are the margin requirements?" %}<span class="faq-icon">+</span></button>
+        <div class="faq-a"><p class="faq-a-inner">{% ui "Margin call is triggered at 80% margin level. Stop-out occurs at 50%. We recommend keeping free margin above 200% to withstand normal market volatility." %}</p></div>
       </div>
       <div class="faq-item">
-        <button class="faq-q" aria-expanded="false">Which instruments can I trade?<span class="faq-icon">+</span></button>
-        <div class="faq-a"><p class="faq-a-inner">Forex majors (EUR/USD, GBP/USD, USD/JPY, AUD/USD), cryptocurrencies (BTC, ETH), Gold (XAU/USD), and indices (NAS100) — all available in the platform with live data feeds.</p></div>
+        <button class="faq-q" aria-expanded="false">{% ui "Which instruments can I trade?" %}<span class="faq-icon">+</span></button>
+        <div class="faq-a"><p class="faq-a-inner">{% ui "Forex majors (EUR/USD, GBP/USD, USD/JPY, AUD/USD), cryptocurrencies (BTC, ETH), Gold (XAU/USD), and indices (NAS100) — all available in the platform with live data feeds." %}</p></div>
       </div>
       <div class="faq-item">
-        <button class="faq-q" aria-expanded="false">Is crypto the only deposit method?<span class="faq-icon">+</span></button>
-        <div class="faq-a"><p class="faq-a-inner">Currently yes — we accept BTC, ETH, USDT, USDC, SOL, and BNB. Crypto allows instant global payments with no bank intermediaries. Additional methods are coming soon.</p></div>
+        <button class="faq-q" aria-expanded="false">{% ui "Is crypto the only deposit method?" %}<span class="faq-icon">+</span></button>
+        <div class="faq-a"><p class="faq-a-inner">{% ui "Currently yes — we accept BTC, ETH, USDT, USDC, SOL, and BNB. Crypto allows instant global payments with no bank intermediaries. Additional methods are coming soon." %}</p></div>
       </div>
       <div class="faq-item">
-        <button class="faq-q" aria-expanded="false">Can I use a trading bot or EA?<span class="faq-icon">+</span></button>
-        <div class="faq-a"><p class="faq-a-inner">Yes, automated strategies and Expert Advisors are fully supported. We provide VPS hosting on ECN and VIP accounts to ensure low-latency execution for algorithmic strategies.</p></div>
+        <button class="faq-q" aria-expanded="false">{% ui "Can I use a trading bot or EA?" %}<span class="faq-icon">+</span></button>
+        <div class="faq-a"><p class="faq-a-inner">{% ui "Yes, automated strategies and Expert Advisors are fully supported. We provide VPS hosting on ECN and VIP accounts to ensure low-latency execution for algorithmic strategies." %}</p></div>
       </div>
       {% endfor %}
     </div>
@@ -910,15 +910,15 @@ html { scroll-behavior: smooth; }
      ══════════════════════════════════════ -->
 <section class="lp-section lp" style="text-align:center;border-bottom:none;">
   <div class="lp-container">
-    <p class="lp-label" style="justify-content:center;">Start Today</p>
+    <p class="lp-label" style="justify-content:center;">{% ui "Start Today" %}</p>
     <h2 style="font-family:'Orbitron',sans-serif;font-size:clamp(1.8rem,5vw,3.2rem);font-weight:900;margin-bottom:16px;">
-      Open an account.<br><span class="gold">Start trading today.</span>
+      {% ui "Open an account." %}<br><span class="gold">{% ui "Start trading today." %}</span>
     </h2>
     <p style="color:var(--muted);margin-bottom:36px;max-width:440px;margin-left:auto;margin-right:auto;line-height:1.7;">
-      Join thousands of traders on Money Broker. Deposit from $10, no hidden fees.
+      {% ui "Join thousands of traders on Money Broker. Deposit from $10, no hidden fees." %}
     </p>
     <a href="{% url 'simulator:register' %}" class="btn-gold" style="font-size:1rem;padding:16px 40px;">
-      Open Your Account &rarr;
+      {% ui "Open Your Account →" %}
     </a>
   </div>
 </section>
@@ -931,31 +931,31 @@ html { scroll-behavior: smooth; }
     <div class="footer-grid">
       <div>
         <p class="footer-brand">MONEY BROKER</p>
-        <p class="footer-about">Online CFD and Forex broker offering tight spreads, deep liquidity, and multi-asset access from a single trading account.</p>
+        <p class="footer-about">{% ui "Online CFD and Forex broker offering tight spreads, deep liquidity, and multi-asset access from a single trading account." %}</p>
       </div>
       <div class="footer-col">
-        <h4>Platform</h4>
+        <h4>{% ui "Platform" %}</h4>
         <ul>
-          <li><a href="{% url 'simulator:dashboard' %}">Dashboard</a></li>
-          <li><a href="{% url 'simulator:register' %}">Open Account</a></li>
-          <li><a href="{% url 'simulator:login' %}">Login</a></li>
+          <li><a href="{% url 'simulator:dashboard' %}">{% ui "Dashboard" %}</a></li>
+          <li><a href="{% url 'simulator:register' %}">{% ui "Open Account" %}</a></li>
+          <li><a href="{% url 'simulator:login' %}">{% ui "Login" %}</a></li>
         </ul>
       </div>
       <div class="footer-col">
-        <h4>Accounts</h4>
+        <h4>{% ui "Accounts" %}</h4>
         <ul>
-          <li><a href="#accounts">Standard</a></li>
+          <li><a href="#accounts">{% ui "Standard" %}</a></li>
           <li><a href="#accounts">ECN</a></li>
           <li><a href="#accounts">VIP</a></li>
         </ul>
       </div>
       <div class="footer-col">
-        <h4>Company</h4>
+        <h4>{% ui "Company" %}</h4>
         <ul>
-          <li><a href="#why">About Us</a></li>
-          <li><a href="#affiliates">Affiliates</a></li>
-          <li><a href="#faq">FAQ</a></li>
-          <li><a href="#deposits">Deposits</a></li>
+          <li><a href="#why">{% ui "About Us" %}</a></li>
+          <li><a href="#affiliates">{% ui "Affiliates" %}</a></li>
+          <li><a href="#faq">{% ui "FAQ" %}</a></li>
+          <li><a href="#deposits">{% ui "Deposits" %}</a></li>
         </ul>
       </div>
     </div>
@@ -963,9 +963,9 @@ html { scroll-behavior: smooth; }
     <hr class="footer-divider">
 
     <div class="footer-bottom">
-      <p class="footer-copy">&copy; 2025 Money Broker. All rights reserved.</p>
+      <p class="footer-copy">{% ui "© 2025 Money Broker. All rights reserved." %}</p>
       <p class="footer-disclaimer">
-        Risk Disclaimer: Trading CFDs and Forex involves substantial risk and is not suitable for all investors. Leverage can work against you. Past performance is not indicative of future results. Money Broker does not provide financial advice. Please ensure you fully understand the risks involved before trading.
+        {% ui "Risk Disclaimer: Trading CFDs and Forex involves substantial risk and is not suitable for all investors. Leverage can work against you. Past performance is not indicative of future results. Money Broker does not provide financial advice. Please ensure you fully understand the risks involved before trading." %}
       </p>
     </div>
   </div>

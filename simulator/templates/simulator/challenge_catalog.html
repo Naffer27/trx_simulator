@@ -1,6 +1,7 @@
 {% extends "simulator/base_app.html" %}
-{% block title %}Programas de Fondeo — Money Broker{% endblock %}
-{% block page_title %}Programas de Fondeo{% endblock %}
+{% load ui_language %}
+{% block title %}{% ui "Programas de Fondeo — Money Broker" %}{% endblock %}
+{% block page_title %}{% ui "Programas de Fondeo" %}{% endblock %}
 
 {% block extra_styles %}
 <style>
@@ -97,43 +98,43 @@
 
   {# ── Hero ── #}
   <div class="cc-hero">
-    <div class="cc-hero-eyebrow"><i class="fa-solid fa-trophy"></i> Prop Firm Challenge</div>
-    <h1 class="cc-hero-title">Programas de <span>Fondeo</span></h1>
-    <p class="cc-hero-sub">Demuestra tu habilidad. Supera el challenge. Accede a capital fondeado sin arriesgar tus fondos propios.</p>
+    <div class="cc-hero-eyebrow"><i class="fa-solid fa-trophy"></i> {% ui "Prop Firm Challenge" %}</div>
+    <h1 class="cc-hero-title">{% ui "Programas de" %} <span>{% ui "Fondeo" %}</span></h1>
+    <p class="cc-hero-sub">{% ui "Demuestra tu habilidad. Supera el challenge. Accede a capital fondeado sin arriesgar tus fondos propios." %}</p>
   </div>
 
   {# ── Cómo funciona ── #}
   <div class="cc-how">
-    <div class="cc-how-title"><i class="fa-solid fa-route"></i>&nbsp; Cómo funciona</div>
+    <div class="cc-how-title"><i class="fa-solid fa-route"></i>{% ui "  Cómo funciona" %}</div>
     <div class="cc-steps">
       <div class="cc-step">
         <div class="cc-step-num">1</div>
         <i class="fa-solid fa-store cc-step-icon"></i>
-        <span class="cc-step-label">Elige tu challenge</span>
+        <span class="cc-step-label">{% ui "Elige tu challenge" %}</span>
       </div>
       <div class="cc-step-arrow"><i class="fa-solid fa-chevron-right"></i></div>
       <div class="cc-step">
         <div class="cc-step-num">2</div>
         <i class="fa-solid fa-chart-line cc-step-icon"></i>
-        <span class="cc-step-label">Opera respetando las reglas</span>
+        <span class="cc-step-label">{% ui "Opera respetando las reglas" %}</span>
       </div>
       <div class="cc-step-arrow"><i class="fa-solid fa-chevron-right"></i></div>
       <div class="cc-step">
         <div class="cc-step-num">3</div>
         <i class="fa-solid fa-flag-checkered cc-step-icon"></i>
-        <span class="cc-step-label">Pasa Phase 1 y Phase 2</span>
+        <span class="cc-step-label">{% ui "Pasa Phase 1 y Phase 2" %}</span>
       </div>
       <div class="cc-step-arrow"><i class="fa-solid fa-chevron-right"></i></div>
       <div class="cc-step">
         <div class="cc-step-num">4</div>
         <i class="fa-solid fa-vault cc-step-icon"></i>
-        <span class="cc-step-label">Recibe una cuenta funded</span>
+        <span class="cc-step-label">{% ui "Recibe una cuenta funded" %}</span>
       </div>
       <div class="cc-step-arrow"><i class="fa-solid fa-chevron-right"></i></div>
       <div class="cc-step">
         <div class="cc-step-num">5</div>
         <i class="fa-solid fa-sack-dollar cc-step-icon"></i>
-        <span class="cc-step-label">Solicita tu payout</span>
+        <span class="cc-step-label">{% ui "Solicita tu payout" %}</span>
       </div>
     </div>
   </div>
@@ -147,7 +148,7 @@
         <span class="cc-tier-badge">{{ tier_group.grouper }}</span>
         <span class="cc-tier-dot"></span>
         {% with p=tier_group.list.0 %}
-        <span class="cc-tier-size">Capital de evaluación: ${{ p.account_size|floatformat:0 }}</span>
+        <span class="cc-tier-size">{% ui "Capital de evaluación: $" %}{{ p.account_size|floatformat:0 }}</span>
         {% endwith %}
       </div>
       <div class="cc-grid">
@@ -155,28 +156,28 @@
         <div class="cc-card">
           <div class="cc-card-top">
             <div class="cc-card-name">{{ p.name }}</div>
-            <div class="cc-card-eval">Capital de evaluación: ${{ p.account_size|floatformat:0 }}</div>
+            <div class="cc-card-eval">{% ui "Capital de evaluación: $" %}{{ p.account_size|floatformat:0 }}</div>
             <div class="cc-card-price">${{ p.price_usd|floatformat:2 }}<span>USD</span></div>
-            <div class="cc-card-price-sub">Pago único · acceso inmediato</div>
+            <div class="cc-card-price-sub">{% ui "Pago único · acceso inmediato" %}</div>
           </div>
 
           {# ── Phase rules ── #}
           <div class="cc-phases">
             <div class="cc-phase">
-              <div class="cc-phase-label p1">Phase 1</div>
-              <div class="cc-rule"><span class="cc-rule-key">Profit target</span><span class="cc-rule-val highlight">{{ p.p1_profit_target_pct|floatformat:0 }}%</span></div>
-              <div class="cc-rule"><span class="cc-rule-key">Daily loss</span><span class="cc-rule-val danger">{{ p.p1_max_daily_loss_pct|floatformat:0 }}%</span></div>
-              <div class="cc-rule"><span class="cc-rule-key">Max drawdown</span><span class="cc-rule-val danger">{{ p.p1_max_drawdown_pct|floatformat:0 }}%</span></div>
-              <div class="cc-rule"><span class="cc-rule-key">Min días</span><span class="cc-rule-val">{{ p.p1_min_trading_days }} días</span></div>
-              <div class="cc-rule"><span class="cc-rule-key">Duración máx</span><span class="cc-rule-val">{{ p.p1_max_duration_days }} días</span></div>
+              <div class="cc-phase-label p1">{% ui "Phase 1" %}</div>
+              <div class="cc-rule"><span class="cc-rule-key">{% ui "Profit target" %}</span><span class="cc-rule-val highlight">{{ p.p1_profit_target_pct|floatformat:0 }}%</span></div>
+              <div class="cc-rule"><span class="cc-rule-key">{% ui "Daily loss" %}</span><span class="cc-rule-val danger">{{ p.p1_max_daily_loss_pct|floatformat:0 }}%</span></div>
+              <div class="cc-rule"><span class="cc-rule-key">{% ui "Max drawdown" %}</span><span class="cc-rule-val danger">{{ p.p1_max_drawdown_pct|floatformat:0 }}%</span></div>
+              <div class="cc-rule"><span class="cc-rule-key">{% ui "Min días" %}</span><span class="cc-rule-val">{{ p.p1_min_trading_days }} {% ui "días" %}</span></div>
+              <div class="cc-rule"><span class="cc-rule-key">{% ui "Duración máx" %}</span><span class="cc-rule-val">{{ p.p1_max_duration_days }} {% ui "días" %}</span></div>
             </div>
             <div class="cc-phase">
-              <div class="cc-phase-label p2">Phase 2</div>
-              <div class="cc-rule"><span class="cc-rule-key">Profit target</span><span class="cc-rule-val highlight">{{ p.p2_profit_target_pct|floatformat:0 }}%</span></div>
-              <div class="cc-rule"><span class="cc-rule-key">Daily loss</span><span class="cc-rule-val danger">{{ p.p2_max_daily_loss_pct|floatformat:0 }}%</span></div>
-              <div class="cc-rule"><span class="cc-rule-key">Max drawdown</span><span class="cc-rule-val danger">{{ p.p2_max_drawdown_pct|floatformat:0 }}%</span></div>
-              <div class="cc-rule"><span class="cc-rule-key">Min días</span><span class="cc-rule-val">{{ p.p2_min_trading_days }} días</span></div>
-              <div class="cc-rule"><span class="cc-rule-key">Duración máx</span><span class="cc-rule-val">{{ p.p2_max_duration_days }} días</span></div>
+              <div class="cc-phase-label p2">{% ui "Phase 2" %}</div>
+              <div class="cc-rule"><span class="cc-rule-key">{% ui "Profit target" %}</span><span class="cc-rule-val highlight">{{ p.p2_profit_target_pct|floatformat:0 }}%</span></div>
+              <div class="cc-rule"><span class="cc-rule-key">{% ui "Daily loss" %}</span><span class="cc-rule-val danger">{{ p.p2_max_daily_loss_pct|floatformat:0 }}%</span></div>
+              <div class="cc-rule"><span class="cc-rule-key">{% ui "Max drawdown" %}</span><span class="cc-rule-val danger">{{ p.p2_max_drawdown_pct|floatformat:0 }}%</span></div>
+              <div class="cc-rule"><span class="cc-rule-key">{% ui "Min días" %}</span><span class="cc-rule-val">{{ p.p2_min_trading_days }} {% ui "días" %}</span></div>
+              <div class="cc-rule"><span class="cc-rule-key">{% ui "Duración máx" %}</span><span class="cc-rule-val">{{ p.p2_max_duration_days }} {% ui "días" %}</span></div>
             </div>
           </div>
 
@@ -184,17 +185,17 @@
 
           {# ── Funded terms ── #}
           <div class="cc-card-funded">
-            <div class="cc-funded-label"><i class="fa-solid fa-coins"></i> Cuenta Fondeada</div>
-            <div class="cc-funded-split">{{ p.profit_split_pct|floatformat:0 }}%<span style="font-size:.8rem;font-weight:400;color:var(--muted);margin-left:4px;">profit split</span></div>
-            <div class="cc-funded-split-sub">Al alcanzar la cuenta funded</div>
-            <div class="cc-rule"><span class="cc-rule-key">Lot size máx</span><span class="cc-rule-val">{{ p.max_lot_size|floatformat:2 }}</span></div>
-            <div class="cc-rule"><span class="cc-rule-key">Posiciones abiertas máx</span><span class="cc-rule-val">{{ p.max_open_positions }}</span></div>
+            <div class="cc-funded-label"><i class="fa-solid fa-coins"></i> {% ui "Cuenta Fondeada" %}</div>
+            <div class="cc-funded-split">{{ p.profit_split_pct|floatformat:0 }}%<span style="font-size:.8rem;font-weight:400;color:var(--muted);margin-left:4px;">{% ui "profit split" %}</span></div>
+            <div class="cc-funded-split-sub">{% ui "Al alcanzar la cuenta funded" %}</div>
+            <div class="cc-rule"><span class="cc-rule-key">{% ui "Lot size máx" %}</span><span class="cc-rule-val">{{ p.max_lot_size|floatformat:2 }}</span></div>
+            <div class="cc-rule"><span class="cc-rule-key">{% ui "Posiciones abiertas máx" %}</span><span class="cc-rule-val">{{ p.max_open_positions }}</span></div>
           </div>
 
           {# ── CTA ── #}
           <div class="cc-card-cta">
             <a href="{% url 'simulator:challenge_purchase' p.pk %}" class="cc-btn cc-btn-primary">
-              <i class="fa-solid fa-rocket"></i> Empezar Challenge
+              <i class="fa-solid fa-rocket"></i> {% ui "Empezar Challenge" %}
             </a>
           </div>
         </div>
@@ -205,7 +206,7 @@
   {% else %}
     <div class="cc-empty">
       <i class="fa-solid fa-circle-info"></i>
-      <p>No hay programas de fondeo disponibles en este momento.<br>Vuelve pronto.</p>
+      <p>{% ui "No hay programas de fondeo disponibles en este momento." %}<br>{% ui "Vuelve pronto." %}</p>
     </div>
   {% endif %}
 

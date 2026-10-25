@@ -1,6 +1,7 @@
 {% extends "simulator/base_app.html" %}
-{% block title %}Deposit History — Money Broker{% endblock %}
-{% block page_title %}Historial de Depósitos{% endblock %}
+{% load ui_language %}
+{% block title %}{% ui "Deposit History — Money Broker" %}{% endblock %}
+{% block page_title %}{% ui "Historial de Depósitos" %}{% endblock %}
 
 {% block extra_head %}
 <style>
@@ -139,15 +140,15 @@
 <div class="dh-wrap">
   <div class="dh-header">
     <div>
-      <div class="dh-title">Historial de Depósitos</div>
+      <div class="dh-title">{% ui "Historial de Depósitos" %}</div>
       {% if wallet %}
       <div style="font-size:.78rem;color:var(--text-muted);margin-top:4px;">
         <i class="fa-solid fa-wallet" style="color:var(--gold);margin-right:5px;"></i>
-        Wallet disponible: <strong style="color:var(--gold);">${{ wallet.available_balance|floatformat:2 }}</strong>
+        {% ui "Wallet disponible:" %} <strong style="color:var(--gold);">${{ wallet.available_balance|floatformat:2 }}</strong>
       </div>
       {% endif %}
     </div>
-    <a href="{% url 'simulator:deposit' %}" class="dh-new-btn">+ NUEVO DEPÓSITO</a>
+    <a href="{% url 'simulator:deposit' %}" class="dh-new-btn">{% ui "+ NUEVO DEPÓSITO" %}</a>
   </div>
 
   <div class="dh-table-wrap">
@@ -156,12 +157,12 @@
       <thead>
         <tr>
           <th>#</th>
-          <th>Monto</th>
-          <th>Cripto</th>
-          <th>Estado</th>
-          <th>Payment ID</th>
-          <th>Fecha</th>
-          <th>Confirmado</th>
+          <th>{% ui "Monto" %}</th>
+          <th>{% ui "Cripto" %}</th>
+          <th>{% ui "Estado" %}</th>
+          <th>{% ui "Payment ID" %}</th>
+          <th>{% ui "Fecha" %}</th>
+          <th>{% ui "Confirmado" %}</th>
           <th></th>
         </tr>
       </thead>
@@ -173,7 +174,7 @@
           <td><span class="dh-crypto">{{ dep.crypto_currency }}</span></td>
           <td>
             <span class="badge-status badge-{{ dep.status }}">
-              {% if dep.credited %}Completado{% else %}{{ dep.get_status_display }}{% endif %}
+              {% if dep.credited %}{% ui "Completado" %}{% else %}{{ dep.get_status_display }}{% endif %}
             </span>
           </td>
           <td class="pid-cell">
@@ -197,7 +198,7 @@
             {% if not dep.credited and dep.status not in "failed,expired,refunded" %}
             <a href="{% url 'simulator:deposit_status' dep.id %}"
                style="font-size:.72rem;font-weight:600;color:var(--gold);text-decoration:none;white-space:nowrap;">
-              Ver pago →
+              {% ui "Ver pago →" %}
             </a>
             {% endif %}
           </td>
@@ -208,8 +209,8 @@
     {% else %}
     <div class="dh-empty">
       <div class="icon">&#9679;</div>
-      <p>Aún no tienes depósitos registrados.</p>
-      <a href="{% url 'simulator:deposit' %}" class="dh-new-btn">Hacer primer depósito</a>
+      <p>{% ui "Aún no tienes depósitos registrados." %}</p>
+      <a href="{% url 'simulator:deposit' %}" class="dh-new-btn">{% ui "Hacer primer depósito" %}</a>
     </div>
     {% endif %}
   </div>

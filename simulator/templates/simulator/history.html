@@ -1,8 +1,9 @@
 {% extends "simulator/base_app.html" %}
+{% load ui_language %}
 {% load static %}
 
-{% block title %}History — Money Broker{% endblock %}
-{% block page_title %}Análisis{% endblock %}
+{% block title %}{% ui "History — Money Broker" %}{% endblock %}
+{% block page_title %}{% ui "Análisis" %}{% endblock %}
 
 {% block extra_head %}
 <style>
@@ -91,15 +92,15 @@
   <!-- ── Stats overview ── -->
   <div class="stat-grid">
     <div class="stat-card">
-      <div class="lbl">Total Trades</div>
+      <div class="lbl">{% ui "Total Trades" %}</div>
       <div class="val gold">{{ total }}</div>
     </div>
     <div class="stat-card">
-      <div class="lbl">Win Rate</div>
+      <div class="lbl">{% ui "Win Rate" %}</div>
       <div class="val {% if win_rate >= 50 %}pos{% else %}neg{% endif %}">{{ win_rate }}%</div>
     </div>
     <div class="stat-card">
-      <div class="lbl">W / L</div>
+      <div class="lbl">{% ui "W / L" %}</div>
       <div class="val">
         <span class="pnl-pos">{{ wins }}</span>
         <span style="color:var(--muted)"> / </span>
@@ -107,47 +108,47 @@
       </div>
     </div>
     <div class="stat-card">
-      <div class="lbl">Net P&L</div>
+      <div class="lbl">{% ui "Net P&L" %}</div>
       <div class="val {% if total_pnl >= 0 %}pos{% else %}neg{% endif %}">
         {% if total_pnl >= 0 %}+{% endif %}${{ total_pnl|floatformat:2 }}
       </div>
     </div>
     <div class="stat-card">
-      <div class="lbl">Best Trade</div>
+      <div class="lbl">{% ui "Best Trade" %}</div>
       <div class="val pos">+${{ best_trade|floatformat:2 }}</div>
     </div>
     <div class="stat-card">
-      <div class="lbl">Worst Trade</div>
+      <div class="lbl">{% ui "Worst Trade" %}</div>
       <div class="val neg">${{ worst_trade|floatformat:2 }}</div>
     </div>
     <div class="stat-card">
-      <div class="lbl">Balance</div>
+      <div class="lbl">{% ui "Balance" %}</div>
       <div class="val gold">${{ account.balance|floatformat:2 }}</div>
     </div>
     <div class="stat-card">
-      <div class="lbl">Phase</div>
+      <div class="lbl">{% ui "Phase" %}</div>
       <div class="val" style="font-size:1rem;">{{ account.phase }}</div>
     </div>
   </div>
 
   <!-- ── Closed Trades ── -->
-  <p class="sect-title">Closed Trades</p>
+  <p class="sect-title">{% ui "Closed Trades" %}</p>
   <div class="tbl-wrap">
     {% if trades %}
     <table>
       <thead>
         <tr>
           <th>#</th>
-          <th>Symbol</th>
-          <th>Side</th>
-          <th>Lots</th>
-          <th>Entry</th>
-          <th>Exit</th>
+          <th>{% ui "Symbol" %}</th>
+          <th>{% ui "Side" %}</th>
+          <th>{% ui "Lots" %}</th>
+          <th>{% ui "Entry" %}</th>
+          <th>{% ui "Exit" %}</th>
           <th>SL</th>
           <th>TP</th>
-          <th>P&L</th>
-          <th>Opened</th>
-          <th>Closed</th>
+          <th>{% ui "P&L" %}</th>
+          <th>{% ui "Opened" %}</th>
+          <th>{% ui "Closed" %}</th>
         </tr>
       </thead>
       <tbody>
@@ -169,28 +170,28 @@
             {% endif %}
           </td>
           <td>{{ t.opened_at|date:"M d, H:i" }}</td>
-          <td>{% if t.closed_at %}{{ t.closed_at|date:"M d, H:i" }}{% else %}<span style="color:var(--muted)">open</span>{% endif %}</td>
+          <td>{% if t.closed_at %}{{ t.closed_at|date:"M d, H:i" }}{% else %}<span style="color:var(--muted)">{% ui "open" %}</span>{% endif %}</td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
     {% else %}
-    <div class="empty-msg">No trades yet. Open your first position from the dashboard.</div>
+    <div class="empty-msg">{% ui "No trades yet. Open your first position from the dashboard." %}</div>
     {% endif %}
   </div>
 
   <!-- ── Account Ledger ── -->
-  <p class="sect-title">Account Ledger <span style="color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0">(last 50 events)</span></p>
+  <p class="sect-title">{% ui "Account Ledger" %} <span style="color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0">{% ui "(last 50 events)" %}</span></p>
   <div class="tbl-wrap">
     {% if ledger %}
     <table>
       <thead>
         <tr>
-          <th>Date</th>
-          <th>Event</th>
-          <th>Amount</th>
-          <th>Balance After</th>
-          <th>Notes</th>
+          <th>{% ui "Date" %}</th>
+          <th>{% ui "Event" %}</th>
+          <th>{% ui "Amount" %}</th>
+          <th>{% ui "Balance After" %}</th>
+          <th>{% ui "Notes" %}</th>
         </tr>
       </thead>
       <tbody>
@@ -210,7 +211,7 @@
       </tbody>
     </table>
     {% else %}
-    <div class="empty-msg">No ledger entries yet.</div>
+    <div class="empty-msg">{% ui "No ledger entries yet." %}</div>
     {% endif %}
   </div>
 

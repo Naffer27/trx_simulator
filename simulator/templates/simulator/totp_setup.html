@@ -1,9 +1,11 @@
+{% load ui_language %}
 <!DOCTYPE html>
-<html lang="es">
+{% ui_language as ui_lang %}
+<html lang="{{ ui_lang }}">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Configurar 2FA — Money Broker</title>
+<title>{% ui "Configurar 2FA — Money Broker" %}</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Courier New', monospace; background: #0d0d0d; color: #c8c8c8;
@@ -37,52 +39,53 @@
 </style>
 </head>
 <body>
+<div class="mb-auth-language">{% include "simulator/includes/language_switch.html" %}</div>
 <div class="card">
-  <h1>🔐 Autenticación de dos factores</h1>
-  <div class="sub">Protege tu cuenta con un código TOTP.</div>
+  <h1>{% ui "🔐 Autenticación de dos factores" %}</h1>
+  <div class="sub">{% ui "Protege tu cuenta con un código TOTP." %}</div>
 
   {% if existing %}
   <div class="existing">
-    ✓ 2FA activo desde {{ existing.confirmed_at|date:"Y-m-d H:i" }} UTC
+    {% ui "✓ 2FA activo desde" %} {{ existing.confirmed_at|date:"Y-m-d H:i" }} UTC
   </div>
   <div class="disable-section">
-    <p style="color:#888;font-size:11px;margin-bottom:12px;">Para desactivar 2FA, ingresa tu código actual:</p>
+    <p style="color:#888;font-size:11px;margin-bottom:12px;">{% ui "Para desactivar 2FA, ingresa tu código actual:" %}</p>
     <form method="post" action="{% url 'simulator:totp_disable' %}">
       {% csrf_token %}
-      <label>Código TOTP (6 dígitos)</label>
+      <label>{% ui "Código TOTP (6 dígitos)" %}</label>
       <input type="text" name="code" maxlength="6" inputmode="numeric" autocomplete="one-time-code" placeholder="000000" autofocus>
-      {% if error %}<div class="error">{{ error }}</div>{% endif %}
-      <button class="disable-btn" type="submit">Desactivar 2FA</button>
+      {% if error %}<div class="error">{% ui error %}</div>{% endif %}
+      <button class="disable-btn" type="submit">{% ui "Desactivar 2FA" %}</button>
     </form>
   </div>
   {% else %}
   <p style="color:#888;font-size:11px;margin-bottom:16px;">
-    Escanea el QR con tu app (Google Authenticator, Authy, etc.) y luego ingresa el código de 6 dígitos.
+    {% ui "Escanea el QR con tu app (Google Authenticator, Authy, etc.) y luego ingresa el código de 6 dígitos." %}
   </p>
 
   <div class="qr">
     <img src="data:image/png;base64,{{ qr_b64 }}" alt="QR Code" width="180" height="180">
   </div>
 
-  <p style="color:#888;font-size:11px;margin-bottom:6px;">O ingresa la clave manualmente:</p>
+  <p style="color:#888;font-size:11px;margin-bottom:6px;">{% ui "O ingresa la clave manualmente:" %}</p>
   <div class="secret">{{ raw_secret }}</div>
 
   <form method="post">
     {% csrf_token %}
     <input type="hidden" name="secret" value="{{ raw_secret }}">
-    <label>Confirma con tu código TOTP</label>
+    <label>{% ui "Confirma con tu código TOTP" %}</label>
     <input type="text" name="code" maxlength="6" inputmode="numeric" autocomplete="one-time-code" placeholder="000000" autofocus>
-    {% if error %}<div class="error">{{ error }}</div>{% endif %}
-    <button type="submit">Activar 2FA</button>
+    {% if error %}<div class="error">{% ui error %}</div>{% endif %}
+    <button type="submit">{% ui "Activar 2FA" %}</button>
   </form>
 
   <div class="info">
-    ⚠ Guarda la clave manual en un lugar seguro.<br>
-    Si pierdes acceso a tu app, contacta al administrador.
+    {% ui "⚠ Guarda la clave manual en un lugar seguro." %}<br>
+    {% ui "Si pierdes acceso a tu app, contacta al administrador." %}
   </div>
   {% endif %}
 
-  <div style="margin-top:20px;"><a href="{% url 'simulator:home' %}">← Volver</a></div>
+  <div style="margin-top:20px;"><a href="{% url 'simulator:home' %}">{% ui "← Volver" %}</a></div>
 </div>
 </body>
 </html>

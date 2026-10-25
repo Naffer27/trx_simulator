@@ -1,7 +1,8 @@
 {% extends "simulator/base_app.html" %}
+{% load ui_language %}
 {% load static %}
-{% block title %}Verificación — Money Broker{% endblock %}
-{% block page_title %}Verificación{% endblock %}
+{% block title %}{% ui "Verificación — Money Broker" %}{% endblock %}
+{% block page_title %}{% ui "Verificación" %}{% endblock %}
 
 {% block extra_head %}
 <style>
@@ -42,20 +43,20 @@
 {% block content %}
 <div class="wd-wrap">
   <div class="wd-card">
-    <h2>{% if is_address_change %}Verificar nueva wallet{% else %}Verificar retiro{% endif %}</h2>
-    <p class="subtitle">Ingresa el código de 6 dígitos que enviamos a tu email.</p>
+    <h2>{% if is_address_change %}{% ui "Verificar nueva wallet" %}{% else %}{% ui "Verificar retiro" %}{% endif %}</h2>
+    <p class="subtitle">{% ui "Ingresa el código de 6 dígitos que enviamos a tu email." %}</p>
 
     <div class="summary-box">
       {% if not is_address_change %}
-      <div><span>Monto</span><span class="v">
-        {% if challenge.withdraw_all %}Balance completo (${{ challenge.amount_usd|floatformat:2 }} al momento de la solicitud){% else %}${{ challenge.amount_usd|floatformat:2 }}{% endif %}
+      <div><span>{% ui "Monto" %}</span><span class="v">
+        {% if challenge.withdraw_all %}{% ui "Balance completo ($" %}{{ challenge.amount_usd|floatformat:2 }} {% ui "al momento de la solicitud)" %}{% else %}${{ challenge.amount_usd|floatformat:2 }}{% endif %}
       </span></div>
       {% endif %}
-      <div><span>Red</span><span class="v">{{ challenge.asset }}/{{ challenge.network }}</span></div>
-      <div><span>Dirección</span><span class="v">{{ challenge.wallet_address|slice:":6" }}…{{ challenge.wallet_address|slice:"-4:" }}</span></div>
+      <div><span>{% ui "Red" %}</span><span class="v">{{ challenge.asset }}/{{ challenge.network }}</span></div>
+      <div><span>{% ui "Dirección" %}</span><span class="v">{{ challenge.wallet_address|slice:":6" }}…{{ challenge.wallet_address|slice:"-4:" }}</span></div>
     </div>
 
-    {% if error %}<div class="wd-error">{{ error }}</div>{% endif %}
+    {% if error %}<div class="wd-error">{% ui error %}</div>{% endif %}
     {% if resend_msg %}<div class="wd-msg">{{ resend_msg }}</div>{% endif %}
 
     <form method="post">
@@ -63,16 +64,16 @@
       {{ form.challenge_id }}
       {{ form.code }}
       {% if form.code.errors %}
-        <div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{{ form.code.errors|join:", " }}</div>
+        <div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{% ui_errors form.code.errors %}</div>
       {% endif %}
-      <button type="submit" class="submit-btn">CONFIRMAR</button>
+      <button type="submit" class="submit-btn">{% ui "CONFIRMAR" %}</button>
     </form>
 
     <form method="post">
       {% csrf_token %}
       <input type="hidden" name="action" value="resend">
       <button type="submit" class="resend-btn" {% if not can_resend_now %}disabled{% endif %}>
-        {% if can_resend_now %}Reenviar código{% else %}Reenviar disponible en {{ resend_wait }}s{% endif %}
+        {% if can_resend_now %}{% ui "Reenviar código" %}{% else %}{% ui "Reenviar disponible en" %} {{ resend_wait }}s{% endif %}
       </button>
     </form>
   </div>

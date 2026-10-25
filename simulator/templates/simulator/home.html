@@ -1,6 +1,7 @@
 {% extends "simulator/base_app.html" %}
-{% block title %}Dashboard — Money Broker{% endblock %}
-{% block page_title %}Dashboard{% endblock %}
+{% load ui_language %}
+{% block title %}{% ui "Dashboard — Money Broker" %}{% endblock %}
+{% block page_title %}{% ui "Dashboard" %}{% endblock %}
 
 {% block extra_styles %}
 /* ─── Stats Grid ─── */
@@ -402,7 +403,7 @@
   <!-- ╔══════════════════ ACCOUNT SELECTOR ══════════════════╗ -->
   {% if all_accounts %}
   <div class="acc-switcher">
-    <span class="acc-switcher-label">Cuenta activa:</span>
+    <span class="acc-switcher-label">{% ui "Cuenta activa:" %}</span>
 
     {% for acc in all_accounts %}
     <a href="{% url 'simulator:switch_account' acc.id %}?next={% url 'simulator:home' %}"
@@ -415,7 +416,7 @@
     {% endfor %}
 
     <a href="{% url 'simulator:dashboard' %}" class="acc-switcher-trade">
-      <i class="fa-solid fa-chart-line"></i> Tradear →
+      <i class="fa-solid fa-chart-line"></i> {% ui "Tradear →" %}
     </a>
   </div>
   {% endif %}
@@ -424,13 +425,13 @@
   <!-- ╔══════════════════ DASH HEADER + PERIOD SELECTOR ══════════════════╗ -->
   <div class="dash-header">
     <div class="dash-welcome">
-      <h1>Welcome back, <span class="gold">{{ user.first_name|default:user.username }}</span></h1>
-      <p>Here&rsquo;s your account activity and performance overview.</p>
+      <h1>{% ui "Welcome back," %} <span class="gold">{{ user.first_name|default:user.username }}</span></h1>
+      <p>{% ui "Here’s your account activity and performance overview." %}</p>
     </div>
     <div class="period-selector">
       {% for pkey, plabel in period_choices %}
       <a href="?period={{ pkey }}"
-         class="period-pill {% if pkey == period %}active{% endif %}">{{ plabel }}</a>
+         class="period-pill {% if pkey == period %}active{% endif %}">{% ui plabel %}</a>
       {% endfor %}
     </div>
   </div>
@@ -445,11 +446,11 @@
         <i class="fa-solid fa-dollar-sign"></i>
       </div>
       <div class="stat-body">
-        <div class="stat-label">Balance</div>
+        <div class="stat-label">{% ui "Balance" %}</div>
         <div class="stat-value">${{ account.balance|floatformat:2 }}</div>
         <div class="stat-meta">
           <i class="fa-solid fa-circle-dot" style="font-size:.55rem; color:var(--bull)"></i>
-          {% if account.tier %}Cuenta {{ account.tier }}{% else %}{{ account.account_type }}{% endif %}
+          {% if account.tier %}{% ui "Cuenta" %} {{ account.tier }}{% else %}{{ account.account_type }}{% endif %}
         </div>
       </div>
     </div>
@@ -460,11 +461,11 @@
         <i class="fa-solid fa-scale-balanced"></i>
       </div>
       <div class="stat-body">
-        <div class="stat-label">Equity</div>
+        <div class="stat-label">{% ui "Equity" %}</div>
         <div class="stat-value">${{ account.equity|floatformat:2 }}</div>
         <div class="stat-meta">
           <i class="fa-solid fa-layer-group" style="font-size:.65rem"></i>
-          {{ open_positions_count }} posición{{ open_positions_count|pluralize:"es" }} abiert{{ open_positions_count|pluralize:"a,as" }}
+          {{ open_positions_count }} {% ui_plural open_positions_count "posición abierta" "posiciones abiertas" %}
         </div>
       </div>
     </div>
@@ -477,11 +478,11 @@
         <i class="fa-solid fa-{% if pnl_today >= 0 %}arrow-trend-up{% else %}arrow-trend-down{% endif %}"></i>
       </div>
       <div class="stat-body">
-        <div class="stat-label">P&amp;L Hoy</div>
+        <div class="stat-label">{% ui "P&L Hoy" %}</div>
         <div class="stat-value {% if pnl_today >= 0 %}positive{% else %}negative{% endif %}">
           {% if pnl_today >= 0 %}+{% endif %}${{ pnl_today|floatformat:2 }}
         </div>
-        <div class="stat-meta">Ganancias/pérdidas realizadas hoy</div>
+        <div class="stat-meta">{% ui "Ganancias/pérdidas realizadas hoy" %}</div>
       </div>
     </div>
 
@@ -491,11 +492,11 @@
         <i class="fa-solid fa-shield-halved"></i>
       </div>
       <div class="stat-body">
-        <div class="stat-label">Margen Usado</div>
+        <div class="stat-label">{% ui "Margen Usado" %}</div>
         <div class="stat-value">${{ margin_used|floatformat:2 }}</div>
         <div class="stat-meta">
           <i class="fa-solid fa-sliders" style="font-size:.65rem"></i>
-          Apalancamiento 1:{{ account.leverage|default:50 }}
+          {% ui "Apalancamiento 1:" %}{{ account.leverage|default:50 }}
         </div>
       </div>
     </div>
@@ -510,28 +511,28 @@
     <div class="info-card">
       <div class="ic-head">
         <div class="ic-title">
-          {% if challenge_progress %}Challenge Progress{% else %}Trading Activity{% endif %}
+          {% if challenge_progress %}{% ui "Challenge Progress" %}{% else %}{% ui "Trading Activity" %}{% endif %}
         </div>
       </div>
       <div class="ic-body">
         {% if challenge_progress %}
           <div class="progress-item">
             <div class="progress-item-row">
-              <span class="progress-item-lbl">Profit Target</span>
+              <span class="progress-item-lbl">{% ui "Profit Target" %}</span>
               <span class="progress-item-val">${{ challenge_progress.current_profit|floatformat:2 }} / ${{ challenge_progress.profit_target|floatformat:2 }}</span>
             </div>
             <div class="progress-track"><div class="progress-fill" style="width:{{ challenge_progress.progress_pct }}%"></div></div>
           </div>
           <div class="progress-item">
             <div class="progress-item-row">
-              <span class="progress-item-lbl">Daily Drawdown</span>
+              <span class="progress-item-lbl">{% ui "Daily Drawdown" %}</span>
               <span class="progress-item-val">{{ challenge_progress.daily_dd_pct }}%</span>
             </div>
             <div class="progress-track"><div class="progress-fill bear" style="width:{{ challenge_progress.daily_dd_pct }}%"></div></div>
           </div>
           <div class="progress-item">
             <div class="progress-item-row">
-              <span class="progress-item-lbl">Max Drawdown</span>
+              <span class="progress-item-lbl">{% ui "Max Drawdown" %}</span>
               <span class="progress-item-val">${{ challenge_progress.drawdown_used|floatformat:2 }} / ${{ challenge_progress.max_drawdown|floatformat:2 }}</span>
             </div>
             <div class="progress-track"><div class="progress-fill bear" style="width:{{ challenge_progress.drawdown_used_pct }}%"></div></div>
@@ -539,21 +540,21 @@
         {% else %}
           <div class="progress-item">
             <div class="progress-item-row">
-              <span class="progress-item-lbl">Total Trades</span>
+              <span class="progress-item-lbl">{% ui "Total Trades" %}</span>
               <span class="progress-item-val">{{ total_trades }}</span>
             </div>
             <div class="progress-track"><div class="progress-fill" style="width:{% if total_trades %}100{% else %}0{% endif %}%"></div></div>
           </div>
           <div class="progress-item">
             <div class="progress-item-row">
-              <span class="progress-item-lbl">Open Positions</span>
+              <span class="progress-item-lbl">{% ui "Open Positions" %}</span>
               <span class="progress-item-val">{{ open_positions_count }}</span>
             </div>
             <div class="progress-track"><div class="progress-fill" style="width:{% if open_positions_count %}100{% else %}0{% endif %}%"></div></div>
           </div>
           <div class="progress-item">
             <div class="progress-item-row">
-              <span class="progress-item-lbl">Win Rate ({{ period_label }})</span>
+              <span class="progress-item-lbl">{% ui "Win Rate (" %}{% ui period_label %})</span>
               <span class="progress-item-val">
                 {% if performance_metrics.win_rate is not None %}{{ performance_metrics.win_rate }}%{% else %}&mdash;{% endif %}
               </span>
@@ -567,7 +568,7 @@
     <!-- Monthly Goal / Challenge Goal -->
     <div class="info-card">
       <div class="ic-head">
-        <div class="ic-title">{% if challenge_progress %}Challenge Goal{% else %}Account Goal{% endif %}</div>
+        <div class="ic-title">{% if challenge_progress %}{% ui "Challenge Goal" %}{% else %}{% ui "Account Goal" %}{% endif %}</div>
       </div>
       <div class="ic-body">
         {% if challenge_progress %}
@@ -575,15 +576,15 @@
           <div class="goal-ring" style="--pct:{{ challenge_progress.progress_pct }}">
             <div class="goal-ring-inner">
               <div class="goal-ring-pct">{{ challenge_progress.progress_pct }}%</div>
-              <div class="goal-ring-lbl">Progress</div>
+              <div class="goal-ring-lbl">{% ui "Progress" %}</div>
             </div>
           </div>
-          <div class="goal-meta">Target <b>${{ challenge_progress.profit_target|floatformat:0 }}</b></div>
+          <div class="goal-meta">{% ui "Target" %} <b>${{ challenge_progress.profit_target|floatformat:0 }}</b></div>
         </div>
         {% else %}
         <div class="goal-empty">
           <i class="fa-solid fa-bullseye"></i>
-          No active goal for this account.<br>Challenge/Funded accounts show their profit target here.
+          {% ui "No active goal for this account." %}<br>{% ui "Challenge/Funded accounts show their profit target here." %}
         </div>
         {% endif %}
       </div>
@@ -595,8 +596,8 @@
   <!-- ╔══════════════════ PERFORMANCE OVERVIEW ══════════════════╗ -->
   <div class="info-card perf-overview-card">
     <div class="ic-head">
-      <div class="ic-title">Performance Overview</div>
-      <span style="font-size:.72rem;color:var(--muted)">Equity &middot; {{ period_label }}</span>
+      <div class="ic-title">{% ui "Performance Overview" %}</div>
+      <span style="font-size:.72rem;color:var(--muted)">{% ui "Equity ·" %} {% ui period_label %}</span>
     </div>
     <div class="perf-chart-wrap">
       {% if equity_curve %}
@@ -604,7 +605,7 @@
       {% else %}
       <div class="perf-empty">
         <i class="fa-solid fa-chart-area"></i>
-        No data yet for this period.
+        {% ui "No data yet for this period." %}
       </div>
       {% endif %}
     </div>
@@ -614,15 +615,15 @@
   <!-- ╔══════════════════ FINANCIAL CARDS ══════════════════╗ -->
   <div class="fin-grid">
     <div class="fin-card">
-      <div class="fin-card-head"><i class="fa-solid fa-coins"></i> Total Deposited &middot; {{ period_label }}</div>
+      <div class="fin-card-head"><i class="fa-solid fa-coins"></i> {% ui "Total Deposited ·" %} {% ui period_label %}</div>
       <div class="fin-card-val">${{ total_deposited|floatformat:2 }}</div>
     </div>
     <div class="fin-card">
-      <div class="fin-card-head"><i class="fa-solid fa-arrow-up-from-bracket"></i> Total Withdrawn &middot; {{ period_label }}</div>
+      <div class="fin-card-head"><i class="fa-solid fa-arrow-up-from-bracket"></i> {% ui "Total Withdrawn ·" %} {% ui period_label %}</div>
       <div class="fin-card-val">${{ total_withdrawn|floatformat:2 }}</div>
     </div>
     <div class="fin-card">
-      <div class="fin-card-head"><i class="fa-solid fa-wallet"></i> Available Funds</div>
+      <div class="fin-card-head"><i class="fa-solid fa-wallet"></i> {% ui "Available Funds" %}</div>
       <div class="fin-card-val">${{ wallet_available|floatformat:2 }}</div>
     </div>
   </div>
@@ -634,7 +635,7 @@
     <!-- Win Rate -->
     <div class="info-card">
       <div class="ic-head">
-        <div class="ic-title">Performance &middot; {{ period_label }}</div>
+        <div class="ic-title">{% ui "Performance ·" %} {% ui period_label %}</div>
       </div>
       <div class="ic-body">
         {% if performance_metrics.total %}
@@ -645,12 +646,12 @@
             </div>
           </div>
           <div class="winrate-stats">
-            <div class="winrate-stat-row"><span class="winrate-stat-lbl">Winning trades</span><span class="winrate-stat-val" style="color:var(--bull)">{{ performance_metrics.wins }}</span></div>
-            <div class="winrate-stat-row"><span class="winrate-stat-lbl">Losing trades</span><span class="winrate-stat-val" style="color:var(--bear)">{{ performance_metrics.losses }}</span></div>
-            <div class="winrate-stat-row"><span class="winrate-stat-lbl">Average win</span><span class="winrate-stat-val" style="color:var(--bull)">
+            <div class="winrate-stat-row"><span class="winrate-stat-lbl">{% ui "Winning trades" %}</span><span class="winrate-stat-val" style="color:var(--bull)">{{ performance_metrics.wins }}</span></div>
+            <div class="winrate-stat-row"><span class="winrate-stat-lbl">{% ui "Losing trades" %}</span><span class="winrate-stat-val" style="color:var(--bear)">{{ performance_metrics.losses }}</span></div>
+            <div class="winrate-stat-row"><span class="winrate-stat-lbl">{% ui "Average win" %}</span><span class="winrate-stat-val" style="color:var(--bull)">
               {% if performance_metrics.avg_win is not None %}+${{ performance_metrics.avg_win|floatformat:2 }}{% else %}&mdash;{% endif %}
             </span></div>
-            <div class="winrate-stat-row"><span class="winrate-stat-lbl">Average loss</span><span class="winrate-stat-val" style="color:var(--bear)">
+            <div class="winrate-stat-row"><span class="winrate-stat-lbl">{% ui "Average loss" %}</span><span class="winrate-stat-val" style="color:var(--bear)">
               {% if performance_metrics.avg_loss is not None %}${{ performance_metrics.avg_loss|floatformat:2 }}{% else %}&mdash;{% endif %}
             </span></div>
           </div>
@@ -658,7 +659,7 @@
         {% else %}
         <div class="empty-mini">
           <i class="fa-solid fa-chart-pie"></i>
-          No closed trades yet for this period.
+          {% ui "No closed trades yet for this period." %}
         </div>
         {% endif %}
       </div>
@@ -667,7 +668,7 @@
     <!-- Top Instruments -->
     <div class="info-card">
       <div class="ic-head">
-        <div class="ic-title">Top Instruments &middot; {{ period_label }}</div>
+        <div class="ic-title">{% ui "Top Instruments ·" %} {% ui period_label %}</div>
       </div>
       <div class="ic-body">
         {% if top_instruments %}
@@ -678,7 +679,7 @@
               <div class="instr-fill" style="width:{% widthratio ins.trade_count top_instruments.0.trade_count 100 %}%"></div>
             </div>
             <span class="instr-meta">
-              {{ ins.trade_count }} trade{{ ins.trade_count|pluralize }}
+              {{ ins.trade_count }} {% ui_plural ins.trade_count "operación" "operaciones" %}
               &middot;
               <span style="{% if ins.total_pnl and ins.total_pnl >= 0 %}color:var(--bull){% elif ins.total_pnl %}color:var(--bear){% endif %}">
                 {% if ins.total_pnl and ins.total_pnl >= 0 %}+{% endif %}${{ ins.total_pnl|default:0|floatformat:2 }}
@@ -689,7 +690,7 @@
         {% else %}
         <div class="empty-mini">
           <i class="fa-solid fa-layer-group"></i>
-          No instruments traded yet for this period.
+          {% ui "No instruments traded yet for this period." %}
         </div>
         {% endif %}
       </div>
@@ -702,15 +703,15 @@
   <div class="qa-grid">
     <a href="{% url 'simulator:deposit' %}" class="qa-btn qa-primary">
       <i class="fa-solid fa-arrow-down-to-line"></i>
-      Depositar Fondos
+      {% ui "Depositar Fondos" %}
     </a>
     <a href="{% url 'simulator:dashboard' %}" class="qa-btn qa-secondary">
       <i class="fa-solid fa-chart-line"></i>
-      Ir al Terminal
+      {% ui "Ir al Terminal" %}
     </a>
     <a href="{% url 'simulator:history' %}" class="qa-btn qa-secondary">
       <i class="fa-solid fa-clock-rotate-left"></i>
-      Ver Historial
+      {% ui "Ver Historial" %}
     </a>
   </div>
 
@@ -720,59 +721,59 @@
     <div class="ic-head" style="background:rgba(255,165,0,.04);">
       <div class="ic-title" style="color:var(--gold);">
         <i class="fa-solid fa-list-check" style="margin-right:6px;"></i>
-        Completa tu cuenta
+        {% ui "Completa tu cuenta" %}
       </div>
-      <span style="font-size:.72rem;color:var(--muted);">{{ readiness.missing_requirements|length }} paso{{ readiness.missing_requirements|length|pluralize }} pendiente{{ readiness.missing_requirements|length|pluralize }}</span>
+      <span style="font-size:.72rem;color:var(--muted);">{{ readiness.missing_requirements|length }} {% ui_plural readiness.missing_requirements|length "paso pendiente" "pasos pendientes" %}</span>
     </div>
     <div class="ic-body" style="padding:14px 18px;">
       <p style="font-size:.78rem;color:var(--muted);margin-bottom:12px;">
-        Completa los siguientes pasos para habilitar los retiros.
+        {% ui "Completa los siguientes pasos para habilitar los retiros." %}
       </p>
       <ul style="list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:8px;">
 
         <li style="display:flex;align-items:center;gap:10px;font-size:.82rem;">
           {% if readiness.email_verified %}
           <i class="fa-solid fa-circle-check" style="color:var(--bull);flex-shrink:0;"></i>
-          <span style="color:var(--muted-2);">Email verificado</span>
+          <span style="color:var(--muted-2);">{% ui "Email verificado" %}</span>
           {% else %}
           <i class="fa-solid fa-circle-xmark" style="color:var(--bear);flex-shrink:0;"></i>
-          <a href="{% url 'simulator:resend_verification' %}" style="color:var(--gold);font-weight:600;text-decoration:none;">Verificar email &rarr;</a>
+          <a href="{% url 'simulator:resend_verification' %}" style="color:var(--gold);font-weight:600;text-decoration:none;">{% ui "Verificar email →" %}</a>
           {% endif %}
         </li>
 
         <li style="display:flex;align-items:center;gap:10px;font-size:.82rem;">
           {% if readiness.terms_accepted %}
           <i class="fa-solid fa-circle-check" style="color:var(--bull);flex-shrink:0;"></i>
-          <span style="color:var(--muted-2);">Términos y condiciones aceptados</span>
+          <span style="color:var(--muted-2);">{% ui "Términos y condiciones aceptados" %}</span>
           {% else %}
           <i class="fa-solid fa-circle-xmark" style="color:var(--bear);flex-shrink:0;"></i>
-          <a href="{% url 'simulator:accept_terms' %}" style="color:var(--gold);font-weight:600;text-decoration:none;">Aceptar términos &rarr;</a>
+          <a href="{% url 'simulator:accept_terms' %}" style="color:var(--gold);font-weight:600;text-decoration:none;">{% ui "Aceptar términos →" %}</a>
           {% endif %}
         </li>
 
         <li style="display:flex;align-items:center;gap:10px;font-size:.82rem;">
           {% if readiness.kyc_approved %}
           <i class="fa-solid fa-circle-check" style="color:var(--bull);flex-shrink:0;"></i>
-          <span style="color:var(--muted-2);">KYC aprobado</span>
+          <span style="color:var(--muted-2);">{% ui "KYC aprobado" %}</span>
           {% elif readiness.kyc_status == 'pending' %}
           <i class="fa-solid fa-clock" style="color:#FFA500;flex-shrink:0;"></i>
-          <span style="color:#FFA500;">KYC en revisión — aguarda aprobación</span>
+          <span style="color:#FFA500;">{% ui "KYC en revisión — aguarda aprobación" %}</span>
           {% elif readiness.kyc_status == 'rejected' %}
           <i class="fa-solid fa-circle-xmark" style="color:var(--bear);flex-shrink:0;"></i>
-          <a href="{% url 'simulator:kyc' %}" style="color:var(--gold);font-weight:600;text-decoration:none;">KYC rechazado — vuelve a enviar &rarr;</a>
+          <a href="{% url 'simulator:kyc' %}" style="color:var(--gold);font-weight:600;text-decoration:none;">{% ui "KYC rechazado — vuelve a enviar →" %}</a>
           {% else %}
           <i class="fa-solid fa-circle-xmark" style="color:var(--bear);flex-shrink:0;"></i>
-          <a href="{% url 'simulator:kyc' %}" style="color:var(--gold);font-weight:600;text-decoration:none;">Completar verificación KYC &rarr;</a>
+          <a href="{% url 'simulator:kyc' %}" style="color:var(--gold);font-weight:600;text-decoration:none;">{% ui "Completar verificación KYC →" %}</a>
           {% endif %}
         </li>
 
         <li style="display:flex;align-items:center;gap:10px;font-size:.82rem;">
           {% if readiness.totp_enabled %}
           <i class="fa-solid fa-circle-check" style="color:var(--bull);flex-shrink:0;"></i>
-          <span style="color:var(--muted-2);">Autenticación 2FA activada</span>
+          <span style="color:var(--muted-2);">{% ui "Autenticación 2FA activada" %}</span>
           {% else %}
           <i class="fa-solid fa-circle-xmark" style="color:var(--bear);flex-shrink:0;"></i>
-          <a href="{% url 'simulator:totp_setup' %}" style="color:var(--gold);font-weight:600;text-decoration:none;">Activar 2FA &rarr;</a>
+          <a href="{% url 'simulator:totp_setup' %}" style="color:var(--gold);font-weight:600;text-decoration:none;">{% ui "Activar 2FA →" %}</a>
           {% endif %}
         </li>
 
@@ -788,7 +789,7 @@
     <!-- ── Account Status ── -->
     <div class="info-card">
       <div class="ic-head">
-        <div class="ic-title">Estado de Cuenta</div>
+        <div class="ic-title">{% ui "Estado de Cuenta" %}</div>
         <span class="acc-phase-badge badge-{{ account.status|lower }}">
           <i class="fa-solid fa-{% if account.status == 'Activo' %}circle-check{% else %}circle-xmark{% endif %}"
              style="font-size:.65rem"></i>
@@ -799,27 +800,27 @@
 
         <div class="acc-rows">
           <div class="acc-row">
-            <span class="acc-row-lbl">Tipo de cuenta</span>
+            <span class="acc-row-lbl">{% ui "Tipo de cuenta" %}</span>
             <span class="acc-row-val gold">
               {% if account.tier %}{{ account.tier }} — {% endif %}{{ account.account_type }}
             </span>
           </div>
           {% if account.account_type != 'RETAIL' %}
           <div class="acc-row">
-            <span class="acc-row-lbl">Fase</span>
+            <span class="acc-row-lbl">{% ui "Fase" %}</span>
             <span class="acc-row-val">{{ account.phase }}</span>
           </div>
           {% endif %}
           <div class="acc-row">
-            <span class="acc-row-lbl">Apalancamiento</span>
+            <span class="acc-row-lbl">{% ui "Apalancamiento" %}</span>
             <span class="acc-row-val">1:{{ account.leverage|default:50 }}</span>
           </div>
           <div class="acc-row">
-            <span class="acc-row-lbl">Trades realizados</span>
+            <span class="acc-row-lbl">{% ui "Trades realizados" %}</span>
             <span class="acc-row-val">{{ total_trades }}</span>
           </div>
           <div class="acc-row">
-            <span class="acc-row-lbl">Posiciones abiertas</span>
+            <span class="acc-row-lbl">{% ui "Posiciones abiertas" %}</span>
             <span class="acc-row-val">{{ open_positions_count }}</span>
           </div>
         </div>
@@ -827,14 +828,14 @@
         <!-- Drawdown progress -->
         <div class="acc-progress-wrap">
           <div class="acc-progress-label">
-            <span>Drawdown diario</span>
+            <span>{% ui "Drawdown diario" %}</span>
             <span style="color:var(--text)">{{ daily_dd_pct }}%</span>
           </div>
           <div class="acc-progress-bar">
             <div class="acc-progress-fill" style="width:{{ daily_dd_pct }}%"></div>
           </div>
           <div style="font-size:.68rem; color:var(--muted); margin-top:5px; text-align:right">
-            Límite: 5%
+            {% ui "Límite: 5%" %}
           </div>
         </div>
 
@@ -844,8 +845,8 @@
     <!-- ── Recent Movements ── -->
     <div class="info-card">
       <div class="ic-head">
-        <div class="ic-title">Últimos Movimientos</div>
-        <a href="{% url 'simulator:history' %}" class="ic-action">Ver todo →</a>
+        <div class="ic-title">{% ui "Últimos Movimientos" %}</div>
+        <a href="{% url 'simulator:history' %}" class="ic-action">{% ui "Ver todo →" %}</a>
       </div>
       <div class="ic-body" style="padding:0">
 
@@ -853,11 +854,11 @@
         <table class="mov-table">
           <thead>
             <tr>
-              <th>Tipo</th>
-              <th>Descripción</th>
-              <th>Monto</th>
-              <th>Balance</th>
-              <th>Fecha</th>
+              <th>{% ui "Tipo" %}</th>
+              <th>{% ui "Descripción" %}</th>
+              <th>{% ui "Monto" %}</th>
+              <th>{% ui "Balance" %}</th>
+              <th>{% ui "Fecha" %}</th>
             </tr>
           </thead>
           <tbody>
@@ -865,10 +866,10 @@
             <tr>
               <td>
                 <span class="ev-pill ev-{{ e.event_type }}">
-                  {% if e.event_type == 'REALIZED_PNL' %}P&L
-                  {% elif e.event_type == 'COMMISSION' %}Comis.
-                  {% elif e.event_type == 'DEPOSIT' %}Dep.
-                  {% elif e.event_type == 'WITHDRAW' %}Ret.
+                  {% if e.event_type == 'REALIZED_PNL' %}{% ui "P&L" %}
+                  {% elif e.event_type == 'COMMISSION' %}{% ui "Comis." %}
+                  {% elif e.event_type == 'DEPOSIT' %}{% ui "Dep." %}
+                  {% elif e.event_type == 'WITHDRAW' %}{% ui "Ret." %}
                   {% else %}{{ e.event_type }}{% endif %}
                 </span>
               </td>
@@ -890,8 +891,8 @@
         {% else %}
         <div class="mov-empty">
           <i class="fa-solid fa-inbox" style="font-size:1.8rem; margin-bottom:10px; display:block; opacity:.3"></i>
-          Sin movimientos todavía.<br>
-          <a href="{% url 'simulator:deposit' %}" style="color:var(--gold); font-weight:600">Haz tu primer depósito →</a>
+          {% ui "Sin movimientos todavía." %}<br>
+          <a href="{% url 'simulator:deposit' %}" style="color:var(--gold); font-weight:600">{% ui "Haz tu primer depósito →" %}</a>
         </div>
         {% endif %}
 
@@ -905,20 +906,20 @@
   {% if recent_trades %}
   <div class="info-card">
     <div class="ic-head">
-      <div class="ic-title">Últimas Operaciones</div>
-      <a href="{% url 'simulator:history' %}" class="ic-action">Ver historial completo →</a>
+      <div class="ic-title">{% ui "Últimas Operaciones" %}</div>
+      <a href="{% url 'simulator:history' %}" class="ic-action">{% ui "Ver historial completo →" %}</a>
     </div>
     <div class="ic-body" style="padding:0">
       <table class="mov-table">
         <thead>
           <tr>
-            <th>Símbolo</th>
-            <th>Dirección</th>
-            <th>Lotes</th>
-            <th>Entrada</th>
-            <th>Salida</th>
-            <th>P&amp;L</th>
-            <th>Cerrado</th>
+            <th>{% ui "Símbolo" %}</th>
+            <th>{% ui "Dirección" %}</th>
+            <th>{% ui "Lotes" %}</th>
+            <th>{% ui "Entrada" %}</th>
+            <th>{% ui "Salida" %}</th>
+            <th>{% ui "P&L" %}</th>
+            <th>{% ui "Cerrado" %}</th>
           </tr>
         </thead>
         <tbody>
@@ -927,13 +928,13 @@
             <td class="trade-row-sym">{{ t.symbol }}</td>
             <td>
               <span class="{% if t.trade_type == 'BUY' %}trade-row-buy{% else %}trade-row-sell{% endif %}">
-                {% if t.trade_type == 'BUY' %}▲ BUY{% else %}▼ SELL{% endif %}
+                {% if t.trade_type == 'BUY' %}{% ui "▲ BUY" %}{% else %}{% ui "▼ SELL" %}{% endif %}
               </span>
             </td>
             <td style="color:var(--muted-2)">{{ t.lot_size }}</td>
             <td style="color:var(--muted-2)">{{ t.entry_price }}</td>
             <td style="color:var(--muted-2)">
-              {% if t.exit_price %}{{ t.exit_price }}{% else %}<span style="color:var(--muted)">open</span>{% endif %}
+              {% if t.exit_price %}{{ t.exit_price }}{% else %}<span style="color:var(--muted)">{% ui "open" %}</span>{% endif %}
             </td>
             <td class="mov-amount {% if t.profit_loss and t.profit_loss > 0 %}mov-pos{% elif t.profit_loss and t.profit_loss < 0 %}mov-neg{% else %}mov-neutral{% endif %}">
               {% if t.profit_loss %}
@@ -952,7 +953,7 @@
   {% endif %}
 
   <!-- ╔══════════════════ BROKER ECOSYSTEM ══════════════════╗ -->
-  <div style="margin-top:28px;margin-bottom:4px;font-family:'Orbitron',sans-serif;font-size:.7rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">Ecosistema broker</div>
+  <div style="margin-top:28px;margin-bottom:4px;font-family:'Orbitron',sans-serif;font-size:.7rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">{% ui "Ecosistema broker" %}</div>
 
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;margin-top:12px">
 
@@ -963,12 +964,12 @@
         <i class="fa-solid fa-calendar-days"></i>
       </div>
       <div>
-        <div style="font-size:.78rem;font-weight:700;color:var(--text-primary);margin-bottom:3px">Calendario</div>
+        <div style="font-size:.78rem;font-weight:700;color:var(--text-primary);margin-bottom:3px">{% ui "Calendario" %}</div>
         {% if upcoming_events %}
-        <div style="font-size:.7rem;color:var(--muted-2)">{{ upcoming_events|length }} evento{{ upcoming_events|length|pluralize }} próximo{{ upcoming_events|length|pluralize }}</div>
+        <div style="font-size:.7rem;color:var(--muted-2)">{{ upcoming_events|length }} {% ui_plural upcoming_events|length "evento próximo" "eventos próximos" %}</div>
         <div style="font-size:.68rem;color:var(--muted);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px">{{ upcoming_events.0.title|truncatechars:28 }}</div>
         {% else %}
-        <div style="font-size:.7rem;color:var(--muted)">Sin eventos próximos</div>
+        <div style="font-size:.7rem;color:var(--muted)">{% ui "Sin eventos próximos" %}</div>
         {% endif %}
       </div>
     </div>
@@ -981,12 +982,12 @@
         <i class="fa-solid fa-handshake"></i>
       </div>
       <div>
-        <div style="font-size:.78rem;font-weight:700;color:var(--text-primary);margin-bottom:3px">Asociados</div>
+        <div style="font-size:.78rem;font-weight:700;color:var(--text-primary);margin-bottom:3px">{% ui "Asociados" %}</div>
         {% if referral %}
-        <div style="font-size:.7rem;color:var(--muted-2)">{{ referral.clicks }} click{{ referral.clicks|pluralize }} · {{ referral.attributions.count }} registro{{ referral.attributions.count|pluralize }}</div>
-        <div style="font-size:.68rem;color:var(--muted);margin-top:3px">Comisión: ${{ referral.estimated_commission|floatformat:2 }}</div>
+        <div style="font-size:.7rem;color:var(--muted-2)">{{ referral.clicks }} {% ui "click" %}{{ referral.clicks|pluralize }} · {{ referral.attributions.count }} {% ui "registro" %}{{ referral.attributions.count|pluralize }}</div>
+        <div style="font-size:.68rem;color:var(--muted);margin-top:3px">{% ui "Comisión: $" %}{{ referral.estimated_commission|floatformat:2 }}</div>
         {% else %}
-        <div style="font-size:.7rem;color:var(--muted)">Activa tu programa IB</div>
+        <div style="font-size:.7rem;color:var(--muted)">{% ui "Activa tu programa IB" %}</div>
         {% endif %}
       </div>
     </div>
@@ -999,11 +1000,11 @@
         <i class="fa-solid fa-gift"></i>
       </div>
       <div>
-        <div style="font-size:.78rem;font-weight:700;color:var(--text-primary);margin-bottom:3px">Bonos</div>
+        <div style="font-size:.78rem;font-weight:700;color:var(--text-primary);margin-bottom:3px">{% ui "Bonos" %}</div>
         {% if active_bonuses_ct %}
-        <div style="font-size:.7rem;color:#26a69a;font-weight:600">{{ active_bonuses_ct }} bono{{ active_bonuses_ct|pluralize }} activo{{ active_bonuses_ct|pluralize }}</div>
+        <div style="font-size:.7rem;color:#26a69a;font-weight:600">{{ active_bonuses_ct }} {% ui "bono" %}{{ active_bonuses_ct|pluralize }} {% ui "activo" %}{{ active_bonuses_ct|pluralize }}</div>
         {% else %}
-        <div style="font-size:.7rem;color:var(--muted)">Sin bonos activos</div>
+        <div style="font-size:.7rem;color:var(--muted)">{% ui "Sin bonos activos" %}</div>
         {% endif %}
       </div>
     </div>
@@ -1016,11 +1017,11 @@
         <i class="fa-solid fa-folder-open"></i>
       </div>
       <div>
-        <div style="font-size:.78rem;font-weight:700;color:var(--text-primary);margin-bottom:3px">Archivos</div>
+        <div style="font-size:.78rem;font-weight:700;color:var(--text-primary);margin-bottom:3px">{% ui "Archivos" %}</div>
         {% if recent_docs %}
-        <div style="font-size:.7rem;color:var(--muted-2)">{{ recent_docs|length }} archivo{{ recent_docs|length|pluralize }} reciente{{ recent_docs|length|pluralize }}</div>
+        <div style="font-size:.7rem;color:var(--muted-2)">{{ recent_docs|length }} {% ui_plural recent_docs|length "archivo reciente" "archivos recientes" %}</div>
         {% else %}
-        <div style="font-size:.7rem;color:var(--muted)">Sin archivos publicados</div>
+        <div style="font-size:.7rem;color:var(--muted)">{% ui "Sin archivos publicados" %}</div>
         {% endif %}
       </div>
     </div>
@@ -1033,11 +1034,11 @@
         <i class="fa-solid fa-robot"></i>
       </div>
       <div>
-        <div style="font-size:.78rem;font-weight:700;color:var(--text-primary);margin-bottom:3px">Expertos (EAs)</div>
+        <div style="font-size:.78rem;font-weight:700;color:var(--text-primary);margin-bottom:3px">{% ui "Expertos (EAs)" %}</div>
         {% if ea_count %}
-        <div style="font-size:.7rem;color:var(--muted-2)">{{ ea_count }} EA{{ ea_count|pluralize }} disponible{{ ea_count|pluralize }}</div>
+        <div style="font-size:.7rem;color:var(--muted-2)">{{ ea_count }} {% ui_plural ea_count "EA disponible" "EAs disponibles" %}</div>
         {% else %}
-        <div style="font-size:.7rem;color:var(--muted)">Sin EAs publicados</div>
+        <div style="font-size:.7rem;color:var(--muted)">{% ui "Sin EAs publicados" %}</div>
         {% endif %}
       </div>
     </div>

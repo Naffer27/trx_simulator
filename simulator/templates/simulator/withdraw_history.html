@@ -1,7 +1,8 @@
 {% extends "simulator/base_app.html" %}
+{% load ui_language %}
 {% load static %}
-{% block title %}Withdrawal History — Money Broker{% endblock %}
-{% block page_title %}Historial de Retiros{% endblock %}
+{% block title %}{% ui "Withdrawal History — Money Broker" %}{% endblock %}
+{% block page_title %}{% ui "Historial de Retiros" %}{% endblock %}
 
 {% block extra_head %}
 <style>
@@ -126,18 +127,18 @@
 {% block content %}
 <div class="wh-wrap">
   <div class="wh-header">
-    <h2>Historial de Retiros</h2>
-    <a href="{% url 'simulator:withdraw' %}" class="new-btn">+ NUEVO RETIRO</a>
+    <h2>{% ui "Historial de Retiros" %}</h2>
+    <a href="{% url 'simulator:withdraw' %}" class="new-btn">{% ui "+ NUEVO RETIRO" %}</a>
   </div>
 
   <!-- Wallet summary -->
   <div class="wallet-pill">
     <i class="fa-solid fa-wallet" style="color:var(--gold)"></i>
-    <span style="color:var(--text-secondary);">Balance disponible:</span>
+    <span style="color:var(--text-secondary);">{% ui "Balance disponible:" %}</span>
     <strong style="color:var(--gold);">${{ wallet.available_balance|floatformat:2 }}</strong>
     {% if wallet.pending_balance > 0 %}
     <span style="color:var(--text-muted);font-size:.77rem;margin-left:8px;">
-      · Pendiente: ${{ wallet.pending_balance|floatformat:2 }}
+      {% ui "· Pendiente: $" %}{{ wallet.pending_balance|floatformat:2 }}
     </span>
     {% endif %}
   </div>
@@ -148,12 +149,12 @@
       <thead>
         <tr>
           <th>#</th>
-          <th>Fecha</th>
-          <th>Monto</th>
-          <th>Cripto</th>
-          <th>Dirección</th>
-          <th>Cripto</th>
-          <th>Status</th>
+          <th>{% ui "Fecha" %}</th>
+          <th>{% ui "Monto" %}</th>
+          <th>{% ui "Cripto" %}</th>
+          <th>{% ui "Dirección" %}</th>
+          <th>{% ui "Cripto" %}</th>
+          <th>{% ui "Status" %}</th>
         </tr>
       </thead>
       <tbody>
@@ -180,23 +181,23 @@
                 {% endif %}
               {% elif wr.crypto_amount %}
                 {{ wr.crypto_amount }} {{ wr.crypto_currency|upper }}
-                <br><span style="font-size:.62rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;">Estimado</span>
+                <br><span style="font-size:.62rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;">{% ui "Estimado" %}</span>
               {% else %}—{% endif %}
             {% endwith %}
           </td>
           <td>
             {% if wr.status == "pending" %}
-              <span class="badge s-pending">Pendiente</span>
+              <span class="badge s-pending">{% ui "Pendiente" %}</span>
             {% elif wr.status == "approved" %}
-              <span class="badge s-approved">Aprobado</span>
+              <span class="badge s-approved">{% ui "Aprobado" %}</span>
             {% elif wr.status == "processing" %}
-              <span class="badge s-processing">En proceso</span>
+              <span class="badge s-processing">{% ui "En proceso" %}</span>
             {% elif wr.status == "completed" %}
-              <span class="badge s-completed">Completado</span>
+              <span class="badge s-completed">{% ui "Completado" %}</span>
             {% elif wr.status == "rejected" %}
-              <span class="badge s-rejected">Rechazado</span>
+              <span class="badge s-rejected">{% ui "Rechazado" %}</span>
             {% elif wr.status == "failed" %}
-              <span class="badge s-failed">Fallido</span>
+              <span class="badge s-failed">{% ui "Fallido" %}</span>
             {% else %}
               <span class="badge" style="background:var(--bg-card-2);color:var(--text-muted);">{{ wr.status }}</span>
             {% endif %}
@@ -208,8 +209,8 @@
     {% else %}
     <div class="empty-state">
       <i class="fa-solid fa-arrow-up-from-bracket" style="font-size:2rem;color:rgba(255,215,0,.2);"></i>
-      <p>No tienes solicitudes de retiro aún.</p>
-      <a href="{% url 'simulator:withdraw' %}" class="new-btn">Crear primer retiro</a>
+      <p>{% ui "No tienes solicitudes de retiro aún." %}</p>
+      <a href="{% url 'simulator:withdraw' %}" class="new-btn">{% ui "Crear primer retiro" %}</a>
     </div>
     {% endif %}
   </div>
@@ -217,10 +218,10 @@
   <!-- Status legend -->
   {% if withdrawals %}
   <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:18px;">
-    <span class="badge s-pending">Pendiente — en revisión</span>
-    <span class="badge s-processing">En proceso — enviando</span>
-    <span class="badge s-completed">Completado — crypto enviado</span>
-    <span class="badge s-rejected">Rechazado — fondos devueltos</span>
+    <span class="badge s-pending">{% ui "Pendiente — en revisión" %}</span>
+    <span class="badge s-processing">{% ui "En proceso — enviando" %}</span>
+    <span class="badge s-completed">{% ui "Completado — crypto enviado" %}</span>
+    <span class="badge s-rejected">{% ui "Rechazado — fondos devueltos" %}</span>
   </div>
   {% endif %}
 </div>

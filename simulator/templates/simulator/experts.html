@@ -1,6 +1,7 @@
 {% extends "simulator/base_app.html" %}
-{% block title %}Expertos (EAs) — Money Broker{% endblock %}
-{% block page_title %}Expertos (EAs){% endblock %}
+{% load ui_language %}
+{% block title %}{% ui "Expertos (EAs) — Money Broker" %}{% endblock %}
+{% block page_title %}{% ui "Expertos (EAs)" %}{% endblock %}
 
 {% block extra_styles %}
 .ea-section-title {
@@ -84,9 +85,9 @@
 {% block content %}
 <div>
   <p style="color:var(--muted-2);font-size:.85rem;margin-bottom:24px;">
-    Robots de trading y asesores expertos (EAs) disponibles para Money Broker.
-    {% if total %}<span style="color:var(--muted);margin-left:8px">{{ total }} EA{{ total|pluralize }} disponible{{ total|pluralize }}</span>{% endif %}
-    Gestionado desde el panel de administración.
+    {% ui "Robots de trading y asesores expertos (EAs) disponibles para Money Broker." %}
+    {% if total %}<span style="color:var(--muted);margin-left:8px">{{ total }} EA{{ total|pluralize }} {% ui "disponible" %}{{ total|pluralize }}</span>{% endif %}
+    {% ui "Gestionado desde el panel de administración." %}
   </p>
 
   {% if by_category %}
@@ -102,7 +103,7 @@
             <div class="ea-meta-row">
               <span class="ea-cat-badge">{{ ea.get_category_display }}</span>
               {% if ea.version %}<span class="ea-ver-badge">v{{ ea.version }}</span>{% endif %}
-              {% if ea.coming_soon %}<span class="ea-soon-badge">Pronto</span>{% endif %}
+              {% if ea.coming_soon %}<span class="ea-soon-badge">{% ui "Pronto" %}</span>{% endif %}
             </div>
           </div>
         </div>
@@ -113,13 +114,13 @@
         {% endif %}
         <div class="ea-card-footer">
           {% if ea.coming_soon %}
-          <span class="ea-coming-btn"><i class="fa-solid fa-lock"></i> Próximamente</span>
+          <span class="ea-coming-btn"><i class="fa-solid fa-lock"></i> {% ui "Próximamente" %}</span>
           {% elif ea.download_url %}
           <a href="{{ ea.download_url }}" class="ea-download-btn" target="_blank" rel="noopener">
-            <i class="fa-solid fa-download"></i> Descargar
+            <i class="fa-solid fa-download"></i> {% ui "Descargar" %}
           </a>
           {% else %}
-          <span class="ea-coming-btn"><i class="fa-solid fa-clock"></i> Disponible pronto</span>
+          <span class="ea-coming-btn"><i class="fa-solid fa-clock"></i> {% ui "Disponible pronto" %}</span>
           {% endif %}
         </div>
       </div>
@@ -129,8 +130,8 @@
   {% else %}
   <div class="empty-state">
     <div class="empty-icon"><i class="fa-solid fa-robot"></i></div>
-    <div class="empty-msg">No hay expertos disponibles en este momento.</div>
-    <div style="font-size:.75rem;color:var(--muted);margin-top:6px">Los EAs serán publicados próximamente por el equipo de Money Broker.</div>
+    <div class="empty-msg">{% ui "No hay expertos disponibles en este momento." %}</div>
+    <div style="font-size:.75rem;color:var(--muted);margin-top:6px">{% ui "Los EAs serán publicados próximamente por el equipo de Money Broker." %}</div>
   </div>
   {% endif %}
 </div>

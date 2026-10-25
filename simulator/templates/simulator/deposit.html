@@ -1,7 +1,8 @@
 {% extends "simulator/base_app.html" %}
+{% load ui_language %}
 {% load static %}
-{% block title %}Deposit — Money Broker{% endblock %}
-{% block page_title %}Depositar{% endblock %}
+{% block title %}{% ui "Deposit — Money Broker" %}{% endblock %}
+{% block page_title %}{% ui "Depositar" %}{% endblock %}
 
 {% block extra_head %}
 <style>
@@ -143,18 +144,18 @@
 {% block content %}
 <div class="deposit-wrap">
   <div class="deposit-card">
-    <h2>Deposit Funds</h2>
-    <p class="subtitle">Depósito instantáneo con criptomonedas · Sin comisiones · Desde $20</p>
+    <h2>{% ui "Deposit Funds" %}</h2>
+    <p class="subtitle">{% ui "Depósito instantáneo con criptomonedas · Sin comisiones · Desde $20" %}</p>
     {% if wallet %}
     <div style="background:rgba(255,215,0,.06);border:1px solid rgba(255,215,0,.18);border-radius:10px;padding:12px 16px;margin-bottom:22px;display:flex;align-items:center;gap:10px;font-size:.83rem;">
       <i class="fa-solid fa-wallet" style="color:var(--gold)"></i>
-      <span style="color:var(--text-secondary);">Wallet disponible:</span>
+      <span style="color:var(--text-secondary);">{% ui "Wallet disponible:" %}</span>
       <strong style="color:var(--gold);margin-left:auto;">${{ wallet.available_balance|floatformat:2 }}</strong>
     </div>
     {% endif %}
 
     {% if error %}
-    <div class="deposit-error">{{ error }}</div>
+    <div class="deposit-error">{% ui error %}</div>
     {% endif %}
 
     <form method="post" id="depositForm">
@@ -162,7 +163,7 @@
 
       <!-- Amount -->
       <div class="form-group">
-        <div class="field-label">Monto en USD</div>
+        <div class="field-label">{% ui "Monto en USD" %}</div>
         <div class="preset-grid" id="presetGrid">
           <button type="button" class="preset-btn" data-amount="20">$20</button>
           <button type="button" class="preset-btn" data-amount="50">$50</button>
@@ -173,7 +174,7 @@
         </div>
         {{ form.amount_usd }}
         {% if form.amount_usd.errors %}
-          <div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{{ form.amount_usd.errors|join:", " }}</div>
+          <div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{% ui_errors form.amount_usd.errors %}</div>
         {% endif %}
       </div>
 
@@ -181,10 +182,10 @@
 
       <!-- Crypto -->
       <div class="form-group">
-        <div class="field-label">Criptomoneda</div>
+        <div class="field-label">{% ui "Criptomoneda" %}</div>
         {{ form.crypto_currency }}
         {% if form.crypto_currency.errors %}
-          <div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{{ form.crypto_currency.errors|join:", " }}</div>
+          <div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{% ui_errors form.crypto_currency.errors %}</div>
         {% endif %}
         <div class="crypto-icons" style="margin-top:10px;">
           <span class="crypto-tag">BTC</span>
@@ -196,22 +197,22 @@
         </div>
       </div>
 
-      <button type="submit" class="submit-btn">CONTINUAR AL PAGO</button>
+      <button type="submit" class="submit-btn">{% ui "CONTINUAR AL PAGO" %}</button>
     </form>
 
     <div class="info-row">
       <span>&#9432;</span>
-      Serás redirigido a NowPayments para completar el pago de forma segura.
+      {% ui "Serás redirigido a NowPayments para completar el pago de forma segura." %}
     </div>
     <div class="info-row" style="margin-top:8px;">
       <span>&#128274;</span>
-      Confirmación en ~15 minutos · Balance acreditado automáticamente.
+      {% ui "Confirmación en ~15 minutos · Balance acreditado automáticamente." %}
     </div>
 
     <hr class="divider">
     <div style="text-align:center;">
       <a href="{% url 'simulator:deposit_history' %}" style="color:var(--gold);font-size:.78rem;text-decoration:none;">
-        Ver historial de depósitos →
+        {% ui "Ver historial de depósitos →" %}
       </a>
     </div>
   </div>

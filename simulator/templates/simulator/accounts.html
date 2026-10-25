@@ -1,6 +1,7 @@
 {% extends "simulator/base_app.html" %}
-{% block title %}Mis Cuentas — Money Broker{% endblock %}
-{% block page_title %}Mis Cuentas{% endblock %}
+{% load ui_language %}
+{% block title %}{% ui "Mis Cuentas — Money Broker" %}{% endblock %}
+{% block page_title %}{% ui "Mis Cuentas" %}{% endblock %}
 
 {% block extra_styles %}
 
@@ -171,13 +172,13 @@
 <div class="flash flash-warn">
   <i class="fa-solid fa-envelope-circle-check" style="margin-top:1px;font-size:1rem;flex-shrink:0"></i>
   <span>
-    <strong>Tu email aún no está verificado.</strong>
-    Verifica tu correo para activar depósitos, retiros, cuentas reales y challenges.
+    <strong>{% ui "Tu email aún no está verificado." %}</strong>
+    {% ui "Verifica tu correo para activar depósitos, retiros, cuentas reales y challenges." %}
   </span>
   <form method="post" action="{% url 'simulator:resend_verification' %}" style="display:inline">
     {% csrf_token %}
     <button type="submit" style="background:none;border:none;cursor:pointer;color:#ffb800;font-weight:700;font-size:.82rem;text-decoration:underline;padding:0">
-      Reenviar email de verificación
+      {% ui "Reenviar email de verificación" %}
     </button>
   </form>
 </div>
@@ -187,34 +188,34 @@
 <div class="flash flash-ok"><i class="fa-solid fa-circle-check"></i>{{ acct_success }}</div>
 {% endif %}
 {% if acct_error %}
-<div class="flash flash-err"><i class="fa-solid fa-triangle-exclamation"></i>{{ acct_error }}</div>
+<div class="flash flash-err"><i class="fa-solid fa-triangle-exclamation"></i>{% ui acct_error %}</div>
 {% endif %}
 
 <!-- ═══════════════ WALLET ═══════════════ -->
 <div class="wallet-card">
   <div class="wallet-left">
-    <div class="wallet-label"><i class="fa-solid fa-wallet" style="margin-right:6px"></i>Wallet Balance</div>
+    <div class="wallet-label"><i class="fa-solid fa-wallet" style="margin-right:6px"></i>{% ui "Wallet Balance" %}</div>
     <div class="wallet-amount" id="walletAmount">${{ wallet.available_balance|floatformat:2 }}</div>
     <div class="wallet-pending" id="walletPending" {% if not wallet.pending_balance %}style="display:none"{% endif %}>
       <i class="fa-solid fa-clock" style="margin-right:4px;color:var(--amber)"></i>
-      Pendiente: $<span id="walletPendingAmt">{{ wallet.pending_balance|floatformat:2 }}</span>
+      {% ui "Pendiente: $" %}<span id="walletPendingAmt">{{ wallet.pending_balance|floatformat:2 }}</span>
     </div>
   </div>
   <div class="wallet-actions">
     <a href="{% url 'simulator:deposit' %}" class="btn btn-outline">
-      <i class="fa-solid fa-arrow-down-to-line"></i> Depositar
+      <i class="fa-solid fa-arrow-down-to-line"></i> {% ui "Depositar" %}
     </a>
     <a href="{% url 'simulator:deposit_history' %}" class="btn btn-outline">
-      <i class="fa-solid fa-clock-rotate-left"></i> Historial
+      <i class="fa-solid fa-clock-rotate-left"></i> {% ui "Historial" %}
     </a>
   </div>
 </div>
 
 <!-- ═══════════════ MY ACCOUNTS HEADER ═══════════════ -->
 <div class="sec-header">
-  <div class="sec-title">Mis Cuentas</div>
+  <div class="sec-title">{% ui "Mis Cuentas" %}</div>
   <a href="{% url 'simulator:account_open' %}" class="btn btn-primary btn-sm">
-    <i class="fa-solid fa-plus"></i> Abrir Nueva Cuenta
+    <i class="fa-solid fa-plus"></i> {% ui "Abrir Nueva Cuenta" %}
   </a>
 </div>
 
@@ -232,46 +233,46 @@
     </div>
     <div class="ac-body">
       <div class="ac-row">
-        <span class="ac-lbl">Balance</span>
+        <span class="ac-lbl">{% ui "Balance" %}</span>
         <span class="ac-val">${{ acc.balance|floatformat:2 }}</span>
       </div>
       <div class="ac-row">
-        <span class="ac-lbl">Equity</span>
+        <span class="ac-lbl">{% ui "Equity" %}</span>
         <span class="ac-val">${{ acc.equity|floatformat:2 }}</span>
       </div>
       <div class="ac-row">
-        <span class="ac-lbl">Apalancamiento</span>
+        <span class="ac-lbl">{% ui "Apalancamiento" %}</span>
         <span class="ac-val gold">1:{{ acc.leverage }}</span>
       </div>
       <div class="ac-row">
-        <span class="ac-lbl">Posiciones abiertas</span>
+        <span class="ac-lbl">{% ui "Posiciones abiertas" %}</span>
         <span class="ac-val">{{ item.open_positions }}</span>
       </div>
       {% if acc.account_type == 'CHALLENGE' or acc.account_type == 'FUNDED' %}
       <div class="ac-row">
-        <span class="ac-lbl">Fase</span>
+        <span class="ac-lbl">{% ui "Fase" %}</span>
         <span class="ac-val">{{ acc.phase }}</span>
       </div>
       {% endif %}
       <div class="ac-row">
-        <span class="ac-lbl">Creada</span>
+        <span class="ac-lbl">{% ui "Creada" %}</span>
         <span class="ac-val" style="color:var(--muted)">{{ acc.created_at|date:"d/m/Y" }}</span>
       </div>
     </div>
     <div class="ac-footer">
       {% if acc.status == 'Activo' %}
       <a href="{% url 'simulator:dashboard_account' acc.id %}" class="btn btn-primary btn-sm" style="flex:1;justify-content:center">
-        <i class="fa-solid fa-chart-line"></i> Tradear
+        <i class="fa-solid fa-chart-line"></i> {% ui "Tradear" %}
       </a>
       {% endif %}
       {% if acc.account_type != 'DEMO' and acc.account_type != 'CHALLENGE' %}
       <button class="btn btn-outline btn-sm"
               onclick="openFundModal({{ acc.id }},'{{ acc.account_type }}',{{ acc.balance }})">
-        <i class="fa-solid fa-arrow-down-to-line"></i> Fund
+        <i class="fa-solid fa-arrow-down-to-line"></i> {% ui "Fund" %}
       </button>
       <button class="btn btn-outline btn-sm"
               onclick="openWithdrawModal({{ acc.id }},'{{ acc.account_type }}',{{ acc.balance }})">
-        <i class="fa-solid fa-arrow-up-from-line"></i> Withdraw
+        <i class="fa-solid fa-arrow-up-from-line"></i> {% ui "Withdraw" %}
       </button>
       {% endif %}
     </div>
@@ -280,9 +281,9 @@
   {% empty %}
   <div class="empty-state">
     <i class="fa-solid fa-briefcase"></i>
-    <p>Aún no tienes cuentas de trading.<br>Abre tu primera cuenta para empezar.</p>
+    <p>{% ui "Aún no tienes cuentas de trading." %}<br>{% ui "Abre tu primera cuenta para empezar." %}</p>
     <a href="{% url 'simulator:account_open' %}" class="btn btn-primary">
-      <i class="fa-solid fa-plus"></i> Abrir Primera Cuenta
+      <i class="fa-solid fa-plus"></i> {% ui "Abrir Primera Cuenta" %}
     </a>
   </div>
   {% endfor %}
@@ -292,22 +293,22 @@
 <div class="modal-backdrop" id="fundModal" onclick="closeOnBackdrop(event,'fundModal')">
   <div class="modal-box">
     <div class="modal-title">
-      <span><i class="fa-solid fa-arrow-down-to-line" style="color:#26a69a;margin-right:8px"></i>Transferir al Account</span>
+      <span><i class="fa-solid fa-arrow-down-to-line" style="color:#26a69a;margin-right:8px"></i>{% ui "Transferir al Account" %}</span>
       <button class="modal-close" onclick="closeModal('fundModal')"><i class="fa-solid fa-xmark"></i></button>
     </div>
     <div class="modal-balance-tag">
       <i class="fa-solid fa-wallet"></i>
-      Wallet disponible: <strong style="color:var(--gold)">${{ wallet.available_balance|floatformat:2 }}</strong>
+      {% ui "Wallet disponible:" %} <strong style="color:var(--gold)">${{ wallet.available_balance|floatformat:2 }}</strong>
     </div>
     <div id="fundAccInfo" style="font-size:.78rem;color:var(--muted-2);margin-bottom:14px"></div>
     <form method="POST" id="fundForm">
       {% csrf_token %}
       <div class="form-group">
-        <label class="form-label">Monto (USD)</label>
+        <label class="form-label">{% ui "Monto (USD)" %}</label>
         <input type="number" name="amount" class="form-input" step="1" min="1" placeholder="100.00" required>
       </div>
       <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center">
-        <i class="fa-solid fa-paper-plane"></i> Transferir
+        <i class="fa-solid fa-paper-plane"></i> {% ui "Transferir" %}
       </button>
     </form>
   </div>
@@ -317,22 +318,22 @@
 <div class="modal-backdrop" id="withdrawModal" onclick="closeOnBackdrop(event,'withdrawModal')">
   <div class="modal-box">
     <div class="modal-title">
-      <span><i class="fa-solid fa-arrow-up-from-line" style="color:var(--amber);margin-right:8px"></i>Retirar al Wallet</span>
+      <span><i class="fa-solid fa-arrow-up-from-line" style="color:var(--amber);margin-right:8px"></i>{% ui "Retirar al Wallet" %}</span>
       <button class="modal-close" onclick="closeModal('withdrawModal')"><i class="fa-solid fa-xmark"></i></button>
     </div>
     <div id="withdrawAccInfo" style="font-size:.78rem;color:var(--muted-2);margin-bottom:14px"></div>
     <form method="POST" id="withdrawForm">
       {% csrf_token %}
       <div class="form-group">
-        <label class="form-label">Monto (USD)</label>
+        <label class="form-label">{% ui "Monto (USD)" %}</label>
         <input type="number" name="amount" class="form-input" step="1" min="1" placeholder="100.00" required>
       </div>
       <div class="form-hint" style="margin-bottom:14px;color:var(--muted)">
         <i class="fa-solid fa-triangle-exclamation" style="color:var(--amber);margin-right:4px"></i>
-        Cierra todas las posiciones antes de retirar.
+        {% ui "Cierra todas las posiciones antes de retirar." %}
       </div>
       <button type="submit" class="btn btn-primary" style="width:100%;justify-content:center">
-        <i class="fa-solid fa-arrow-up-from-line"></i> Retirar
+        <i class="fa-solid fa-arrow-up-from-line"></i> {% ui "Retirar" %}
       </button>
     </form>
   </div>

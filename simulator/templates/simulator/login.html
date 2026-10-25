@@ -1,10 +1,12 @@
+{% load ui_language %}
 {% load static %}
 <!DOCTYPE html>
-<html lang="en">
+{% ui_language as ui_lang %}
+<html lang="{{ ui_lang }}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Login — Money Broker</title>
+  <title>{% ui "Login — Money Broker" %}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
@@ -165,6 +167,7 @@
   </style>
 </head>
 <body>
+<div class="mb-auth-language">{% include "simulator/includes/language_switch.html" %}</div>
 
 <canvas id="auth-canvas"></canvas>
 
@@ -172,41 +175,41 @@
   <a class="auth-brand" href="{% url 'simulator:landing' %}">MONEY BROKER</a>
 
   <div class="auth-card">
-    <h1 class="auth-title">Welcome back</h1>
-    <p class="auth-sub">Sign in to your trading account</p>
+    <h1 class="auth-title">{% ui "Welcome back" %}</h1>
+    <p class="auth-sub">{% ui "Sign in to your trading account" %}</p>
 
     {% if error %}
-      <div class="auth-alert">{{ error }}</div>
+      <div class="auth-alert">{% ui error %}</div>
     {% endif %}
 
     <form method="post" action="{% url 'simulator:login' %}" autocomplete="on">
       {% csrf_token %}
 
       <div class="field">
-        <label for="id_username">Username</label>
+        <label for="id_username">{% ui "Username" %}</label>
         <input type="text" id="id_username" name="username"
-               placeholder="your username" autocomplete="username" required>
+               placeholder="{% ui "your username" %}" autocomplete="username" required>
       </div>
 
       <div class="field">
-        <label for="id_password">Password</label>
+        <label for="id_password">{% ui "Password" %}</label>
         <input type="password" id="id_password" name="password"
                placeholder="••••••••" autocomplete="current-password" required>
       </div>
 
-      <button type="submit" class="btn-auth">Sign In &rarr;</button>
+      <button type="submit" class="btn-auth">{% ui "Sign In →" %}</button>
     </form>
 
     <hr class="auth-divider">
 
     <p class="auth-footer">
-      Don't have an account? <a href="{% url 'simulator:register' %}">Open Account</a>
+      {% ui "Don't have an account?" %} <a href="{% url 'simulator:register' %}">{% ui "Open Account" %}</a>
     </p>
     <p class="auth-footer" style="margin-top:10px;">
-      <a href="{% url 'simulator:password_reset' %}">Forgot password?</a>
+      <a href="{% url 'simulator:password_reset' %}">{% ui "Forgot password?" %}</a>
     </p>
     <p class="auth-footer" style="margin-top:12px;">
-      <a href="{% url 'simulator:landing' %}">&larr; Volver</a>
+      <a href="{% url 'simulator:landing' %}">{% ui "← Volver" %}</a>
     </p>
   </div>
 </div>

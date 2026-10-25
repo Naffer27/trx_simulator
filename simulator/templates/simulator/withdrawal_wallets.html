@@ -1,7 +1,8 @@
 {% extends "simulator/base_app.html" %}
+{% load ui_language %}
 {% load static %}
-{% block title %}Mis wallets — Money Broker{% endblock %}
-{% block page_title %}Wallets de retiro{% endblock %}
+{% block title %}{% ui "Mis wallets — Money Broker" %}{% endblock %}
+{% block page_title %}{% ui "Wallets de retiro" %}{% endblock %}
 
 {% block extra_head %}
 <style>
@@ -22,7 +23,7 @@
 {% block content %}
 <div class="wd-wrap">
   <div class="wd-card">
-    <h2>Mis wallets de retiro</h2>
+    <h2>{% ui "Mis wallets de retiro" %}</h2>
 
     {% if wallets %}
       {% for w in wallets %}
@@ -30,17 +31,17 @@
         <div>
           <strong>{{ w.asset }}/{{ w.network }}</strong> — {{ w.address|slice:":6" }}…{{ w.address|slice:"-4:" }}
           {% if w.status == "pending_cooldown" and w.cooldown_until %}
-            <div style="color:var(--text-muted);font-size:.72rem;margin-top:2px;">Disponible desde {{ w.cooldown_until }}</div>
+            <div style="color:var(--text-muted);font-size:.72rem;margin-top:2px;">{% ui "Disponible desde" %} {{ w.cooldown_until }}</div>
           {% endif %}
         </div>
-        <span class="badge {{ w.status }}">{{ w.get_status_display }}</span>
+        <span class="badge {{ w.status }}">{% ui w.get_status_display %}</span>
       </div>
       {% endfor %}
     {% else %}
-      <p style="color:var(--text-muted);font-size:.85rem;">No tienes wallets registradas todavía.</p>
+      <p style="color:var(--text-muted);font-size:.85rem;">{% ui "No tienes wallets registradas todavía." %}</p>
     {% endif %}
 
-    <a href="{% url 'simulator:withdraw_wallet_register' %}" class="submit-btn">REGISTRAR NUEVA WALLET</a>
+    <a href="{% url 'simulator:withdraw_wallet_register' %}" class="submit-btn">{% ui "REGISTRAR NUEVA WALLET" %}</a>
   </div>
 </div>
 {% endblock %}

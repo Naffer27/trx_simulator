@@ -1,7 +1,8 @@
 {% extends "simulator/base_app.html" %}
+{% load ui_language %}
 {% load static %}
-{% block title %}Soporte — Money Broker{% endblock %}
-{% block page_title %}Soporte{% endblock %}
+{% block title %}{% ui "Soporte — Money Broker" %}{% endblock %}
+{% block page_title %}{% ui "Soporte" %}{% endblock %}
 
 {% block extra_styles %}
 .sp-grid {
@@ -143,20 +144,20 @@
   <div class="sp-card">
     <div class="sp-card-title">
       <i class="fa-solid fa-ticket"></i>
-      Nuevo ticket
+      {% ui "Nuevo ticket" %}
     </div>
 
     {% if success %}
     <div class="sp-alert sp-alert-success">
       <i class="fa-solid fa-circle-check"></i>
-      <span>Tu ticket fue enviado. Nuestro equipo te responderá pronto.</span>
+      <span>{% ui "Tu ticket fue enviado. Nuestro equipo te responderá pronto." %}</span>
     </div>
     {% endif %}
 
     {% if error %}
     <div class="sp-alert sp-alert-error">
       <i class="fa-solid fa-circle-exclamation"></i>
-      <span>{{ error }}</span>
+      <span>{% ui error %}</span>
     </div>
     {% endif %}
 
@@ -164,35 +165,35 @@
       {% csrf_token %}
 
       <div class="sp-field">
-        <label class="sp-label" for="id_category">Categoría</label>
+        <label class="sp-label" for="id_category">{% ui "Categoría" %}</label>
         <select id="id_category" name="category" class="sp-select" required>
-          <option value="">— Selecciona una categoría —</option>
+          <option value="">{% ui "— Selecciona una categoría —" %}</option>
           {% for value, label in category_choices %}
           <option value="{{ value }}"
-            {% if request.POST.category == value %}selected{% endif %}>{{ label }}</option>
+            {% if request.POST.category == value %}selected{% endif %}>{% ui label %}</option>
           {% endfor %}
         </select>
       </div>
 
       <div class="sp-field">
-        <label class="sp-label" for="id_subject">Asunto</label>
+        <label class="sp-label" for="id_subject">{% ui "Asunto" %}</label>
         <input id="id_subject" name="subject" type="text"
                class="sp-input"
-               placeholder="Describe brevemente el problema"
+               placeholder="{% ui "Describe brevemente el problema" %}"
                maxlength="200"
                value="{{ request.POST.subject|default:'' }}"
                required>
       </div>
 
       <div class="sp-field">
-        <label class="sp-label" for="id_message">Mensaje</label>
+        <label class="sp-label" for="id_message">{% ui "Mensaje" %}</label>
         <textarea id="id_message" name="message" class="sp-textarea"
-                  placeholder="Explica el problema con el mayor detalle posible…"
+                  placeholder="{% ui "Explica el problema con el mayor detalle posible…" %}"
                   required>{{ request.POST.message|default:'' }}</textarea>
       </div>
 
       <button type="submit" class="sp-submit">
-        <i class="fa-solid fa-paper-plane"></i>&nbsp; Enviar ticket
+        <i class="fa-solid fa-paper-plane"></i>{% ui "  Enviar ticket" %}
       </button>
     </form>
   </div>
@@ -201,7 +202,7 @@
   <div class="sp-card">
     <div class="sp-card-title">
       <i class="fa-solid fa-list-check"></i>
-      Mis tickets recientes
+      {% ui "Mis tickets recientes" %}
     </div>
 
     {% if tickets %}
@@ -216,7 +217,7 @@
           <span><i class="fa-solid fa-tag" style="opacity:.5"></i>&nbsp;{{ ticket.get_category_display }}</span>
           <span><i class="fa-regular fa-clock" style="opacity:.5"></i>&nbsp;{{ ticket.created_at|date:"d M Y, H:i" }}</span>
           {% if ticket.has_staff_reply %}
-          <span style="color:var(--gold);"><i class="fa-solid fa-comment-dots"></i>&nbsp;Respuesta disponible</span>
+          <span style="color:var(--gold);"><i class="fa-solid fa-comment-dots"></i>{% ui " Respuesta disponible" %}</span>
           {% endif %}
         </div>
       </a>
@@ -225,7 +226,7 @@
     {% else %}
     <div class="sp-empty">
       <i class="fa-solid fa-inbox" style="font-size:2rem;margin-bottom:10px;display:block;opacity:.25"></i>
-      No tienes tickets aún.<br>Usa el formulario para abrir uno.
+      {% ui "No tienes tickets aún." %}<br>{% ui "Usa el formulario para abrir uno." %}
     </div>
     {% endif %}
   </div>

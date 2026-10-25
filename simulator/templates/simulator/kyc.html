@@ -1,6 +1,7 @@
 {% extends "simulator/base_app.html" %}
-{% block title %}Verificación KYC — Money Broker{% endblock %}
-{% block page_title %}Verificación KYC{% endblock %}
+{% load ui_language %}
+{% block title %}{% ui "Verificación KYC — Money Broker" %}{% endblock %}
+{% block page_title %}{% ui "Verificación KYC" %}{% endblock %}
 
 {% block extra_styles %}
 .kyc-wrap { max-width: 580px; margin: 0 auto; }
@@ -116,90 +117,89 @@
   {# ── Status badge ── #}
   <div class="kyc-card">
     <span class="kyc-status-badge badge-{{ kyc.status }}">
-      {% if kyc.status == "not_started" %}Sin verificar
-      {% elif kyc.status == "pending" %}En revisión
-      {% elif kyc.status == "approved" %}Verificado
-      {% elif kyc.status == "rejected" %}Rechazado
+      {% if kyc.status == "not_started" %}{% ui "Sin verificar" %}
+      {% elif kyc.status == "pending" %}{% ui "En revisión" %}
+      {% elif kyc.status == "approved" %}{% ui "Verificado" %}
+      {% elif kyc.status == "rejected" %}{% ui "Rechazado" %}
       {% endif %}
     </span>
 
     {# ── APPROVED ── #}
     {% if kyc.status == "approved" %}
       <div class="kyc-info-icon" style="color:var(--bull);">✔</div>
-      <h1 class="kyc-title">Identidad Verificada</h1>
+      <h1 class="kyc-title">{% ui "Identidad Verificada" %}</h1>
       <p class="kyc-sub">
-        Tu identidad ha sido verificada exitosamente.<br>
-        Puedes realizar retiros y abrir cuentas reales sin restricciones.
+        {% ui "Tu identidad ha sido verificada exitosamente." %}<br>
+        {% ui "Puedes realizar retiros y abrir cuentas reales sin restricciones." %}
       </p>
 
     {# ── PENDING ── #}
     {% elif kyc.status == "pending" %}
       <div class="kyc-info-icon" style="color:#FFA500;">&#9203;</div>
-      <h1 class="kyc-title">Verificación en Proceso</h1>
+      <h1 class="kyc-title">{% ui "Verificación en Proceso" %}</h1>
       <p class="kyc-sub">
-        Hemos recibido tus documentos y están siendo revisados por nuestro equipo.<br>
-        El proceso normalmente tarda <strong>1–2 días hábiles</strong>.<br>
-        Te notificaremos por email cuando esté listo.
+        {% ui "Hemos recibido tus documentos y están siendo revisados por nuestro equipo." %}<br>
+        {% ui "El proceso normalmente tarda" %} <strong>{% ui "1–2 días hábiles" %}</strong>.<br>
+        {% ui "Te notificaremos por email cuando esté listo." %}
       </p>
 
     {# ── NOT STARTED / REJECTED — show form ── #}
     {% else %}
       {% if kyc.status == "rejected" %}
         <div class="kyc-info-icon" style="color:#ef5350;">&#x26A0;</div>
-        <h1 class="kyc-title">Verificación Rechazada</h1>
+        <h1 class="kyc-title">{% ui "Verificación Rechazada" %}</h1>
         {% if kyc.rejection_reason %}
           <div class="kyc-reason">
-            <strong>Motivo:</strong> {{ kyc.rejection_reason }}
+            <strong>{% ui "Motivo:" %}</strong> {{ kyc.rejection_reason }}
           </div>
         {% endif %}
-        <p class="kyc-sub">Por favor corrige los problemas indicados y envía tus documentos nuevamente.</p>
+        <p class="kyc-sub">{% ui "Por favor corrige los problemas indicados y envía tus documentos nuevamente." %}</p>
       {% else %}
         <div class="kyc-info-icon" style="color:var(--gold);">&#x1F4CB;</div>
-        <h1 class="kyc-title">Verificación de Identidad</h1>
+        <h1 class="kyc-title">{% ui "Verificación de Identidad" %}</h1>
         <p class="kyc-sub">
-          Para acceder a retiros y cuentas reales, debemos verificar tu identidad.<br>
-          Sube un documento de identidad válido y un selfie.
-          Tus datos están protegidos y se usan solo para cumplimiento regulatorio.
+          {% ui "Para acceder a retiros y cuentas reales, debemos verificar tu identidad." %}<br>
+          {% ui "Sube un documento de identidad válido y un selfie. Tus datos están protegidos y se usan solo para cumplimiento regulatorio." %}
         </p>
       {% endif %}
 
       {# ── Form ── #}
       {% if form.errors %}
-        <div class="form-alert">Por favor corrige los errores indicados abajo.</div>
+        <div class="form-alert">{% ui "Por favor corrige los errores indicados abajo." %}</div>
       {% endif %}
 
       <form method="post" enctype="multipart/form-data" novalidate>
         {% csrf_token %}
 
         <div class="field">
-          <label for="{{ form.legal_name.id_for_label }}">Nombre legal completo</label>
+          <label for="{{ form.legal_name.id_for_label }}">{% ui "Nombre legal completo" %}</label>
           <input type="text"
                  id="{{ form.legal_name.id_for_label }}"
                  name="legal_name"
                  value="{{ form.legal_name.value|default:'' }}"
-                 placeholder="Ej: Juan Carlos Pérez Rodríguez"
+                 placeholder="{% ui "Ej: Juan Carlos Pérez Rodríguez" %}"
                  required>
           {% for err in form.legal_name.errors %}<p class="field-error">{{ err }}</p>{% endfor %}
         </div>
 
         <div class="field">
-          <label for="{{ form.country.id_for_label }}">País de residencia</label>
+          <label for="{{ form.country.id_for_label }}">{% ui "País de residencia" %}</label>
           <input type="text"
                  id="{{ form.country.id_for_label }}"
                  name="country"
                  value="{{ form.country.value|default:'' }}"
-                 placeholder="Ej: Venezuela"
+                 placeholder="{% ui "Ej: Venezuela" %}"
                  required>
           {% for err in form.country.errors %}<p class="field-error">{{ err }}</p>{% endfor %}
         </div>
 
         <div class="field">
-          <label for="{{ form.document_type.id_for_label }}">Tipo de documento</label>
+          <label for="{{ form.document_type.id_for_label }}">{% ui "Tipo de documento" %}</label>
           <select id="{{ form.document_type.id_for_label }}" name="document_type" required>
-            <option value="">— Selecciona —</option>
+            <option value="">{% ui "— Selecciona —" %}</option>
             {% for val, label in form.document_type.field.choices %}
               {% if val %}
-                <option value="{{ val }}" {% if form.document_type.value == val %}selected{% endif %}>{{ label }}</option>
+                <option value="{{ val }}" {% if form.document_type.value == val %}selected{% endif %}>{% ui label %}</option>
               {% endif %}
             {% endfor %}
           </select>
@@ -207,38 +207,38 @@
         </div>
 
         <div class="field">
-          <label for="{{ form.document_number.id_for_label }}">Número de documento <span style="color:var(--muted);font-weight:400;">(opcional)</span></label>
+          <label for="{{ form.document_number.id_for_label }}">{% ui "Número de documento" %} <span style="color:var(--muted);font-weight:400;">{% ui "(opcional)" %}</span></label>
           <input type="text"
                  id="{{ form.document_number.id_for_label }}"
                  name="document_number"
                  value="{{ form.document_number.value|default:'' }}"
-                 placeholder="Ej: V-12345678">
+                 placeholder="{% ui "Ej: V-12345678" %}">
           {% for err in form.document_number.errors %}<p class="field-error">{{ err }}</p>{% endfor %}
         </div>
 
         <div class="field">
-          <label for="{{ form.document_front.id_for_label }}">Frente del documento</label>
+          <label for="{{ form.document_front.id_for_label }}">{% ui "Frente del documento" %}</label>
           <input type="file" id="{{ form.document_front.id_for_label }}"
                  name="document_front" accept="image/*,.pdf" required>
-          <p class="field-hint">JPG, PNG o PDF — máx. 5 MB</p>
+          <p class="field-hint">{% ui "JPG, PNG o PDF — máx. 5 MB" %}</p>
           {% for err in form.document_front.errors %}<p class="field-error">{{ err }}</p>{% endfor %}
         </div>
 
         <div class="field">
-          <label for="{{ form.document_back.id_for_label }}">Reverso del documento <span style="color:var(--muted);font-weight:400;">(opcional)</span></label>
+          <label for="{{ form.document_back.id_for_label }}">{% ui "Reverso del documento" %} <span style="color:var(--muted);font-weight:400;">{% ui "(opcional)" %}</span></label>
           <input type="file" id="{{ form.document_back.id_for_label }}"
                  name="document_back" accept="image/*,.pdf">
           {% for err in form.document_back.errors %}<p class="field-error">{{ err }}</p>{% endfor %}
         </div>
 
         <div class="field">
-          <label for="{{ form.selfie.id_for_label }}">Selfie sosteniendo el documento <span style="color:var(--muted);font-weight:400;">(opcional)</span></label>
+          <label for="{{ form.selfie.id_for_label }}">{% ui "Selfie sosteniendo el documento" %} <span style="color:var(--muted);font-weight:400;">{% ui "(opcional)" %}</span></label>
           <input type="file" id="{{ form.selfie.id_for_label }}"
                  name="selfie" accept="image/*">
           {% for err in form.selfie.errors %}<p class="field-error">{{ err }}</p>{% endfor %}
         </div>
 
-        <button type="submit" class="btn-kyc">Enviar verificación &rarr;</button>
+        <button type="submit" class="btn-kyc">{% ui "Enviar verificación →" %}</button>
       </form>
     {% endif %}
   </div>

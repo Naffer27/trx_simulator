@@ -1,6 +1,7 @@
 {% extends "simulator/base_app.html" %}
-{% block title %}Mi Perfil — Money Broker{% endblock %}
-{% block page_title %}Mi Perfil{% endblock %}
+{% load ui_language %}
+{% block title %}{% ui "Mi Perfil — Money Broker" %}{% endblock %}
+{% block page_title %}{% ui "Mi Perfil" %}{% endblock %}
 
 {% block extra_styles %}
 .profile-wrap { max-width: 640px; margin: 0 auto; }
@@ -94,105 +95,105 @@
 
   {# ── Personal info ── #}
   <div class="profile-card">
-    <div class="profile-section-title">Información de Cuenta</div>
+    <div class="profile-section-title">{% ui "Información de Cuenta" %}</div>
 
     <div class="info-row">
-      <span class="info-label">Usuario</span>
+      <span class="info-label">{% ui "Usuario" %}</span>
       <span class="info-value">{{ user.username }}</span>
     </div>
     <div class="info-row">
-      <span class="info-label">Email</span>
+      <span class="info-label">{% ui "Email" %}</span>
       <span class="info-value">{{ user.email }}</span>
     </div>
     <div class="info-row">
-      <span class="info-label">Miembro desde</span>
+      <span class="info-label">{% ui "Miembro desde" %}</span>
       <span class="info-value">{{ user.date_joined|date:"d M Y" }}</span>
     </div>
   </div>
 
   {# ── Editable fields ── #}
   <div class="profile-card">
-    <div class="profile-section-title">Nombre</div>
+    <div class="profile-section-title">{% ui "Nombre" %}</div>
 
     {% if request.GET.saved == "1" %}
-    <div class="saved-banner"><i class="fa-solid fa-check"></i> Cambios guardados.</div>
+    <div class="saved-banner"><i class="fa-solid fa-check"></i> {% ui "Cambios guardados." %}</div>
     {% endif %}
 
     <form method="post" novalidate>
       {% csrf_token %}
 
       <div class="field">
-        <label for="{{ form.first_name.id_for_label }}">Nombre</label>
+        <label for="{{ form.first_name.id_for_label }}">{% ui "Nombre" %}</label>
         <input type="text"
                id="{{ form.first_name.id_for_label }}"
                name="first_name"
                value="{{ form.first_name.value|default:'' }}"
-               placeholder="Nombre">
+               placeholder="{% ui "Nombre" %}">
         {% for err in form.first_name.errors %}<p class="field-error">{{ err }}</p>{% endfor %}
       </div>
 
       <div class="field">
-        <label for="{{ form.last_name.id_for_label }}">Apellido</label>
+        <label for="{{ form.last_name.id_for_label }}">{% ui "Apellido" %}</label>
         <input type="text"
                id="{{ form.last_name.id_for_label }}"
                name="last_name"
                value="{{ form.last_name.value|default:'' }}"
-               placeholder="Apellido">
+               placeholder="{% ui "Apellido" %}">
         {% for err in form.last_name.errors %}<p class="field-error">{{ err }}</p>{% endfor %}
       </div>
 
-      <button type="submit" class="btn-save">Guardar cambios</button>
+      <button type="submit" class="btn-save">{% ui "Guardar cambios" %}</button>
     </form>
   </div>
 
   {# ── Security status ── #}
   <div class="profile-card">
-    <div class="profile-section-title">Estado de Seguridad</div>
+    <div class="profile-section-title">{% ui "Estado de Seguridad" %}</div>
 
     <div class="status-row">
-      <span class="status-label">Email verificado</span>
+      <span class="status-label">{% ui "Email verificado" %}</span>
       {% if email_verified %}
-        <span class="status-badge badge-ok">Verificado</span>
+        <span class="status-badge badge-ok">{% ui "Verificado" %}</span>
       {% else %}
         <div style="display:flex;align-items:center;gap:12px;">
-          <span class="status-badge badge-warn">Sin verificar</span>
-          <a href="{% url 'simulator:resend_verification' %}" class="status-action">Reenviar →</a>
+          <span class="status-badge badge-warn">{% ui "Sin verificar" %}</span>
+          <a href="{% url 'simulator:resend_verification' %}" class="status-action">{% ui "Reenviar →" %}</a>
         </div>
       {% endif %}
     </div>
 
     <div class="status-row">
-      <span class="status-label">Autenticación 2FA</span>
+      <span class="status-label">{% ui "Autenticación 2FA" %}</span>
       {% if totp_enabled %}
         <div style="display:flex;align-items:center;gap:12px;">
-          <span class="status-badge badge-ok">Activado</span>
-          <a href="{% url 'simulator:totp_disable' %}" class="status-action">Desactivar →</a>
+          <span class="status-badge badge-ok">{% ui "Activado" %}</span>
+          <a href="{% url 'simulator:totp_disable' %}" class="status-action">{% ui "Desactivar →" %}</a>
         </div>
       {% else %}
         <div style="display:flex;align-items:center;gap:12px;">
-          <span class="status-badge badge-off">Desactivado</span>
-          <a href="{% url 'simulator:totp_setup' %}" class="status-action">Activar →</a>
+          <span class="status-badge badge-off">{% ui "Desactivado" %}</span>
+          <a href="{% url 'simulator:totp_setup' %}" class="status-action">{% ui "Activar →" %}</a>
         </div>
       {% endif %}
     </div>
 
     <div class="status-row">
-      <span class="status-label">Verificación KYC</span>
+      <span class="status-label">{% ui "Verificación KYC" %}</span>
       {% if kyc_status == "approved" %}
-        <span class="status-badge badge-ok">Aprobado</span>
+        <span class="status-badge badge-ok">{% ui "Aprobado" %}</span>
       {% elif kyc_status == "pending" %}
         <div style="display:flex;align-items:center;gap:12px;">
-          <span class="status-badge badge-warn">En revisión</span>
+          <span class="status-badge badge-warn">{% ui "En revisión" %}</span>
         </div>
       {% elif kyc_status == "rejected" %}
         <div style="display:flex;align-items:center;gap:12px;">
-          <span class="status-badge" style="background:rgba(239,83,80,.12);color:#ef5350;border:1px solid rgba(239,83,80,.25);">Rechazado</span>
-          <a href="{% url 'simulator:kyc' %}" class="status-action">Reenviar →</a>
+          <span class="status-badge" style="background:rgba(239,83,80,.12);color:#ef5350;border:1px solid rgba(239,83,80,.25);">{% ui "Rechazado" %}</span>
+          <a href="{% url 'simulator:kyc' %}" class="status-action">{% ui "Reenviar →" %}</a>
         </div>
       {% else %}
         <div style="display:flex;align-items:center;gap:12px;">
-          <span class="status-badge badge-off">Sin verificar</span>
-          <a href="{% url 'simulator:kyc' %}" class="status-action">Verificar →</a>
+          <span class="status-badge badge-off">{% ui "Sin verificar" %}</span>
+          <a href="{% url 'simulator:kyc' %}" class="status-action">{% ui "Verificar →" %}</a>
         </div>
       {% endif %}
     </div>

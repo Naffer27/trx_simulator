@@ -1,6 +1,8 @@
+{% load ui_language %}
 {% load static %}
 <!DOCTYPE html>
-<html lang="en">
+{% ui_language as ui_lang %}
+<html lang="{{ ui_lang }}">
 <head>
   <!-- UI-THEME-01 FASE D2 — anti-flash theme bootstrap, identical
        mechanism to base_app.html: localStorage['mb_theme'] ->
@@ -81,15 +83,16 @@
     <div class="container-fluid">
       <a class="navbar-brand" href="{% url 'simulator:landing' %}">{% block navbar_brand %}MONEY BROKER{% endblock %}</a>
       <ul class="navbar-nav ms-auto gap-1 align-items-center">
+        <li class="nav-item">{% include "simulator/includes/language_switch.html" %}</li>
         {% if user.is_authenticated %}
-          <li class="nav-item"><a class="nav-link{% if request.resolver_match.url_name == 'dashboard' or request.resolver_match.url_name == 'dashboard_alt' %} nav-active{% endif %}" href="{% url 'simulator:home' %}">Dashboard</a></li>
-          <li class="nav-item"><a class="nav-link{% if request.resolver_match.url_name == 'history' %} nav-active{% endif %}" href="{% url 'simulator:history' %}">History</a></li>
-          <li class="nav-item"><a class="nav-link nav-cta{% if request.resolver_match.url_name == 'deposit' or request.resolver_match.url_name == 'deposit_history' %} nav-active{% endif %}" href="{% url 'simulator:deposit' %}">Deposit</a></li>
+          <li class="nav-item"><a class="nav-link{% if request.resolver_match.url_name == 'dashboard' or request.resolver_match.url_name == 'dashboard_alt' %} nav-active{% endif %}" href="{% url 'simulator:home' %}">{% ui "Dashboard" %}</a></li>
+          <li class="nav-item"><a class="nav-link{% if request.resolver_match.url_name == 'history' %} nav-active{% endif %}" href="{% url 'simulator:history' %}">{% ui "History" %}</a></li>
+          <li class="nav-item"><a class="nav-link nav-cta{% if request.resolver_match.url_name == 'deposit' or request.resolver_match.url_name == 'deposit_history' %} nav-active{% endif %}" href="{% url 'simulator:deposit' %}">{% ui "Deposit" %}</a></li>
           {% block navbar_extra %}{% endblock %}
-          <li class="nav-item"><a class="nav-link" href="{% url 'simulator:logout' %}">Logout</a></li>
+          <li class="nav-item"><a class="nav-link" href="{% url 'simulator:logout' %}">{% ui "Logout" %}</a></li>
         {% else %}
-          <li class="nav-item"><a class="nav-link" href="{% url 'simulator:login' %}">Login</a></li>
-          <li class="nav-item"><a class="nav-link nav-cta" href="{% url 'simulator:register' %}">Open Account</a></li>
+          <li class="nav-item"><a class="nav-link" href="{% url 'simulator:login' %}">{% ui "Login" %}</a></li>
+          <li class="nav-item"><a class="nav-link nav-cta" href="{% url 'simulator:register' %}">{% ui "Open Account" %}</a></li>
         {% endif %}
       </ul>
     </div>

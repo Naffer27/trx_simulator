@@ -1,6 +1,7 @@
 {% extends "simulator/base_app.html" %}
-{% block title %}Checkout — {{ product.name }} — Money Broker{% endblock %}
-{% block page_title %}Checkout Challenge{% endblock %}
+{% load ui_language %}
+{% block title %}{% ui "Checkout —" %} {{ product.name }} — Money Broker{% endblock %}
+{% block page_title %}{% ui "Checkout Challenge" %}{% endblock %}
 
 {% block extra_styles %}
 <style>
@@ -134,9 +135,9 @@
 
   {# ── Hero ── #}
   <div class="cp-hero">
-    <div class="cp-hero-eyebrow"><i class="fa-solid fa-shield-halved"></i> Pago seguro</div>
-    <h1 class="cp-hero-title">Checkout Challenge</h1>
-    <p class="cp-hero-sub">Confirma tu programa de fondeo y completa el pago de forma segura.</p>
+    <div class="cp-hero-eyebrow"><i class="fa-solid fa-shield-halved"></i> {% ui "Pago seguro" %}</div>
+    <h1 class="cp-hero-title">{% ui "Checkout Challenge" %}</h1>
+    <p class="cp-hero-sub">{% ui "Confirma tu programa de fondeo y completa el pago de forma segura." %}</p>
   </div>
 
   {# ── Two-column grid ── #}
@@ -148,49 +149,49 @@
         <div>
           <div class="cp-sum-badge"><i class="fa-solid fa-medal"></i> {{ product.tier }}</div>
           <div class="cp-sum-name">{{ product.name }}</div>
-          <div class="cp-sum-size">Capital de evaluación: ${{ product.account_size|floatformat:0 }}</div>
+          <div class="cp-sum-size">{% ui "Capital de evaluación: $" %}{{ product.account_size|floatformat:0 }}</div>
         </div>
       </div>
 
       <div class="cp-sum-price-row">
-        <span class="cp-sum-price-label">Precio del challenge</span>
+        <span class="cp-sum-price-label">{% ui "Precio del challenge" %}</span>
         <span class="cp-sum-price-val">${{ product.price_usd|floatformat:2 }}<span>USD</span></span>
       </div>
 
       {# Phase rules ── two columns #}
       <div class="cp-phases">
         <div class="cp-phase">
-          <div class="cp-phase-label p1">Phase 1</div>
-          <div class="cp-rule"><span class="cp-rule-key">Profit target</span><span class="cp-rule-val ok">{{ product.p1_profit_target_pct|floatformat:0 }}%</span></div>
-          <div class="cp-rule"><span class="cp-rule-key">Daily loss</span><span class="cp-rule-val warn">{{ product.p1_max_daily_loss_pct|floatformat:0 }}%</span></div>
-          <div class="cp-rule"><span class="cp-rule-key">Max drawdown</span><span class="cp-rule-val warn">{{ product.p1_max_drawdown_pct|floatformat:0 }}%</span></div>
-          <div class="cp-rule"><span class="cp-rule-key">Min días</span><span class="cp-rule-val">{{ product.p1_min_trading_days }}</span></div>
-          <div class="cp-rule"><span class="cp-rule-key">Duración máx</span><span class="cp-rule-val">{{ product.p1_max_duration_days }} días</span></div>
+          <div class="cp-phase-label p1">{% ui "Phase 1" %}</div>
+          <div class="cp-rule"><span class="cp-rule-key">{% ui "Profit target" %}</span><span class="cp-rule-val ok">{{ product.p1_profit_target_pct|floatformat:0 }}%</span></div>
+          <div class="cp-rule"><span class="cp-rule-key">{% ui "Daily loss" %}</span><span class="cp-rule-val warn">{{ product.p1_max_daily_loss_pct|floatformat:0 }}%</span></div>
+          <div class="cp-rule"><span class="cp-rule-key">{% ui "Max drawdown" %}</span><span class="cp-rule-val warn">{{ product.p1_max_drawdown_pct|floatformat:0 }}%</span></div>
+          <div class="cp-rule"><span class="cp-rule-key">{% ui "Min días" %}</span><span class="cp-rule-val">{{ product.p1_min_trading_days }}</span></div>
+          <div class="cp-rule"><span class="cp-rule-key">{% ui "Duración máx" %}</span><span class="cp-rule-val">{{ product.p1_max_duration_days }} {% ui "días" %}</span></div>
         </div>
         <div class="cp-phase">
-          <div class="cp-phase-label p2">Phase 2</div>
-          <div class="cp-rule"><span class="cp-rule-key">Profit target</span><span class="cp-rule-val ok">{{ product.p2_profit_target_pct|floatformat:0 }}%</span></div>
-          <div class="cp-rule"><span class="cp-rule-key">Daily loss</span><span class="cp-rule-val warn">{{ product.p2_max_daily_loss_pct|floatformat:0 }}%</span></div>
-          <div class="cp-rule"><span class="cp-rule-key">Max drawdown</span><span class="cp-rule-val warn">{{ product.p2_max_drawdown_pct|floatformat:0 }}%</span></div>
-          <div class="cp-rule"><span class="cp-rule-key">Min días</span><span class="cp-rule-val">{{ product.p2_min_trading_days }}</span></div>
-          <div class="cp-rule"><span class="cp-rule-key">Duración máx</span><span class="cp-rule-val">{{ product.p2_max_duration_days }} días</span></div>
+          <div class="cp-phase-label p2">{% ui "Phase 2" %}</div>
+          <div class="cp-rule"><span class="cp-rule-key">{% ui "Profit target" %}</span><span class="cp-rule-val ok">{{ product.p2_profit_target_pct|floatformat:0 }}%</span></div>
+          <div class="cp-rule"><span class="cp-rule-key">{% ui "Daily loss" %}</span><span class="cp-rule-val warn">{{ product.p2_max_daily_loss_pct|floatformat:0 }}%</span></div>
+          <div class="cp-rule"><span class="cp-rule-key">{% ui "Max drawdown" %}</span><span class="cp-rule-val warn">{{ product.p2_max_drawdown_pct|floatformat:0 }}%</span></div>
+          <div class="cp-rule"><span class="cp-rule-key">{% ui "Min días" %}</span><span class="cp-rule-val">{{ product.p2_min_trading_days }}</span></div>
+          <div class="cp-rule"><span class="cp-rule-key">{% ui "Duración máx" %}</span><span class="cp-rule-val">{{ product.p2_max_duration_days }} {% ui "días" %}</span></div>
         </div>
       </div>
 
       {# Funded terms ── footer row #}
       <div class="cp-funded">
-        <div class="cp-funded-label"><i class="fa-solid fa-coins"></i> Cuenta Fondeada</div>
+        <div class="cp-funded-label"><i class="fa-solid fa-coins"></i> {% ui "Cuenta Fondeada" %}</div>
         <div class="cp-funded-item">
           <span class="cp-funded-item-val">{{ product.profit_split_pct|floatformat:0 }}%</span>
-          <span class="cp-funded-item-key">Profit split</span>
+          <span class="cp-funded-item-key">{% ui "Profit split" %}</span>
         </div>
         <div class="cp-funded-item">
           <span class="cp-funded-item-val">{{ product.max_lot_size|floatformat:2 }}</span>
-          <span class="cp-funded-item-key">Lot size máx</span>
+          <span class="cp-funded-item-key">{% ui "Lot size máx" %}</span>
         </div>
         <div class="cp-funded-item">
           <span class="cp-funded-item-val">{{ product.max_open_positions }}</span>
-          <span class="cp-funded-item-key">Posiciones máx</span>
+          <span class="cp-funded-item-key">{% ui "Posiciones máx" %}</span>
         </div>
       </div>
     </div>
@@ -202,7 +203,7 @@
       <div class="cw-card">
         <div class="cw-header">
           <i class="fa-solid fa-wallet" style="color:var(--gold);font-size:.8rem;"></i>
-          <span class="cw-header-label">Pagar con balance interno</span>
+          <span class="cw-header-label">{% ui "Pagar con balance interno" %}</span>
         </div>
         <div class="cw-body">
 
@@ -214,11 +215,11 @@
           {% endif %}
 
           <div class="cw-row">
-            <span class="cw-row-key">Tu balance disponible</span>
+            <span class="cw-row-key">{% ui "Tu balance disponible" %}</span>
             <span class="cw-row-val green">${{ wallet_balance|floatformat:2 }}</span>
           </div>
           <div class="cw-row">
-            <span class="cw-row-key">Precio del challenge</span>
+            <span class="cw-row-key">{% ui "Precio del challenge" %}</span>
             <span class="cw-row-val">${{ product.price_usd|floatformat:2 }}</span>
           </div>
           <hr class="cw-divider">
@@ -226,39 +227,39 @@
           {% if can_pay_with_wallet %}
             <div class="cw-sufficient">
               <i class="fa-solid fa-circle-check"></i>
-              Tu balance es suficiente para activar este challenge inmediatamente.
+              {% ui "Tu balance es suficiente para activar este challenge inmediatamente." %}
             </div>
             <form method="post" action="{% url 'simulator:challenge_wallet_purchase' product.pk %}">
               {% csrf_token %}
               <button type="submit" class="cw-btn">
-                <i class="fa-solid fa-wallet"></i> Pagar con mi balance
+                <i class="fa-solid fa-wallet"></i> {% ui "Pagar con mi balance" %}
               </button>
             </form>
           {% else %}
             <div class="cw-shortfall">
               <i class="fa-solid fa-triangle-exclamation"></i>
-              Te faltan ${{ wallet_shortfall|floatformat:2 }} para activar con tu balance.
+              {% ui "Te faltan $" %}{{ wallet_shortfall|floatformat:2 }} {% ui "para activar con tu balance." %}
             </div>
             <a href="{% url 'simulator:deposit' %}" class="cw-btn-deposit">
-              <i class="fa-solid fa-plus"></i> Depositar para empezar
+              <i class="fa-solid fa-plus"></i> {% ui "Depositar para empezar" %}
             </a>
           {% endif %}
 
         </div>
       </div>
 
-      <div class="cw-separator">o paga con crypto</div>
+      <div class="cw-separator">{% ui "o paga con crypto" %}</div>
 
       {# ── Crypto payment card ── #}
       <div class="cp-card">
         <div class="cp-pay-header">
-          <div class="cp-pay-header-label"><i class="fa-solid fa-lock"></i>&nbsp; Pago seguro</div>
+          <div class="cp-pay-header-label"><i class="fa-solid fa-lock"></i>{% ui "  Pago seguro" %}</div>
         </div>
         <div class="cp-pay-body">
 
           {# Total #}
           <div class="cp-pay-total">
-            <div class="cp-pay-total-label">Total a pagar</div>
+            <div class="cp-pay-total-label">{% ui "Total a pagar" %}</div>
             <div class="cp-pay-total-val">${{ product.price_usd|floatformat:2 }}<span>USD</span></div>
           </div>
 
@@ -266,7 +267,7 @@
           {% if error %}
           <div class="cp-error">
             <i class="fa-solid fa-circle-exclamation"></i>
-            <span class="cp-error-msg">{{ error }}</span>
+            <span class="cp-error-msg">{% ui error %}</span>
           </div>
           {% endif %}
 
@@ -275,7 +276,7 @@
             {% csrf_token %}
 
             {# Currency selector — radio cards #}
-            <div class="cp-currency-label">Elige tu criptomoneda</div>
+            <div class="cp-currency-label">{% ui "Elige tu criptomoneda" %}</div>
             <div class="cp-currency-grid" id="cryptoGrid">
               {% for code, label in crypto_choices %}
               <div class="cp-currency-opt">
@@ -283,20 +284,20 @@
                        {% if forloop.first %}checked{% endif %}>
                 <label for="cc_{{ code }}">
                   <i class="fa-brands fa-bitcoin cp-currency-icon" style="opacity:.7;"></i>
-                  {{ label }}
+                  {% ui label %}
                 </label>
               </div>
               {% endfor %}
             </div>
 
             <button type="submit" class="cp-btn">
-              <i class="fa-solid fa-rocket"></i> Pagar Challenge
+              <i class="fa-solid fa-rocket"></i> {% ui "Pagar Challenge" %}
             </button>
           </form>
 
           <p class="cp-btn-note">
             <i class="fa-solid fa-bolt" style="color:var(--gold);"></i>
-            El challenge se activará automáticamente cuando el pago sea confirmado.
+            {% ui "El challenge se activará automáticamente cuando el pago sea confirmado." %}
           </p>
         </div>
       </div>
@@ -306,23 +307,23 @@
 
   {# ── Steps footer ── #}
   <div class="cp-steps">
-    <div class="cp-steps-title"><i class="fa-solid fa-route"></i>&nbsp; Después del pago</div>
+    <div class="cp-steps-title"><i class="fa-solid fa-route"></i>{% ui "  Después del pago" %}</div>
     <div class="cp-steps-list">
       <div class="cp-step">
         <div class="cp-step-dot">1</div>
-        <span class="cp-step-label">Pago<br>enviado</span>
+        <span class="cp-step-label">{% ui "Pago" %}<br>{% ui "enviado" %}</span>
       </div>
       <div class="cp-step">
         <div class="cp-step-dot">2</div>
-        <span class="cp-step-label">Confirmación<br>de pago</span>
+        <span class="cp-step-label">{% ui "Confirmación" %}<br>{% ui "de pago" %}</span>
       </div>
       <div class="cp-step">
         <div class="cp-step-dot">3</div>
-        <span class="cp-step-label">Cuenta<br>Phase 1 activa</span>
+        <span class="cp-step-label">{% ui "Cuenta" %}<br>{% ui "Phase 1 activa" %}</span>
       </div>
       <div class="cp-step">
         <div class="cp-step-dot">4</div>
-        <span class="cp-step-label">Ir al panel<br>de trading</span>
+        <span class="cp-step-label">{% ui "Ir al panel" %}<br>{% ui "de trading" %}</span>
       </div>
     </div>
   </div>

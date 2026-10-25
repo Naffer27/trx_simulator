@@ -1,6 +1,7 @@
 {% extends "simulator/base_app.html" %}
-{% block title %}Programa de Afiliados — Money Broker{% endblock %}
-{% block page_title %}Programa{% endblock %}
+{% load ui_language %}
+{% block title %}{% ui "Programa de Afiliados — Money Broker" %}{% endblock %}
+{% block page_title %}{% ui "Programa" %}{% endblock %}
 
 {% block extra_styles %}
 /* ═══════════════ IB-PORTAL-UX-10C — Affiliate Program ═══════════════ */
@@ -109,14 +110,14 @@
   {% if is_frozen %}
   <div style="background:rgba(239,83,80,.08);border:1px solid rgba(239,83,80,.35);border-radius:12px;padding:16px 20px;margin-bottom:20px;font-size:.84rem;color:var(--text);display:flex;align-items:center;gap:12px;">
     <i class="fa-solid fa-triangle-exclamation" style="color:#ef5350;font-size:1.1rem;"></i>
-    <div><strong style="color:#ef5350;">Programa IB temporalmente congelado.</strong> Los detalles de tu programa siguen disponibles abajo en modo de solo lectura.</div>
+    <div><strong style="color:#ef5350;">{% ui "Programa IB temporalmente congelado." %}</strong> {% ui "Los detalles de tu programa siguen disponibles abajo en modo de solo lectura." %}</div>
   </div>
   {% endif %}
 
   <div class="prg-header">
     <div>
-      <h1>Tu <span style="color:var(--gold);">Programa IB</span></h1>
-      <p>Tu contrato económico vigente con Money Broker.</p>
+      <h1>{% ui "Tu" %} <span style="color:var(--gold);">{% ui "Programa IB" %}</span></h1>
+      <p>{% ui "Tu contrato económico vigente con Money Broker." %}</p>
     </div>
   </div>
 
@@ -125,22 +126,22 @@
        FIX-01) to avoid duplicating the same data/control on two pages. -->
   <div class="prg-summary-grid">
     <div class="prg-summary-item">
-      <div class="prg-summary-label">Estado del Programa</div>
+      <div class="prg-summary-label">{% ui "Estado del Programa" %}</div>
       <div class="prg-summary-value">
         {% if is_frozen %}
-        <span class="prg-status-pill prg-status-frozen"><i class="fa-solid fa-lock"></i> Congelado</span>
+        <span class="prg-status-pill prg-status-frozen"><i class="fa-solid fa-lock"></i> {% ui "Congelado" %}</span>
         {% else %}
-        <span class="prg-status-pill prg-status-active"><i class="fa-solid fa-circle-check"></i> Activo</span>
+        <span class="prg-status-pill prg-status-active"><i class="fa-solid fa-circle-check"></i> {% ui "Activo" %}</span>
         {% endif %}
       </div>
     </div>
     <div class="prg-summary-item">
-      <div class="prg-summary-label">Modalidades Activas</div>
+      <div class="prg-summary-label">{% ui "Modalidades Activas" %}</div>
       <div class="prg-summary-value">
         {% if has_active_component %}
-        {{ active_component_count }} configurada{{ active_component_count|pluralize }} totales
+        {{ active_component_count }} {% ui "configurada" %}{{ active_component_count|pluralize }} {% ui "totales" %}
         {% else %}
-        <span style="color:var(--muted);font-size:.85rem;">Ninguna configurada</span>
+        <span style="color:var(--muted);font-size:.85rem;">{% ui "Ninguna configurada" %}</span>
         {% endif %}
       </div>
     </div>
@@ -149,7 +150,7 @@
   <!-- Compensation components -->
   <div class="prg-card">
     <div class="prg-card-head">
-      <div class="prg-card-title"><i class="fa-solid fa-sack-dollar" style="margin-right:6px;color:var(--gold);"></i>Compensation Components</div>
+      <div class="prg-card-title"><i class="fa-solid fa-sack-dollar" style="margin-right:6px;color:var(--gold);"></i>{% ui "Compensation Components" %}</div>
     </div>
     <div class="prg-card-body">
       {% if has_active_component %}
@@ -166,25 +167,25 @@
           {% endif %}
           <div class="prg-comp-meta">
             <div class="prg-comp-meta-row">
-              <span class="prg-comp-meta-lbl">Origen</span>
+              <span class="prg-comp-meta-lbl">{% ui "Origen" %}</span>
               <span class="prg-comp-meta-val">
-                {% if c.source == 'per-IB' %}<span class="prg-source-badge prg-source-per-ib">IB-Specific</span>
-                {% else %}<span class="prg-source-badge prg-source-global">Global</span>{% endif %}
+                {% if c.source == 'per-IB' %}<span class="prg-source-badge prg-source-per-ib">{% ui "IB-Specific" %}</span>
+                {% else %}<span class="prg-source-badge prg-source-global">{% ui "Global" %}</span>{% endif %}
               </span>
             </div>
             <div class="prg-comp-meta-row">
-              <span class="prg-comp-meta-lbl">Vigente desde</span>
+              <span class="prg-comp-meta-lbl">{% ui "Vigente desde" %}</span>
               <span class="prg-comp-meta-val">{{ c.effective_from|date:"d M Y" }}</span>
             </div>
             {% if c.effective_until %}
             <div class="prg-comp-meta-row">
-              <span class="prg-comp-meta-lbl">Vigente hasta</span>
+              <span class="prg-comp-meta-lbl">{% ui "Vigente hasta" %}</span>
               <span class="prg-comp-meta-val">{{ c.effective_until|date:"d M Y" }}</span>
             </div>
             {% endif %}
           </div>
           {% else %}
-          <div class="prg-comp-not-configured"><i class="fa-solid fa-circle-minus"></i>Not configured</div>
+          <div class="prg-comp-not-configured"><i class="fa-solid fa-circle-minus"></i>{% ui "Not configured" %}</div>
           {% endif %}
         </div>
         {% endfor %}
@@ -192,8 +193,8 @@
       {% else %}
       <div class="prg-empty-all">
         <i class="fa-solid fa-sack-dollar"></i>
-        No compensation rule is currently configured for your account.<br>
-        Contact support if you believe this is unexpected.
+        {% ui "No compensation rule is currently configured for your account." %}<br>
+        {% ui "Contact support if you believe this is unexpected." %}
       </div>
       {% endif %}
     </div>
@@ -202,17 +203,17 @@
   <!-- Special conditions / exceptions -->
   <div class="prg-card">
     <div class="prg-card-head">
-      <div class="prg-card-title"><i class="fa-solid fa-list-check" style="margin-right:6px;color:var(--gold);"></i>Special Conditions</div>
+      <div class="prg-card-title"><i class="fa-solid fa-list-check" style="margin-right:6px;color:var(--gold);"></i>{% ui "Special Conditions" %}</div>
     </div>
     <div class="prg-card-body">
       <ul class="prg-conditions-list">
         <li>
           <i class="fa-solid fa-circle-info"></i>
-          <span>Each compensation component above may be a <strong>Global</strong> rate (applies to all IBs by default) or an <strong>IB-Specific</strong> override configured for your account specifically — the badge on each card shows which one is currently effective for you.</span>
+          <span>{% ui "Each compensation component above may be a" %} <strong>{% ui "Global" %}</strong> {% ui "rate (applies to all IBs by default) or an" %} <strong>{% ui "IB-Specific" %}</strong> {% ui "override configured for your account specifically — the badge on each card shows which one is currently effective for you." %}</span>
         </li>
         <li>
           <i class="fa-solid fa-circle-info"></i>
-          <span>Rates are time-bound (<strong>effective from</strong>, and optionally an <strong>effective until</strong> date) — only the rate the system currently considers effective is shown above, never a past or future one.</span>
+          <span>{% ui "Rates are time-bound (" %}<strong>{% ui "effective from" %}</strong>{% ui ", and optionally an" %} <strong>{% ui "effective until" %}</strong> {% ui "date) — only the rate the system currently considers effective is shown above, never a past or future one." %}</span>
         </li>
       </ul>
     </div>
@@ -221,13 +222,13 @@
   <!-- Sub-IB Program — honest empty state, no invented levels -->
   <div class="prg-card">
     <div class="prg-card-head">
-      <div class="prg-card-title"><i class="fa-solid fa-sitemap" style="margin-right:6px;color:var(--gold);"></i>Programa Sub-IB</div>
+      <div class="prg-card-title"><i class="fa-solid fa-sitemap" style="margin-right:6px;color:var(--gold);"></i>{% ui "Programa Sub-IB" %}</div>
     </div>
     <div class="prg-card-body">
       <div class="prg-subib-empty">
         <i class="fa-solid fa-sitemap"></i>
-        <strong>Programa multinivel aún no configurado.</strong>
-        Esta funcionalidad estará disponible cuando el programa Sub-IB correspondiente sea habilitado por Money Broker.
+        <strong>{% ui "Programa multinivel aún no configurado." %}</strong>
+        {% ui "Esta funcionalidad estará disponible cuando el programa Sub-IB correspondiente sea habilitado por Money Broker." %}
       </div>
     </div>
   </div>

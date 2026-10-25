@@ -1,6 +1,7 @@
 {% extends "simulator/base_app.html" %}
-{% block title %}Pago en progreso — Money Broker{% endblock %}
-{% block page_title %}Depósito{% endblock %}
+{% load ui_language %}
+{% block title %}{% ui "Pago en progreso — Money Broker" %}{% endblock %}
+{% block page_title %}{% ui "Depósito" %}{% endblock %}
 
 {% block extra_styles %}
 .ps-wrap {
@@ -258,15 +259,15 @@
     </div>
     <div>
       <div class="ps-banner-title" id="psBannerTitle">
-        {% if deposit.credited %}{% if is_challenge %}Challenge activado{% else %}Depósito acreditado{% endif %}{% elif deposit.status == 'waiting' %}{% if is_challenge %}Esperando confirmación del pago{% else %}Esperando pago{% endif %}{% elif deposit.status == 'confirming' %}Confirmando en blockchain{% else %}{{ deposit.get_status_display }}{% endif %}
+        {% if deposit.credited %}{% if is_challenge %}{% ui "Challenge activado" %}{% else %}{% ui "Depósito acreditado" %}{% endif %}{% elif deposit.status == 'waiting' %}{% if is_challenge %}{% ui "Esperando confirmación del pago" %}{% else %}{% ui "Esperando pago" %}{% endif %}{% elif deposit.status == 'confirming' %}{% ui "Confirmando en blockchain" %}{% else %}{{ deposit.get_status_display }}{% endif %}
       </div>
       <div class="ps-banner-sub" id="psBannerSub">
         {% if deposit.credited %}
-          {% if is_challenge %}Tu cuenta Phase 1 está lista. ¡Comienza a operar!{% else %}${{ deposit.amount_usd }} añadidos a tu wallet.{% endif %}
+          {% if is_challenge %}{% ui "Tu cuenta Phase 1 está lista. ¡Comienza a operar!" %}{% else %}${{ deposit.amount_usd }} {% ui "añadidos a tu wallet." %}{% endif %}
         {% elif deposit.status == 'waiting' %}
-          {% if is_challenge %}Tu challenge se activará automáticamente cuando confirmemos el pago.{% else %}Envía exactamente el monto indicado a la dirección de abajo.{% endif %}
+          {% if is_challenge %}{% ui "Tu challenge se activará automáticamente cuando confirmemos el pago." %}{% else %}{% ui "Envía exactamente el monto indicado a la dirección de abajo." %}{% endif %}
         {% elif deposit.status == 'confirming' %}
-          {% if is_challenge %}Pago recibido — tu challenge se activará en breve.{% else %}Pago recibido — esperando confirmaciones en blockchain.{% endif %}
+          {% if is_challenge %}{% ui "Pago recibido — tu challenge se activará en breve." %}{% else %}{% ui "Pago recibido — esperando confirmaciones en blockchain." %}{% endif %}
         {% else %}
           {{ deposit.get_status_display }}
         {% endif %}
@@ -279,12 +280,12 @@
 
   <!-- ═══════════════ ORDER SUMMARY ═══════════════ -->
   <div class="ps-card">
-    <div class="ps-card-header">Resumen del depósito · #{{ deposit.id }}</div>
+    <div class="ps-card-header">{% ui "Resumen del depósito · #" %}{{ deposit.id }}</div>
     <div class="ps-card-body">
 
       <!-- USD Amount -->
       <div>
-        <div style="font-size:.68rem;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px;">Monto a depositar</div>
+        <div style="font-size:.68rem;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px;">{% ui "Monto a depositar" %}</div>
         <div class="ps-amount-row">
           <span class="ps-usd">${{ deposit.amount_usd }}</span>
           <span class="ps-currency-badge">{{ deposit.crypto_currency|upper }}</span>
@@ -294,7 +295,7 @@
       {% if deposit.pay_amount %}
       <!-- Crypto amount -->
       <div class="ps-crypto-row">
-        <div class="ps-crypto-label">Monto exacto a enviar</div>
+        <div class="ps-crypto-label">{% ui "Monto exacto a enviar" %}</div>
         <div class="ps-crypto-amount" id="psCryptoAmount">{{ deposit.pay_amount }} {{ deposit.crypto_currency|upper }}</div>
       </div>
       {% endif %}
@@ -307,11 +308,11 @@
 
       <!-- Address -->
       <div class="ps-addr-wrap">
-        <div class="ps-addr-label">Dirección de pago ({{ deposit.crypto_currency|upper }})</div>
+        <div class="ps-addr-label">{% ui "Dirección de pago (" %}{{ deposit.crypto_currency|upper }})</div>
         <div class="ps-addr-row">
           <div class="ps-addr" id="psAddr">{{ deposit.pay_address }}</div>
           <button class="ps-copy-btn" id="copyAddrBtn" onclick="copyAddress()">
-            <i class="fa-solid fa-copy"></i> Copiar
+            <i class="fa-solid fa-copy"></i> {% ui "Copiar" %}
           </button>
         </div>
       </div>
@@ -320,14 +321,14 @@
       <!-- Status + countdown -->
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
         <div>
-          <div style="font-size:.68rem;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;margin-bottom:5px;">Estado</div>
+          <div style="font-size:.68rem;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;margin-bottom:5px;">{% ui "Estado" %}</div>
           <span class="ps-status-badge psb-{{ deposit.status }}" id="psStatusBadge">
             {{ deposit.get_status_display }}
           </span>
         </div>
         {% if deposit.expires_at and not is_final %}
         <div class="ps-countdown" id="psCountdown">
-          Expira en <span id="cdTimer">—</span>
+          {% ui "Expira en" %} <span id="cdTimer">—</span>
         </div>
         {% endif %}
       </div>
@@ -339,7 +340,7 @@
   {% if deposit.nowpayments_invoice_url and not is_final %}
   <a href="{{ deposit.nowpayments_invoice_url }}" target="_blank" rel="noopener" class="ps-ext-link">
     <i class="fa-solid fa-arrow-up-right-from-square"></i>
-    Abrir página de pago externo
+    {% ui "Abrir página de pago externo" %}
   </a>
   {% endif %}
 
@@ -348,22 +349,22 @@
   <div style="margin-top:18px;display:flex;flex-direction:column;gap:6px;">
     <div class="ps-info-row">
       <i class="fa-solid fa-shield-halved"></i>
-      Envía únicamente {{ deposit.crypto_currency|upper }} a esta dirección.
+      {% ui "Envía únicamente" %} {{ deposit.crypto_currency|upper }} {% ui "a esta dirección." %}
     </div>
     {% if is_challenge %}
     <div class="ps-info-row">
       <i class="fa-solid fa-bolt"></i>
-      Tu challenge se activará automáticamente al confirmar el pago.
+      {% ui "Tu challenge se activará automáticamente al confirmar el pago." %}
     </div>
     {% else %}
     <div class="ps-info-row">
       <i class="fa-solid fa-bolt"></i>
-      El balance se acredita automáticamente en tu wallet al confirmar.
+      {% ui "El balance se acredita automáticamente en tu wallet al confirmar." %}
     </div>
     {% endif %}
     <div class="ps-info-row">
       <i class="fa-solid fa-clock"></i>
-      Confirmación ~15 min · No cierres esta página.
+      {% ui "Confirmación ~15 min · No cierres esta página." %}
     </div>
   </div>
   {% endif %}
@@ -375,24 +376,24 @@
       <a href="{% if account_url %}{{ account_url }}{% else %}{% url 'simulator:accounts' %}{% endif %}"
          class="btn btn-primary" id="psChallengeCta" style="flex:1;justify-content:center;">
         <i class="fa-solid fa-chart-line"></i>
-        {% if account_url %}Ir a mi cuenta Challenge{% else %}Ir al Panel de Trading{% endif %}
+        {% if account_url %}{% ui "Ir a mi cuenta Challenge" %}{% else %}{% ui "Ir al Panel de Trading" %}{% endif %}
       </a>
       {% else %}
       <a href="{% url 'simulator:accounts' %}" class="btn btn-primary" style="flex:1;justify-content:center;">
-        <i class="fa-solid fa-briefcase"></i> Ver Mis Cuentas
+        <i class="fa-solid fa-briefcase"></i> {% ui "Ver Mis Cuentas" %}
       </a>
       {% endif %}
     {% endif %}
     {% if is_challenge %}
     <a href="{% url 'simulator:challenge_catalog' %}" class="btn btn-outline btn-sm" style="flex:1;justify-content:center;">
-      <i class="fa-solid fa-trophy"></i> Ver Challenges
+      <i class="fa-solid fa-trophy"></i> {% ui "Ver Challenges" %}
     </a>
     {% else %}
     <a href="{% url 'simulator:deposit_history' %}" class="btn btn-outline {% if deposit.credited %}btn-sm{% endif %}" style="flex:1;justify-content:center;">
-      <i class="fa-solid fa-clock-rotate-left"></i> Historial
+      <i class="fa-solid fa-clock-rotate-left"></i> {% ui "Historial" %}
     </a>
     <a href="{% url 'simulator:deposit' %}" class="btn btn-outline btn-sm" style="flex:1;justify-content:center;">
-      <i class="fa-solid fa-plus"></i> Nuevo depósito
+      <i class="fa-solid fa-plus"></i> {% ui "Nuevo depósito" %}
     </a>
     {% endif %}
   </div>
@@ -413,9 +414,9 @@ const POLL_URL      = "{% url 'simulator:deposit_status_json' deposit.id %}";
 const IS_CHALLENGE  = {{ is_challenge|lower }};
 const CHALLENGE_NAME = "{{ challenge_product.name|default:''|escapejs }}";
 const ACCOUNT_URL   = "{{ account_url|default:''|escapejs }}";
-const MSG_CREDITED_TITLE = "{% if is_challenge %}Challenge activado{% else %}Depósito acreditado{% endif %}";
-const MSG_CREDITED_SUB   = "{% if is_challenge %}Tu cuenta Phase 1 está lista. ¡Comienza a operar!{% else %}${{ deposit.amount_usd }} añadidos a tu wallet.{% endif %}";
-const MSG_CONFIRMING_SUB = "{% if is_challenge %}Pago recibido — tu challenge se activará en breve.{% else %}Pago recibido — esperando confirmaciones en blockchain.{% endif %}";
+const MSG_CREDITED_TITLE = "{% if is_challenge %}{% ui_js "Challenge activado" %}{% else %}{% ui_js "Depósito acreditado" %}{% endif %}";
+const MSG_CREDITED_SUB   = "{% if is_challenge %}{% ui_js "Tu cuenta Phase 1 está lista. ¡Comienza a operar!" %}{% else %}${{ deposit.amount_usd }} {% ui_js "añadidos a tu wallet." %}{% endif %}";
+const MSG_CONFIRMING_SUB = "{% if is_challenge %}{% ui_js "Pago recibido — tu challenge se activará en breve." %}{% else %}{% ui_js "Pago recibido — esperando confirmaciones en blockchain." %}{% endif %}";
 
 /* ── QR Code ── */
 function buildCryptoURI(crypto, address, amount) {
@@ -443,10 +444,10 @@ function copyAddress() {
   if (!PAY_ADDRESS) return;
   navigator.clipboard.writeText(PAY_ADDRESS).then(() => {
     const btn = document.getElementById('copyAddrBtn');
-    btn.innerHTML = '<i class="fa-solid fa-check"></i> Copiado';
+    btn.innerHTML = '<i class="fa-solid fa-check"></i> {% ui_js "Copiado" %}';
     btn.classList.add('copied');
     setTimeout(() => {
-      btn.innerHTML = '<i class="fa-solid fa-copy"></i> Copiar';
+      btn.innerHTML = '<i class="fa-solid fa-copy"></i> {% ui_js "Copiar" %}';
       btn.classList.remove('copied');
     }, 2500);
   });
@@ -458,7 +459,7 @@ function updateCountdown() {
   const diff = Math.floor((new Date(EXPIRES_AT) - Date.now()) / 1000);
   const el = document.getElementById('cdTimer');
   if (!el) return;
-  if (diff <= 0) { el.textContent = 'Expirado'; return; }
+  if (diff <= 0) { el.textContent = '{% ui_js "Expirado" %}'; return; }
   const m = Math.floor(diff / 60), s = diff % 60;
   el.textContent = `${m}:${s.toString().padStart(2, '0')}`;
 }
@@ -466,16 +467,16 @@ if (EXPIRES_AT) { updateCountdown(); setInterval(updateCountdown, 1000); }
 
 /* ── Status labels ── */
 const STATUS_LABELS = {
-  pending:        'Pendiente',
-  waiting:        'Esperando pago',
-  confirming:     'Confirmando',
-  confirmed:      'Confirmado',
-  sending:        'Enviando',
-  partially_paid: 'Pago parcial',
-  finished:       'Completado',
-  failed:         'Fallido',
-  refunded:       'Reembolsado',
-  expired:        'Expirado',
+  pending:        '{% ui_js "Pendiente" %}',
+  waiting:        '{% ui_js "Esperando pago" %}',
+  confirming:     '{% ui_js "Confirmando" %}',
+  confirmed:      '{% ui_js "Confirmado" %}',
+  sending:        '{% ui_js "Enviando" %}',
+  partially_paid: '{% ui_js "Pago parcial" %}',
+  finished:       '{% ui_js "Completado" %}',
+  failed:         '{% ui_js "Fallido" %}',
+  refunded:       '{% ui_js "Reembolsado" %}',
+  expired:        '{% ui_js "Expirado" %}',
 };
 
 /* ── State machine for banner ── */
@@ -487,7 +488,7 @@ function applyState(status, credited) {
   const badge     = document.getElementById('psStatusBadge');
 
   if (badge) {
-    badge.textContent = credited ? 'Completado' : (STATUS_LABELS[status] || status);
+    badge.textContent = credited ? '{% ui_js "Completado" %}' : (STATUS_LABELS[status] || status);
     badge.className = `ps-status-badge psb-${credited ? 'finished' : status}`;
   }
 
@@ -502,15 +503,15 @@ function applyState(status, credited) {
   } else if (status === 'confirming') {
     banner.className = 'ps-banner ps-banner-confirming';
     bannerIcon.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
-    title.textContent = 'Confirmando en blockchain';
+    title.textContent = '{% ui_js "Confirmando en blockchain" %}';
     sub.textContent   = MSG_CONFIRMING_SUB;
   } else if (status === 'failed' || status === 'expired') {
     banner.className = 'ps-banner ps-banner-failed';
     bannerIcon.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i>';
     title.textContent = STATUS_LABELS[status] || status;
     sub.textContent   = status === 'expired'
-      ? 'El pago expiró. Crea un nuevo depósito.'
-      : 'El pago no pudo completarse.';
+      ? '{% ui_js "El pago expiró. Crea un nuevo depósito." %}'
+      : '{% ui_js "El pago no pudo completarse." %}';
     const dot = document.querySelector('.pulse-dot');
     if (dot) dot.remove();
   }

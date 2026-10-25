@@ -1,7 +1,8 @@
 {% extends "simulator/base_app.html" %}
+{% load ui_language %}
 {% load static %}
-{% block title %}Withdraw — Money Broker{% endblock %}
-{% block page_title %}Retirar{% endblock %}
+{% block title %}{% ui "Withdraw — Money Broker" %}{% endblock %}
+{% block page_title %}{% ui "Retirar" %}{% endblock %}
 
 {% block extra_head %}
 <style>
@@ -199,25 +200,25 @@
 {% block content %}
 <div class="wd-wrap">
   <div class="wd-card">
-    <h2>Withdraw Funds</h2>
-    <p class="subtitle">Retiro a tu wallet crypto personal · Revisión manual en 24-48h</p>
+    <h2>{% ui "Withdraw Funds" %}</h2>
+    <p class="subtitle">{% ui "Retiro a tu wallet crypto personal · Revisión manual en 24-48h" %}</p>
 
     <!-- Wallet balance -->
     <div class="balance-pill">
       <i class="fa-solid fa-wallet" style="color:var(--gold)"></i>
-      <span style="color:var(--text-secondary);">Balance disponible:</span>
+      <span style="color:var(--text-secondary);">{% ui "Balance disponible:" %}</span>
       <strong style="color:var(--gold);margin-left:auto;">${{ wallet.available_balance|floatformat:2 }}</strong>
     </div>
 
     <!-- Withdrawal info -->
     <div class="daily-limit-box">
-      <div class="dl-title"><i class="fa-solid fa-shield-halved"></i>&nbsp; Información de retiros</div>
+      <div class="dl-title"><i class="fa-solid fa-shield-halved"></i>{% ui "  Información de retiros" %}</div>
       <div class="daily-limit-row">
-        <span>Retirado hoy</span>
+        <span>{% ui "Retirado hoy" %}</span>
         <span class="dl-val used">${{ daily_used|floatformat:2 }}</span>
       </div>
       <div class="daily-limit-row" style="font-style:italic;color:var(--text-muted);font-size:0.85em;grid-column:1/-1;">
-        <span>Los retiros pueden estar sujetos a revisión manual por seguridad.</span>
+        <span>{% ui "Los retiros pueden estar sujetos a revisión manual por seguridad." %}</span>
       </div>
     </div>
 
@@ -225,48 +226,48 @@
     <div class="kyc-banner" style="flex-direction:column;gap:10px;">
       <div style="display:flex;align-items:center;gap:10px;">
         <i class="fa-solid fa-triangle-exclamation" style="flex-shrink:0;"></i>
-        <strong>Requisitos pendientes para retirar</strong>
+        <strong>{% ui "Requisitos pendientes para retirar" %}</strong>
       </div>
       <ul style="margin:0;padding:0 0 0 4px;list-style:none;display:flex;flex-direction:column;gap:6px;">
         {% if not readiness.email_verified %}
         <li style="font-size:.8rem;">
           <i class="fa-solid fa-circle-xmark" style="color:#ef5350;margin-right:4px;"></i>
-          Email no verificado —
-          <a href="{% url 'simulator:resend_verification' %}">Reenviar verificación &rarr;</a>
+          {% ui "Email no verificado —" %}
+          <a href="{% url 'simulator:resend_verification' %}">{% ui "Reenviar verificación →" %}</a>
         </li>
         {% endif %}
         {% if not readiness.terms_accepted %}
         <li style="font-size:.8rem;">
           <i class="fa-solid fa-circle-xmark" style="color:#ef5350;margin-right:4px;"></i>
-          Términos no aceptados —
-          <a href="{% url 'simulator:accept_terms' %}">Aceptar ahora &rarr;</a>
+          {% ui "Términos no aceptados —" %}
+          <a href="{% url 'simulator:accept_terms' %}">{% ui "Aceptar ahora →" %}</a>
         </li>
         {% endif %}
         {% if not readiness.kyc_approved %}
           {% if readiness.kyc_status == 'pending' %}
           <li style="font-size:.8rem;">
             <i class="fa-solid fa-clock" style="color:#FFA500;margin-right:4px;"></i>
-            Verificación KYC requerida — en revisión, aguarda aprobación
+            {% ui "Verificación KYC requerida — en revisión, aguarda aprobación" %}
           </li>
           {% elif readiness.kyc_status == 'rejected' %}
           <li style="font-size:.8rem;">
             <i class="fa-solid fa-circle-xmark" style="color:#ef5350;margin-right:4px;"></i>
-            Verificación KYC requerida — KYC rechazado,
-            <a href="{% url 'simulator:kyc' %}">vuelve a enviar &rarr;</a>
+            {% ui "Verificación KYC requerida — KYC rechazado," %}
+            <a href="{% url 'simulator:kyc' %}">{% ui "vuelve a enviar →" %}</a>
           </li>
           {% else %}
           <li style="font-size:.8rem;">
             <i class="fa-solid fa-circle-xmark" style="color:#ef5350;margin-right:4px;"></i>
-            Verificación KYC requerida —
-            <a href="{% url 'simulator:kyc' %}">completar verificación &rarr;</a>
+            {% ui "Verificación KYC requerida —" %}
+            <a href="{% url 'simulator:kyc' %}">{% ui "completar verificación →" %}</a>
           </li>
           {% endif %}
         {% endif %}
         {% if not readiness.totp_enabled %}
         <li style="font-size:.8rem;">
           <i class="fa-solid fa-circle-xmark" style="color:#ef5350;margin-right:4px;"></i>
-          2FA no activado —
-          <a href="{% url 'simulator:totp_setup' %}">Activar ahora &rarr;</a>
+          {% ui "2FA no activado —" %}
+          <a href="{% url 'simulator:totp_setup' %}">{% ui "Activar ahora →" %}</a>
         </li>
         {% endif %}
       </ul>
@@ -274,16 +275,15 @@
     {% endif %}
 
     {% if error %}
-    <div class="wd-error">{{ error }}</div>
+    <div class="wd-error">{% ui error %}</div>
     {% endif %}
 
     {% if not has_verified_wallet %}
     <div class="kyc-banner">
       <i class="fa-solid fa-triangle-exclamation" style="flex-shrink:0;"></i>
       <span>
-        No tienes ninguna wallet verificada todavía. Debes registrar y verificar
-        una dirección de retiro antes de poder solicitar un retiro —
-        <a href="{% url 'simulator:withdraw_wallet_register' %}">registrar wallet &rarr;</a>
+        {% ui "No tienes ninguna wallet verificada todavía. Debes registrar y verificar una dirección de retiro antes de poder solicitar un retiro —" %}
+        <a href="{% url 'simulator:withdraw_wallet_register' %}">{% ui "registrar wallet →" %}</a>
       </span>
     </div>
     {% endif %}
@@ -293,7 +293,7 @@
 
       <!-- Amount -->
       <div class="form-group">
-        <div class="field-label">Monto en USD</div>
+        <div class="field-label">{% ui "Monto en USD" %}</div>
         <div class="preset-grid" id="presetGrid">
           <button type="button" class="preset-btn" data-amount="1000">$1,000</button>
           <button type="button" class="preset-btn" data-amount="2500">$2,500</button>
@@ -301,13 +301,13 @@
         </div>
         {{ form.amount_usd }}
         {% if form.amount_usd.errors %}
-          <div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{{ form.amount_usd.errors|join:", " }}</div>
+          <div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{% ui_errors form.amount_usd.errors %}</div>
         {% endif %}
         <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:.83rem;color:var(--text-secondary);">
-          {{ form.withdraw_all }} Retirar todo el balance disponible (${{ wallet.available_balance|floatformat:2 }})
+          {{ form.withdraw_all }} {% ui "Retirar todo el balance disponible ($" %}{{ wallet.available_balance|floatformat:2 }})
         </label>
         {% if form.withdraw_all.errors %}
-          <div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{{ form.withdraw_all.errors|join:", " }}</div>
+          <div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{% ui_errors form.withdraw_all.errors %}</div>
         {% endif %}
       </div>
 
@@ -315,32 +315,30 @@
 
       <!-- Crypto -->
       <div class="form-group">
-        <div class="field-label">Criptomoneda</div>
+        <div class="field-label">{% ui "Criptomoneda" %}</div>
         {{ form.crypto_currency }}
         {% if form.crypto_currency.errors %}
-          <div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{{ form.crypto_currency.errors|join:", " }}</div>
+          <div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{% ui_errors form.crypto_currency.errors %}</div>
         {% endif %}
       </div>
 
       <!-- Wallet address (must already be verified — see /withdraw/wallets/) -->
       <div class="form-group">
-        <div class="field-label">Wallet destino verificada</div>
+        <div class="field-label">{% ui "Wallet destino verificada" %}</div>
         {{ form.wallet_address }}
         <div class="addr-check">
           <i class="fa-solid fa-circle-info"></i>
-          Solo puedes retirar a una wallet previamente verificada.
-          <a href="{% url 'simulator:withdraw_wallets' %}" style="color:var(--gold);">Gestionar wallets &rarr;</a>
+          {% ui "Solo puedes retirar a una wallet previamente verificada." %}
+          <a href="{% url 'simulator:withdraw_wallets' %}" style="color:var(--gold);">{% ui "Gestionar wallets →" %}</a>
         </div>
         {% if form.wallet_address.errors %}
-          <div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{{ form.wallet_address.errors|join:", " }}</div>
+          <div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{% ui_errors form.wallet_address.errors %}</div>
         {% endif %}
       </div>
 
       <div class="warn-box">
-        <strong>&#9888; Verifica tu dirección antes de continuar.</strong><br>
-        Los retiros crypto son <strong>irreversibles</strong>. Una dirección incorrecta
-        significa pérdida permanente de fondos. El equipo NO puede recuperar envíos a
-        direcciones equivocadas.
+        <strong>{% ui "⚠ Verifica tu dirección antes de continuar." %}</strong><br>
+        {% ui "Los retiros crypto son" %} <strong>{% ui "irreversibles" %}</strong>{% ui ". Una dirección incorrecta significa pérdida permanente de fondos. El equipo NO puede recuperar envíos a direcciones equivocadas." %}
       </div>
 
       {% if totp_enabled %}
@@ -350,7 +348,7 @@
       <div class="form-group">
         <div class="field-label">
           <i class="fa-solid fa-shield-halved" style="color:var(--gold);margin-right:4px;"></i>
-          Código de autenticación (2FA)
+          {% ui "Código de autenticación (2FA)" %}
         </div>
         <input
           type="text"
@@ -367,7 +365,7 @@
         >
         <div class="info-row" style="margin-top:6px;">
           <span>&#128274;</span>
-          Ingresa el código de 6 dígitos de tu app de autenticación.
+          {% ui "Ingresa el código de 6 dígitos de tu app de autenticación." %}
         </div>
       </div>
       {% else %}
@@ -376,24 +374,24 @@
       {% endif %}
 
       <button type="submit" class="submit-btn" id="submitBtn"
-              {% if not readiness.can_withdraw %}disabled title="Completa los requisitos antes de retirar"{% endif %}>
-        SOLICITAR RETIRO
+              {% if not readiness.can_withdraw %}disabled title="{% ui "Completa los requisitos antes de retirar" %}"{% endif %}>
+        {% ui "SOLICITAR RETIRO" %}
       </button>
     </form>
 
     <div class="info-row">
       <span>&#9432;</span>
-      Recibirás un código de verificación por email antes de confirmar el retiro.
+      {% ui "Recibirás un código de verificación por email antes de confirmar el retiro." %}
     </div>
     <div class="info-row">
       <span>&#128274;</span>
-      Tiempo de procesamiento: retiros hasta $1,000 se procesan automáticamente · Retiros mayores requieren doble aprobación.
+      {% ui "Tiempo de procesamiento: retiros hasta $1,000 se procesan automáticamente · Retiros mayores requieren doble aprobación." %}
     </div>
 
     <hr class="divider">
     <div style="text-align:center;">
       <a href="{% url 'simulator:withdraw_history' %}" style="color:var(--gold);font-size:.78rem;text-decoration:none;">
-        Ver historial de retiros →
+        {% ui "Ver historial de retiros →" %}
       </a>
     </div>
   </div>
@@ -431,7 +429,7 @@
     if (v > available) {
       e.preventDefault();
       amtInput.style.borderColor = '#ef5350';
-      alert('El monto excede tu balance disponible ($' + available.toFixed(2) + ')');
+      alert('{% ui_js "El monto excede tu balance disponible ($" %}' + available.toFixed(2) + ')');
     }
   });
 </script>

@@ -1,7 +1,8 @@
 {% extends "simulator/base_app.html" %}
+{% load ui_language %}
 {% load static %}
-{% block title %}Registrar wallet — Money Broker{% endblock %}
-{% block page_title %}Registrar wallet{% endblock %}
+{% block title %}{% ui "Registrar wallet — Money Broker" %}{% endblock %}
+{% block page_title %}{% ui "Registrar wallet" %}{% endblock %}
 
 {% block extra_head %}
 <style>
@@ -22,41 +23,40 @@
 {% block content %}
 <div class="wd-wrap">
   <div class="wd-card">
-    <h2>Registrar wallet de retiro</h2>
-    <p class="subtitle">La nueva dirección entra en cooldown de seguridad antes de poder usarse.</p>
+    <h2>{% ui "Registrar wallet de retiro" %}</h2>
+    <p class="subtitle">{% ui "La nueva dirección entra en cooldown de seguridad antes de poder usarse." %}</p>
 
-    {% if error %}<div class="wd-error">{{ error }}</div>{% endif %}
+    {% if error %}<div class="wd-error">{% ui error %}</div>{% endif %}
 
     <form method="post">
       {% csrf_token %}
       <div class="form-group">
-        <div class="field-label">Criptomoneda</div>
+        <div class="field-label">{% ui "Criptomoneda" %}</div>
         {{ form.asset }}
-        {% if form.asset.errors %}<div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{{ form.asset.errors|join:", " }}</div>{% endif %}
+        {% if form.asset.errors %}<div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{% ui_errors form.asset.errors %}</div>{% endif %}
       </div>
       <div class="form-group">
-        <div class="field-label">Nueva dirección</div>
+        <div class="field-label">{% ui "Nueva dirección" %}</div>
         {{ form.address }}
-        {% if form.address.errors %}<div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{{ form.address.errors|join:", " }}</div>{% endif %}
+        {% if form.address.errors %}<div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{% ui_errors form.address.errors %}</div>{% endif %}
       </div>
       <div class="form-group">
-        <div class="field-label">Código TOTP (2FA)</div>
+        <div class="field-label">{% ui "Código TOTP (2FA)" %}</div>
         {{ form.otp_code }}
-        {% if form.otp_code.errors %}<div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{{ form.otp_code.errors|join:", " }}</div>{% endif %}
+        {% if form.otp_code.errors %}<div style="color:#ef5350;font-size:.78rem;margin-top:4px;">{% ui_errors form.otp_code.errors %}</div>{% endif %}
       </div>
-      <button type="submit" class="submit-btn">CONTINUAR</button>
+      <button type="submit" class="submit-btn">{% ui "CONTINUAR" %}</button>
     </form>
 
     <div class="warn-box">
-      <strong>&#9888; La wallet nueva no queda disponible de inmediato.</strong><br>
-      Debe pasar el período de cooldown de seguridad antes de poder retirar hacia ella.
-      Tu wallet anterior (si tienes una) sigue activa mientras tanto.
+      <strong>{% ui "⚠ La wallet nueva no queda disponible de inmediato." %}</strong><br>
+      {% ui "Debe pasar el período de cooldown de seguridad antes de poder retirar hacia ella. Tu wallet anterior (si tienes una) sigue activa mientras tanto." %}
     </div>
 
     <hr style="border:none;border-top:1px solid rgba(255,215,0,.08);margin:24px 0;">
     <div style="text-align:center;">
       <a href="{% url 'simulator:withdraw_wallets' %}" style="color:var(--gold);font-size:.78rem;text-decoration:none;">
-        Ver mis wallets →
+        {% ui "Ver mis wallets →" %}
       </a>
     </div>
   </div>

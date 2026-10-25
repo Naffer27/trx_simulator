@@ -1,10 +1,12 @@
+{% load ui_language %}
 {% load static %}
 <!DOCTYPE html>
-<html lang="en">
+{% ui_language as ui_lang %}
+<html lang="{{ ui_lang }}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Open Account — Money Broker</title>
+  <title>{% ui "Open Account — Money Broker" %}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
@@ -195,6 +197,7 @@
   </style>
 </head>
 <body>
+<div class="mb-auth-language">{% include "simulator/includes/language_switch.html" %}</div>
 
 <canvas id="auth-canvas"></canvas>
 
@@ -202,64 +205,64 @@
   <a class="auth-brand" href="{% url 'simulator:landing' %}">MONEY BROKER</a>
 
   <div class="auth-card">
-    <h1 class="auth-title">Open Account</h1>
-    <p class="auth-sub">Create your trading account in minutes</p>
+    <h1 class="auth-title">{% ui "Open Account" %}</h1>
+    <p class="auth-sub">{% ui "Create your trading account in minutes" %}</p>
 
     {% if form.non_field_errors %}
-      <div class="auth-alert">{{ form.non_field_errors }}</div>
+      <div class="auth-alert">{% ui_errors form.non_field_errors %}</div>
     {% endif %}
 
     <form method="post" action="{% url 'simulator:register' %}" novalidate autocomplete="on">
       {% csrf_token %}
 
       <!-- Personal -->
-      <p class="field-section">Personal Info</p>
+      <p class="field-section">{% ui "Personal Info" %}</p>
 
       <div class="field">
-        <label for="id_username">Username</label>
+        <label for="id_username">{% ui "Username" %}</label>
         <input type="text" id="id_username" name="username"
                value="{{ form.username.value|default:'' }}"
-               placeholder="choose a username" autocomplete="username" required>
-        {% if form.username.errors %}<p class="field-error">{{ form.username.errors|join:", " }}</p>{% endif %}
+               placeholder="{% ui "choose a username" %}" autocomplete="username" required>
+        {% if form.username.errors %}<p class="field-error">{% ui_errors form.username.errors %}</p>{% endif %}
       </div>
 
       <div class="field">
-        <label for="id_email">Email Address</label>
+        <label for="id_email">{% ui "Email Address" %}</label>
         <input type="email" id="id_email" name="email"
                value="{{ form.email.value|default:'' }}"
                placeholder="you@example.com" autocomplete="email" required>
-        {% if form.email.errors %}<p class="field-error">{{ form.email.errors|join:", " }}</p>{% endif %}
+        {% if form.email.errors %}<p class="field-error">{% ui_errors form.email.errors %}</p>{% endif %}
       </div>
 
       <!-- Security -->
-      <p class="field-section">Security</p>
+      <p class="field-section">{% ui "Security" %}</p>
 
       <div class="field">
-        <label for="id_password1">Password</label>
+        <label for="id_password1">{% ui "Password" %}</label>
         <input type="password" id="id_password1" name="password1"
-               placeholder="min. 8 characters" autocomplete="new-password" required>
-        {% if form.password1.errors %}<p class="field-error">{{ form.password1.errors|join:", " }}</p>{% endif %}
+               placeholder="{% ui "min. 8 characters" %}" autocomplete="new-password" required>
+        {% if form.password1.errors %}<p class="field-error">{% ui_errors form.password1.errors %}</p>{% endif %}
       </div>
 
       <div class="field">
-        <label for="id_password2">Confirm Password</label>
+        <label for="id_password2">{% ui "Confirm Password" %}</label>
         <input type="password" id="id_password2" name="password2"
-               placeholder="repeat password" autocomplete="new-password" required>
-        {% if form.password2.errors %}<p class="field-error">{{ form.password2.errors|join:", " }}</p>{% endif %}
+               placeholder="{% ui "repeat password" %}" autocomplete="new-password" required>
+        {% if form.password2.errors %}<p class="field-error">{% ui_errors form.password2.errors %}</p>{% endif %}
       </div>
 
 
 
-      <button type="submit" class="btn-auth">Create Account &rarr;</button>
+      <button type="submit" class="btn-auth">{% ui "Create Account →" %}</button>
     </form>
 
     <hr class="auth-divider">
 
     <p class="auth-footer">
-      Already have an account? <a href="{% url 'simulator:login' %}">Sign In</a>
+      {% ui "Already have an account?" %} <a href="{% url 'simulator:login' %}">{% ui "Sign In" %}</a>
     </p>
     <p class="auth-footer" style="margin-top:12px;">
-      <a href="{% url 'simulator:login' %}">&larr; Volver</a>
+      <a href="{% url 'simulator:login' %}">{% ui "← Volver" %}</a>
     </p>
   </div>
 </div>

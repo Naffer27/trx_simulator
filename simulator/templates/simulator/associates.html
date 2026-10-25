@@ -1,6 +1,7 @@
 {% extends "simulator/base_app.html" %}
-{% block title %}Programa de Asociados — Money Broker{% endblock %}
-{% block page_title %}Programa de Asociados{% endblock %}
+{% load ui_language %}
+{% block title %}{% ui "Programa de Asociados — Money Broker" %}{% endblock %}
+{% block page_title %}{% ui "Programa de Asociados" %}{% endblock %}
 
 {% block extra_styles %}
 .ref-hero {
@@ -258,10 +259,10 @@
   <div class="ref-hero">
     <div class="ref-hero-icon"><i class="fa-solid fa-handshake"></i></div>
     <div>
-      <div class="ref-hero-title">Programa de Asociados (IB)</div>
+      <div class="ref-hero-title">{% ui "Programa de Asociados (IB)" %}</div>
       <div class="ref-hero-sub">
-        Comparte tu enlace de referido y gana comisiones por cada trader que se registre y opere.<br>
-        Comisiones acumuladas son reportadas y gestionadas por el equipo de Money Broker.
+        {% ui "Comparte tu enlace de referido y gana comisiones por cada trader que se registre y opere." %}<br>
+        {% ui "Comisiones acumuladas son reportadas y gestionadas por el equipo de Money Broker." %}
       </div>
     </div>
   </div>
@@ -269,21 +270,19 @@
   {% if is_frozen %}
   <div class="ref-frozen-banner">
     <i class="fa-solid fa-triangle-exclamation"></i>
-    <div><strong>Programa IB temporalmente congelado.</strong> Tu historial y comisiones anteriores siguen
-    disponibles abajo. No se generan nuevas comisiones mientras el programa esté congelado. Contacta a
-    soporte para más información.</div>
+    <div><strong>{% ui "Programa IB temporalmente congelado." %}</strong> {% ui "Tu historial y comisiones anteriores siguen disponibles abajo. No se generan nuevas comisiones mientras el programa esté congelado. Contacta a soporte para más información." %}</div>
   </div>
   {% endif %}
 
   <!-- ╔══════════════════ HEADER + PERIOD SELECTOR ══════════════════╗ -->
   <div class="ibx-header">
     <div>
-      <h1>Associates <span class="gold">Performance</span></h1>
-      <p>Acquisition and commission overview for traders attributed to your referral link.</p>
+      <h1>{% ui "Associates" %} <span class="gold">{% ui "Performance" %}</span></h1>
+      <p>{% ui "Acquisition and commission overview for traders attributed to your referral link." %}</p>
     </div>
     <div class="ibx-period-selector">
       {% for pkey, plabel in period_choices %}
-      <a href="?period={{ pkey }}" class="ibx-period-pill {% if pkey == period %}active{% endif %}">{{ plabel }}</a>
+      <a href="?period={{ pkey }}" class="ibx-period-pill {% if pkey == period %}active{% endif %}">{% ui plabel %}</a>
       {% endfor %}
     </div>
   </div>
@@ -293,7 +292,7 @@
   <div class="ibx-kpi-grid">
     <div class="ibx-kpi-card" style="--kpi-bg:rgba(255,215,0,.1);--kpi-fg:var(--gold)">
       <div class="ibx-kpi-icon"><i class="fa-solid fa-users"></i></div>
-      <div class="ibx-kpi-label">Registered</div>
+      <div class="ibx-kpi-label">{% ui "Registered" %}</div>
       <div class="ibx-kpi-value">{{ top_cards.registered.value }}</div>
       {% if top_cards.registered.delta is not None %}
       <div class="ibx-kpi-delta {% if top_cards.registered.delta >= 0 %}up{% else %}down{% endif %}">
@@ -306,7 +305,7 @@
     </div>
     <div class="ibx-kpi-card" style="--kpi-bg:rgba(52,152,219,.1);--kpi-fg:#3498db">
       <div class="ibx-kpi-icon"><i class="fa-solid fa-display"></i></div>
-      <div class="ibx-kpi-label">Demo Accounts</div>
+      <div class="ibx-kpi-label">{% ui "Demo Accounts" %}</div>
       <div class="ibx-kpi-value">{{ top_cards.demo.value }}</div>
       {% if top_cards.demo.delta is not None %}
       <div class="ibx-kpi-delta {% if top_cards.demo.delta >= 0 %}up{% else %}down{% endif %}">
@@ -319,7 +318,7 @@
     </div>
     <div class="ibx-kpi-card" style="--kpi-bg:rgba(39,174,96,.1);--kpi-fg:#27ae60">
       <div class="ibx-kpi-icon"><i class="fa-solid fa-chart-line"></i></div>
-      <div class="ibx-kpi-label">Live Accounts</div>
+      <div class="ibx-kpi-label">{% ui "Live Accounts" %}</div>
       <div class="ibx-kpi-value">{{ top_cards.live.value }}</div>
       {% if top_cards.live.delta is not None %}
       <div class="ibx-kpi-delta {% if top_cards.live.delta >= 0 %}up{% else %}down{% endif %}">
@@ -332,7 +331,7 @@
     </div>
     <div class="ibx-kpi-card" style="--kpi-bg:rgba(255,165,0,.1);--kpi-fg:#FFA500">
       <div class="ibx-kpi-icon"><i class="fa-solid fa-coins"></i></div>
-      <div class="ibx-kpi-label">First-Time Deposit</div>
+      <div class="ibx-kpi-label">{% ui "First-Time Deposit" %}</div>
       <div class="ibx-kpi-value">{{ top_cards.ftd.value }}</div>
       {% if top_cards.ftd.delta is not None %}
       <div class="ibx-kpi-delta {% if top_cards.ftd.delta >= 0 %}up{% else %}down{% endif %}">
@@ -350,8 +349,8 @@
   <div class="ibx-analytics-row">
     <div class="info-card">
       <div class="ic-head">
-        <div class="ic-title"><i class="fa-solid fa-filter" style="margin-right:6px;color:var(--gold)"></i>Acquisition Funnel</div>
-        <span style="font-size:.7rem;color:var(--muted)">All-time</span>
+        <div class="ic-title"><i class="fa-solid fa-filter" style="margin-right:6px;color:var(--gold)"></i>{% ui "Acquisition Funnel" %}</div>
+        <span style="font-size:.7rem;color:var(--muted)">{% ui "All-time" %}</span>
       </div>
       <div class="ic-body">
         {% for stage in funnel_stages %}
@@ -370,12 +369,12 @@
 
     <div class="info-card">
       <div class="ic-head">
-        <div class="ic-title"><i class="fa-solid fa-bullseye" style="margin-right:6px;color:var(--gold)"></i>Monthly Goal</div>
+        <div class="ic-title"><i class="fa-solid fa-bullseye" style="margin-right:6px;color:var(--gold)"></i>{% ui "Monthly Goal" %}</div>
       </div>
       <div class="ic-body">
         <div class="ibx-goal-empty">
           <i class="fa-solid fa-bullseye"></i>
-          No goal configured.<br>Goal setup is not available yet for IB accounts.
+          {% ui "No goal configured." %}<br>{% ui "Goal setup is not available yet for IB accounts." %}
         </div>
       </div>
     </div>
@@ -385,14 +384,14 @@
   <!-- ╔══════════════════ PERFORMANCE OVERVIEW ══════════════════╗ -->
   <div class="info-card ibx-perf-card">
     <div class="ibx-perf-head">
-      <div class="ic-title"><i class="fa-solid fa-chart-area" style="margin-right:6px;color:var(--gold)"></i>Performance Overview</div>
+      <div class="ic-title"><i class="fa-solid fa-chart-area" style="margin-right:6px;color:var(--gold)"></i>{% ui "Performance Overview" %}</div>
       <div class="ibx-perf-tabs" id="ibxPerfTabs">
-        <span class="ibx-perf-tab active" data-series="registered">Registered</span>
-        <span class="ibx-perf-tab" data-series="demo">Demo</span>
-        <span class="ibx-perf-tab" data-series="live">Live</span>
-        <span class="ibx-perf-tab" data-series="deposits">Deposits</span>
+        <span class="ibx-perf-tab active" data-series="registered">{% ui "Registered" %}</span>
+        <span class="ibx-perf-tab" data-series="demo">{% ui "Demo" %}</span>
+        <span class="ibx-perf-tab" data-series="live">{% ui "Live" %}</span>
+        <span class="ibx-perf-tab" data-series="deposits">{% ui "Deposits" %}</span>
       </div>
-      <span style="font-size:.72rem;color:var(--muted)">{{ period_label }}</span>
+      <span style="font-size:.72rem;color:var(--muted)">{% ui period_label %}</span>
     </div>
     <div class="ibx-perf-chart-wrap">
       {% if has_performance_data %}
@@ -400,7 +399,7 @@
       {% else %}
       <div class="ibx-perf-empty">
         <i class="fa-solid fa-chart-area"></i>
-        No data yet for this period.
+        {% ui "No data yet for this period." %}
       </div>
       {% endif %}
     </div>
@@ -410,17 +409,17 @@
   <!-- ╔══════════════════ FINANCIAL / ACTIVITY CARDS ══════════════════╗ -->
   <div class="ibx-fin-grid">
     <div class="ibx-fin-card">
-      <div class="ibx-fin-head"><i class="fa-solid fa-sack-dollar"></i> Deposits &middot; {{ period_label }}</div>
+      <div class="ibx-fin-head"><i class="fa-solid fa-sack-dollar"></i> {% ui "Deposits ·" %} {% ui period_label %}</div>
       <div class="ibx-fin-val">${{ ib_deposits_total|floatformat:2 }}</div>
     </div>
     <div class="ibx-fin-card">
-      <div class="ibx-fin-head"><i class="fa-solid fa-arrow-up-from-bracket"></i> Withdrawals &middot; {{ period_label }}</div>
+      <div class="ibx-fin-head"><i class="fa-solid fa-arrow-up-from-bracket"></i> {% ui "Withdrawals ·" %} {% ui period_label %}</div>
       <div class="ibx-fin-val">${{ ib_withdrawals_total|floatformat:2 }}</div>
     </div>
     <div class="ibx-fin-card">
-      <div class="ibx-fin-head"><i class="fa-solid fa-chart-simple"></i> Traded Volume &middot; {{ period_label }}</div>
-      <div class="ibx-fin-val">{{ ib_traded_volume }} <span style="font-size:.8rem;color:var(--muted-2);font-weight:600;">Lots</span></div>
-      <div class="ref-stat-sub" style="margin-top:4px;">Lifetime: {{ lot_totals.lifetime }} lots</div>
+      <div class="ibx-fin-head"><i class="fa-solid fa-chart-simple"></i> {% ui "Traded Volume ·" %} {% ui period_label %}</div>
+      <div class="ibx-fin-val">{{ ib_traded_volume }} <span style="font-size:.8rem;color:var(--muted-2);font-weight:600;">{% ui "Lots" %}</span></div>
+      <div class="ref-stat-sub" style="margin-top:4px;">{% ui "Lifetime:" %} {{ lot_totals.lifetime }} {% ui "lots" %}</div>
     </div>
   </div>
   <!-- /FINANCIAL CARDS -->
@@ -428,7 +427,7 @@
   <!-- ╔══════════════════ CONVERSION RATES + TOP CHANNELS ══════════════════╗ -->
   <div class="ibx-conv-row">
     <div class="info-card">
-      <div class="ic-head"><div class="ic-title"><i class="fa-solid fa-circle-nodes" style="margin-right:6px;color:var(--gold)"></i>Conversion Rates</div></div>
+      <div class="ic-head"><div class="ic-title"><i class="fa-solid fa-circle-nodes" style="margin-right:6px;color:var(--gold)"></i>{% ui "Conversion Rates" %}</div></div>
       <div class="ic-body">
         <div class="ibx-donut-row">
           <div>
@@ -439,7 +438,7 @@
             {% else %}
             <div class="ibx-donut"><div class="ibx-donut-inner ibx-donut-empty">&mdash;</div></div>
             {% endif %}
-            <div class="ibx-donut-label">Registration</div>
+            <div class="ibx-donut-label">{% ui "Registration" %}</div>
             <div class="ibx-donut-ratio">{{ conversion_rates.registration.num }} / {{ conversion_rates.registration.den }}</div>
           </div>
           <div>
@@ -450,7 +449,7 @@
             {% else %}
             <div class="ibx-donut"><div class="ibx-donut-inner ibx-donut-empty">&mdash;</div></div>
             {% endif %}
-            <div class="ibx-donut-label">Live Account</div>
+            <div class="ibx-donut-label">{% ui "Live Account" %}</div>
             <div class="ibx-donut-ratio">{{ conversion_rates.live.num }} / {{ conversion_rates.live.den }}</div>
           </div>
           <div>
@@ -461,7 +460,7 @@
             {% else %}
             <div class="ibx-donut"><div class="ibx-donut-inner ibx-donut-empty">&mdash;</div></div>
             {% endif %}
-            <div class="ibx-donut-label">First-Time Deposit</div>
+            <div class="ibx-donut-label">{% ui "First-Time Deposit" %}</div>
             <div class="ibx-donut-ratio">{{ conversion_rates.ftd.num }} / {{ conversion_rates.ftd.den }}</div>
           </div>
         </div>
@@ -469,11 +468,11 @@
     </div>
 
     <div class="info-card">
-      <div class="ic-head"><div class="ic-title"><i class="fa-solid fa-share-nodes" style="margin-right:6px;color:var(--gold)"></i>Top Channels</div></div>
+      <div class="ic-head"><div class="ic-title"><i class="fa-solid fa-share-nodes" style="margin-right:6px;color:var(--gold)"></i>{% ui "Top Channels" %}</div></div>
       <div class="ic-body">
         <div class="ibx-channels-empty">
           <i class="fa-solid fa-chart-pie"></i>
-          No channel attribution data available.
+          {% ui "No channel attribution data available." %}
         </div>
       </div>
     </div>
@@ -482,36 +481,36 @@
 
   <!-- ╔══════════════════ COMMISSION OVERVIEW ══════════════════╗ -->
   <div class="info-card" style="margin-bottom:24px;">
-    <div class="ic-head"><div class="ic-title"><i class="fa-solid fa-sack-dollar" style="margin-right:6px;color:var(--gold)"></i>Commission Overview</div></div>
+    <div class="ic-head"><div class="ic-title"><i class="fa-solid fa-sack-dollar" style="margin-right:6px;color:var(--gold)"></i>{% ui "Commission Overview" %}</div></div>
     <div class="ic-body">
       <div class="ibx-comm-grid">
         <div class="ibx-comm-card">
-          <div class="ibx-comm-label">Generated</div>
+          <div class="ibx-comm-label">{% ui "Generated" %}</div>
           <div class="ibx-comm-val">${{ commission_summary.generated|floatformat:2 }}</div>
         </div>
         <div class="ibx-comm-card">
-          <div class="ibx-comm-label">Pending</div>
+          <div class="ibx-comm-label">{% ui "Pending" %}</div>
           <div class="ibx-comm-val">${{ commission_summary.pending|floatformat:2 }}</div>
         </div>
         <div class="ibx-comm-card">
-          <div class="ibx-comm-label">On Hold</div>
+          <div class="ibx-comm-label">{% ui "On Hold" %}</div>
           <div class="ibx-comm-val">${{ commission_summary.held|floatformat:2 }}</div>
-          <div class="ibx-comm-sub">Subset of Pending</div>
+          <div class="ibx-comm-sub">{% ui "Subset of Pending" %}</div>
         </div>
         <div class="ibx-comm-card">
-          <div class="ibx-comm-label">Credited</div>
+          <div class="ibx-comm-label">{% ui "Credited" %}</div>
           <div class="ibx-comm-val">${{ commission_summary.credited|floatformat:2 }}</div>
           {% if commission_summary.reversed and commission_summary.reversed > 0 %}
-          <div class="ibx-comm-sub">Reversed/adjusted: ${{ commission_summary.reversed|floatformat:2 }}</div>
+          <div class="ibx-comm-sub">{% ui "Reversed/adjusted: $" %}{{ commission_summary.reversed|floatformat:2 }}</div>
           {% endif %}
         </div>
       </div>
       <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border-dim);font-size:.8rem;color:var(--muted-2);">
-        Current Commission Rule (PER_LOT):
+        {% ui "Current Commission Rule (PER_LOT):" %}
         {% if current_rate is not None %}
-          <span style="color:var(--gold);font-weight:700;">${{ current_rate }}/lot</span>
+          <span style="color:var(--gold);font-weight:700;">${{ current_rate }}{% ui "/lot" %}</span>
         {% else %}
-          <span style="color:var(--muted);">Not configured</span>
+          <span style="color:var(--muted);">{% ui "Not configured" %}</span>
         {% endif %}
       </div>
     </div>
@@ -520,27 +519,27 @@
 
   <!-- Link de referido -->
   <div class="ref-link-box">
-    <div class="ref-link-label">Tu enlace de referido</div>
+    <div class="ref-link-label">{% ui "Tu enlace de referido" %}</div>
     <div class="ref-link-row">
       <input class="ref-link-input" id="refUrl" type="text"
              value="{{ referral_url }}" readonly>
       <button class="ref-link-copy" onclick="copyRef()">
-        <i class="fa-solid fa-copy"></i> Copiar
+        <i class="fa-solid fa-copy"></i> {% ui "Copiar" %}
       </button>
     </div>
     <div class="ref-code-box">
-      Código de referido: <span>{{ referral.code }}</span>
+      {% ui "Código de referido:" %} <span>{{ referral.code }}</span>
     </div>
   </div>
 
   <!-- Actividad / Historial de comisiones -->
   <div class="ref-history">
-    <h6>Actividad / Historial de comisiones</h6>
+    <h6>{% ui "Actividad / Historial de comisiones" %}</h6>
     {% if history_rows %}
     <div style="overflow-x:auto;">
       <table class="ref-history-table">
         <thead>
-          <tr><th>Fecha</th><th>Trader</th><th>Lotes</th><th>Tarifa aplicada</th><th>Comisión</th><th>Estado</th></tr>
+          <tr><th>{% ui "Fecha" %}</th><th>{% ui "Trader" %}</th><th>{% ui "Lotes" %}</th><th>{% ui "Tarifa aplicada" %}</th><th>{% ui "Comisión" %}</th><th>{% ui "Estado" %}</th></tr>
         </thead>
         <tbody>
           {% for row in history_rows %}
@@ -558,34 +557,34 @@
     </div>
     {% if history_page.paginator.num_pages > 1 %}
     <div class="ref-history-pager">
-      {% if history_page.has_previous %}<a href="?page={{ history_page.previous_page_number }}">&laquo; Anterior</a>{% endif %}
-      <span>Página {{ history_page.number }} de {{ history_page.paginator.num_pages }}</span>
-      {% if history_page.has_next %}<a href="?page={{ history_page.next_page_number }}">Siguiente &raquo;</a>{% endif %}
+      {% if history_page.has_previous %}<a href="?page={{ history_page.previous_page_number }}">{% ui "« Anterior" %}</a>{% endif %}
+      <span>{% ui "Página" %} {{ history_page.number }} {% ui "de" %} {{ history_page.paginator.num_pages }}</span>
+      {% if history_page.has_next %}<a href="?page={{ history_page.next_page_number }}">{% ui "Siguiente »" %}</a>{% endif %}
     </div>
     {% endif %}
     {% else %}
-    <div class="ref-history-empty">Aún no hay comisiones generadas.</div>
+    <div class="ref-history-empty">{% ui "Aún no hay comisiones generadas." %}</div>
     {% endif %}
   </div>
 
   <!-- Cómo funciona -->
   <div class="ref-info">
-    <h6>Cómo funciona</h6>
+    <h6>{% ui "Cómo funciona" %}</h6>
     <div class="ref-step">
       <div class="ref-step-num">1</div>
-      <div class="ref-step-text">Comparte tu enlace en redes sociales, grupos o directamente con traders.</div>
+      <div class="ref-step-text">{% ui "Comparte tu enlace en redes sociales, grupos o directamente con traders." %}</div>
     </div>
     <div class="ref-step">
       <div class="ref-step-num">2</div>
-      <div class="ref-step-text">Cada vez que alguien se registra usando tu enlace, <strong>se registra un nuevo asociado</strong> bajo tu cuenta IB.</div>
+      <div class="ref-step-text">{% ui "Cada vez que alguien se registra usando tu enlace," %} <strong>{% ui "se registra un nuevo asociado" %}</strong> {% ui "bajo tu cuenta IB." %}</div>
     </div>
     <div class="ref-step">
       <div class="ref-step-num">3</div>
-      <div class="ref-step-text">Al realizar depósitos y operar, <strong>generas comisiones</strong> según tu contrato vigente, que el equipo revisa y acredita periódicamente.</div>
+      <div class="ref-step-text">{% ui "Al realizar depósitos y operar," %} <strong>{% ui "generas comisiones" %}</strong> {% ui "según tu contrato vigente, que el equipo revisa y acredita periódicamente." %}</div>
     </div>
     <div class="ref-step">
       <div class="ref-step-num">4</div>
-      <div class="ref-step-text">Contacta con soporte para retirar tus comisiones o solicitar información de tu programa IB.</div>
+      <div class="ref-step-text">{% ui "Contacta con soporte para retirar tus comisiones o solicitar información de tu programa IB." %}</div>
     </div>
   </div>
 </div>

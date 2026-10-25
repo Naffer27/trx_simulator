@@ -235,6 +235,10 @@ AUTH_PASSWORD_VALIDATORS = [
 
 # i18n
 LANGUAGE_CODE = "en-us"
+LANGUAGES = [("es", "Español"), ("en", "English")]
+# UI text uses a cookie without changing financial parsing/number formatting.
+LANGUAGE_COOKIE_HTTPONLY = True
+LANGUAGE_COOKIE_SAMESITE = "Lax"
 TIME_ZONE = "UTC"
 USE_I18N = True
 USE_TZ = True
@@ -1036,6 +1040,7 @@ USE_X_FORWARDED_HOST = True
 
 # ── Cookie hardening ──────────────────────────────────────────────────────────
 SESSION_COOKIE_SECURE = not DEBUG
+LANGUAGE_COOKIE_SECURE = SESSION_COOKIE_SECURE
 CSRF_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SAMESITE = "Lax"
 

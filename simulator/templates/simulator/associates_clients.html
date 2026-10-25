@@ -1,6 +1,7 @@
 {% extends "simulator/base_app.html" %}
-{% block title %}Clientes — Asociados — Money Broker{% endblock %}
-{% block page_title %}Clientes{% endblock %}
+{% load ui_language %}
+{% block title %}{% ui "Clientes — Asociados — Money Broker" %}{% endblock %}
+{% block page_title %}{% ui "Clientes" %}{% endblock %}
 
 {% block extra_styles %}
 /* ═══════════════ IB-PORTAL-UX-10B — Clients ═══════════════ */
@@ -130,23 +131,23 @@
   {% if is_frozen %}
   <div style="background:rgba(239,83,80,.08);border:1px solid rgba(239,83,80,.35);border-radius:12px;padding:16px 20px;margin-bottom:20px;font-size:.84rem;color:var(--text);display:flex;align-items:center;gap:12px;">
     <i class="fa-solid fa-triangle-exclamation" style="color:#ef5350;font-size:1.1rem;"></i>
-    <div><strong style="color:#ef5350;">Programa IB temporalmente congelado.</strong> Los datos de tus clientes siguen disponibles abajo en modo de solo lectura.</div>
+    <div><strong style="color:#ef5350;">{% ui "Programa IB temporalmente congelado." %}</strong> {% ui "Los datos de tus clientes siguen disponibles abajo en modo de solo lectura." %}</div>
   </div>
   {% endif %}
 
   <div class="clx-header">
     <div>
-      <h1>My <span style="color:var(--gold);">Clients</span></h1>
-      <p>Traders attributed to your referral link.</p>
+      <h1>{% ui "My" %} <span style="color:var(--gold);">{% ui "Clients" %}</span></h1>
+      <p>{% ui "Traders attributed to your referral link." %}</p>
     </div>
-    <div class="clx-total-badge">{{ total_clients }} client{{ total_clients|pluralize }}</div>
+    <div class="clx-total-badge">{{ total_clients }} {% ui "client" %}{{ total_clients|pluralize }}</div>
   </div>
 
   <div class="clx-card">
     <form method="get" class="clx-toolbar">
       <div class="clx-search">
         <i class="fa-solid fa-magnifying-glass"></i>
-        <input type="text" name="q" value="{{ search_q }}" placeholder="Search by username…">
+        <input type="text" name="q" value="{{ search_q }}" placeholder="{% ui "Search by username…" %}">
       </div>
       <select name="status" class="clx-select" onchange="this.form.submit()">
         {% for skey, slabel in status_choices %}
@@ -154,15 +155,15 @@
         {% endfor %}
       </select>
       <input type="hidden" name="period" value="{{ period }}" id="clxPeriodInput">
-      <button type="submit" class="clx-apply-btn">Apply</button>
+      <button type="submit" class="clx-apply-btn">{% ui "Apply" %}</button>
     </form>
 
     <div class="clx-toolbar" style="border-top:none;">
-      <span style="font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;">Joined</span>
+      <span style="font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;">{% ui "Joined" %}</span>
       <div class="clx-period-selector">
         {% for pkey, plabel in period_choices %}
         <a href="?period={{ pkey }}&status={{ status_filter }}{% if search_q %}&q={{ search_q }}{% endif %}"
-           class="clx-period-pill {% if pkey == period %}active{% endif %}">{{ plabel }}</a>
+           class="clx-period-pill {% if pkey == period %}active{% endif %}">{% ui plabel %}</a>
         {% endfor %}
       </div>
     </div>
@@ -172,15 +173,15 @@
       <table class="clx-table">
         <thead>
           <tr>
-            <th>Client</th>
-            <th>Joined</th>
-            <th>Demo</th>
-            <th>Live</th>
+            <th>{% ui "Client" %}</th>
+            <th>{% ui "Joined" %}</th>
+            <th>{% ui "Demo" %}</th>
+            <th>{% ui "Live" %}</th>
             <th>FTD</th>
-            <th>Deposits</th>
-            <th>Traded Volume</th>
-            <th>Commission</th>
-            <th>Status</th>
+            <th>{% ui "Deposits" %}</th>
+            <th>{% ui "Traded Volume" %}</th>
+            <th>{% ui "Commission" %}</th>
+            <th>{% ui "Status" %}</th>
           </tr>
         </thead>
         <tbody>
@@ -189,11 +190,11 @@
             <td data-label="Client"><span class="clx-username">{{ row.username }}</span></td>
             <td data-label="Joined">{{ row.joined_at|date:"d M Y" }}</td>
             <td data-label="Demo">
-              {% if row.has_demo %}<span class="clx-yesno clx-yes"><i class="fa-solid fa-circle-check"></i> Yes</span>
+              {% if row.has_demo %}<span class="clx-yesno clx-yes"><i class="fa-solid fa-circle-check"></i> {% ui "Yes" %}</span>
               {% else %}<span class="clx-yesno clx-no">—</span>{% endif %}
             </td>
             <td data-label="Live">
-              {% if row.has_live %}<span class="clx-yesno clx-yes"><i class="fa-solid fa-circle-check"></i> Yes</span>
+              {% if row.has_live %}<span class="clx-yesno clx-yes"><i class="fa-solid fa-circle-check"></i> {% ui "Yes" %}</span>
               {% else %}<span class="clx-yesno clx-no">—</span>{% endif %}
             </td>
             <td data-label="FTD">
@@ -201,7 +202,7 @@
               {% else %}<span class="clx-no">—</span>{% endif %}
             </td>
             <td data-label="Deposits" class="clx-money">${{ row.deposits_total|floatformat:2 }}</td>
-            <td data-label="Traded Volume" class="clx-money">{{ row.traded_volume|floatformat:"-2" }} lots</td>
+            <td data-label="Traded Volume" class="clx-money">{{ row.traded_volume|floatformat:"-2" }} {% ui "lots" %}</td>
             <td data-label="Commission" class="clx-money" style="color:var(--gold);">${{ row.commission_total|floatformat:2 }}</td>
             <td data-label="Status">
               <span class="clx-status-pill clx-status-{{ row.status_label|lower }}">{{ row.status_label }}</span>
@@ -214,18 +215,18 @@
 
     <div class="clx-pager">
       <span class="clx-pager-info">
-        Page {{ page.number }} of {{ page.paginator.num_pages }} &middot; {{ total_clients }} total
+        {% ui "Page" %} {{ page.number }} {% ui "of" %} {{ page.paginator.num_pages }} &middot; {{ total_clients }} {% ui "total" %}
       </span>
       <div class="clx-pager-links">
         {% if page.has_previous %}
-        <a href="?page={{ page.previous_page_number }}&period={{ period }}&status={{ status_filter }}{% if search_q %}&q={{ search_q }}{% endif %}">&laquo; Previous</a>
+        <a href="?page={{ page.previous_page_number }}&period={{ period }}&status={{ status_filter }}{% if search_q %}&q={{ search_q }}{% endif %}">{% ui "« Previous" %}</a>
         {% else %}
-        <span class="disabled">&laquo; Previous</span>
+        <span class="disabled">{% ui "« Previous" %}</span>
         {% endif %}
         {% if page.has_next %}
-        <a href="?page={{ page.next_page_number }}&period={{ period }}&status={{ status_filter }}{% if search_q %}&q={{ search_q }}{% endif %}">Next &raquo;</a>
+        <a href="?page={{ page.next_page_number }}&period={{ period }}&status={{ status_filter }}{% if search_q %}&q={{ search_q }}{% endif %}">{% ui "Next »" %}</a>
         {% else %}
-        <span class="disabled">Next &raquo;</span>
+        <span class="disabled">{% ui "Next »" %}</span>
         {% endif %}
       </div>
     </div>
@@ -234,9 +235,9 @@
     <div class="clx-empty">
       <i class="fa-solid fa-user-group"></i>
       {% if search_q or status_filter != 'all' or period != 'all' %}
-      No clients match your current filters.
+      {% ui "No clients match your current filters." %}
       {% else %}
-      No clients yet — share your referral link from the Dashboard to start.
+      {% ui "No clients yet — share your referral link from the Dashboard to start." %}
       {% endif %}
     </div>
     {% endif %}

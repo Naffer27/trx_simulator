@@ -1,6 +1,8 @@
+{% load ui_language %}
 {% load static %}
 <!DOCTYPE html>
-<html lang="es">
+{% ui_language as ui_lang %}
+<html lang="{{ ui_lang }}">
 <head>
   <!-- UI-THEME-01 — anti-flash theme bootstrap. Must run before any CSS
        paints: localStorage -> prefers-color-scheme -> dark fallback.
@@ -611,7 +613,7 @@
         <div class="sb-logo-mark">MB</div>
         <div class="sb-logo-text">MONEY<br>BROKERS</div>
       </div>
-      <button class="sb-collapse-btn" id="sidebarToggle" title="Colapsar menú">
+      <button class="sb-collapse-btn" id="sidebarToggle" title="{% ui "Colapsar menú" %}">
         <i class="fa fa-chevron-left"></i>
       </button>
     </div>
@@ -619,25 +621,25 @@
     <!-- Navigation -->
     <nav class="sb-nav" role="navigation">
 
-      <div class="sb-section-label">Cuenta</div>
+      <div class="sb-section-label">{% ui "Cuenta" %}</div>
 
       <!-- Dashboard -->
       <a href="{% url 'simulator:home' %}"
          class="sb-link {% if active_section == 'dashboard' %}active{% endif %}">
         <span class="sb-icon"><i class="fa-solid fa-gauge-high"></i></span>
-        <span class="sb-text">Dashboard</span>
+        <span class="sb-text">{% ui "Dashboard" %}</span>
       </a>
 
       <!-- Mis Cuentas -->
       <a href="{% url 'simulator:accounts' %}" class="sb-link {% if active_section == 'accounts' %}active{% endif %}">
         <span class="sb-icon"><i class="fa-solid fa-briefcase"></i></span>
-        <span class="sb-text">Mis Cuentas</span>
+        <span class="sb-text">{% ui "Mis Cuentas" %}</span>
       </a>
 
       <!-- Abrir Cuenta -->
       <a href="{% url 'simulator:account_open' %}" class="sb-link {% if active_section == 'account_open' %}active{% endif %}">
         <span class="sb-icon"><i class="fa-solid fa-circle-plus"></i></span>
-        <span class="sb-text">Abrir Cuenta</span>
+        <span class="sb-text">{% ui "Abrir Cuenta" %}</span>
       </a>
 
       <!-- Cartera (dropdown) -->
@@ -645,49 +647,49 @@
            data-group="cartera">
         <div class="sb-link sb-group-hd">
           <span class="sb-icon"><i class="fa-solid fa-wallet"></i></span>
-          <span class="sb-text">Cartera</span>
+          <span class="sb-text">{% ui "Cartera" %}</span>
           <span class="sb-chevron"><i class="fa-solid fa-chevron-right"></i></span>
         </div>
         <div class="sb-children">
           <a href="{% url 'simulator:deposit' %}"
              class="sb-child {% if active_section == 'deposit' %}active{% endif %}">
-            <span class="sb-cdot"></span>Depositar
+            <span class="sb-cdot"></span>{% ui "Depositar" %}
           </a>
           <a href="{% url 'simulator:deposit_history' %}"
              class="sb-child {% if active_section == 'deposit_history' %}active{% endif %}">
-            <span class="sb-cdot"></span>Historial depósitos
+            <span class="sb-cdot"></span>{% ui "Historial depósitos" %}
           </a>
           <a href="{% url 'simulator:withdraw' %}"
              class="sb-child {% if active_section == 'withdraw' %}active{% endif %}">
-            <span class="sb-cdot"></span>Retirar
+            <span class="sb-cdot"></span>{% ui "Retirar" %}
             {% if readiness and not readiness.can_withdraw %}
             <span style="margin-left:auto;font-size:.6rem;color:#ef5350;font-weight:700;">!</span>
             {% endif %}
           </a>
           <a href="{% url 'simulator:withdraw_history' %}"
              class="sb-child {% if active_section == 'withdraw_history' %}active{% endif %}">
-            <span class="sb-cdot"></span>Historial retiros
+            <span class="sb-cdot"></span>{% ui "Historial retiros" %}
           </a>
           <a href="#" class="sb-child sb-hidden" data-sb-future="transferencia-interna">
-            <span class="sb-cdot"></span>Transferencia interna
+            <span class="sb-cdot"></span>{% ui "Transferencia interna" %}
           </a>
         </div>
       </div>
 
-      <div class="sb-section-label">Mercados</div>
+      <div class="sb-section-label">{% ui "Mercados" %}</div>
 
       <!-- Panel de Trading -->
       <a href="{% url 'simulator:dashboard' %}"
          class="sb-link {% if active_section == 'trading' %}active{% endif %}">
         <span class="sb-icon"><i class="fa-solid fa-chart-line"></i></span>
-        <span class="sb-text">Panel de Trading</span>
+        <span class="sb-text">{% ui "Panel de Trading" %}</span>
       </a>
 
       <!-- Análisis -->
       <a href="{% url 'simulator:history' %}"
          class="sb-link {% if active_section == 'analysis' %}active{% endif %}">
         <span class="sb-icon"><i class="fa-solid fa-chart-bar"></i></span>
-        <span class="sb-text">Análisis</span>
+        <span class="sb-text">{% ui "Análisis" %}</span>
       </a>
 
       <!-- ══ HIDDEN ITEMS — code preserved, visually disabled ══ -->
@@ -697,7 +699,7 @@
       <a href="{% url 'simulator:calendar' %}"
          class="sb-link {% if active_section == 'calendar' %}active{% endif %}">
         <span class="sb-icon"><i class="fa-solid fa-calendar-days"></i></span>
-        <span class="sb-text">Calendario</span>
+        <span class="sb-text">{% ui "Calendario" %}</span>
       </a>
 
       <div class="sb-divider"></div>
@@ -711,21 +713,21 @@
            data-group="asociados">
         <div class="sb-link sb-group-hd">
           <span class="sb-icon"><i class="fa-solid fa-handshake"></i></span>
-          <span class="sb-text">Asociados</span>
+          <span class="sb-text">{% ui "Asociados" %}</span>
           <span class="sb-chevron"><i class="fa-solid fa-chevron-right"></i></span>
         </div>
         <div class="sb-children">
           <a href="{% url 'simulator:associates' %}"
              class="sb-child {% if active_section == 'associates' %}active{% endif %}">
-            <span class="sb-cdot"></span>Dashboard
+            <span class="sb-cdot"></span>{% ui "Dashboard" %}
           </a>
           <a href="{% url 'simulator:associates_clients' %}"
              class="sb-child {% if active_section == 'associates_clients' %}active{% endif %}">
-            <span class="sb-cdot"></span>Clientes
+            <span class="sb-cdot"></span>{% ui "Clientes" %}
           </a>
           <a href="{% url 'simulator:associates_program' %}"
              class="sb-child {% if active_section == 'associates_program' %}active{% endif %}">
-            <span class="sb-cdot"></span>Programa
+            <span class="sb-cdot"></span>{% ui "Programa" %}
           </a>
         </div>
       </div>
@@ -734,29 +736,29 @@
       <a href="{% url 'simulator:bonuses' %}"
          class="sb-link {% if active_section == 'bonuses' %}active{% endif %}">
         <span class="sb-icon"><i class="fa-solid fa-gift"></i></span>
-        <span class="sb-text">Bonos</span>
-        <span class="sb-badge sb-badge-new">New</span>
+        <span class="sb-text">{% ui "Bonos" %}</span>
+        <span class="sb-badge sb-badge-new">{% ui "New" %}</span>
       </a>
 
       <!-- PAMM — código preservado, próximamente -->
       <a href="#" class="sb-link sb-hidden" data-sb-future="pamm">
         <span class="sb-icon"><i class="fa-solid fa-people-group"></i></span>
         <span class="sb-text">PAMM</span>
-        <span class="sb-badge sb-badge-soon">Pronto</span>
+        <span class="sb-badge sb-badge-soon">{% ui "Pronto" %}</span>
       </a>
 
       <!-- Archivos -->
       <a href="{% url 'simulator:documents' %}"
          class="sb-link {% if active_section == 'documents' %}active{% endif %}">
         <span class="sb-icon"><i class="fa-solid fa-folder-open"></i></span>
-        <span class="sb-text">Archivos</span>
+        <span class="sb-text">{% ui "Archivos" %}</span>
       </a>
 
       <!-- Expertos (EAs) -->
       <a href="{% url 'simulator:experts' %}"
          class="sb-link {% if active_section == 'experts' %}active{% endif %}">
         <span class="sb-icon"><i class="fa-solid fa-robot"></i></span>
-        <span class="sb-text">Expertos (EAs)</span>
+        <span class="sb-text">{% ui "Expertos (EAs)" %}</span>
       </a>
 
       <div class="sb-divider"></div>
@@ -765,17 +767,17 @@
       <a href="{% url 'simulator:profile' %}"
          class="sb-link {% if active_section == 'profile' %}active{% endif %}">
         <span class="sb-icon"><i class="fa-solid fa-user"></i></span>
-        <span class="sb-text">Mi Perfil</span>
+        <span class="sb-text">{% ui "Mi Perfil" %}</span>
       </a>
 
       <!-- Verificación KYC -->
       <a href="{% url 'simulator:kyc' %}"
          class="sb-link {% if active_section == 'kyc' %}active{% endif %}">
         <span class="sb-icon"><i class="fa-solid fa-id-card"></i></span>
-        <span class="sb-text">Verificación KYC</span>
+        <span class="sb-text">{% ui "Verificación KYC" %}</span>
         {% if readiness and not readiness.kyc_approved %}
           {% if readiness.kyc_status == 'pending' %}
-          <span class="sb-badge" style="background:rgba(255,165,0,.2);color:#FFA500;font-size:.6rem;">Revisión</span>
+          <span class="sb-badge" style="background:rgba(255,165,0,.2);color:#FFA500;font-size:.6rem;">{% ui "Revisión" %}</span>
           {% elif readiness.kyc_status == 'rejected' %}
           <span class="sb-badge" style="background:rgba(239,83,80,.2);color:#ef5350;font-size:.6rem;">!</span>
           {% else %}
@@ -788,14 +790,14 @@
       <a href="{% url 'simulator:password_change' %}"
          class="sb-link {% if active_section == 'password_change' %}active{% endif %}">
         <span class="sb-icon"><i class="fa-solid fa-key"></i></span>
-        <span class="sb-text">Cambiar Contraseña</span>
+        <span class="sb-text">{% ui "Cambiar Contraseña" %}</span>
       </a>
 
       <!-- 2FA Setup -->
       <a href="{% url 'simulator:totp_setup' %}"
          class="sb-link {% if active_section == 'totp_setup' %}active{% endif %}">
         <span class="sb-icon"><i class="fa-solid fa-shield-halved"></i></span>
-        <span class="sb-text">Autenticación 2FA</span>
+        <span class="sb-text">{% ui "Autenticación 2FA" %}</span>
         {% if readiness and not readiness.totp_enabled %}
         <span class="sb-badge" style="background:rgba(239,83,80,.2);color:#ef5350;font-size:.6rem;">!</span>
         {% endif %}
@@ -805,7 +807,7 @@
       <a href="{% url 'simulator:support' %}"
          class="sb-link {% if active_section == 'support' %}active{% endif %}">
         <span class="sb-icon"><i class="fa-solid fa-headset"></i></span>
-        <span class="sb-text">Soporte</span>
+        <span class="sb-text">{% ui "Soporte" %}</span>
       </a>
 
       <!-- Ops (staff only) -->
@@ -813,7 +815,7 @@
       <a href="{% url 'simulator:ops_panel' %}"
          class="sb-link {% if active_section == 'ops_panel' %}active{% endif %}">
         <span class="sb-icon"><i class="fa-solid fa-gauge-high"></i></span>
-        <span class="sb-text">Ops</span>
+        <span class="sb-text">{% ui "Ops" %}</span>
       </a>
       {% endif %}
 
@@ -824,9 +826,9 @@
       <div class="sb-avatar">{{ user.username|slice:":1"|upper }}</div>
       <div class="sb-user-info">
         <div class="sb-username">{{ user.username }}</div>
-        <div class="sb-user-role">Trader</div>
+        <div class="sb-user-role">{% ui "Trader" %}</div>
       </div>
-      <a href="{% url 'simulator:logout' %}" class="sb-logout" title="Cerrar sesión">
+      <a href="{% url 'simulator:logout' %}" class="sb-logout" title="{% ui "Cerrar sesión" %}">
         <i class="fa-solid fa-arrow-right-from-bracket"></i>
       </a>
     </div>
@@ -840,29 +842,30 @@
     <!-- Topbar -->
     <header class="app-topbar">
       <div class="tb-left">
-        <button class="tb-toggle" id="mobileToggle" aria-label="Abrir menú">
+        <button class="tb-toggle" id="mobileToggle" aria-label="{% ui "Abrir menú" %}">
           <i class="fa-solid fa-bars"></i>
         </button>
         <div class="tb-breadcrumb">
           <span>Money Broker</span>
           <span class="tb-breadcrumb-sep">/</span>
-          <span class="tb-page-title">{% block page_title %}Dashboard{% endblock %}</span>
+          <span class="tb-page-title">{% block page_title %}{% ui "Dashboard" %}{% endblock %}</span>
         </div>
       </div>
       <div class="tb-right">
+        {% include "simulator/includes/language_switch.html" %}
         <!-- UI-THEME-01 FASE B1 — Dark/Light switch. Icon shows what
              clicking it switches TO (sun while dark, moon while light).
              Preference is localStorage-only (see anti-flash script in
              <head>) — never written to User/Profile/DB. -->
-        <button class="tb-icon-btn" id="themeToggle" type="button" title="Cambiar tema"
-                aria-label="Cambiar a modo claro" aria-pressed="false">
+        <button class="tb-icon-btn" id="themeToggle" type="button" title="{% ui "Cambiar tema" %}"
+                aria-label="{% ui "Cambiar a modo claro" %}" aria-pressed="false">
           <i class="fa-solid fa-sun" id="themeToggleIcon"></i>
         </button>
-        <button class="tb-icon-btn" title="Notificaciones">
+        <button class="tb-icon-btn" title="{% ui "Notificaciones" %}">
           <i class="fa-solid fa-bell"></i>
           <span class="tb-notif-dot"></span>
         </button>
-        <button class="tb-icon-btn" title="Configuración">
+        <button class="tb-icon-btn" title="{% ui "Configuración" %}">
           <i class="fa-solid fa-gear"></i>
         </button>
         <div class="tb-user-chip">
@@ -948,7 +951,7 @@
   function sync(theme) {
     icon.className = theme === 'light' ? 'fa-solid fa-moon' : 'fa-solid fa-sun';
     btn.setAttribute('aria-pressed', theme === 'light' ? 'true' : 'false');
-    btn.setAttribute('aria-label', theme === 'light' ? 'Cambiar a modo oscuro' : 'Cambiar a modo claro');
+    btn.setAttribute('aria-label', theme === 'light' ? '{% ui_js "Cambiar a modo oscuro" %}' : '{% ui_js "Cambiar a modo claro" %}');
   }
 
   sync(current());
@@ -977,22 +980,22 @@
 <div id="sw-root">
   <button id="sw-toggle" type="button" aria-expanded="false" aria-controls="sw-panel">
     <i class="fa-solid fa-headset"></i>
-    <span>Soporte</span>
+    <span>{% ui "Soporte" %}</span>
   </button>
-  <div id="sw-panel" hidden role="dialog" aria-label="Chat de soporte">
+  <div id="sw-panel" hidden role="dialog" aria-label="{% ui "Chat de soporte" %}">
     <div class="sw-header">
-      <span>Money Broker Support</span>
+      <span>{% ui "Money Broker Support" %}</span>
       <div class="sw-header-actions">
-        <a href="{% url 'simulator:support' %}" title="Abrir centro de soporte completo">
+        <a href="{% url 'simulator:support' %}" title="{% ui "Abrir centro de soporte completo" %}">
           <i class="fa-solid fa-arrow-up-right-from-square"></i>
         </a>
-        <button type="button" id="sw-close" aria-label="Cerrar chat">
+        <button type="button" id="sw-close" aria-label="{% ui "Cerrar chat" %}">
           <i class="fa-solid fa-xmark"></i>
         </button>
       </div>
     </div>
     <div id="sw-body" class="sw-body">
-      <div class="sw-loading">Cargando…</div>
+      <div class="sw-loading">{% ui "Cargando…" %}</div>
     </div>
   </div>
 </div>
@@ -1020,7 +1023,7 @@
   }
 
   function fetchFragment(url, opts) {
-    body.innerHTML = '<div class="sw-loading">Cargando…</div>';
+    body.innerHTML = '<div class="sw-loading">{% ui_js "Cargando…" %}</div>';
     return fetch(url, opts || {})
       .then(function (resp) {
         if (!resp.ok) { throw new Error('http_' + resp.status); }
@@ -1028,7 +1031,7 @@
       })
       .then(renderFragment)
       .catch(function () {
-        body.innerHTML = '<div class="sw-loading">No se pudo cargar el chat. Intenta de nuevo.</div>';
+        body.innerHTML = '<div class="sw-loading">{% ui_js "No se pudo cargar el chat. Intenta de nuevo." %}</div>';
       });
   }
 
