@@ -521,6 +521,36 @@ html { scroll-behavior: smooth; }
  .hero-world .hero-motion, .hero-world .hero-motion-label { display:none; }
 }
 
+/* Match the approved desktop planet; mobile keeps its own composition. */
+.hero-world .hero-desktop-routes { display:none; }
+@media (min-width:768px) {
+ .hero-world .hero-stage { min-height:700px; }
+ .hero-world .hero-globe { width:min(1160px,86vw); right:-24%; top:1%; margin-top:0; }
+ .hero-world .hero-globe img { animation-duration:130s; filter:contrast(1.06) saturate(.85); mask-image:radial-gradient(circle,#000 62%,transparent 73%); }
+ .hero-world .hero-globe svg { display:none; }
+ .hero-world .hero-globe .hero-desktop-routes { display:block; transform:rotate(-8deg); opacity:.9; }
+ .hero-world .hero-market { font-size:11px; padding:9px 12px; animation-duration:22s; box-shadow:0 6px 20px #0008; }
+ .hero-world .hero-market:nth-of-type(1) { top:16%!important; left:15%!important; }
+ .hero-world .hero-market:nth-of-type(2) { top:29%!important; left:5%!important; }
+ .hero-world .hero-market:nth-of-type(3) { top:45%!important; left:9%!important; }
+ .hero-world .hero-market:nth-of-type(4) { top:54%!important; left:14%!important; }
+ .hero-world .hero-market:nth-of-type(5) { top:54%!important; left:46%!important; }
+ .hero-world .hero-market:nth-of-type(6) { top:11%!important; left:40%!important; }
+ .hero-world .hero-market:nth-of-type(7) { top:47%!important; left:31%!important; }
+ .hero-world .hero-market:nth-of-type(8) { top:37%!important; left:40%!important; }
+ .hero-world .hero-market:nth-of-type(9) { top:43%!important; left:57%!important; }
+ .hero-world .hero-market:nth-of-type(10) { top:23%!important; left:58%!important; }
+ .hero-world .hero-desktop-routes .route { fill:none; stroke:#f4c76b; stroke-width:.13; opacity:.35; }
+ .hero-world .hero-desktop-routes .signal { fill:none; stroke:#ffe9a8; stroke-width:.28; stroke-dasharray:1.4 24; animation:hero-flow 12s linear infinite; filter:drop-shadow(0 0 1.1px #ffd261); }
+ .hero-world .hero-desktop-routes .signal.second { stroke-dasharray:.8 18; animation-duration:18s; animation-delay:-4s; }
+ .hero-world .hero-desktop-routes .route-rich { fill:none; stroke:#d8ae5b; stroke-width:.10; opacity:.33; }
+ .hero-world .hero-desktop-routes .flow-rich { fill:none; stroke:#ffe7a0; stroke-width:.23; stroke-linecap:round; stroke-dasharray:.9 45; filter:drop-shadow(0 0 .65px #ffce68); animation:hero-flow 14s linear infinite; }
+ .hero-world .hero-desktop-routes .flow-rich:nth-of-type(3n) { animation-duration:21s; animation-delay:-9s; }
+ .hero-world .hero-desktop-routes .flow-rich:nth-of-type(2n) { animation-duration:17s; animation-delay:-4s; }
+ .hero-world .hero-desktop-routes .node, .hero-world .hero-desktop-routes .node-rich { fill:#ffe8a3; filter:drop-shadow(0 0 1px #f9be50); animation:hero-node-pulse 4s ease-in-out infinite; }
+}
+@keyframes hero-node-pulse { 50% { opacity:.35; } }
+
 </style>
 {% endblock %}
 
@@ -580,6 +610,7 @@ html { scroll-behavior: smooth; }
      <path class="hero-route" d="M65 83 Q82 85 73 70"/><path class="hero-signal" pathLength="100" style="animation-delay:-12s" d="M65 83 Q82 85 73 70"/>
      <path class="hero-route" d="M29 32 Q30 65 65 83"/><path class="hero-signal" pathLength="100" style="animation-delay:-13s" d="M29 32 Q30 65 65 83"/>
     </svg>
+    <svg class="hero-desktop-routes" focusable="false" viewBox="0 0 100 100" aria-hidden="true"><path class="route" d="M29 32 Q45 8 66 26 Q82 45 73 70 Q50 91 36 68 Q20 44 29 32"/><path class="signal" pathLength="102" d="M29 32 Q45 8 66 26 Q82 45 73 70 Q50 91 36 68 Q20 44 29 32"/><path class="route" d="M36 68 Q40 40 66 26 Q85 24 88 43 M29 32 Q55 33 73 70"/><path class="signal second" pathLength="102" d="M36 68 Q40 40 66 26 Q85 24 88 43 M29 32 Q55 33 73 70"/><circle class="node" cx="29" cy="32" r=".7"/><circle class="node" cx="66" cy="26" r=".7"/><circle class="node" cx="73" cy="70" r=".7"/><circle class="node" cx="36" cy="68" r=".7"/><circle class="node" cx="88" cy="43" r=".7"/><path class="route-rich" d="M29 32 Q36 5 53 20"/><path class="flow-rich" pathLength="100" d="M29 32 Q36 5 53 20"/><path class="route-rich" d="M53 20 Q70 9 66 26"/><path class="flow-rich" pathLength="100" d="M53 20 Q70 9 66 26"/><path class="route-rich" d="M29 32 Q13 49 36 68"/><path class="flow-rich" pathLength="100" d="M29 32 Q13 49 36 68"/><path class="route-rich" d="M36 68 Q64 50 73 70"/><path class="flow-rich" pathLength="100" d="M36 68 Q64 50 73 70"/><path class="route-rich" d="M66 26 Q38 39 29 32"/><path class="flow-rich" pathLength="100" d="M66 26 Q38 39 29 32"/><path class="route-rich" d="M29 32 Q43 45 57 44"/><path class="flow-rich" pathLength="100" d="M29 32 Q43 45 57 44"/><path class="route-rich" d="M57 44 Q53 60 36 68"/><path class="flow-rich" pathLength="100" d="M57 44 Q53 60 36 68"/><path class="route-rich" d="M57 44 Q82 27 88 43"/><path class="flow-rich" pathLength="100" d="M57 44 Q82 27 88 43"/><path class="route-rich" d="M88 43 Q96 62 73 70"/><path class="flow-rich" pathLength="100" d="M88 43 Q96 62 73 70"/><path class="route-rich" d="M53 20 Q44 33 57 44"/><path class="flow-rich" pathLength="100" d="M53 20 Q44 33 57 44"/><path class="route-rich" d="M66 26 Q75 52 73 70"/><path class="flow-rich" pathLength="100" d="M66 26 Q75 52 73 70"/><path class="route-rich" d="M36 68 Q57 95 65 83"/><path class="flow-rich" pathLength="100" d="M36 68 Q57 95 65 83"/><path class="route-rich" d="M65 83 Q82 85 73 70"/><path class="flow-rich" pathLength="100" d="M65 83 Q82 85 73 70"/><path class="route-rich" d="M29 32 Q30 65 65 83"/><path class="flow-rich" pathLength="100" d="M29 32 Q30 65 65 83"/><circle class="node-rich" cx="29" cy="32" r=".4" style="animation-delay:-0s"/><circle class="node-rich" cx="53" cy="20" r=".4" style="animation-delay:-1s"/><circle class="node-rich" cx="66" cy="26" r=".4" style="animation-delay:-2s"/><circle class="node-rich" cx="36" cy="68" r=".4" style="animation-delay:-3s"/><circle class="node-rich" cx="73" cy="70" r=".4" style="animation-delay:-0s"/><circle class="node-rich" cx="57" cy="44" r=".4" style="animation-delay:-1s"/><circle class="node-rich" cx="88" cy="43" r=".4" style="animation-delay:-2s"/><circle class="node-rich" cx="65" cy="83" r=".4" style="animation-delay:-3s"/></svg>
     <span class="hero-market" style="left:24%;top:18%;animation-delay:-0s">₿ BTC</span>
     <span class="hero-market" style="left:14%;top:31%;animation-delay:-1s">EUR/USD</span>
     <span class="hero-market" style="left:60%;top:25%;animation-delay:-2s">◇ ETH</span>
