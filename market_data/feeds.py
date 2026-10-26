@@ -350,6 +350,9 @@ def _parse_massive_events(raw) -> list:
 # below (mirrors _massive_* 1:1, never merged with it).
 _MASSIVE_WS_CRYPTO_URL = "wss://socket.massive.com/crypto"
 _MASSIVE_CRYPTO_ENABLED_SYMBOLS = frozenset({"BTCUSD", "ETHUSD"})
+# BTC source consistency: Massive exchange 1 is Coinbase. Never switch
+# execution quotes between venues on a per-message basis. ETH is unchanged.
+_MASSIVE_BTC_EXCHANGE = 1
 
 # GOLDEN-MARKETDATA-CRYPTO-01 — ACCEPTANCE FIX (pagination). Confirmed live
 # against the real Massive REST API: the crypto aggs endpoint returns only
@@ -814,6 +817,10 @@ class FeedManager:
         # every reconnect and popped on unregister — see
         # _massive_crypto_shared_loop()/_massive_crypto_unregister_symbol().
         self._massive_crypto_last_broadcast_quote: dict[str, tuple[float, float]] = {}
+        # Separate quote/trade watermarks, retained across reconnects. Provider
+        # timestamps are compared in milliseconds, before conversion to seconds.
+        self._massive_btc_event_ms: dict[str, int] = {}
+        self._massive_btc_quote_log_at: float | None = None
         # PANEL-02 — guards all reads/writes of the four dicts above. This
         # class's own feed tasks (_broadcast/_resync_price) run on the
         # asyncio event loop thread, but has_price()/last_price()/
@@ -3019,6 +3026,26 @@ class FeedManager:
         except asyncio.CancelledError:
             raise
 
+    def _accept_btc_market_event(self, symbol: str, event: dict) -> bool:
+        """BTC-only venue/order gate; called after existing value validation.
+
+        No interpolation, price calculation or fallback venue. Rejected events
+        must not refresh price caches or the selected quote's watchdog. Equal
+        timestamps remain valid: multiple real events can share a millisecond.
+        This is ordering, not a substitute for existing freshness checks.
+        """
+        if symbol != "BTCUSD":
+            return True
+        exchange, stamp, kind = event.get("x"), event.get("t"), event.get("ev")
+        if (type(exchange) is not int or exchange != _MASSIVE_BTC_EXCHANGE
+                or type(stamp) is not int or stamp <= 0
+                or kind not in ("XQ", "XT")):
+            return False
+        if stamp < self._massive_btc_event_ms.get(kind, 0):
+            return False
+        self._massive_btc_event_ms[kind] = stamp
+        return True
+
     async def _massive_crypto_shared_loop(self, channel_layer) -> None:
         """The ONE Massive crypto connection + ONE reader, process-wide.
         Mirrors _massive_shared_loop() exactly, with two crypto-specific
@@ -3099,6 +3126,17 @@ class FeedManager:
                                         continue
                                     if not _validate_quote_values(sym, bid, ask):
                                         continue
+                                    if not self._accept_btc_market_event(sym, ev):
+                                        continue
+                                    if sym == "BTCUSD":
+                                        now_mono = time.monotonic()
+                                        if (self._massive_btc_quote_log_at is None
+                                                or now_mono - self._massive_btc_quote_log_at >= 10.0):
+                                            log.info(
+                                                "[btc-venue] Coinbase quote validated via Massive; event_ms=%d",
+                                                ev["t"],
+                                            )
+                                            self._massive_btc_quote_log_at = now_mono
                                     self._massive_crypto_last_quote_at[sym] = time.monotonic()
                                     self._massive_crypto_symbol_stale_attempts[sym] = 0
                                     backoff = 2.0
@@ -3156,6 +3194,8 @@ class FeedManager:
                                     # price's magnitude without a second,
                                     # parallel validator function.
                                     if not _validate_quote_values(sym, price, price):
+                                        continue
+                                    if not self._accept_btc_market_event(sym, ev):
                                         continue
                                     await self._broadcast_trade(sym, channel_layer, price, size, ts)
                                     continue

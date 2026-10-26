@@ -228,7 +228,7 @@ class SharedLoopXtDispatchTests(_FeedTestsBase):
         _run(_scenario())
 
     def test_xq_event_still_dispatches_to_broadcast_unaffected(self):
-        xq_event = json.dumps([{"ev": "XQ", "pair": "BTC-USD", "bp": 80000.0, "ap": 80001.0, "t": 1788484440000}])
+        xq_event = json.dumps([{"ev": "XQ", "pair": "BTC-USD", "bp": 80000.0, "ap": 80001.0, "t": 1788484440000, "x": 1}])
         connect_mock = _make_connect_mock([[MASSIVE_AUTH_SUCCESS, xq_event]])
         async def _scenario():
             with patch("market_data.feeds.websockets.connect", connect_mock), \
