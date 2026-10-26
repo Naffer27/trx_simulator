@@ -446,7 +446,7 @@
     --summary-muted:#A3A9B3; --summary-good:#3DDC97; --summary-accent:#F5C518;
     --buy-soft:#E3F6EE; --sell-soft:#FDE8EB;
   }
-  .mob-view[data-mobile-view="trade"] .mbg{width:100%;height:100%;max-width:none;box-sizing:border-box;display:flex;flex-direction:column;gap:var(--mb-space-2);font-family:'Geist',var(--mb-font-sans);}
+  .mob-view[data-mobile-view="trade"] .mbg{width:100%;height:100%;max-width:none;box-sizing:border-box;display:flex;flex-direction:column;gap:6px;font-family:'Geist',var(--mb-font-sans);}
   .mob-view[data-mobile-view="trade"] .mbg-num{font-family:'Geist Mono',var(--mb-font-sans);font-variant-numeric:tabular-nums;letter-spacing:-.01em;}
   .mob-view[data-mobile-view="trade"] .mbg-topbar{display:flex;align-items:center;gap:var(--mb-space-2);}
   .mob-view[data-mobile-view="trade"] .mbg-logo{width:34px;height:34px;border-radius:9px;background:var(--brand);color:var(--on-brand);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;letter-spacing:-.02em;flex:0 0 auto;}
@@ -476,7 +476,7 @@
   .mob-view[data-mobile-view="trade"] .mbg-live{display:flex;align-items:center;gap:6px;font-size:var(--mb-text-2xs);font-weight:600;letter-spacing:var(--mb-tracking-label);color:var(--buy-text);white-space:nowrap;flex-shrink:0;}
   .mob-view[data-mobile-view="trade"] .mbg-live::before{content:'';width:7px;height:7px;border-radius:50%;background:var(--buy);}
   .mob-view[data-mobile-view="trade"] .mbg-quote{display:flex;flex-direction:column;gap:2px;}
-  .mob-view[data-mobile-view="trade"] .mbg-price{font-size:32px;font-weight:600;letter-spacing:-.03em;color:var(--text);}
+  .mob-view[data-mobile-view="trade"] .mbg-price{font-size:28px;font-weight:600;letter-spacing:-.03em;color:var(--text);}
   .mob-view[data-mobile-view="trade"] .mbg-stats{display:flex;gap:14px;font-size:var(--mb-text-xs);color:var(--muted);}
   .mob-view[data-mobile-view="trade"] .mbg-stats b{color:var(--text);font-weight:400;}
   /* Balance / Profit-Loss strip — reproduces money-broker-movil 2/
@@ -489,11 +489,11 @@
      (grafico.html: className = 'buy-text'/'sell-text'), not this
      file's unrelated generic --mb-positive/--mb-negative (a different
      Design-System default that does not match the reference). */
-  .mob-view[data-mobile-view="trade"] .mbg-account-strip{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));margin-top:10px;border-radius:12px;background:var(--surface);border:1px solid var(--border);}
-  .mob-view[data-mobile-view="trade"] .mbg-account-strip div{display:flex;flex-direction:column;gap:2px;padding:8px 12px;}
+  .mob-view[data-mobile-view="trade"] .mbg-account-strip{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));margin-top:4px;border-radius:12px;background:var(--surface);border:1px solid var(--border);}
+  .mob-view[data-mobile-view="trade"] .mbg-account-strip div{display:flex;flex-direction:column;gap:0;padding:4px 10px;}
   .mob-view[data-mobile-view="trade"] .mbg-account-strip div:first-child{border-right:1px solid var(--border);}
   .mob-view[data-mobile-view="trade"] .mbg-account-strip small{font-size:11px;color:var(--muted);}
-  .mob-view[data-mobile-view="trade"] .mbg-account-strip b{font-size:16px;font-weight:600;color:var(--text);}
+  .mob-view[data-mobile-view="trade"] .mbg-account-strip b{font-size:14px;font-weight:600;color:var(--text);}
   .mob-view[data-mobile-view="trade"] .mbg-account-strip .is-pos{color:var(--buy-text);}
   .mob-view[data-mobile-view="trade"] .mbg-account-strip .is-neg{color:var(--sell-text);}
   /* tema.css: [data-theme="dia"] .account-strip { border-color:
@@ -686,19 +686,19 @@
   .mob-view[data-mobile-view="trade"] .mbg-protect-row label span{font-size:var(--mb-text-2xs);color:var(--muted);letter-spacing:var(--mb-tracking-label);}
   .mob-view[data-mobile-view="trade"] .mbg-protect-row input{flex:1;min-width:0;background:none;border:none;color:var(--text);font-size:var(--mb-text-sm);text-align:right;}
   .mob-view[data-mobile-view="trade"] .mbg-protect-row input::placeholder{color:var(--muted);}
-  .mob-view[data-mobile-view="trade"] .mbg-trade-bar{display:flex;gap:var(--mb-space-2);}
+  .mob-view[data-mobile-view="trade"] .mbg-trade-bar{display:flex;align-items:center;gap:var(--mb-space-2);}
   .mob-view[data-mobile-view="trade"] .mbg-trade-bar .mbg-sell,
-  .mob-view[data-mobile-view="trade"] .mbg-trade-bar .mbg-buy{flex:1;min-width:0;height:62px;border-radius:14px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;border:none;cursor:pointer;font-family:inherit;}
+  .mob-view[data-mobile-view="trade"] .mbg-trade-bar .mbg-buy{flex:1;min-width:0;height:52px;border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;border:none;cursor:pointer;font-family:inherit;}
   .mob-view[data-mobile-view="trade"] .mbg-trade-bar .mbg-sell{background:var(--sell);color:var(--on-sell);}
   .mob-view[data-mobile-view="trade"] .mbg-trade-bar .mbg-buy{background:var(--buy);color:var(--on-buy);}
   .mob-view[data-mobile-view="trade"] .mbg-trade-bar .mbg-sell:disabled,
   .mob-view[data-mobile-view="trade"] .mbg-trade-bar .mbg-buy:disabled{opacity:.5;cursor:default;}
   .mob-view[data-mobile-view="trade"] .mbg-tb-label{font-size:var(--mb-text-2xs);font-weight:600;letter-spacing:.08em;}
   .mob-view[data-mobile-view="trade"] .mbg-tb-price{font-size:var(--mb-text-md);font-weight:600;}
-  .mob-view[data-mobile-view="trade"] .mbg-lot{width:118px;border-radius:14px;background:var(--surface);border:1px solid var(--border);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:4px 0;box-sizing:border-box;}
-  .mob-view[data-mobile-view="trade"] .mbg-lot small{font-size:var(--mb-text-2xs);color:var(--muted);}
+  .mob-view[data-mobile-view="trade"] .mbg-lot{width:118px;flex-shrink:0;border-radius:10px;background:var(--surface);border:1px solid var(--border);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;padding:0;box-sizing:border-box;}
+  .mob-view[data-mobile-view="trade"] .mbg-lot small{font-size:var(--mb-text-2xs);line-height:14px;color:var(--muted);}
   .mob-view[data-mobile-view="trade"] .mbg-lot-row{display:flex;align-items:center;width:100%;}
-  .mob-view[data-mobile-view="trade"] .mbg-lot-row button{width:36px;height:34px;font-size:20px;font-weight:500;color:var(--text-2);background:none;border:none;cursor:pointer;font-family:inherit;}
+  .mob-view[data-mobile-view="trade"] .mbg-lot-row button{width:36px;height:44px;flex-shrink:0;font-size:20px;font-weight:500;color:var(--text-2);background:none;border:none;cursor:pointer;font-family:inherit;}
   .mob-view[data-mobile-view="trade"] .mbg-lot-row button:disabled{opacity:.5;cursor:default;}
   .mob-view[data-mobile-view="trade"] .mbg-lot-row input{flex:1;width:0;min-width:0;text-align:center;font-size:var(--mb-text-md);font-weight:700;padding:3px 0;border-radius:6px;background:var(--brand-soft);color:var(--brand-text);border:none;}
   .mob-view[data-mobile-view="trade"] .mbg-ticket-status{min-height:18px;font-size:var(--mb-text-xs);color:var(--muted);}
