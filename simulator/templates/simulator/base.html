@@ -73,6 +73,15 @@
     }
     .navbar .nav-cta:hover { background:#FFC200; color:#000 !important; }
     main.container, main.container-fluid { background:transparent; }
+    @media (max-width:600px) {
+      .navbar.navbar-expand { height:auto; min-height:56px; padding:8px 12px; }
+      .navbar.navbar-expand > .container-fluid { flex-wrap:wrap; gap:6px 10px; padding:0; }
+      .navbar.navbar-expand .navbar-brand { margin-right:0; }
+      .navbar.navbar-expand .navbar-nav { flex-wrap:wrap; justify-content:flex-end; max-width:100%; row-gap:4px; }
+      .navbar.navbar-expand .nav-link { font-size:.75rem; padding:6px; white-space:nowrap; }
+      .navbar.navbar-expand .nav-cta { padding:6px 10px !important; }
+    }
+
   </style>
 
   <link rel="stylesheet" href="{% static 'css/dashboard.css' %}?v={{ ts }}">
