@@ -466,6 +466,61 @@ html { scroll-behavior: smooth; }
   .footer-bottom { flex-direction:column; }
   .footer-disclaimer { text-align:left; max-width:100%; }
 }
+
+/* Landing hero only: decorative artwork, independent of trading data. */
+.hero.hero-world { min-height:0; display:block; padding:0 0 72px; overflow:hidden; isolation:isolate; }
+.hero-world .hero-stage { position:relative; max-width:1440px; margin:auto; min-height:650px; display:flex; align-items:center; padding:80px 6%; text-align:left; }
+.hero-world .hero-copy { position:relative; z-index:2; width:57%; }
+.hero-world .hero-title { font-size:clamp(2.3rem,4.1vw,3.8rem); line-height:1.16; margin:0 0 26px; }
+.hero-world .hero-eyebrow { font-size:.65rem; letter-spacing:.16em; gap:8px; }
+.hero-world .hero-eyebrow span { width:20px; flex-shrink:0; }
+.hero-world .hero-sub { font-size:1rem; max-width:470px; margin:0 0 30px; }
+.hero-world .hero-ctas { justify-content:flex-start; gap:12px; }
+.hero-world .hero-ctas a { font-size:.8rem; padding:14px 20px; }
+.hero-world .hero-art { position:absolute; inset:0; overflow:hidden; z-index:0; pointer-events:none; }
+.hero-world .hero-globe { position:absolute; width:900px; aspect-ratio:1; right:-290px; top:50%; margin-top:-450px; }
+.hero-world .hero-globe img { display:block; width:100%; height:100%; mask-image:radial-gradient(circle,#000 61%,transparent 72%); animation:hero-earth-turn 140s linear infinite; }
+.hero-world .hero-art:after { content:''; position:absolute; inset:0; background:linear-gradient(90deg,var(--bg) 14%,rgba(5,5,10,.88) 33%,transparent 63%); }
+.hero-world .hero-globe svg { position:absolute; inset:0; width:100%; height:100%; overflow:visible; }
+.hero-world .hero-route { fill:none; stroke:#edbf60; stroke-width:.12; opacity:.4; }
+.hero-world .hero-signal { fill:none; stroke:#ffe3a0; stroke-width:.28; stroke-dasharray:1 35; animation:hero-flow 12s linear infinite; }
+.hero-world .hero-market { position:absolute; z-index:1; color:#f5d68c; background:rgba(5,5,10,.88); border:1px solid rgba(255,215,0,.3); border-radius:8px; padding:8px 12px; font-size:12px; letter-spacing:.03em; white-space:nowrap; animation:hero-market-float 16s ease-in-out infinite; }
+.hero-world .hero-trust { position:relative; z-index:2; margin:0 auto; max-width:1100px; padding:24px; gap:clamp(24px,6vw,85px); }
+.hero-world .hero-scroll { display:none; }
+.hero-world .hero-motion { position:absolute; width:1px; height:1px; opacity:0; }
+.hero-world .hero-motion-label { position:absolute; right:24px; bottom:12px; z-index:3; width:36px; height:36px; display:grid; place-items:center; border:1px solid rgba(255,215,0,.3); border-radius:50%; color:var(--gold); background:var(--bg); cursor:pointer; font-size:12px; }
+.hero-world .hero-motion:focus-visible + .hero-motion-label { outline:2px solid var(--gold); outline-offset:4px; }
+.hero-world .hero-motion:checked ~ .hero-art * { animation-play-state:paused; }
+.hero-world .hero-motion:checked + .hero-motion-label { background:var(--gold); color:var(--bg); }
+@keyframes hero-earth-turn { from { transform:rotate(-8deg); } to { transform:rotate(352deg); } }
+@keyframes hero-flow { to { stroke-dashoffset:-100; } }
+@keyframes hero-market-float { 0%,100% { transform:translate(0,0); } 50% { transform:translate(8px,-8px); } }
+@media (min-width:1440px) { .hero-world .hero-globe { width:1050px; right:-320px; margin-top:-525px; } }
+@media (max-width:767px) {
+ .hero.hero-world { padding-bottom:24px; }
+ .hero-world .hero-stage { display:flex; flex-direction:column; align-items:stretch; min-height:0; padding:38px 24px 12px; }
+ .hero-world .hero-copy { display:contents; }
+ .hero-world .hero-intro { order:0; position:relative; z-index:2; }
+ .hero-world .hero-title { font-size:clamp(1.65rem,6.9vw,2.5rem); line-height:1.18; max-width:390px; margin-bottom:18px; }
+ .hero-world .hero-eyebrow { font-size:.55rem; letter-spacing:.1em; margin-bottom:20px; gap:6px; }
+ .hero-world .hero-eyebrow span { width:12px; }
+ .hero-world .hero-sub { font-size:.85rem; line-height:1.6; max-width:340px; margin-bottom:0; }
+ .hero-world .hero-art { position:relative; inset:auto; order:1; height:310px; margin:0 -24px; }
+ .hero-world .hero-globe { width:560px; right:auto; left:calc(50% - 280px); top:-30px; margin:0; }
+ .hero-world .hero-art:after { background:linear-gradient(180deg,var(--bg),transparent 15%,transparent 70%,var(--bg)); }
+ .hero-world .hero-market { font-size:10px; padding:6px 9px; }
+ .hero-world .hero-market:nth-of-type(n+6) { display:none; }
+ .hero-world .hero-ctas { order:2; position:relative; z-index:2; flex-direction:column; align-items:stretch; margin-top:0; }
+ .hero-world .hero-ctas a { justify-content:center; font-size:.85rem; min-height:46px; }
+ .hero-world .hero-motion-label { right:16px; bottom:140px; }
+ .hero-world .hero-trust { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:22px 14px; padding:26px 24px 12px; }
+ .hero-world .trust-num { font-size:1.25rem; }
+}
+@media (prefers-reduced-motion:reduce) {
+ .hero-world .hero-art * { animation:none!important; }
+ .hero-world .hero-motion, .hero-world .hero-motion-label { display:none; }
+}
+
 </style>
 {% endblock %}
 
@@ -477,7 +532,10 @@ html { scroll-behavior: smooth; }
 <!-- ══════════════════════════════════════
      1. HERO
      ══════════════════════════════════════ -->
-<section class="hero lp">
+<section class="hero lp hero-world">
+ <div class="hero-stage">
+  <div class="hero-copy">
+   <div class="hero-intro">
   <p class="hero-eyebrow"><span></span>{% ui "Your Global Trading Partner" %}<span></span></p>
 
   <h1 class="hero-title">
@@ -490,6 +548,7 @@ html { scroll-behavior: smooth; }
     {% ui "Access Forex, crypto, commodities and indices with tight spreads, deep liquidity, and lightning-fast execution." %}
   </p>
 
+   </div>
   <div class="hero-ctas">
     <a href="{% url 'simulator:register' %}" class="btn-gold">
       {% ui "Open Account →" %}
@@ -498,6 +557,42 @@ html { scroll-behavior: smooth; }
       {% ui "View Account Types" %}
     </a>
   </div>
+
+  </div>
+  <input class="hero-motion" type="checkbox" id="hero-pause" aria-label="{% ui_language as hero_lang %}{% if hero_lang == 'es' %}Pausar animación del planeta{% else %}Pause planet animation{% endif %}">
+  <label class="hero-motion-label" for="hero-pause" aria-hidden="true">Ⅱ</label>
+  <div class="hero-art" aria-hidden="true">
+   <div class="hero-globe">
+    <img src="{% static 'simulator/landing/planet-night.webp' %}" width="1254" height="1254" alt="" fetchpriority="high" decoding="async">
+    <svg viewBox="0 0 100 100" focusable="false">
+     <path class="hero-route" d="M29 32 Q36 5 53 20"/><path class="hero-signal" pathLength="100" style="animation-delay:-0s" d="M29 32 Q36 5 53 20"/>
+     <path class="hero-route" d="M53 20 Q70 9 66 26"/><path class="hero-signal" pathLength="100" style="animation-delay:-1s" d="M53 20 Q70 9 66 26"/>
+     <path class="hero-route" d="M29 32 Q13 49 36 68"/><path class="hero-signal" pathLength="100" style="animation-delay:-2s" d="M29 32 Q13 49 36 68"/>
+     <path class="hero-route" d="M36 68 Q64 50 73 70"/><path class="hero-signal" pathLength="100" style="animation-delay:-3s" d="M36 68 Q64 50 73 70"/>
+     <path class="hero-route" d="M66 26 Q38 39 29 32"/><path class="hero-signal" pathLength="100" style="animation-delay:-4s" d="M66 26 Q38 39 29 32"/>
+     <path class="hero-route" d="M29 32 Q43 45 57 44"/><path class="hero-signal" pathLength="100" style="animation-delay:-5s" d="M29 32 Q43 45 57 44"/>
+     <path class="hero-route" d="M57 44 Q53 60 36 68"/><path class="hero-signal" pathLength="100" style="animation-delay:-6s" d="M57 44 Q53 60 36 68"/>
+     <path class="hero-route" d="M57 44 Q82 27 88 43"/><path class="hero-signal" pathLength="100" style="animation-delay:-7s" d="M57 44 Q82 27 88 43"/>
+     <path class="hero-route" d="M88 43 Q96 62 73 70"/><path class="hero-signal" pathLength="100" style="animation-delay:-8s" d="M88 43 Q96 62 73 70"/>
+     <path class="hero-route" d="M53 20 Q44 33 57 44"/><path class="hero-signal" pathLength="100" style="animation-delay:-9s" d="M53 20 Q44 33 57 44"/>
+     <path class="hero-route" d="M66 26 Q75 52 73 70"/><path class="hero-signal" pathLength="100" style="animation-delay:-10s" d="M66 26 Q75 52 73 70"/>
+     <path class="hero-route" d="M36 68 Q57 95 65 83"/><path class="hero-signal" pathLength="100" style="animation-delay:-11s" d="M36 68 Q57 95 65 83"/>
+     <path class="hero-route" d="M65 83 Q82 85 73 70"/><path class="hero-signal" pathLength="100" style="animation-delay:-12s" d="M65 83 Q82 85 73 70"/>
+     <path class="hero-route" d="M29 32 Q30 65 65 83"/><path class="hero-signal" pathLength="100" style="animation-delay:-13s" d="M29 32 Q30 65 65 83"/>
+    </svg>
+    <span class="hero-market" style="left:24%;top:18%;animation-delay:-0s">₿ BTC</span>
+    <span class="hero-market" style="left:14%;top:31%;animation-delay:-1s">EUR/USD</span>
+    <span class="hero-market" style="left:60%;top:25%;animation-delay:-2s">◇ ETH</span>
+    <span class="hero-market" style="left:26%;top:48%;animation-delay:-3s">GBP/USD</span>
+    <span class="hero-market" style="left:62%;top:43%;animation-delay:-4s">USD/JPY</span>
+    <span class="hero-market" style="left:42%;top:12%;animation-delay:-5s">KAS</span>
+    <span class="hero-market" style="left:43%;top:53%;animation-delay:-6s">OIL</span>
+    <span class="hero-market" style="left:58%;top:15%;animation-delay:-7s">US30</span>
+    <span class="hero-market" style="left:72%;top:35%;animation-delay:-8s">XAU/USD</span>
+    <span class="hero-market" style="left:38%;top:64%;animation-delay:-9s">SOL</span>
+   </div>
+  </div>
+ </div>
 
   <div class="hero-trust">
     <div class="trust-item">
