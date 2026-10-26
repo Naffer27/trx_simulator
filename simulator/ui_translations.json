@@ -3718,5 +3718,21 @@
   "1A": {
     "es": "1A",
     "en": "1Y"
+  },
+  "Máx. sesión": {
+    "es": "Máx. sesión",
+    "en": "Session high"
+  },
+  "Mín. sesión": {
+    "es": "Mín. sesión",
+    "en": "Session low"
+  },
+  "Sesión Massive · No disponible": {
+    "es": "Sesión Massive · No disponible",
+    "en": "Massive session · Unavailable"
+  },
+  "Sesión Massive · Mercado agregado · Actualizado": {
+    "es": "Sesión Massive · Mercado agregado · Actualizado",
+    "en": "Massive session · Aggregated market · Updated"
   }
 }

@@ -1,6 +1,7 @@
 # simulator/urls.py
 from django.contrib.auth import views as auth_views
 from django.urls import path, reverse_lazy
+from .market_session_stats import market_session_stats
 from .login_2fa import login_2fa_view
 from .auth_password_views import (
     AuditedPasswordChangeView,
@@ -160,6 +161,7 @@ urlpatterns = [
     path("deposit/history/",                      deposit_history_view, name="deposit_history"),
 
     # API
+    path("api/market-session-stats/", market_session_stats, name="market_session_stats"),
     path("api/orden/",                    api_orden,                    name="api_orden"),
     path("api/wallet-balance/",           wallet_balance_json,          name="wallet_balance"),
     path("api/np-check/",                 np_diagnostics_view,          name="np_check"),

@@ -1,5 +1,5 @@
 {% extends "simulator/base.html" %}
-{% load static %}
+{% load static ui_language %}
 
 {% block title %}Mobile Trading — Money Broker{% endblock %}
 {% block navbar_brand %}MONEY BROKER{% endblock %}
@@ -1119,22 +1119,12 @@
 
         <section class="mbg-quote">
           <span class="mbg-num mbg-price" id="mobQuoteMid">—</span>
-          <!-- MOBILE-GRAPH-POLISH-03 — máx/mín: real, de las velas YA
-               cargadas (mobileChart.bars), filtradas a un período real
-               de 24h por timestamp (nunca "todo lo cargado" presentado
-               como si fuera 24h) — ver recomputeDailyStats() más abajo.
-               Volumen: mismo campo .volume real de esas velas, pero
-               mostrado SOLO para símbolos crypto (asset_class real de
-               MOBILE_SYMBOLS) — el significado exacto de "volume" para
-               forex (¿ticks? ¿unidades?) no está documentado en el
-               código del proveedor, así que queda "—" ahí en vez de
-               arriesgar una unidad equivocada. Nunca "$" (no es un
-               campo monetario). -->
-          <div class="mbg-num mbg-stats">
-            <span>M&aacute;x <b id="mobStatHigh">&mdash;</b></span>
-            <span>M&iacute;n <b id="mobStatLow">&mdash;</b></span>
-            <span>Vol <b id="mobStatVol">&mdash;</b></span>
+          <div class="mbg-num mbg-stats" style="flex-wrap:wrap" aria-describedby="mobStatsNote">
+            <span>{% ui "Máx. sesión" %} <b id="mobStatHigh">&mdash;</b></span>
+            <span>{% ui "Mín. sesión" %} <b id="mobStatLow">&mdash;</b></span>
+            <span><span id="mobStatVolLabel">Vol</span> <b id="mobStatVol">&mdash;</b></span>
           </div>
+          <div id="mobStatsNote" style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5">{% ui "Sesión Massive · No disponible" %}</div>
           <!-- Balance/Profit-Loss strip (money-broker-movil 2/grafico.html
                .account-strip) — real account:update/account:snapshot
                fields only (msg.balance, msg.upnl??msg.pnl_unreal — the
@@ -1931,7 +1921,7 @@ window.__TRADE_CONFIG__ = {
   // MOBILE-DESIGN-INTEGRATION-01 — GRAPH (2nd correction round) —
   // mobQuoteBid/mobQuoteAsk ids were retired from this file: the
   // reference's own quote-stats slot is "Máx/Mín/Vol" (now shown
-  // honestly as "—", see the markup comment above), never Bid/Ask —
+  // from the separate informational session endpoint), never Bid/Ask —
   // Bid/Ask are real and still fully displayed, exclusively via
   // mobTradeBidPrice/mobTradeAskPrice on the trade-bar buttons (the
   // reference's own actual slot for per-side price). mobQuoteSpread is
@@ -2452,40 +2442,54 @@ window.__TRADE_CONFIG__ = {
   // longer matched session.currentSymbol by the time it arrived (its
   // existing, unchanged guard), so this value is always the real
   // symbol this exact data belongs to, never a stale one.
-  // MOBILE-GRAPH-POLISH-03 — Máx/Mín/Vol, real data only.
-  // Fuente: mobileChart.bars — el MISMO array real que ya alimenta las
-  // velas (generate_history()/candle_new, nunca una segunda petición ni
-  // suscripción nueva — se reutiliza el campo ya público .bars).
-  // Período: una ventana real de 24h, filtrada por el timestamp real de
-  // cada vela — NUNCA "lo que esté cargado" presentado como si fuera
-  // 24h (generate_history() pide 200 velas fijas, que según la
-  // temporalidad pueden cubrir desde ~3h hasta más de 800h).
-  // Unidad: Máx/Mín son precios puros (misma unidad que el precio en
-  // vivo, sin ambigüedad). El volumen SOLO se muestra para símbolos
-  // crypto (asset_class real de MOBILE_SYMBOLS) — el significado exacto
-  // del campo "volume" del proveedor para forex/metal/índice (¿ticks?
-  // ¿unidades negociadas?) no está documentado en ningún sitio de este
-  // código, así que mostrar un número ahí arriesgaría exactamente la
-  // confusión tick/unidad/monetario que esta ronda pide evitar — queda
-  // "—". Nunca "$": no es un campo monetario.
+  // Informational session metrics only. Never read as order/price inputs.
   const elStatHigh=document.getElementById('mobStatHigh');
   const elStatLow=document.getElementById('mobStatLow');
   const elStatVol=document.getElementById('mobStatVol');
+  const elStatVolLabel=document.getElementById('mobStatVolLabel');
+  const elStatsNote=document.getElementById('mobStatsNote');
+  let statsGeneration=0, statsController=null, statsLastAttempt=0;
+  let statsSymbol=null, statsExpires=0;
   function resetDailyStats(){
-    if(elStatHigh)elStatHigh.textContent='—';
-    if(elStatLow)elStatLow.textContent='—';
-    if(elStatVol)elStatVol.textContent='—';
+    statsGeneration++;
+    if(statsController)statsController.abort();
+    statsController=null; statsLastAttempt=0; statsExpires=0; statsSymbol=null;
+    elStatHigh.textContent=elStatLow.textContent=elStatVol.textContent='—';
+    elStatVolLabel.textContent='Vol';
+    elStatsNote.textContent='{% ui_js "Sesión Massive · No disponible" %}';
   }
-  function recomputeDailyStats(){
-    // Cálculo aproximado de 24h DESACTIVADO (cierre de bloque). Las
-    // comprobaciones de cobertura/continuidad que existían aquí
-    // demostraron que mobileChart.bars no permite afirmar una ventana
-    // de 24h completa y correctamente delimitada — ese problema no se
-    // resuelve en este bloque; Máx/Mín/Vol quedan "—" siempre, hasta
-    // que estas estadísticas se conecten en un bloque separado con una
-    // fuente de datos adecuada para esa ventana. No se añaden más
-    // comprobaciones, fórmulas ni investigación de datos aquí.
-    resetDailyStats();
+  async function recomputeDailyStats(){
+    if(document.hidden)return;
+    const symbol=session.currentSymbol;
+    if(statsSymbol!==symbol || (statsExpires && Date.now()/1000>statsExpires))resetDailyStats();
+    if(statsController || Date.now()-statsLastAttempt<60000)return;
+    statsSymbol=symbol; statsLastAttempt=Date.now();
+    const generation=statsGeneration;
+    const controller=new AbortController(); statsController=controller;
+    const timeout=setTimeout(()=>controller.abort(),10000);
+    try{
+      const response=await fetch('{% url "simulator:market_session_stats" %}?symbol='+encodeURIComponent(symbol),
+        {credentials:'same-origin',cache:'no-store',signal:controller.signal});
+      const data=response.ok?await response.json():null;
+      if(generation!==statsGeneration || session.currentSymbol!==symbol)return;
+      if(!data || !data.available || data.symbol!==symbol || !Number.isFinite(data.high) || !Number.isFinite(data.low)
+          || !Number.isFinite(data.expires_at) || data.expires_at<=Date.now()/1000){
+        resetDailyStats();statsSymbol=symbol;statsLastAttempt=Date.now();return;
+      }
+      const precision=priceFormatFor(symbol).precision;
+      elStatHigh.textContent=data.high.toFixed(precision);
+      elStatLow.textContent=data.low.toFixed(precision);
+      elStatVolLabel.textContent=data.volume_unit==='ticks'?'Ticks':'Vol '+data.volume_unit;
+      elStatVol.textContent=Number.isFinite(data.volume)?data.volume.toLocaleString(undefined,{maximumFractionDigits:data.volume_unit==='ticks'?0:2}):'—';
+      statsExpires=data.expires_at;
+      const updated=new Date(data.updated_at);
+      elStatsNote.textContent='{% ui_js "Sesión Massive · Mercado agregado · Actualizado" %} '+updated.toISOString().replace('T',' ').slice(0,19)+' UTC';
+    }catch(error){
+      if(generation===statsGeneration){resetDailyStats();statsSymbol=symbol;statsLastAttempt=Date.now();}
+    }finally{
+      clearTimeout(timeout);
+      if(statsController===controller)statsController=null;
+    }
   }
 
   function onHistory(data, phase){ mobileChart.applyHistory(data, phase, session.currentSymbol); recomputeDailyStats(); }
@@ -3815,6 +3819,13 @@ window.__TRADE_CONFIG__ = {
   refreshPositionLines();
   renderHistorialState();
   session.connect();
+  recomputeDailyStats();
+  let statsTimer=setInterval(recomputeDailyStats,15000);
+  document.addEventListener('visibilitychange',()=>{
+    if(document.hidden)resetDailyStats(); else recomputeDailyStats();
+  });
+  window.addEventListener('pagehide',()=>{clearInterval(statsTimer);statsTimer=null;resetDailyStats();});
+  window.addEventListener('pageshow',()=>{if(statsTimer===null)statsTimer=setInterval(recomputeDailyStats,15000);recomputeDailyStats();});
 })();
 </script>
 
