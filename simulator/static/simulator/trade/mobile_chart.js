@@ -1437,6 +1437,11 @@ class MobileTradingChart {
       }
       return;
     }
+    // A new history starts with its own vertical framing. Manual scaling
+    // from the previous instrument must not flatten the new candles.
+    // Live updates and older-history prepends keep the user's zoom.
+    if (symbol) this.setSymbolFormat(symbol);
+    this.chart?.priceScale('right').applyOptions({ autoScale: true });
     this.bars = bars;
     this.candleSeries?.setData(bars);
     this.volumeSeries?.setData(bars.map(volPointForBar));
