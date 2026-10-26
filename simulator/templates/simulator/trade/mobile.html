@@ -1124,7 +1124,7 @@
             <span>{% ui "Mín. sesión" %} <b id="mobStatLow">&mdash;</b></span>
             <span><span id="mobStatVolLabel">Vol</span> <b id="mobStatVol">&mdash;</b></span>
           </div>
-          <div id="mobStatsNote" style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5">{% ui "Sesión Massive · No disponible" %}</div>
+          <div id="mobStatsNote" style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5">{% ui "Estadísticas no disponibles" %}</div>
           <!-- Balance/Profit-Loss strip (money-broker-movil 2/grafico.html
                .account-strip) — real account:update/account:snapshot
                fields only (msg.balance, msg.upnl??msg.pnl_unreal — the
@@ -2456,7 +2456,7 @@ window.__TRADE_CONFIG__ = {
     statsController=null; statsLastAttempt=0; statsExpires=0; statsSymbol=null;
     elStatHigh.textContent=elStatLow.textContent=elStatVol.textContent='—';
     elStatVolLabel.textContent='Vol';
-    elStatsNote.textContent='{% ui_js "Sesión Massive · No disponible" %}';
+    elStatsNote.textContent='{% ui_js "Estadísticas no disponibles" %}';
   }
   async function recomputeDailyStats(){
     if(document.hidden)return;
@@ -2483,7 +2483,7 @@ window.__TRADE_CONFIG__ = {
       elStatVol.textContent=Number.isFinite(data.volume)?data.volume.toLocaleString(undefined,{maximumFractionDigits:data.volume_unit==='ticks'?0:2}):'—';
       statsExpires=data.expires_at;
       const updated=new Date(data.updated_at);
-      elStatsNote.textContent='{% ui_js "Sesión Massive · Mercado agregado · Actualizado" %} '+updated.toISOString().replace('T',' ').slice(0,19)+' UTC';
+      elStatsNote.textContent='{% ui_js "Actualizado" %} '+updated.toISOString().slice(11,19)+' UTC';
     }catch(error){
       if(generation===statsGeneration){resetDailyStats();statsSymbol=symbol;statsLastAttempt=Date.now();}
     }finally{

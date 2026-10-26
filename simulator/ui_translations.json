@@ -3734,5 +3734,13 @@
   "Sesión Massive · Mercado agregado · Actualizado": {
     "es": "Sesión Massive · Mercado agregado · Actualizado",
     "en": "Massive session · Aggregated market · Updated"
+  },
+  "Estadísticas no disponibles": {
+    "es": "Estadísticas no disponibles",
+    "en": "Statistics unavailable"
+  },
+  "Actualizado": {
+    "es": "Actualizado",
+    "en": "Updated"
   }
 }
