@@ -709,12 +709,6 @@
 
   /* Informational preview only; mandatory confirmation remains in the main flow. */
   .mob-view[data-mobile-view="trade"] #mobTicket{position:relative;}
-  .mob-view[data-mobile-view="trade"] .mbg-risk-details{position:relative;font-size:12px;color:var(--muted);}
-  .mob-view[data-mobile-view="trade"] .mbg-risk-details summary{cursor:pointer;min-height:32px;display:flex;align-items:center;justify-content:center;gap:6px;list-style:none;touch-action:manipulation;}
-  .mob-view[data-mobile-view="trade"] .mbg-risk-details summary::-webkit-details-marker{display:none;}
-  .mob-view[data-mobile-view="trade"] .mbg-risk-details summary::after{content:'⌃';}
-  .mob-view[data-mobile-view="trade"] .mbg-risk-details[open] summary::after{content:'⌄';}
-  .mob-view[data-mobile-view="trade"] .mbg-risk-details .mbg-risk-panel{position:absolute;bottom:100%;left:0;right:0;z-index:10;box-shadow:var(--mb-shadow-2);}
   .mob-view[data-mobile-view="trade"] .mbg-lot-row button{touch-action:manipulation;}
 
   /* MOBILE-TRADE-FORM-01 — dedicated Trade screen. Faithful port of
@@ -1189,14 +1183,14 @@
                onOrderRejected()/onTradingError() wiring as before —
                pure presentation location, zero behavior change. -->
           <div class="mbg-ticket-status" id="mobTicketStatus"></div>
-          <details class="mbg-risk-details">
-            <summary>{% ui "Detalles" %}</summary>
+          <!-- Keep the advisory bindings; mandatory warnings remain visible below. -->
+          <div hidden>
             <div class="mbg-risk-panel" id="mobRiskPanel" hidden>
               <div><span>Risk</span> <span id="mobRiskLevel">—</span></div>
               <div><span>Margin required</span> <span id="mobRiskMargin">—</span></div>
               <div><span>Exposure</span> <span id="mobRiskExposure">—</span></div>
             </div>
-          </details>
+          </div>
           <div class="mbg-risk-confirm" id="mobRiskConfirm" hidden>
             <p id="mobRiskConfirmText"></p>
             <div class="mbg-risk-confirm-buttons">
