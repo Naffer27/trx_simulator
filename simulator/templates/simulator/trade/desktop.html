@@ -2766,6 +2766,7 @@ class TradingPanel {
     this.wrapper=wrapper; this.id=id; this.currentSymbol=sym; this.currentTF='15m';
     this.ws=null; this.hb=null; this.reconnTimer=null; this.reconnDelay=800; this.connecting=false;
     this.chart=null; this.candleSeries=null; this.volumeSeries=null; this.priceLine=null;
+    this._quoteGuide=null;
     this.stayLive=true; this.agg={sizeSec:900,curStart:null,o:null,h:null,l:null,c:null,vol:0};
     this.lastClose=null; this.prevClose=null; this.prevCandleClose=null; this.bid=null; this.ask=null;
     // FIX-05C — REAL LIVE QUOTE STATE, distinct from lastClose (candle/
@@ -2938,6 +2939,7 @@ class TradingPanel {
     // FIX-05C — a new symbol has no live quote yet either; the old
     // symbol's liveMid must never leak into the new instrument's ticket.
     this.liveMid=null; this.liveSource=null; this.prevLiveMid=null;
+    this._drawGlow(null);
     // GOLDEN-MARKETDATA-CRYPTO-01 — the state above (liveMid=null) was
     // already correct, but the VISIBLE badge text was never blanked —
     // it kept showing the previous symbol's last price until the first
@@ -4176,26 +4178,27 @@ class TradingPanel {
     }
   }
 
-  /* ── Price glow canvas (Feature 2) ── */
+  /* Quote guide: native chart coordinates follow zoom, pan, autoscale
+     and resize in the chart's own render pass. The old canvas cached a
+     pixel Y until another quote arrived, leaving a misleading line. */
   _drawGlow(px){
-    const cv=this.glowCanvas;if(!cv||!this.candleSeries)return;
-    const y=this.candleSeries.priceToCoordinate(px);if(y==null)return;
-    const w=cv.offsetWidth,h=cv.offsetHeight;if(w<2||h<2)return;
-    if(cv.width!==w||cv.height!==h){cv.width=w;cv.height=h;}
-    const ctx=cv.getContext('2d');ctx.clearRect(0,0,w,h);
-    // outer soft glow bands
-    for(let i=4;i>=1;i--){
-      const spread=i*4,alpha=0.03/i;
-      const g=ctx.createLinearGradient(0,y-spread,0,y+spread);
-      g.addColorStop(0,'transparent');g.addColorStop(.5,`rgba(0,180,216,${alpha})`);g.addColorStop(1,'transparent');
-      ctx.fillStyle=g;ctx.fillRect(0,y-spread,w,spread*2);
+    // Clear the legacy overlay; it must never retain a previous price.
+    const cv=this.glowCanvas;
+    if(cv)cv.getContext('2d')?.clearRect(0,0,cv.width,cv.height);
+    if(!this.candleSeries)return;
+    if(!Number.isFinite(px)||px<=0){
+      if(this._quoteGuide)this.candleSeries.removePriceLine(this._quoteGuide);
+      this._quoteGuide=null;
+      return;
     }
-    // bright core line — fades at edges
-    const lg=ctx.createLinearGradient(0,0,w,0);
-    lg.addColorStop(0,'transparent');lg.addColorStop(.06,'rgba(0,180,216,.6)');
-    lg.addColorStop(.94,'rgba(0,180,216,.6)');lg.addColorStop(1,'transparent');
-    ctx.strokeStyle=lg;ctx.lineWidth=1;
-    ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke();
+    if(!this._quoteGuide){
+      this._quoteGuide=this.candleSeries.createPriceLine({
+        price:px,color:'rgba(0,180,216,.6)',lineWidth:1,lineStyle:0,
+        axisLabelVisible:false,lineVisible:true,title:''
+      });
+    }else{
+      this._quoteGuide.applyOptions({price:px});
+    }
   }
 
   /* ── RR badge (Feature 4) ── */
@@ -4425,7 +4428,7 @@ class TradingPanel {
     if(this._resizeObs){this._resizeObs.disconnect();this._resizeObs=null;}
     cancelAnimationFrame(this._rafId);
     for(const key of Object.keys(this._oscChart))this._teardownOscillator(key);
-    try{this.chart?.remove();}catch(_){}this.chart=null;this.candleSeries=null;this.volumeSeries=null;
+    try{this.chart?.remove();}catch(_){}this.chart=null;this.candleSeries=null;this.volumeSeries=null;this._quoteGuide=null;
     this.disconnect();
   }
 
