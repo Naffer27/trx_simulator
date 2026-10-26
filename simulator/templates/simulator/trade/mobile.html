@@ -695,17 +695,27 @@
   .mob-view[data-mobile-view="trade"] .mbg-trade-bar .mbg-buy:disabled{opacity:.5;cursor:default;}
   .mob-view[data-mobile-view="trade"] .mbg-tb-label{font-size:var(--mb-text-2xs);font-weight:600;letter-spacing:.08em;}
   .mob-view[data-mobile-view="trade"] .mbg-tb-price{font-size:var(--mb-text-md);font-weight:600;}
-  .mob-view[data-mobile-view="trade"] .mbg-lot{width:118px;flex-shrink:0;border-radius:10px;background:var(--surface);border:1px solid var(--border);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;padding:0;box-sizing:border-box;}
+  .mob-view[data-mobile-view="trade"] .mbg-lot{width:128px;flex-shrink:0;border-radius:10px;background:var(--surface);border:1px solid var(--border);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;padding:0;box-sizing:border-box;}
   .mob-view[data-mobile-view="trade"] .mbg-lot small{font-size:var(--mb-text-2xs);line-height:14px;color:var(--muted);}
   .mob-view[data-mobile-view="trade"] .mbg-lot-row{display:flex;align-items:center;width:100%;}
   .mob-view[data-mobile-view="trade"] .mbg-lot-row button{width:36px;height:44px;flex-shrink:0;font-size:20px;font-weight:500;color:var(--text-2);background:none;border:none;cursor:pointer;font-family:inherit;}
   .mob-view[data-mobile-view="trade"] .mbg-lot-row button:disabled{opacity:.5;cursor:default;}
-  .mob-view[data-mobile-view="trade"] .mbg-lot-row input{flex:1;width:0;min-width:0;text-align:center;font-size:var(--mb-text-md);font-weight:700;padding:3px 0;border-radius:6px;background:var(--brand-soft);color:var(--brand-text);border:none;}
+  .mob-view[data-mobile-view="trade"] .mbg-lot-row input{flex:1;width:0;min-width:0;text-align:center;font-size:16px;font-weight:700;padding:3px 0;border-radius:6px;background:var(--brand-soft);color:var(--brand-text);border:none;}
   .mob-view[data-mobile-view="trade"] .mbg-ticket-status{min-height:18px;font-size:var(--mb-text-xs);color:var(--muted);}
   .mob-view[data-mobile-view="trade"] .mbg-risk-panel{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--mb-radius-sm);padding:var(--mb-space-2) var(--mb-space-3);font-size:var(--mb-text-xs);color:var(--text);display:flex;flex-direction:column;gap:var(--mb-space-1);}
   .mob-view[data-mobile-view="trade"] .mbg-risk-confirm{background:var(--surface-2);border:1px solid var(--brand-line);border-radius:var(--mb-radius-sm);padding:var(--mb-space-3);font-size:var(--mb-text-xs);color:var(--text);display:flex;flex-direction:column;gap:var(--mb-space-2);}
   .mob-view[data-mobile-view="trade"] .mbg-risk-confirm-buttons{display:flex;gap:var(--mb-space-2);}
   .mob-view[data-mobile-view="trade"] .mbg-risk-confirm-buttons button{flex:1;min-width:0;min-height:38px;border-radius:var(--mb-radius-sm);font-size:var(--mb-text-sm);border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-family:inherit;}
+
+  /* Informational preview only; mandatory confirmation remains in the main flow. */
+  .mob-view[data-mobile-view="trade"] #mobTicket{position:relative;}
+  .mob-view[data-mobile-view="trade"] .mbg-risk-details{position:relative;font-size:12px;color:var(--muted);}
+  .mob-view[data-mobile-view="trade"] .mbg-risk-details summary{cursor:pointer;min-height:32px;display:flex;align-items:center;justify-content:center;gap:6px;list-style:none;touch-action:manipulation;}
+  .mob-view[data-mobile-view="trade"] .mbg-risk-details summary::-webkit-details-marker{display:none;}
+  .mob-view[data-mobile-view="trade"] .mbg-risk-details summary::after{content:'⌃';}
+  .mob-view[data-mobile-view="trade"] .mbg-risk-details[open] summary::after{content:'⌄';}
+  .mob-view[data-mobile-view="trade"] .mbg-risk-details .mbg-risk-panel{position:absolute;bottom:100%;left:0;right:0;z-index:10;box-shadow:var(--mb-shadow-2);}
+  .mob-view[data-mobile-view="trade"] .mbg-lot-row button{touch-action:manipulation;}
 
   /* MOBILE-TRADE-FORM-01 — dedicated Trade screen. Faithful port of
      money-broker-movil 2/tema.css's .page-head/.icon-btn/.content/
@@ -1179,11 +1189,14 @@
                onOrderRejected()/onTradingError() wiring as before —
                pure presentation location, zero behavior change. -->
           <div class="mbg-ticket-status" id="mobTicketStatus"></div>
-          <div class="mbg-risk-panel" id="mobRiskPanel" hidden>
-            <div><span>Risk</span> <span id="mobRiskLevel">—</span></div>
-            <div><span>Margin required</span> <span id="mobRiskMargin">—</span></div>
-            <div><span>Exposure</span> <span id="mobRiskExposure">—</span></div>
-          </div>
+          <details class="mbg-risk-details">
+            <summary>{% ui "Detalles" %}</summary>
+            <div class="mbg-risk-panel" id="mobRiskPanel" hidden>
+              <div><span>Risk</span> <span id="mobRiskLevel">—</span></div>
+              <div><span>Margin required</span> <span id="mobRiskMargin">—</span></div>
+              <div><span>Exposure</span> <span id="mobRiskExposure">—</span></div>
+            </div>
+          </details>
           <div class="mbg-risk-confirm" id="mobRiskConfirm" hidden>
             <p id="mobRiskConfirmText"></p>
             <div class="mbg-risk-confirm-buttons">
