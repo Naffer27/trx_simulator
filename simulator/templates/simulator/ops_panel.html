@@ -1,3 +1,4 @@
+{% load l10n %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -254,6 +255,80 @@ tr:hover td { background: #141414; }
 /* ── Snapshot age ────────────────────────────────────────────────── */
 .snapshot-age { font-size: 10px; color: #555; }
 .snapshot-age.stale { color: #e74c3c; }
+
+/* Presentation only. All operational values and existing actions are preserved. */
+:root { color-scheme:dark; --ops-bg:#0b0d12; --ops-panel:#151923; --ops-line:#343c4c; --ops-text:#f4f6fc; --ops-muted:#b3bdce; --ops-gold:#ffda19; }
+body { font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif; background:var(--ops-bg); color:var(--ops-text); font-size:14px; line-height:1.55; }
+.page-header { background:var(--ops-bg); border-color:var(--ops-line); padding:22px 26px; position:relative; }
+.page-header h1 { font-size:24px; letter-spacing:0; }
+.page-header h1::before { content:'MONEY BROKER'; display:block; color:var(--ops-gold); font-size:12px; letter-spacing:1.2px; margin-bottom:6px; }
+.page-meta,.page-meta strong { color:var(--ops-muted); font-size:12px; }
+a.refresh { color:var(--ops-gold); font-size:13px; display:inline-block; padding:6px 10px; border:1px solid #61561f; border-radius:6px; }
+.section-nav { padding:12px 26px; gap:8px; background:var(--ops-bg); border-color:var(--ops-line); }
+.section-nav a { color:var(--ops-text); font-size:13px; padding:9px 13px; background:var(--ops-panel); border-color:var(--ops-line); border-radius:7px; }
+.section-nav a:hover,.section-nav a:focus-visible { color:var(--ops-gold); border-color:var(--ops-gold); }
+.section-nav a.attn { background:#332c10; color:#ffe574; border-color:#766321; }
+a:focus-visible,.ops-section-header:focus-visible { outline:2px solid var(--ops-gold); outline-offset:4px; }
+.content { padding:24px 26px; max-width:1500px; margin:auto; }
+.ops-section { background:var(--ops-panel); border-color:var(--ops-line); border-radius:10px; margin-bottom:22px; scroll-margin-top:20px; }
+.ops-section-header { padding:17px 20px; background:#191e29; border-color:var(--ops-line); }
+.ops-section-header:hover { background:#202736; }
+.section-title-group { flex-wrap:wrap; gap:5px 10px; }
+.section-title { color:var(--ops-text); font-size:15px; text-transform:none; letter-spacing:0; white-space:normal; }
+.section-desc { color:var(--ops-muted); font-size:13px; white-space:normal; }
+.section-toggle { color:var(--ops-muted); font-size:12px; }
+.ops-section-body { padding:20px; }
+.subsection-header { border-color:var(--ops-line); gap:16px; }
+.subsection-title { color:#dbe2f0; font-size:13px; text-transform:none; letter-spacing:0; }
+a.admin-link { color:var(--ops-gold); font-size:13px; }
+.kpi-grid { grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:14px; }
+.kpi-card,.metric-card { background:#111620; border-color:var(--ops-line); border-radius:8px; padding:17px; }
+.kpi-card.attn { background:#242111; border-color:#756424; }
+.kpi-label,.metric-card .label { color:var(--ops-muted); font-size:12px; text-transform:none; letter-spacing:0; }
+.kpi-value { font-size:32px; margin:10px 0 8px; font-variant-numeric:tabular-nums; }
+.metric-card .value { font-size:23px; font-variant-numeric:tabular-nums; }
+.kpi-sub,.metric-card .sub,.snapshot-age { color:var(--ops-muted); font-size:12px; }
+.kpi-sub.attn { color:#ffe574; }
+.kpi-value.ok,.metric-card .value.ok { color:#5de3b4; }
+.kpi-value.warn,.metric-card .value.warn { color:#ffd57e; }
+.kpi-value.err,.metric-card .value.err,.snapshot-age.stale { color:#ff9da9; }
+.kpi-value.info { color:#8ccfff; }
+.table-scroll { overflow-x:auto; max-width:100%; }
+th { background:#111620; color:var(--ops-muted); font-size:12px; padding:12px; border-color:var(--ops-line); text-transform:none; letter-spacing:0; }
+td { color:var(--ops-text); font-size:13px; padding:13px 12px; border-color:#2a3242; overflow-wrap:anywhere; }
+tr:hover td { background:#1d2432; }
+.badge,.count-badge { font-size:12px; padding:4px 8px; border-radius:5px; }
+.badge-ok,.count-badge.ok { background:#143b30; color:#8df1cc; }
+.badge-warn,.badge-gold,.count-badge.attn { background:#3a3214; color:#ffe574; }
+.badge-err { background:#39212b; color:#ffb0b9; }
+.badge-info,.count-badge.info { background:#192f46; color:#9bd6ff; }
+.empty { color:var(--ops-muted); font-style:normal; font-size:13px; padding:16px 0; }
+[style*="color:#444"],[style*="color:#555"] { color:var(--ops-muted)!important; font-size:12px!important; }
+[style*="color:#e74c3c"] { color:#ff9da9!important; }
+.ops-overview { margin-bottom:24px; }
+.ops-overview h2 { font-size:18px; margin-bottom:5px; }
+.ops-overview p { color:var(--ops-muted); font-size:13px; }
+.ops-overview-grid { display:grid; grid-template-columns:1fr 1.25fr; gap:20px; margin-top:16px; }
+.ops-overview-panel { background:var(--ops-panel); border:1px solid var(--ops-line); border-radius:10px; padding:20px; }
+.ops-overview-panel h3 { font-size:15px; margin-bottom:5px; }
+.ops-ring-layout { display:flex; align-items:center; gap:22px; flex-wrap:wrap; margin-top:20px; }
+.ops-ring { width:148px; height:148px; border-radius:50%; background:#2a3242; display:grid; place-items:center; flex-shrink:0; }
+.ops-ring-core { width:116px; height:116px; background:var(--ops-panel); border-radius:50%; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+.ops-ring-core strong { font-size:30px; font-variant-numeric:tabular-nums; }
+.ops-ring-core span { color:var(--ops-muted); font-size:12px; }
+.ops-overview-legend { display:grid; gap:10px; flex:1; min-width:170px; }
+.ops-overview-legend a { color:var(--ops-text); text-decoration:none; display:flex; justify-content:space-between; gap:12px; }
+.ops-overview-legend a:hover { text-decoration:underline; }
+.ops-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:7px; background:var(--category); }
+.ops-pending-row { margin-top:20px; }
+.ops-pending-label { display:flex; flex-wrap:wrap; justify-content:space-between; gap:8px; margin-bottom:8px; }
+.ops-pending-label a { color:var(--ops-text); }
+.ops-pending-label strong { font-variant-numeric:tabular-nums; font-size:13px; }
+.ops-track { background:#2a3242; height:9px; border-radius:5px; overflow:hidden; }
+.ops-fill { height:100%; width:0; background:var(--category); border-radius:5px; }
+.ops-chart-note { margin-top:16px; }
+@media(max-width:760px) { .ops-overview-grid { grid-template-columns:1fr; } .content { padding:18px 14px; } .page-header,.section-nav { padding:16px 14px; } .page-header h1 { font-size:21px; } .ops-section-header,.ops-section-body { padding:14px; } .section-meta { flex-shrink:1; } .count-badge { text-align:center; } .metric-grid,.kpi-grid { grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); } }
+
 </style>
 </head>
 <body>
@@ -283,6 +358,33 @@ tr:hover td { background: #141414; }
 </nav>
 
 <div class="content">
+
+<section class="ops-overview" aria-labelledby="ops-overview-title">
+ <h2 id="ops-overview-title">Operational overview</h2>
+ <p>Current snapshot · {{ server_time|date:"Y-m-d H:i:s" }} UTC · counts from the sections below</p>
+ <div class="ops-overview-grid">
+  <div class="ops-overview-panel">
+   <h3>Pending workload</h3><p>Tickets, KYC reviews and withdrawals</p>
+   <div class="ops-ring-layout">
+    <div class="ops-ring" id="ops-pending-ring" role="img" aria-label="Pending distribution unavailable until chart loads"><div class="ops-ring-core"><strong id="ops-pending-total">—</strong><span>pending items</span></div></div>
+    <div class="ops-overview-legend">
+     <a href="#sec-money"><span><i class="ops-dot" style="--category:#ffda19"></i>Withdrawals</span><strong>{{ withdrawals_pending_count }}</strong></a>
+     <a href="#sec-money"><span><i class="ops-dot" style="--category:#b5a0ff"></i>KYC</span><strong>{{ kyc_pending_count }}</strong></a>
+     <a href="#sec-support"><span><i class="ops-dot" style="--category:#79c8ff"></i>Support</span><strong>{{ open_tickets_count }}</strong></a>
+    </div>
+   </div>
+  </div>
+  <div class="ops-overview-panel" id="ops-pending-bars">
+   <h3>Share of current pending items</h3><p>Each percentage uses the combined pending count.</p>
+   <div class="ops-pending-row" data-count="{{ withdrawals_pending_count|unlocalize }}" data-label="Withdrawals" data-color="#ffda19" style="--category:#ffda19"><div class="ops-pending-label"><a href="#sec-money">Withdrawals · pending + processing</a><strong>{{ withdrawals_pending_count }} <span class="ops-percent"></span></strong></div><div class="ops-track" aria-hidden="true"><div class="ops-fill"></div></div></div>
+   <div class="ops-pending-row" data-count="{{ kyc_pending_count|unlocalize }}" data-label="KYC" data-color="#b5a0ff" style="--category:#b5a0ff"><div class="ops-pending-label"><a href="#sec-money">KYC · pending review</a><strong>{{ kyc_pending_count }} <span class="ops-percent"></span></strong></div><div class="ops-track" aria-hidden="true"><div class="ops-fill"></div></div></div>
+   <div class="ops-pending-row" data-count="{{ open_tickets_count|unlocalize }}" data-label="Support" data-color="#79c8ff" style="--category:#79c8ff"><div class="ops-pending-label"><a href="#sec-support">Support · open + pending</a><strong>{{ open_tickets_count }} <span class="ops-percent"></span></strong></div><div class="ops-track" aria-hidden="true"><div class="ops-fill"></div></div></div>
+   <p class="ops-chart-note" id="ops-pending-note">Distribution of items, not balances or completion rates. Not unique users.</p>
+   <noscript><p>Enable JavaScript to view the distribution. Exact counts remain available above and below.</p></noscript>
+  </div>
+ </div>
+</section>
+
 
 <!-- ════════════════════════════════════════════════════════════════ -->
 <!--  1. CUSTOMER SUPPORT                                            -->
@@ -325,7 +427,7 @@ tr:hover td { background: #141414; }
         <a href="{% url 'admin:simulator_supportticket_changelist' %}" class="admin-link">View all →</a>
       </div>
       {% if open_tickets %}
-      <table>
+      <div class="table-scroll"><table>
         <tr>
           <th>#</th>
           <th>User</th>
@@ -352,7 +454,7 @@ tr:hover td { background: #141414; }
           <td>{{ t.created_at|date:"M d, H:i" }}</td>
         </tr>
         {% endfor %}
-      </table>
+      </table></div>
       {% else %}
       <div class="empty">No open or pending tickets — all clear.</div>
       {% endif %}
@@ -426,7 +528,7 @@ tr:hover td { background: #141414; }
         <a href="{% url 'admin:simulator_kycprofile_changelist' %}" class="admin-link">View all →</a>
       </div>
       {% if kyc_pending %}
-      <table>
+      <div class="table-scroll"><table>
         <tr><th>#</th><th>User</th><th>Email</th><th>Country</th><th>Submitted</th></tr>
         {% for k in kyc_pending %}
         <tr>
@@ -437,7 +539,7 @@ tr:hover td { background: #141414; }
           <td>{{ k.submitted_at|date:"M d, H:i" }}</td>
         </tr>
         {% endfor %}
-      </table>
+      </table></div>
       {% else %}
       <div class="empty">No KYC profiles awaiting review.</div>
       {% endif %}
@@ -450,7 +552,7 @@ tr:hover td { background: #141414; }
         <a href="{% url 'admin:simulator_withdrawalrequest_changelist' %}" class="admin-link">View all →</a>
       </div>
       {% if withdrawals_pending %}
-      <table>
+      <div class="table-scroll"><table>
         <tr><th>#</th><th>User</th><th>Amount USD</th><th>Currency</th><th>Status</th><th>Requested</th></tr>
         {% for wr in withdrawals_pending %}
         <tr>
@@ -462,7 +564,7 @@ tr:hover td { background: #141414; }
           <td>{{ wr.created_at|date:"M d, H:i" }}</td>
         </tr>
         {% endfor %}
-      </table>
+      </table></div>
       {% else %}
       <div class="empty">No withdrawals pending or processing.</div>
       {% endif %}
@@ -475,7 +577,7 @@ tr:hover td { background: #141414; }
         <a href="{% url 'admin:simulator_deposit_changelist' %}" class="admin-link">View all →</a>
       </div>
       {% if deposits_recent %}
-      <table>
+      <div class="table-scroll"><table>
         <tr><th>#</th><th>User</th><th>Amount USD</th><th>Currency</th><th>Credited at</th></tr>
         {% for d in deposits_recent %}
         <tr>
@@ -486,7 +588,7 @@ tr:hover td { background: #141414; }
           <td>{{ d.credited_at|date:"M d, H:i" }}</td>
         </tr>
         {% endfor %}
-      </table>
+      </table></div>
       {% else %}
       <div class="empty">No confirmed deposits recorded yet.</div>
       {% endif %}
@@ -544,7 +646,7 @@ tr:hover td { background: #141414; }
         </div>
       </div>
       {% if exp.by_symbol %}
-      <table>
+      <div class="table-scroll"><table>
         <tr><th>Symbol</th><th>Direction</th><th>Net Qty</th><th>Long USD</th><th>Short USD</th><th>Concentration</th></tr>
         {% for row in exp.by_symbol %}
         <tr>
@@ -566,7 +668,7 @@ tr:hover td { background: #141414; }
           </td>
         </tr>
         {% endfor %}
-      </table>
+      </table></div>
       {% endif %}
     </div>
     {% endif %}
@@ -579,7 +681,7 @@ tr:hover td { background: #141414; }
       <div class="subsection-header">
         <span class="subsection-title">Critical Margin Accounts ({{ margins|length }})</span>
       </div>
-      <table>
+      <div class="table-scroll"><table>
         <tr><th>Account</th><th>User</th><th>Equity</th><th>Margin Level</th><th>Free Margin</th><th>Alert</th></tr>
         {% for acc in margins %}
         <tr>
@@ -599,7 +701,7 @@ tr:hover td { background: #141414; }
           </td>
         </tr>
         {% endfor %}
-      </table>
+      </table></div>
     </div>
     {% endif %}
     {% endwith %}
@@ -649,7 +751,7 @@ tr:hover td { background: #141414; }
         <span class="subsection-title">Stuck Withdrawals &mdash; pending or processing &gt;48 h</span>
       </div>
       {% if stuck_withdrawals %}
-      <table>
+      <div class="table-scroll"><table>
         <tr><th>ID</th><th>User</th><th>Amount USD</th><th>Status</th><th>Created</th></tr>
         {% for wr in stuck_withdrawals %}
         <tr>
@@ -660,7 +762,7 @@ tr:hover td { background: #141414; }
           <td>{{ wr.created_at|date:"Y-m-d H:i" }}</td>
         </tr>
         {% endfor %}
-      </table>
+      </table></div>
       {% else %}
       <div class="empty">No stuck withdrawals &mdash; all clear.</div>
       {% endif %}
@@ -807,7 +909,7 @@ tr:hover td { background: #141414; }
       </div>
       <div id="body-sub-task-failures" class="hidden">
         {% if redis.task_failures %}
-        <table>
+        <div class="table-scroll"><table>
           <tr><th>Task</th><th>Error</th><th>Timestamp</th></tr>
           {% for f in redis.task_failures %}
           <tr>
@@ -816,7 +918,7 @@ tr:hover td { background: #141414; }
             <td>{{ f.ts|floatformat:0 }}</td>
           </tr>
           {% endfor %}
-        </table>
+        </table></div>
         {% else %}
         <div class="empty">No recent task failures.</div>
         {% endif %}
@@ -851,7 +953,7 @@ tr:hover td { background: #141414; }
         <span class="subsection-title">Recent Security Events</span>
       </div>
       {% if recent_security %}
-      <table>
+      <div class="table-scroll"><table>
         <tr><th>Time</th><th>Event</th><th>IP</th><th>Detail</th></tr>
         {% for ev in recent_security %}
         <tr>
@@ -865,7 +967,7 @@ tr:hover td { background: #141414; }
           <td>{{ ev.detail.username|default:"" }}{% if ev.detail.reason %} &mdash; {{ ev.detail.reason }}{% endif %}</td>
         </tr>
         {% endfor %}
-      </table>
+      </table></div>
       {% else %}
       <div class="empty">No recent security events.</div>
       {% endif %}
@@ -877,7 +979,7 @@ tr:hover td { background: #141414; }
         <span class="subsection-title">Audit Trail (last 20 events)</span>
       </div>
       {% if recent_audit %}
-      <table>
+      <div class="table-scroll"><table>
         <tr><th>Time</th><th>Event</th><th>Action</th><th>User</th><th>IP</th><th>Req ID</th></tr>
         {% for ev in recent_audit %}
         <tr>
@@ -889,7 +991,7 @@ tr:hover td { background: #141414; }
           <td style="font-size:10px;color:#444;">{{ ev.request_id }}</td>
         </tr>
         {% endfor %}
-      </table>
+      </table></div>
       {% else %}
       <div class="empty">No audit events yet.</div>
       {% endif %}
@@ -917,6 +1019,46 @@ function toggleSection(id) {
     }
   }
 }
+</script>
+
+
+<script>
+// Informational chart only: reuse displayed counts; no requests or operational actions.
+(function () {
+  var rows = Array.from(document.querySelectorAll('.ops-pending-row'));
+  var counts = rows.map(function (row) { var raw = row.dataset.count.trim(); return /^\d+$/.test(raw) ? Number(raw) : NaN; });
+  var ring = document.getElementById('ops-pending-ring');
+  if (!counts.every(function (n) { return Number.isSafeInteger(n) && n >= 0; })) {
+    ring.setAttribute('aria-label', 'Pending distribution unavailable');
+    document.getElementById('ops-pending-note').textContent = 'Distribution unavailable. Review the counts in the sections below.';
+    return;
+  }
+  var total = counts.reduce(function (sum, n) { return sum + n; }, 0);
+  if (!Number.isSafeInteger(total)) return;
+  document.getElementById('ops-pending-total').textContent = total.toLocaleString('en-US');
+  var position = 0, segments = [], description = [];
+  rows.forEach(function (row, i) {
+    var percent = total ? counts[i] / total * 100 : 0;
+    row.querySelector('.ops-percent').textContent = total ? '· ' + percent.toFixed(1) + '%' : '· —';
+    row.querySelector('.ops-fill').style.width = percent + '%';
+    segments.push(row.dataset.color + ' ' + position + '% ' + (position + percent) + '%');
+    position += percent;
+    description.push(row.dataset.label + ': ' + counts[i] + (total ? ', ' + percent.toFixed(1) + '%' : ''));
+  });
+  if (total) ring.style.background = 'conic-gradient(' + segments.join(',') + ')';
+  ring.setAttribute('aria-label', total + ' pending items. ' + description.join('. '));
+  if (!total) document.getElementById('ops-pending-note').textContent = 'No pending items reported in these three categories. No percentage applies; check the other sections for system or risk alerts.';
+})();
+// Keyboard access to existing disclosure controls, preserving their original action.
+document.querySelectorAll('.ops-section-header').forEach(function (header) {
+  header.setAttribute('role', 'button'); header.tabIndex = 0;
+  var id = header.closest('.ops-section').id;
+  header.setAttribute('aria-controls', 'body-' + id);
+  function sync() { header.setAttribute('aria-expanded', String(!document.getElementById('body-' + id).classList.contains('hidden'))); }
+  header.addEventListener('click', sync);
+  header.addEventListener('keydown', function (event) { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); header.click(); } });
+  sync();
+});
 </script>
 
 </body>
