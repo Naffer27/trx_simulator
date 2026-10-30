@@ -23,3 +23,17 @@ changing BTC bid/ask on 2026-10-30. No order was submitted by this agent.
 Publication still requires the operator's sudo password. Upload alone is not
 deployment. After running deploy.sh, open /admin/simulator/instrument/ and select
 an existing symbol to see the comparison. No new instruments become tradeable.
+
+## Health-check correction after first deployment attempt
+
+The initial release installed/imported successfully but its hardcoded
+/admin/login/ request returned 404; the error trap restored the previous files.
+Confirmed remotely: original admin.py SHA256 restored, new helper absent, all
+three services active. Actual reverse('admin:login') returns a custom route
+and its public URL responds HTTP 200.
+
+The script now resolves admin:login inside the deployed Django environment,
+checks that URL before any installation and again after restart, and rejects
+unexpected redirects. Only transient 502/503/504 or connection errors retry;
+404 fails immediately. No custom admin URL is printed. Source application files
+and the 84-test validation are unchanged by this script-only correction.

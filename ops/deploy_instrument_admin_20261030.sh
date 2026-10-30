@@ -17,6 +17,34 @@ for rel,m in json.loads((pkg/'manifest.json').read_text()).items():
 print('Version y paquete verificados.')
 PY
 "$PY" -B manage.py check
+check_http() {
+"$PY" -B manage.py shell <<'PYHTTP'
+import time
+import urllib.request
+import urllib.error
+from urllib.parse import urlsplit
+from django.urls import reverse
+
+for label, route in (("Portada", "/"), ("Acceso al administrador configurado", reverse("admin:login"))):
+    for attempt in range(10):
+        try:
+            with urllib.request.urlopen("https://moneybrokersglobal.com" + route, timeout=15) as response:
+                if response.status != 200 or urlsplit(response.geturl()).path != route:
+                    raise RuntimeError(label + ": respuesta o redireccion inesperada")
+            print(label + ": HTTP 200")
+            break
+        except urllib.error.HTTPError as exc:
+            if exc.code not in (502, 503, 504) or attempt == 9:
+                raise RuntimeError(label + ": HTTP " + str(exc.code)) from None
+            time.sleep(2)
+        except (urllib.error.URLError, TimeoutError):
+            if attempt == 9:
+                raise RuntimeError(label + ": no se pudo conectar") from None
+            time.sleep(2)
+PYHTTP
+}
+# Verify the actual configured URL before any installation.
+check_http
 export BACKUP=/root/money-instrument-admin-$(date -u +%Y%m%dT%H%M%SZ)
 mkdir -m 700 "$BACKUP"
 python3 - <<'PY'
@@ -59,17 +87,7 @@ PY
 "$PY" -B manage.py check
 "$PY" -B manage.py shell -c 'from simulator.admin import InstrumentAdmin; from simulator.models import Instrument; from django.contrib.admin.sites import AdminSite; from market_data.symbol_specs import allowed_symbols; from django.conf import settings; p=InstrumentAdmin(Instrument,AdminSite()); assert "runtime_specification" in p.readonly_fields; assert "Sin especificación" in p.runtime_specification(Instrument(symbol="KASUSD")); assert allowed_symbols()==frozenset(["EUR/USD","GBP/USD","USD/JPY","AUD/USD","BTCUSD","ETHUSD"]); assert not settings.PENDING_ORDER_SPREAD_FEE_ENABLED; print("Ficha importada. Instrumentos y cobro pendientes siguen desactivados.")'
 systemctl restart daphne
-python3 - <<'PY'
-import urllib.request,time
-for path in ('/','/admin/login/?next=/admin/simulator/instrument/'):
- for attempt in range(10):
-  try:
-   with urllib.request.urlopen('https://moneybrokersglobal.com'+path,timeout=15) as r:
-    assert r.status==200
-   print(path, 'HTTP 200');break
-  except Exception:
-   if attempt==9: raise
-   time.sleep(2)
-PY
+check_http
+
 systemctl is-active daphne celery-worker celery-beat
 printf 'PUBLICADA FICHA DE CONSULTA. Respaldo: %s. Sin migraciones ni activación de instrumentos.\n' "$BACKUP"
