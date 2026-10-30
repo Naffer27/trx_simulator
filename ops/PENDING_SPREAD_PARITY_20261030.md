@@ -74,3 +74,18 @@ false, ES/EN homepage HTTP 200 and daphne/celery-worker/celery-beat active.
 Backup: `/root/money-pending-spread-20261030T180422Z`.
 No migrations or feature activation were performed. PostgreSQL concurrency
 and controlled demo validation remain prerequisites for activation.
+
+## Explicit DEMO validation (2026-10-30)
+
+The full 11-case pending fee suite was also run with `account_type='DEMO'`,
+including ECN/VIP commission profiles, manual/pending equivalence, daemon,
+idempotency and transaction rollback. Combined regression result: 110 tests,
+109 passed, 1 existing skip; isolated SQLite test database and local Redis.
+Log: `/tmp/money-demo-parity-tests.log`.
+
+This is automated DEMO-model validation, not a live browser or production
+PostgreSQL certification. The production flag remains off. A live demo pilot
+must be isolated from customer accounts: the current flag is global, so do not
+switch it on globally merely to test one demo account. Use a staging service
+with its own database and market-data connection, or implement and validate an
+explicit demo-only rollout gate before any live pilot.

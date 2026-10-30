@@ -163,3 +163,15 @@ class PendingSpreadParityTests(TestCase):
         self.assertEqual(-trader, broker)
         fee = LedgerEntry.objects.get(account=account, event_type=LedgerEntry.EV_FEE)
         self.assertGreater(Decimal(fee.meta['exact_amount']), 0)
+
+
+class DemoPendingSpreadParityTests(PendingSpreadParityTests):
+    """Run the complete fee/rollback suite with actual DEMO account semantics.
+
+    Isolated Django test database only; this is not a live UI/quote certification.
+    """
+    def account(self, rate=7, markup=0):
+        return make_account(account_type='DEMO', commercial_profile_snapshot={
+            'source': 'account_product_snapshot', 'commission_per_lot': rate,
+            'commission_pct': 0, 'spread_markup_pips': markup,
+        })
