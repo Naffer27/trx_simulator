@@ -404,13 +404,9 @@ class SpreadFeeChargeTests(_SpreadConfigTestCase):
             panel, symbol="BTCUSD", side="buy", qty=0.01, price=63000.50,
             sl=None, tp=None, commission=commission, new_balance=10000.0 - commission,
         )
-        # result["new_balance"] reflects the in-memory Decimal computed
-        # inside the transaction (10000 - 0.06 commission - 0.075 spread
-        # fee = 9999.865), before any DB round-trip.
-        self.assertAlmostEqual(result["new_balance"], 9999.865, places=3)
-        # account.balance, re-read from DB, reflects the field's real
-        # decimal_places=2 quantization (ROUND_HALF_EVEN): 9999.865 -> 9999.86
-        # — same rounding policy commission-only balances already had.
+        # Quantize before persistence so PostgreSQL and SQLite use the
+        # same half-even policy and the client sees the persisted balance.
+        self.assertEqual(result["new_balance"], 9999.86)
         account.refresh_from_db()
         self.assertAlmostEqual(float(account.balance), 9999.86, places=2)
 

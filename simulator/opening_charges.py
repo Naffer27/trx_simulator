@@ -15,7 +15,7 @@ class PendingSpreadUnavailable(ValueError):
 def allocate_opening_charges(balance, commission, spread):
     """Match the persisted two-decimal balance, including half-cent ties.
 
-    Return exact balance, posted commission and posted spread. The residual
+    Return the quantized balance, posted commission and posted spread. The residual
     belongs to spread when both components exist, as on the manual path.
     """
     balance, commission, spread = map(Decimal, (balance, commission, spread))
@@ -24,7 +24,10 @@ def allocate_opening_charges(balance, commission, spread):
     if commission < 0 or spread < 0:
         raise ValueError('Negative opening charge')
     exact = balance - commission - spread
-    posted_total = balance - exact.quantize(Decimal('0.01'), rounding=ROUND_HALF_EVEN)
+    # Quantize before writing: PostgreSQL NUMERIC rounds ties differently
+    # from SQLite/Django. Never let the database choose this policy.
+    posted_balance = exact.quantize(Decimal('0.01'), rounding=ROUND_HALF_EVEN)
+    posted_total = balance - posted_balance
     if commission > 0 and spread > 0:
         commission_posted = commission.quantize(Decimal('0.01'), rounding=ROUND_HALF_EVEN)
         spread_posted = posted_total - commission_posted
@@ -34,7 +37,7 @@ def allocate_opening_charges(balance, commission, spread):
         commission_posted, spread_posted = Decimal('0'), posted_total
     else:
         commission_posted = spread_posted = Decimal('0')
-    return exact, commission_posted, spread_posted
+    return posted_balance, commission_posted, spread_posted
 
 
 def pending_static_spread_charge(account, symbol, qty):

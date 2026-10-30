@@ -41,7 +41,6 @@ Distinguishes three levels explicitly (Design Lock amendment §5):
 import decimal
 from decimal import Decimal, ROUND_HALF_EVEN, ROUND_DOWN
 
-from asgiref.sync import async_to_sync
 from django.db.models import Sum
 from django.test import TestCase
 
@@ -76,7 +75,9 @@ def _open(consumer, account, *, qty=0.01, price=80000.0, commission=0.0,
     real, authoritative value is _auth_balance, computed under lock) —
     same convention test_ledger_invariant_audit.py already uses."""
     pricing_context = {"effective_spread_pips": effective_pips} if effective_pips is not None else None
-    return async_to_sync(consumer._db_open_position_atomic)(
+    # Call the real atomic body on TestCase's connection. The Channels
+    # wrapper closes connections, which invalidates PostgreSQL's outer test transaction.
+    return TradingConsumer._db_open_position_atomic.__wrapped__(consumer,
         symbol=symbol, side="buy", qty=qty, price=price, sl=None, tp=None,
         commission=commission, new_balance=float(account.balance) - commission,
         pricing_context=pricing_context,

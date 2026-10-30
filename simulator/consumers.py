@@ -5354,7 +5354,8 @@ class TradingConsumer(AsyncWebsocketConsumer):
             # ties to 0.06, but old_balance-0.055=1049.495 ties to
             # 1049.50, i.e. a real posted delta of 0.05, not 0.06).
             #
-            # The fix: derive _total_posted_d from the SAME quantization
+            # The fix: quantize the balance explicitly before persistence, and
+            # derive the posted charges from the SAME quantization
             # Django's own save() performs on _auth_balance (not from an
             # independent rounding of the delta) — by definition, this
             # is EXACTLY old_balance minus what ends up persisted, for

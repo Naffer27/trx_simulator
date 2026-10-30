@@ -89,3 +89,12 @@ must be isolated from customer accounts: the current flag is global, so do not
 switch it on globally merely to test one demo account. Use a staging service
 with its own database and market-data connection, or implement and validate an
 explicit demo-only rollout gate before any live pilot.
+
+## PostgreSQL follow-up
+
+The isolated PostgreSQL pilot found a backend-dependent half-cent rounding
+mismatch; the allocation helper now explicitly quantizes the balance before
+saving. Follow-up validation: 113 regression passes and 1 skip, plus a passing
+concurrent-trigger test. See DEMO_REAL_RULES_VALIDATION_20261030.md for evidence
+and limitations. This rounding correction is not yet deployed; the published
+pending fee feature remains disabled. No historical entries were changed.
