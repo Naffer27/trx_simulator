@@ -1210,3 +1210,6 @@ if SENTRY_DSN:
         environment=SENTRY_ENVIRONMENT,
         release=SENTRY_RELEASE or None,
     )
+# Pending/static spread parity: staged rollout only. Existing behaviour remains
+# default; never enable before reviewing outstanding orders and fee disclosures.
+PENDING_ORDER_SPREAD_FEE_ENABLED = os.getenv("PENDING_ORDER_SPREAD_FEE_ENABLED", "false").strip().lower() in {"1", "true", "yes"}

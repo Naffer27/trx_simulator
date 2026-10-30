@@ -630,8 +630,11 @@ def _trigger_pending_order_core(pending_order_id: int, execution_price: float) -
         best-effort/fail-open in _db_open_position_atomic itself), never
         discussed in the design lock. routing_decision_id is always None
         for a pending-order-triggered open.
-      - Spread MARKUP fee (BrokerLedger REV_SPREAD / pricing_context):
-        this function runs with no live WS connection, so the SPREAD-04/
+      - Legacy/default behaviour excludes spread markup. The opt-in
+        PENDING_ORDER_SPREAD_FEE_ENABLED path below charges static configs
+        using the shared manual formula/allocation; dynamic configs fail
+        before execution until quote-level parity is implemented.
+        Historically this function runs with no live WS connection, so the SPREAD-04/
         05 dynamic/commercial markup pipeline (which resolves per-tick,
         per-connection state) has nothing to read from. Mirrors the
         PRE-EXISTING, already-shipped precedent for daemon-driven SL/TP
@@ -720,6 +723,16 @@ def _trigger_pending_order_core(pending_order_id: int, execution_price: float) -
         )
         if account is None:
             return _reject("account_not_found", "Cuenta no encontrada")
+
+        from django.conf import settings
+        _pending_fee_enabled = getattr(settings, 'PENDING_ORDER_SPREAD_FEE_ENABLED', False)
+        _spread_fee_d = Decimal('0')
+        _pending_pricing_context = None
+        if _pending_fee_enabled:
+            from .opening_charges import pending_static_spread_charge
+            _spread_fee_d, _pending_pricing_context = pending_static_spread_charge(
+                account, symbol, qty,
+            )
 
         # 2 — every open Position for this account, locked.
         open_positions = list(
@@ -888,8 +901,7 @@ def _trigger_pending_order_core(pending_order_id: int, execution_price: float) -
             source_order_id=po.id,
         )
 
-        # 9 — commission (see "deliberately excluded" note above for why
-        # the spread markup fee is skipped but commission is not).
+        # 9 — opening commission and opt-in static spread fee.
         _cp_fields = _cp.resolve_commercial_pricing_fields(account)
         _profile = _cp.build_commercial_pricing_profile(_cp_fields, symbol)
         if _profile.commission_per_lot > 0:
@@ -903,12 +915,20 @@ def _trigger_pending_order_core(pending_order_id: int, execution_price: float) -
         else:
             _commission = 0.0
         _commission_d = Decimal(str(_commission)) if _commission > 0 else Decimal("0")
-        _auth_balance = account.balance - _commission_d
+        if _pending_fee_enabled:
+            from .opening_charges import allocate_opening_charges
+            _auth_balance, _commission_posted, _spread_posted = allocate_opening_charges(
+                account.balance, _commission_d, _spread_fee_d,
+            )
+        else:
+            _auth_balance = account.balance - _commission_d
+            _commission_posted = _commission_d
+            _spread_posted = Decimal('0')
 
         if _commission_d > 0:
             trader_ledger = LedgerEntry.objects.create(
                 account_id=po.account_id, event_type=LedgerEntry.EV_COMMISSION,
-                amount=-_commission_d, balance_after=_auth_balance,
+                amount=-_commission_posted, balance_after=_auth_balance,
                 meta={"symbol": symbol, "side": side, "db_pos_id": position_id,
                       "source": "pending_order_trigger", "pending_order_id": po.id},
             )
@@ -921,15 +941,40 @@ def _trigger_pending_order_core(pending_order_id: int, execution_price: float) -
             try:
                 with transaction.atomic():
                     BrokerLedger.objects.create(
-                        revenue_type=BrokerLedger.REV_COMMISSION, amount=_commission_d,
+                        revenue_type=BrokerLedger.REV_COMMISSION, amount=_commission_posted,
                         source_account_id=po.account_id, source_ledger=trader_ledger,
                         symbol=symbol, economic_date=timezone.now().date(),
                         meta={"side": side, "db_pos_id": position_id, "pending_order_id": po.id},
                     )
             except Exception as _bl_exc:
                 log.warning("[pending_trigger] broker_ledger commission insert failed pos=%s: %s", position_id, _bl_exc)
+
+        if _spread_fee_d > 0:
+            fee_meta = {
+                'fee_type': 'spread', 'symbol': symbol, 'side': side,
+                'db_pos_id': position_id, 'source': 'pending_order_trigger',
+                'pending_order_id': po.id,
+                'effective_pips': _pending_pricing_context['effective_spread_pips'],
+                'base_pips': _pending_pricing_context['base_spread_pips'],
+                'account_markup_pips': _pending_pricing_context['account_markup_pips'],
+                'pricing_context': _pending_pricing_context,
+                'exact_amount': str(_spread_fee_d),
+                'rounding_residual': str(_spread_posted - _spread_fee_d),
+            }
+            fee_ledger = LedgerEntry.objects.create(
+                account_id=po.account_id, event_type=LedgerEntry.EV_FEE,
+                amount=-_spread_posted, balance_after=_auth_balance, meta=fee_meta,
+            )
+            # Both sides of this new fee are mandatory in the same transaction:
+            # never charge a customer without recording the broker counterpart.
+            BrokerLedger.objects.create(
+                revenue_type=BrokerLedger.REV_SPREAD, amount=_spread_posted,
+                source_account_id=po.account_id, source_ledger=fee_ledger,
+                symbol=symbol, economic_date=timezone.now().date(), meta=fee_meta,
+            )
+        if _commission_d > 0 or _spread_fee_d > 0:
             account.balance = _auth_balance
-            account.save(update_fields=["balance"])
+            account.save(update_fields=['balance'])
 
         # 10 — finalize PendingOrder → TRIGGERED, only now that the open
         # has actually succeeded (never before — see docstring).
@@ -5317,22 +5362,10 @@ class TradingConsumer(AsyncWebsocketConsumer):
             # verified against ~2M adversarial (balance, commission,
             # spread) combinations with zero exactness or sign
             # violations — see test_ledger_rounding_reconciliation01.py.
-            _auth_balance     = account.balance - _commission_d - _spread_fee_d
-            _posted_balance   = _money_round(_auth_balance)
-            _total_posted_d   = account.balance - _posted_balance
-
-            if _commission_d > 0 and _spread_fee_d > 0:
-                _commission_ledger_d = _money_round(_commission_d)
-                _spread_ledger_d     = _total_posted_d - _commission_ledger_d
-            elif _commission_d > 0:
-                _commission_ledger_d = _total_posted_d
-                _spread_ledger_d     = Decimal("0")
-            elif _spread_fee_d > 0:
-                _spread_ledger_d     = _total_posted_d
-                _commission_ledger_d = Decimal("0")
-            else:
-                _commission_ledger_d = Decimal("0")
-                _spread_ledger_d     = Decimal("0")
+            from .opening_charges import allocate_opening_charges
+            _auth_balance, _commission_ledger_d, _spread_ledger_d = allocate_opening_charges(
+                account.balance, _commission_d, _spread_fee_d,
+            )
 
             if _commission_d > 0:
                 trader_ledger = LedgerEntry.objects.create(
