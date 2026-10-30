@@ -1,0 +1,808 @@
+{
+  "checked_at": "2026-10-30T19:23:26.444276+00:00",
+  "reference_queries": [
+    {
+      "target": "SOL",
+      "endpoint": "/v3/reference/tickers",
+      "http_status": 200,
+      "results": [
+        {
+          "ticker": "X:MSOLUSD",
+          "name": "Marinade Staked Sol - United States dollar",
+          "market": "crypto",
+          "active": true,
+          "currency_symbol": "USD",
+          "base_currency_symbol": "MSOL"
+        },
+        {
+          "ticker": "X:SOLUSD",
+          "name": "Solana - United States dollar",
+          "market": "crypto",
+          "active": true,
+          "currency_symbol": "USD",
+          "base_currency_symbol": "SOL"
+        }
+      ],
+      "has_more": false
+    },
+    {
+      "target": "KAS",
+      "endpoint": "/v3/reference/tickers",
+      "http_status": 200,
+      "results": [
+        {
+          "ticker": "X:AKTEUR",
+          "name": "Akash Network - Euro",
+          "market": "crypto",
+          "active": true,
+          "currency_symbol": "EUR",
+          "base_currency_symbol": "AKT"
+        },
+        {
+          "ticker": "X:AKTUSD",
+          "name": "Akash - United States dollar",
+          "market": "crypto",
+          "active": true,
+          "currency_symbol": "USD",
+          "base_currency_symbol": "AKT"
+        },
+        {
+          "ticker": "X:KASUSD",
+          "name": "KAS - United States dollar",
+          "market": "crypto",
+          "active": true,
+          "currency_symbol": "USD",
+          "base_currency_symbol": "KAS"
+        },
+        {
+          "ticker": "X:POLSUSD",
+          "name": "Polkastarter - United States dollar",
+          "market": "crypto",
+          "active": true,
+          "currency_symbol": "USD",
+          "base_currency_symbol": "POLS"
+        }
+      ],
+      "has_more": false
+    },
+    {
+      "target": "XAU",
+      "endpoint": "/v3/reference/tickers",
+      "http_status": 200,
+      "results": [
+        {
+          "ticker": "C:XAUUSD",
+          "name": "Gold (one troy ounce) - United States dollar",
+          "market": "fx",
+          "active": true,
+          "currency_symbol": "USD",
+          "base_currency_symbol": "XAU"
+        }
+      ],
+      "has_more": false
+    },
+    {
+      "target": "DOW",
+      "endpoint": "/v3/reference/tickers",
+      "http_status": 200,
+      "results": [
+        {
+          "ticker": "I:DJI",
+          "name": "Dow Jones Industrial Average",
+          "market": "indices",
+          "active": true
+        },
+        {
+          "ticker": "I:DJI2MN",
+          "name": "Dow Jones Industrial Average (2 Minute)",
+          "market": "indices",
+          "active": true
+        },
+        {
+          "ticker": "I:DJIAFP",
+          "name": "Dow Jones Industrial Average Fu",
+          "market": "indices",
+          "active": true
+        },
+        {
+          "ticker": "I:DJIAFT1I",
+          "name": "Dow Jones Industrial Average Futures Inverse Daily Index (USD) TR",
+          "market": "indices",
+          "active": true
+        },
+        {
+          "ticker": "I:DJIAFT2I",
+          "name": "Dow Jones Industrial Average Futures 2X Inverse Daily Index (USD) TR",
+          "market": "indices",
+          "active": true
+        },
+        {
+          "ticker": "I:DJIAFT2L",
+          "name": "Dow Jones Industrial Average Futures 2X Leveraged Daily Index (USD) TR",
+          "market": "indices",
+          "active": true
+        },
+        {
+          "ticker": "I:DJIAFTR",
+          "name": "Dow Jones Industrial Average Futures Index (USD) TR",
+          "market": "indices",
+          "active": true
+        },
+        {
+          "ticker": "I:DJIEW",
+          "name": "Dow Jones Industrial Average Equal Weight Index (USD)",
+          "market": "indices",
+          "active": true
+        },
+        {
+          "ticker": "I:DJIEWNTR",
+          "name": "Dow Jones Industrial Average Equal Weight Index (USD) NTR",
+          "market": "indices",
+          "active": true
+        },
+        {
+          "ticker": "I:DJIEWTR",
+          "name": "Dow Jones Industrial Average Equal Weight Index TR (USD)",
+          "market": "indices",
+          "active": true
+        },
+        {
+          "ticker": "I:DJINR",
+          "name": "Dow Jones Industrial Average NTR",
+          "market": "indices",
+          "active": true
+        },
+        {
+          "ticker": "I:DJIPICF",
+          "name": "Dow Jones Industrial Average Inverse Carry-Free Daily Index (USD)",
+          "market": "indices",
+          "active": true
+        },
+        {
+          "ticker": "I:DJIPICFH",
+          "name": "Dow Jones Industrial Average Inverse Carry-Free Daily Index (HKD)",
+          "market": "indices",
+          "active": true
+        },
+        {
+          "ticker": "I:DJIPICFT",
+          "name": "Dow Jones Industrial Average Inverse Carry-Free Daily Index (TWD)",
+          "market": "indices",
+          "active": true
+        },
+        {
+          "ticker": "I:DJIPLCF",
+          "name": "Dow Jones Industrial Average 2X Leveraged Carry-Free Daily Index (USD)",
+          "market": "indices",
+          "active": true
+        },
+        {
+          "ticker": "I:DJIPLCFH",
+          "name": "Dow Jones Industrial Average 2X Leveraged Carry-Free Daily Index (HKD)",
+          "market": "indices",
+          "active": true
+        },
+        {
+          "ticker": "I:DJIPLCFT",
+          "name": "Dow Jones Industrial Average 2X Leveraged Carry-Free Daily Index (TWD)",
+          "market": "indices",
+          "active": true
+        },
+        {
+          "ticker": "I:DJITR",
+          "name": "Dow Jones Industrial Average TR",
+          "market": "indices",
+          "active": true
+        },
+        {
+          "ticker": "I:DJIYW",
+          "name": "Dow Jones Industrial Average Yield Weighted Index (USD)",
+          "market": "indices",
+          "active": true
+        },
+        {
+          "ticker": "I:DJIYWT",
+          "name": "Dow Jones Industrial Average Yield Weighted Index (USD) TR",
+          "market": "indices",
+          "active": true
+        },
+        {
+          "ticker": "I:DJX",
+          "name": "Options on the Dow Jones Industrial Average",
+          "market": "indices",
+          "active": true
+        }
+      ],
+      "has_more": false
+    },
+    {
+      "target": "WTI",
+      "endpoint": "/futures/v1/contracts",
+      "http_status": 200,
+      "results": [
+        {
+          "active": true,
+          "first_trade_date": "2017-01-23",
+          "last_trade_date": "2019-12-19",
+          "name": "CL:BF F0-G0-H0",
+          "product_code": "CL",
+          "ticker": "CL:BF F0-G0-H0"
+        },
+        {
+          "active": true,
+          "first_trade_date": "2017-01-23",
+          "last_trade_date": "2019-12-19",
+          "name": "CL:BF F0-G0-H0",
+          "product_code": "CL",
+          "ticker": "CL:BF F0-G0-H0"
+        },
+        {
+          "active": true,
+          "first_trade_date": "2017-01-23",
+          "last_trade_date": "2019-12-19",
+          "name": "CL:BF F0-G0-H0",
+          "product_code": "CL",
+          "ticker": "CL:BF F0-G0-H0"
+        }
+      ],
+      "has_more": true
+    }
+  ],
+  "data_checked_at": "2026-10-30T19:24:23.559082+00:00",
+  "data_queries": [
+    {
+      "target": "SOL_snapshot",
+      "endpoint": "/v2/snapshot/locale/global/markets/crypto/tickers/X:SOLUSD",
+      "http_status": 200,
+      "data": {
+        "status": "OK",
+        "ticker": {
+          "ticker": "X:SOLUSD",
+          "todaysChangePerc": -1.0380622837370337,
+          "todaysChange": -0.9900000000000091,
+          "updated": 1793388240000000000,
+          "day": {
+            "o": 95.37,
+            "h": 98.6,
+            "l": 92.14,
+            "c": 94.25,
+            "v": 1782921.0124917561,
+            "vw": 95.2536
+          },
+          "lastTrade": {
+            "c": [
+              2
+            ],
+            "i": "d1532645-f246-455d-8668-058a52c9cbb3",
+            "p": 94.38,
+            "s": 0.44080428,
+            "t": 1793388263183,
+            "x": 23
+          },
+          "min": {
+            "t": 1793388180000,
+            "n": 122,
+            "o": 94.24,
+            "h": 94.35,
+            "l": 94.15,
+            "c": 94.28,
+            "v": 1117.36552516,
+            "vw": 94.2121
+          },
+          "prevDay": {
+            "o": 102.33,
+            "h": 103.15,
+            "l": 94.57,
+            "c": 95.37,
+            "v": 1524528.8302309706,
+            "vw": 98.56
+          }
+        }
+      }
+    },
+    {
+      "target": "KAS_snapshot",
+      "endpoint": "/v2/snapshot/locale/global/markets/crypto/tickers/X:KASUSD",
+      "http_status": 200,
+      "data": {
+        "status": "OK",
+        "ticker": {
+          "ticker": "X:KASUSD",
+          "todaysChangePerc": -3.9071680376028137,
+          "todaysChange": -0.0013299999999999979,
+          "updated": 1793388240000000000,
+          "day": {
+            "o": 0.03407,
+            "h": 0.03462,
+            "l": 0.03237,
+            "c": 0.03264,
+            "v": 41159710.062120065,
+            "vw": 0.03328
+          },
+          "lastTrade": {
+            "c": [
+              2
+            ],
+            "i": "b2f6bd5b-b8ac-4f24-a18c-925835f8bccd",
+            "p": 0.03271,
+            "s": 1971.16009,
+            "t": 1793388259820,
+            "x": 23
+          },
+          "min": {
+            "t": 1793388180000,
+            "n": 2,
+            "o": 0.03264,
+            "h": 0.03264,
+            "l": 0.03264,
+            "c": 0.03264,
+            "v": 1940.12974,
+            "vw": 0.03264
+          },
+          "prevDay": {
+            "o": 0.03747,
+            "h": 0.03747,
+            "l": 0.03375,
+            "c": 0.03404,
+            "v": 27390757.91383003,
+            "vw": 0.03541
+          }
+        }
+      }
+    },
+    {
+      "target": "XAU_quote",
+      "endpoint": "/v1/last_quote/currencies/XAU/USD",
+      "http_status": 200,
+      "data": {
+        "status": "success",
+        "last": {
+          "ask": 3879.53,
+          "bid": 3879.16,
+          "exchange": 48,
+          "timestamp": 1793388264000
+        }
+      }
+    },
+    {
+      "target": "DJI_snapshot",
+      "endpoint": "/v3/snapshot/indices",
+      "http_status": 403,
+      "data": {}
+    },
+    {
+      "target": "WTI_product",
+      "endpoint": "/futures/v1/products",
+      "http_status": 200,
+      "data": {
+        "status": "OK",
+        "results": [
+          {
+            "asset_class": "commodity",
+            "asset_sub_class": "energy",
+            "clearing_venue": "NYMEX",
+            "clearing_symbol": "CL-BZ",
+            "date": "2026-10-30",
+            "last_updated": "2026-09-18T22:00:25-05:00",
+            "name": "CL",
+            "price_quotation": "",
+            "product_code": "CL",
+            "provider_id": "BYE5IOANXG4S",
+            "sector": "crude_oil",
+            "strategy_type": "inter_commodity",
+            "settlement_currency_code": "USD",
+            "settlement_method": "financially_settled",
+            "settlement_type": "cash",
+            "trade_currency_code": "USD",
+            "trading_venue": "XNYM",
+            "type": "combo",
+            "unit_of_measure": "BBL",
+            "unit_of_measure_qty": 1000.0
+          }
+        ]
+      }
+    },
+    {
+      "target": "WTI_contracts",
+      "endpoint": "/futures/v1/contracts",
+      "http_status": 400,
+      "data": {}
+    },
+    {
+      "target": "X:SOLUSD_bars",
+      "endpoint": "/v2/aggs/ticker/X:SOLUSD/range/1/minute/2026-10-27/2026-10-30",
+      "http_status": 200,
+      "data": {
+        "status": "OK",
+        "results": [
+          {
+            "v": 1117.36552516,
+            "vw": 94.2121,
+            "o": 94.24,
+            "c": 94.28,
+            "h": 94.35,
+            "l": 94.15,
+            "t": 1793388180000,
+            "n": 122
+          },
+          {
+            "v": 992.33624879,
+            "vw": 94.0587,
+            "o": 93.99,
+            "c": 94.36,
+            "h": 94.36,
+            "l": 93.98,
+            "t": 1793388120000,
+            "n": 123
+          },
+          {
+            "v": 2637.43670138,
+            "vw": 93.9854,
+            "o": 93.989,
+            "c": 93.98,
+            "h": 94.14,
+            "l": 93.93,
+            "t": 1793388060000,
+            "n": 132
+          }
+        ],
+        "ticker": "X:SOLUSD",
+        "queryCount": 3,
+        "resultsCount": 3
+      }
+    },
+    {
+      "target": "X:KASUSD_bars",
+      "endpoint": "/v2/aggs/ticker/X:KASUSD/range/1/minute/2026-10-27/2026-10-30",
+      "http_status": 200,
+      "data": {
+        "status": "OK",
+        "results": [
+          {
+            "v": 1940.12974,
+            "vw": 0.0326,
+            "o": 0.03264,
+            "c": 0.03264,
+            "h": 0.03264,
+            "l": 0.03264,
+            "t": 1793388180000,
+            "n": 2
+          },
+          {
+            "v": 17118.93021,
+            "vw": 0.0326,
+            "o": 0.03256,
+            "c": 0.0326,
+            "h": 0.0326,
+            "l": 0.03256,
+            "t": 1793388120000,
+            "n": 2
+          },
+          {
+            "v": 1319.653,
+            "vw": 0.0325,
+            "o": 0.03252,
+            "c": 0.03252,
+            "h": 0.03252,
+            "l": 0.03252,
+            "t": 1793388060000,
+            "n": 1
+          }
+        ],
+        "ticker": "X:KASUSD",
+        "queryCount": 3,
+        "resultsCount": 3
+      }
+    },
+    {
+      "target": "C:XAUUSD_bars",
+      "endpoint": "/v2/aggs/ticker/C:XAUUSD/range/1/minute/2026-10-27/2026-10-30",
+      "http_status": 200,
+      "data": {
+        "status": "OK",
+        "results": [
+          {
+            "v": 183,
+            "vw": 3877.8638,
+            "o": 3877.78,
+            "c": 3877.94,
+            "h": 3878.22,
+            "l": 3877.51,
+            "t": 1793388180000,
+            "n": 183
+          },
+          {
+            "v": 200,
+            "vw": 3878.2669,
+            "o": 3877.4,
+            "c": 3877.78,
+            "h": 3879.19,
+            "l": 3877.4,
+            "t": 1793388120000,
+            "n": 200
+          },
+          {
+            "v": 195,
+            "vw": 3878.3711,
+            "o": 3878.81,
+            "c": 3877.33,
+            "h": 3879.21,
+            "l": 3877.33,
+            "t": 1793388060000,
+            "n": 195
+          }
+        ],
+        "ticker": "C:XAUUSD",
+        "queryCount": 3,
+        "resultsCount": 3
+      }
+    }
+  ],
+  "wti_followup": [
+    {
+      "target": "WTI_products_filtered",
+      "http_status": 200,
+      "data": {
+        "status": "OK",
+        "results": [
+          {
+            "asset_class": "commodity",
+            "asset_sub_class": "energy",
+            "clearing_venue": "NYMEX",
+            "clearing_symbol": "CL",
+            "date": "2026-10-30",
+            "last_updated": "2026-10-29T07:58:17-05:00",
+            "name": "Light Sweet Crude Oil Futures",
+            "price_quotation": "U.S. dollars and cents per barrel",
+            "product_code": "CL",
+            "provider_id": "J6RPLCCJNZSE",
+            "sector": "crude_oil",
+            "settlement_currency_code": "USD",
+            "settlement_method": "deliverable",
+            "settlement_type": "fut",
+            "trade_currency_code": "USD",
+            "trading_venue": "XNYM",
+            "type": "single",
+            "unit_of_measure": "BBL",
+            "unit_of_measure_qty": 1000.0
+          }
+        ]
+      }
+    },
+    {
+      "target": "WTI_contracts_filtered",
+      "http_status": 200,
+      "data": {
+        "status": "OK",
+        "results": [
+          {
+            "active": true,
+            "date": "2026-10-30",
+            "days_to_maturity": 1146,
+            "first_trade_date": "2019-06-10",
+            "last_trade_date": "2029-12-19",
+            "max_order_quantity": 2999,
+            "min_order_quantity": 1,
+            "name": "CLF30 Future",
+            "product_code": "CL",
+            "settlement_date": "2029-12-19",
+            "settlement_tick_size": 0.01,
+            "spread_tick_size": 0.01,
+            "ticker": "CLF30",
+            "trade_tick_size": 0.01,
+            "trading_venue": "XNYM",
+            "type": "single",
+            "group_code": "CL",
+            "provider_id": "SSPPO5VFFNVZ",
+            "provider_product_id": "J6RPLCCJNZSE"
+          },
+          {
+            "active": true,
+            "date": "2026-10-30",
+            "days_to_maturity": 1511,
+            "first_trade_date": "2019-11-21",
+            "last_trade_date": "2030-12-19",
+            "max_order_quantity": 2999,
+            "min_order_quantity": 1,
+            "name": "CLF31 Future",
+            "product_code": "CL",
+            "settlement_date": "2030-12-19",
+            "settlement_tick_size": 0.01,
+            "spread_tick_size": 0.01,
+            "ticker": "CLF31",
+            "trade_tick_size": 0.01,
+            "trading_venue": "XNYM",
+            "type": "single",
+            "group_code": "CL",
+            "provider_id": "OPVOKI76WIZX",
+            "provider_product_id": "J6RPLCCJNZSE"
+          },
+          {
+            "active": true,
+            "date": "2026-10-30",
+            "days_to_maturity": 1876,
+            "first_trade_date": "2020-11-23",
+            "last_trade_date": "2031-12-19",
+            "max_order_quantity": 2999,
+            "min_order_quantity": 1,
+            "name": "CLF32 Future",
+            "product_code": "CL",
+            "settlement_date": "2031-12-19",
+            "settlement_tick_size": 0.01,
+            "spread_tick_size": 0.01,
+            "ticker": "CLF32",
+            "trade_tick_size": 0.01,
+            "trading_venue": "XNYM",
+            "type": "single",
+            "group_code": "CL",
+            "provider_id": "CQC75F3YIOAV",
+            "provider_product_id": "J6RPLCCJNZSE"
+          },
+          {
+            "active": true,
+            "date": "2026-10-30",
+            "days_to_maturity": 2243,
+            "first_trade_date": "2021-11-22",
+            "last_trade_date": "2032-12-20",
+            "max_order_quantity": 2999,
+            "min_order_quantity": 1,
+            "name": "CLF33 Future",
+            "product_code": "CL",
+            "settlement_date": "2032-12-20",
+            "settlement_tick_size": 0.01,
+            "spread_tick_size": 0.01,
+            "ticker": "CLF33",
+            "trade_tick_size": 0.01,
+            "trading_venue": "XNYM",
+            "type": "single",
+            "group_code": "CL",
+            "provider_id": "3KK3FQHK2QSY",
+            "provider_product_id": "J6RPLCCJNZSE"
+          },
+          {
+            "active": true,
+            "date": "2026-10-30",
+            "days_to_maturity": 2608,
+            "first_trade_date": "2022-11-22",
+            "last_trade_date": "2033-12-20",
+            "max_order_quantity": 2999,
+            "min_order_quantity": 1,
+            "name": "CLF34 Future",
+            "product_code": "CL",
+            "settlement_date": "2033-12-20",
+            "settlement_tick_size": 0.01,
+            "spread_tick_size": 0.01,
+            "ticker": "CLF34",
+            "trade_tick_size": 0.01,
+            "trading_venue": "XNYM",
+            "type": "single",
+            "group_code": "CL",
+            "provider_id": "72Q6CJUIGJIW",
+            "provider_product_id": "J6RPLCCJNZSE"
+          }
+        ]
+      }
+    }
+  ],
+  "final_queries": [
+    {
+      "target": "WTI_snapshot",
+      "http_status": 403,
+      "data": {}
+    },
+    {
+      "target": "WTI_near_contracts",
+      "http_status": 200,
+      "data": {
+        "status": "OK",
+        "results": [
+          {
+            "active": true,
+            "date": "2026-10-30",
+            "days_to_maturity": 52,
+            "first_trade_date": "2018-01-22",
+            "last_trade_date": "2026-12-21",
+            "max_order_quantity": 2999,
+            "min_order_quantity": 1,
+            "name": "CLF7 Future",
+            "product_code": "CL",
+            "settlement_date": "2026-12-21",
+            "settlement_tick_size": 0.01,
+            "spread_tick_size": 0.01,
+            "ticker": "CLF7",
+            "trade_tick_size": 0.01,
+            "trading_venue": "XNYM",
+            "type": "single",
+            "group_code": "CL",
+            "provider_id": "FRNAJ7MSEMA3",
+            "provider_product_id": "J6RPLCCJNZSE"
+          },
+          {
+            "active": true,
+            "date": "2026-10-30",
+            "days_to_maturity": 82,
+            "first_trade_date": "2018-01-22",
+            "last_trade_date": "2027-01-20",
+            "max_order_quantity": 2999,
+            "min_order_quantity": 1,
+            "name": "CLG7 Future",
+            "product_code": "CL",
+            "settlement_date": "2027-01-20",
+            "settlement_tick_size": 0.01,
+            "spread_tick_size": 0.01,
+            "ticker": "CLG7",
+            "trade_tick_size": 0.01,
+            "trading_venue": "XNYM",
+            "type": "single",
+            "group_code": "CL",
+            "provider_id": "NCNQLP5ORPUD",
+            "provider_product_id": "J6RPLCCJNZSE"
+          },
+          {
+            "active": true,
+            "date": "2026-10-30",
+            "days_to_maturity": 115,
+            "first_trade_date": "2018-11-20",
+            "last_trade_date": "2027-02-22",
+            "max_order_quantity": 2999,
+            "min_order_quantity": 1,
+            "name": "CLH7 Future",
+            "product_code": "CL",
+            "settlement_date": "2027-02-22",
+            "settlement_tick_size": 0.01,
+            "spread_tick_size": 0.01,
+            "ticker": "CLH7",
+            "trade_tick_size": 0.01,
+            "trading_venue": "XNYM",
+            "type": "single",
+            "group_code": "CL",
+            "provider_id": "CIL4WHE3XXWS",
+            "provider_product_id": "J6RPLCCJNZSE"
+          },
+          {
+            "active": true,
+            "date": "2026-10-30",
+            "days_to_maturity": 143,
+            "first_trade_date": "2018-11-20",
+            "last_trade_date": "2027-03-22",
+            "max_order_quantity": 2999,
+            "min_order_quantity": 1,
+            "name": "CLJ7 Future",
+            "product_code": "CL",
+            "settlement_date": "2027-03-22",
+            "settlement_tick_size": 0.01,
+            "spread_tick_size": 0.01,
+            "ticker": "CLJ7",
+            "trade_tick_size": 0.01,
+            "trading_venue": "XNYM",
+            "type": "single",
+            "group_code": "CL",
+            "provider_id": "BTKMLCZARBBM",
+            "provider_product_id": "J6RPLCCJNZSE"
+          },
+          {
+            "active": true,
+            "date": "2026-10-30",
+            "days_to_maturity": 21,
+            "first_trade_date": "2017-11-21",
+            "last_trade_date": "2026-11-20",
+            "max_order_quantity": 2999,
+            "min_order_quantity": 1,
+            "name": "CLZ6 Future",
+            "product_code": "CL",
+            "settlement_date": "2026-11-20",
+            "settlement_tick_size": 0.01,
+            "spread_tick_size": 0.01,
+            "ticker": "CLZ6",
+            "trade_tick_size": 0.01,
+            "trading_venue": "XNYM",
+            "type": "single",
+            "group_code": "CL",
+            "provider_id": "KBQPJNBATHIC",
+            "provider_product_id": "J6RPLCCJNZSE"
+          }
+        ]
+      }
+    }
+  ]
+}

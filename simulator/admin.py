@@ -8,7 +8,7 @@ from django.db.models import Sum, Count, Q
 from django.urls import path, reverse
 from django.shortcuts import redirect, render
 from django.utils.timezone import now
-from django.utils.html import format_html
+from django.utils.html import format_html, format_html_join
 from django.db import transaction
 
 from .models import (
@@ -4417,6 +4417,32 @@ class InstrumentAdmin(admin.ModelAdmin):
         "tabla. Ver docs/MARKET_DATA_ARCHITECTURE.md."
     )
 
+    @admin.display(description="Reglas del motor (solo consulta)")
+    def runtime_specification(self, obj):
+        from .instrument_runtime_preview import runtime_comparison
+
+        if obj is None or not obj.symbol:
+            return "Guarda un símbolo para consultar su especificación."
+        preview = runtime_comparison(obj)
+        if preview is None:
+            return "Sin especificación en el motor. Esta ficha no habilita operaciones."
+        rows = format_html_join(
+            "", "<tr><th>{}</th><td>{}</td><td>{}</td><td>{}</td></tr>",
+            ((label, live, reference, "Coincide" if same else "Diferente")
+             for label, live, reference, same in preview["rows"]),
+        )
+        return format_html(
+            '<p>Símbolo: <strong>{}</strong>. Registro: <strong>{}</strong>.</p>'
+            '<table><thead><tr><th>Regla</th><th>Motor</th>'
+            '<th>Referencia guardada</th><th>Comparación</th></tr></thead>'
+            '<tbody>{}</tbody></table>'
+            '<p>El límite efectivo de apalancamiento también depende de la cuenta. '
+            'La comisión y el recargo de spread dependen de sus reglas comerciales; '
+            'esta tabla no es una cotización. Un registro habilitado no certifica '
+            'la disponibilidad de precios ni la autorización de una orden.</p>',
+            preview["symbol"], "Habilitado" if preview["enabled"] else "Desactivado", rows,
+        )
+
     list_display = (
         'symbol', 'display_name', 'asset_class', 'trading_enabled',
         'market_data_provider', 'max_leverage', 'default_spread', 'spread_unit',
@@ -4424,7 +4450,7 @@ class InstrumentAdmin(admin.ModelAdmin):
     list_filter    = ('asset_class', 'trading_enabled', 'market_data_provider')
     search_fields  = ('symbol', 'display_name')
     ordering       = ('asset_class', 'symbol')
-    readonly_fields = ('created_at', 'updated_at')
+    readonly_fields = ('runtime_specification', 'created_at', 'updated_at')
 
     def changelist_view(self, request, extra_context=None):
         messages.warning(request, self._RUNTIME_WARNING)
@@ -4439,6 +4465,7 @@ class InstrumentAdmin(admin.ModelAdmin):
         return super().change_view(request, object_id, form_url, extra_context=extra_context)
 
     fieldsets = (
+        ('Especificación efectiva del motor', {'fields': ('runtime_specification',)}),
         ('Identity', {
             'fields': ('symbol', 'display_name', 'asset_class', 'base_currency', 'quote_currency'),
         }),

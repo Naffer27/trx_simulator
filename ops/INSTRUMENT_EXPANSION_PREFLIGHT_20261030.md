@@ -26,3 +26,11 @@ implemented by the pending spread patch. Do not apply the same dollar-per-lot
 charge blindly to contracts with different economic sizes.
 
 No new instrument, provider subscription or production trading was enabled.
+
+## Follow-up: provider verified, 2026-10-30
+
+See `MASSIVE_INSTRUMENT_RULES_20261030.md` and the sanitized JSON evidence.
+Massive reference matches exist for all five targets. Gold bid/ask and history,
+SOL/KAS trade snapshots and history returned HTTP 200. DJI and CL snapshot
+requests returned HTTP 403. New demo rule previews are local and disabled;
+no executable mapping or account commission policy has been switched on.
