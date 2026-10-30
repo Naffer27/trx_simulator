@@ -700,11 +700,6 @@ html { scroll-behavior: smooth; }
         <p class="why-body">{% ui "Client funds held in segregated accounts. SSL-encrypted platform, two-factor authentication, and full audit trail." %}</p>
       </div>
       <div class="why-card">
-        <span class="why-icon">📊</span>
-        <p class="why-title">{% ui "Real Market Data" %}</p>
-        <p class="why-body">{% ui "Live feeds from Binance and Finnhub. Forex, crypto, indices — all instruments, one platform." %}</p>
-      </div>
-      <div class="why-card">
         <span class="why-icon">💸</span>
         <p class="why-title">{% ui "Fast Withdrawals" %}</p>
         <p class="why-body">{% ui "Request withdrawals anytime. Processed within 24 hours via crypto — no banks, no delays, no hidden fees." %}</p>
@@ -724,70 +719,42 @@ html { scroll-behavior: smooth; }
     </h2>
 
     <div class="accounts-grid">
-      <div class="acct-card">
-        <p class="acct-tier">{% ui "Standard" %}</p>
-        <p class="acct-balance">{% ui "From $10" %}</p>
-        <ul class="acct-features">
-          <li>{% ui "Spreads from 1.2 pips" %}</li>
-          <li>{% ui "No commission per trade" %}</li>
-          <li>{% ui "Leverage up to 1:200" %}</li>
-          <li>{% ui "All instruments" %}</li>
-          <li>{% ui "Instant withdrawals" %}</li>
-        </ul>
-        <a href="{% url 'simulator:register' %}" class="btn-gold">{% ui "Open Standard" %}</a>
-      </div>
-
       <div class="acct-card featured">
         <p class="acct-tier">ECN</p>
-        <p class="acct-balance">{% ui "From $200" %}</p>
+        <p class="acct-balance">{% ui "From $10" %}</p>
         <ul class="acct-features">
-          <li>{% ui "Spreads from 0.0 pips" %}</li>
-          <li>{% ui "$3.50 commission / lot" %}</li>
+          <li>{% ui "Variable spreads by instrument" %}</li>
+          <li>{% ui "USD 7 per lot, charged at opening" %}</li>
           <li>{% ui "Leverage up to 1:500" %}</li>
-          <li>{% ui "All instruments" %}</li>
-          <li>{% ui "Priority routing" %}</li>
-          <li>{% ui "VPS hosting included" %}</li>
         </ul>
         <a href="{% url 'simulator:register' %}" class="btn-gold">{% ui "Open ECN" %}</a>
       </div>
 
       <div class="acct-card">
         <p class="acct-tier">VIP</p>
-        <p class="acct-balance">{% ui "From $5,000" %}</p>
+        <p class="acct-balance">{% ui "From $100,000" %}</p>
         <ul class="acct-features">
-          <li>{% ui "Spreads from 0.0 pips" %}</li>
-          <li>{% ui "$2.00 commission / lot" %}</li>
+          <li>{% ui "Variable spreads by instrument" %}</li>
+          <li>{% ui "USD 3.50 per lot, charged at opening" %}</li>
           <li>{% ui "Leverage up to 1:500" %}</li>
-          <li>{% ui "All instruments + indices" %}</li>
-          <li>{% ui "Dedicated account manager" %}</li>
-          <li>{% ui "Custom rebate program" %}</li>
         </ul>
         <a href="{% url 'simulator:register' %}" class="btn-gold">{% ui "Open VIP" %}</a>
       </div>
     </div>
 
+    <p class="lp-label">{% ui "Commission is charged at opening. Spread charges are separate. Leverage depends on the instrument; BTC is capped at 1:20. Existing accounts retain their agreed conditions." %}</p>
+
     <!-- Comparison table -->
     <div class="cmp-table-wrap">
       <table class="cmp-table">
         <thead>
-          <tr>
-            <th>{% ui "Feature" %}</th>
-            <th>{% ui "Standard" %}</th>
-            <th>ECN</th>
-            <th>VIP</th>
-          </tr>
+          <tr><th>{% ui "Feature" %}</th><th>ECN</th><th>VIP</th></tr>
         </thead>
         <tbody>
-          <tr><td>{% ui "Min Deposit" %}</td><td>$10</td><td>$200</td><td>$5,000</td></tr>
-          <tr><td>{% ui "Spreads" %}</td><td>{% ui "From 1.2 pips" %}</td><td>{% ui "From 0.0 pips" %}</td><td>{% ui "From 0.0 pips" %}</td></tr>
-          <tr><td>{% ui "Commission / lot" %}</td><td class="ok">{% ui "None" %}</td><td>$3.50</td><td>$2.00</td></tr>
-          <tr><td>{% ui "Leverage" %}</td><td>1:200</td><td>1:500</td><td>1:500</td></tr>
-          <tr><td>{% ui "Forex Trading" %}</td><td class="ok">✓</td><td class="ok">✓</td><td class="ok">✓</td></tr>
-          <tr><td>{% ui "Crypto Trading" %}</td><td class="ok">✓</td><td class="ok">✓</td><td class="ok">✓</td></tr>
-          <tr><td>{% ui "Commodities & Indices" %}</td><td class="no">—</td><td class="ok">✓</td><td class="ok">✓</td></tr>
-          <tr><td>{% ui "VPS Hosting" %}</td><td class="no">—</td><td class="ok">✓</td><td class="ok">✓</td></tr>
-          <tr><td>{% ui "Account Manager" %}</td><td class="no">—</td><td class="no">—</td><td class="ok">✓</td></tr>
-          <tr><td>{% ui "Custom Rebates" %}</td><td class="no">—</td><td class="no">—</td><td class="ok">✓</td></tr>
+          <tr><td>{% ui "Min Deposit" %}</td><td>USD 10</td><td>USD 100,000</td></tr>
+          <tr><td>{% ui "Spreads" %}</td><td>{% ui "Variable by instrument" %}</td><td>{% ui "Variable by instrument" %}</td></tr>
+          <tr><td>{% ui "Commission / lot" %}</td><td>{% ui "From USD 7" %}</td><td>{% ui "From USD 3.50" %}</td></tr>
+          <tr><td>{% ui "Leverage" %}</td><td>{% ui "Up to 1:500" %}</td><td>{% ui "Up to 1:500" %}</td></tr>
         </tbody>
       </table>
     </div>
@@ -807,13 +774,6 @@ html { scroll-behavior: smooth; }
     <div class="platform-layout">
       <div class="platform-features">
         <div class="pf-item">
-          <div class="pf-icon">📈</div>
-          <div>
-            <p class="pf-title">{% ui "Real-Time Charts" %}</p>
-            <p class="pf-body">{% ui "Professional candlestick charts with multiple timeframes, multi-chart layouts, and live bid/ask feeds." %}</p>
-          </div>
-        </div>
-        <div class="pf-item">
           <div class="pf-icon">⚙️</div>
           <div>
             <p class="pf-title">{% ui "Advanced Orders" %}</p>
@@ -824,7 +784,7 @@ html { scroll-behavior: smooth; }
           <div class="pf-icon">🌐</div>
           <div>
             <p class="pf-title">{% ui "Multi-Asset" %}</p>
-            <p class="pf-body">{% ui "Forex majors, BTC, ETH, Gold, and indices — all in one terminal, powered by Binance and Finnhub feeds." %}</p>
+            <p class="pf-body">{% ui "Explore currencies, cryptocurrencies, gold, and indices from one platform." %}</p>
           </div>
         </div>
         <div class="pf-item">
@@ -857,7 +817,7 @@ html { scroll-behavior: smooth; }
      ══════════════════════════════════════ -->
 <section class="lp-section lp" id="affiliates">
   <div class="lp-container">
-    <p class="lp-label">{% ui "Affiliates" %}</p>
+    <p class="lp-label">{% ui "IB Program" %}</p>
     <h2 style="font-family:'Orbitron',sans-serif;font-size:clamp(1.5rem,4vw,2.4rem);font-weight:900;">
       {% ui "Earn while others" %}<br><span class="gold">{% ui "trade." %}</span>
     </h2>
@@ -865,14 +825,14 @@ html { scroll-behavior: smooth; }
     <div class="aff-layout">
       <div>
         <p style="color:var(--muted);line-height:1.7;margin-bottom:0;">
-          {% ui "Refer traders to Money Broker and earn a commission on every deposit they make. No cap, no expiry." %}
+          {% ui "Recommend Money Broker to other traders and earn commissions on the volume traded by your clients." %}
         </p>
         <div class="aff-steps">
           <div class="aff-step">
             <span class="aff-n">01</span>
             <div>
               <p class="aff-step-title">{% ui "Get your link" %}</p>
-              <p class="aff-step-body">{% ui "Sign up and receive a unique referral link from your dashboard instantly." %}</p>
+              <p class="aff-step-body">{% ui "Use your IB link to introduce clients to Money Broker." %}</p>
             </div>
           </div>
           <div class="aff-step">
@@ -885,18 +845,18 @@ html { scroll-behavior: smooth; }
           <div class="aff-step">
             <span class="aff-n">03</span>
             <div>
-              <p class="aff-step-title">{% ui "Get paid in crypto" %}</p>
-              <p class="aff-step-body">{% ui "Commissions credited monthly to your wallet. Minimum payout $20." %}</p>
+              <p class="aff-step-title">{% ui "Earn on traded volume" %}</p>
+              <p class="aff-step-body">{% ui "Earn commissions based on your clients’ traded volume and the terms of your IB agreement." %}</p>
             </div>
           </div>
         </div>
       </div>
 
       <div class="aff-highlight">
-        <p class="aff-rate">20%</p>
-        <p class="aff-rate-label">{% ui "Commission on referred trader deposits" %}</p>
+        <p class="aff-rate">IB</p>
+        <p class="aff-rate-label">{% ui "Commissions on your clients’ traded volume" %}</p>
         <a href="{% url 'simulator:register' %}" class="btn-gold" style="width:100%;justify-content:center;">
-          {% ui "Join Affiliate Program" %}
+          {% ui "Join the IB Program" %}
         </a>
       </div>
     </div>
@@ -1000,11 +960,11 @@ html { scroll-behavior: smooth; }
       {% empty %}
       <div class="faq-item">
         <button class="faq-q" aria-expanded="false">{% ui "How do I open an account?" %}<span class="faq-icon">+</span></button>
-        <div class="faq-a"><p class="faq-a-inner">{% ui "Click \"Open Account\", fill in your details, choose your account type (Standard, ECN, or VIP), and make your first deposit. The whole process takes under 5 minutes." %}</p></div>
+        <div class="faq-a"><p class="faq-a-inner">{% ui "Choose an ECN or VIP account, complete your registration, and follow the steps to fund your account." %}</p></div>
       </div>
       <div class="faq-item">
-        <button class="faq-q" aria-expanded="false">{% ui "What is the difference between Standard and ECN accounts?" %}<span class="faq-icon">+</span></button>
-        <div class="faq-a"><p class="faq-a-inner">{% ui "Standard accounts have wider spreads (from 1.2 pips) but zero commission per trade — ideal for beginners. ECN accounts offer raw spreads from 0.0 pips with a $3.50/lot commission, best suited for high-volume and algorithmic traders." %}</p></div>
+        <button class="faq-q" aria-expanded="false">{% ui "What is the difference between ECN and VIP accounts?" %}<span class="faq-icon">+</span></button>
+        <div class="faq-a"><p class="faq-a-inner">{% ui "ECN accounts start at USD 10 with USD 7 commission per lot at opening. VIP accounts start at USD 100,000 with USD 3.50 per lot at opening. Spreads vary by instrument and spread charges are separate. Leverage is up to 1:500, subject to instrument limits." %}</p></div>
       </div>
       <div class="faq-item">
         <button class="faq-q" aria-expanded="false">{% ui "When can I withdraw my funds?" %}<span class="faq-icon">+</span></button>
@@ -1012,7 +972,7 @@ html { scroll-behavior: smooth; }
       </div>
       <div class="faq-item">
         <button class="faq-q" aria-expanded="false">{% ui "What are the margin requirements?" %}<span class="faq-icon">+</span></button>
-        <div class="faq-a"><p class="faq-a-inner">{% ui "Margin call is triggered at 80% margin level. Stop-out occurs at 50%. We recommend keeping free margin above 200% to withstand normal market volatility." %}</p></div>
+        <div class="faq-a"><p class="faq-a-inner">{% ui "New ECN and VIP accounts use a 100% margin call and 70% stop-out. Existing accounts retain their agreed conditions. Leverage is subject to instrument limits." %}</p></div>
       </div>
       <div class="faq-item">
         <button class="faq-q" aria-expanded="false">{% ui "Which instruments can I trade?" %}<span class="faq-icon">+</span></button>
@@ -1022,10 +982,7 @@ html { scroll-behavior: smooth; }
         <button class="faq-q" aria-expanded="false">{% ui "Is crypto the only deposit method?" %}<span class="faq-icon">+</span></button>
         <div class="faq-a"><p class="faq-a-inner">{% ui "Currently yes — we accept BTC, ETH, USDT, USDC, SOL, and BNB. Crypto allows instant global payments with no bank intermediaries. Additional methods are coming soon." %}</p></div>
       </div>
-      <div class="faq-item">
-        <button class="faq-q" aria-expanded="false">{% ui "Can I use a trading bot or EA?" %}<span class="faq-icon">+</span></button>
-        <div class="faq-a"><p class="faq-a-inner">{% ui "Yes, automated strategies and Expert Advisors are fully supported. We provide VPS hosting on ECN and VIP accounts to ensure low-latency execution for algorithmic strategies." %}</p></div>
-      </div>
+
       {% endfor %}
     </div>
   </div>
@@ -1070,7 +1027,6 @@ html { scroll-behavior: smooth; }
       <div class="footer-col">
         <h4>{% ui "Accounts" %}</h4>
         <ul>
-          <li><a href="#accounts">{% ui "Standard" %}</a></li>
           <li><a href="#accounts">ECN</a></li>
           <li><a href="#accounts">VIP</a></li>
         </ul>
@@ -1079,7 +1035,7 @@ html { scroll-behavior: smooth; }
         <h4>{% ui "Company" %}</h4>
         <ul>
           <li><a href="#why">{% ui "About Us" %}</a></li>
-          <li><a href="#affiliates">{% ui "Affiliates" %}</a></li>
+          <li><a href="#affiliates">{% ui "IB Program" %}</a></li>
           <li><a href="#faq">{% ui "FAQ" %}</a></li>
           <li><a href="#deposits">{% ui "Deposits" %}</a></li>
         </ul>

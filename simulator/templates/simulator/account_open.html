@@ -392,12 +392,12 @@
           <span class="pc-spec-val">1:{{ product.max_leverage }}</span>
         </div>
         <div class="pc-spec">
-          <span class="pc-spec-lbl">{% ui "Spread típico" %}</span>
+          <span class="pc-spec-lbl">{% ui "Recargo de cuenta (no spread total)" %}</span>
           <span class="pc-spec-val teal">{{ product.typical_spread_pips }} pips</span>
         </div>
         <div class="pc-spec">
-          <span class="pc-spec-lbl">{% ui "Comisión/lote" %}</span>
-          <span class="pc-spec-val {% if product.commission_per_lot > 0 %}purple{% endif %}">${{ product.commission_per_lot|floatformat:0 }}</span>
+          <span class="pc-spec-lbl">{% ui "Comisión/lote al abrir" %}</span>
+          <span class="pc-spec-val {% if product.commission_per_lot > 0 %}purple{% endif %}">${{ product.commission_per_lot|floatformat:2 }}</span>
         </div>
       </div>
 
@@ -534,12 +534,12 @@
           <span class="pc-spec-val">1:{{ product.max_leverage }}</span>
         </div>
         <div class="pc-spec">
-          <span class="pc-spec-lbl">{% ui "Spread típico" %}</span>
+          <span class="pc-spec-lbl">{% ui "Recargo de cuenta (no spread total)" %}</span>
           <span class="pc-spec-val teal">{{ product.typical_spread_pips }} pips</span>
         </div>
         <div class="pc-spec">
-          <span class="pc-spec-lbl">{% ui "Comisión/lote" %}</span>
-          <span class="pc-spec-val {% if product.commission_per_lot > 0 %}purple{% endif %}">${{ product.commission_per_lot|floatformat:0 }}</span>
+          <span class="pc-spec-lbl">{% ui "Comisión/lote al abrir" %}</span>
+          <span class="pc-spec-val {% if product.commission_per_lot > 0 %}purple{% endif %}">${{ product.commission_per_lot|floatformat:2 }}</span>
         </div>
       </div>
 
@@ -633,8 +633,8 @@ function openRealModal(productId, name, minDeposit, platform, leverage, spread, 
   document.getElementById('realSummary').innerHTML =
     '<strong>' + name + '</strong> — ' + platform + '<br>' +
     'Apalancamiento: <strong>1:' + leverage + '</strong> · ' +
-    'Spread: <strong>' + spread + ' pips</strong><br>' +
-    'Comisión/lote: <strong>$' + parseFloat(commPerLot).toFixed(0) + '</strong>';
+    'Recargo de cuenta (no spread total): <strong>' + spread + ' pips</strong><br>' +
+    'Comisión/lote al abrir: <strong>$' + parseFloat(commPerLot).toFixed(2) + '</strong>';
   openModal('realModal');
 }
 
@@ -644,8 +644,8 @@ function openDemoModal(productId, name, defaultBalance, platform, leverage, spre
     '<strong>' + name + '</strong> — ' + platform + '<br>' +
     'Balance virtual: <strong>$' + parseFloat(defaultBalance).toLocaleString() + '</strong> · ' +
     'Apalancamiento: <strong>1:' + leverage + '</strong><br>' +
-    'Spread: <strong>' + spread + ' pips</strong> · ' +
-    'Comisión/lote: <strong>$' + parseFloat(commPerLot).toFixed(0) + '</strong>';
+    'Recargo de cuenta (no spread total): <strong>' + spread + ' pips</strong> · ' +
+    'Comisión/lote al abrir: <strong>$' + parseFloat(commPerLot).toFixed(2) + '</strong>';
   openModal('demoModal');
 }
 

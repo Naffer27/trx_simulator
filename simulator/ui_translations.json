@@ -3742,5 +3742,113 @@
   "Actualizado": {
     "es": "Actualizado",
     "en": "Updated"
+  },
+  "From $100,000": {
+    "es": "Desde $100.000",
+    "en": "From $100,000"
+  },
+  "Commission from USD 7 per lot": {
+    "es": "Comisión desde USD 7 por lote",
+    "en": "Commission from USD 7 per lot"
+  },
+  "Commission from USD 3.50 per lot": {
+    "es": "Comisión desde USD 3,50 por lote",
+    "en": "Commission from USD 3.50 per lot"
+  },
+  "From USD 7": {
+    "en": "From USD 7",
+    "es": "Desde USD 7"
+  },
+  "From USD 3.50": {
+    "en": "From USD 3.50",
+    "es": "Desde USD 3,50"
+  },
+  "Up to 1:500": {
+    "en": "Up to 1:500",
+    "es": "Hasta 1:500"
+  },
+  "Candlestick charts to follow price movements and analyze the market.": {
+    "es": "Gráficos de velas para seguir los movimientos del precio y analizar el mercado.",
+    "en": "Candlestick charts to follow price movements and analyze the market."
+  },
+  "Explore currencies, cryptocurrencies, gold, and indices from one platform.": {
+    "es": "Explora divisas, criptomonedas, oro e índices desde una sola plataforma.",
+    "en": "Explore currencies, cryptocurrencies, gold, and indices from one platform."
+  },
+  "Recommend Money Broker to other traders and earn commissions on the volume traded by your clients.": {
+    "es": "Recomienda Money Broker a otros operadores y gana comisiones por el volumen en lotes operado por tus clientes.",
+    "en": "Recommend Money Broker to other traders and earn commissions on the volume traded by your clients."
+  },
+  "Use your IB link to introduce clients to Money Broker.": {
+    "es": "Utiliza tu enlace de IB para presentar clientes a Money Broker.",
+    "en": "Use your IB link to introduce clients to Money Broker."
+  },
+  "Earn commissions based on your clients’ traded volume and the terms of your IB agreement.": {
+    "es": "Genera comisiones según el volumen operado por tus clientes y las condiciones de tu acuerdo IB.",
+    "en": "Earn commissions based on your clients’ traded volume and the terms of your IB agreement."
+  },
+  "Earn on traded volume": {
+    "es": "Gana por el volumen operado",
+    "en": "Earn on traded volume"
+  },
+  "Commissions on your clients’ traded volume": {
+    "es": "Comisiones por el volumen operado por tus clientes",
+    "en": "Commissions on your clients’ traded volume"
+  },
+  "Join the IB Program": {
+    "es": "Únete al programa IB",
+    "en": "Join the IB Program"
+  },
+  "IB Program": {
+    "en": "IB Program",
+    "es": "Programa IB"
+  },
+  "Choose an ECN or VIP account, complete your registration, and follow the steps to fund your account.": {
+    "es": "Elige una cuenta ECN o VIP, completa tu registro y sigue los pasos para depositar en tu cuenta.",
+    "en": "Choose an ECN or VIP account, complete your registration, and follow the steps to fund your account."
+  },
+  "What is the difference between ECN and VIP accounts?": {
+    "es": "¿Cuál es la diferencia entre las cuentas ECN y VIP?",
+    "en": "What is the difference between ECN and VIP accounts?"
+  },
+  "ECN accounts start at USD 10, with commissions from USD 7 per lot. VIP accounts start at USD 100,000, with commissions from USD 3.50 per lot. Both offer spreads from 0.0 pips and leverage up to 1:500.": {
+    "es": "Las cuentas ECN tienen un depósito mínimo de USD 10 y comisiones desde USD 7 por lote. Las cuentas VIP tienen un depósito mínimo de USD 100.000 y comisiones desde USD 3,50 por lote. Ambas ofrecen spreads desde 0,0 pips y apalancamiento de hasta 1:500.",
+    "en": "ECN accounts start at USD 10, with commissions from USD 7 per lot. VIP accounts start at USD 100,000, with commissions from USD 3.50 per lot. Both offer spreads from 0.0 pips and leverage up to 1:500."
+  },
+  "Variable spreads by instrument": {
+    "en": "Variable spreads by instrument",
+    "es": "Spreads variables por instrumento"
+  },
+  "Variable by instrument": {
+    "en": "Variable by instrument",
+    "es": "Variable por instrumento"
+  },
+  "USD 7 per lot, charged at opening": {
+    "en": "USD 7 per lot, charged at opening",
+    "es": "USD 7 por lote, cobrados al abrir"
+  },
+  "USD 3.50 per lot, charged at opening": {
+    "en": "USD 3.50 per lot, charged at opening",
+    "es": "USD 3,50 por lote, cobrados al abrir"
+  },
+  "New ECN and VIP accounts use a 100% margin call and 70% stop-out. Existing accounts retain their agreed conditions. Leverage is subject to instrument limits.": {
+    "en": "New ECN and VIP accounts use a 100% margin call and 70% stop-out. Existing accounts retain their agreed conditions. Leverage is subject to instrument limits.",
+    "es": "Las nuevas cuentas ECN y VIP tienen margin call del 100 % y stop-out del 70 %. Las cuentas existentes conservan sus condiciones acordadas. El apalancamiento está sujeto a los límites de cada instrumento."
+  },
+  "ECN accounts start at USD 10 with USD 7 commission per lot at opening. VIP accounts start at USD 100,000 with USD 3.50 per lot at opening. Spreads vary by instrument and spread charges are separate. Leverage is up to 1:500, subject to instrument limits.": {
+    "en": "ECN accounts start at USD 10 with USD 7 commission per lot at opening. VIP accounts start at USD 100,000 with USD 3.50 per lot at opening. Spreads vary by instrument and spread charges are separate. Leverage is up to 1:500, subject to instrument limits.",
+    "es": "Las cuentas ECN empiezan desde USD 10, con comisión de USD 7 por lote al abrir. Las VIP, desde USD 100.000, con USD 3,50 por lote al abrir. Los spreads varían por instrumento y sus cargos se cobran aparte. Apalancamiento hasta 1:500, sujeto a los límites de cada instrumento."
+  },
+  "Commission is charged at opening. Spread charges are separate. Leverage depends on the instrument; BTC is capped at 1:20. Existing accounts retain their agreed conditions.": {
+    "en": "Commission is charged at opening. Spread charges are separate. Leverage depends on the instrument; BTC is capped at 1:20. Existing accounts retain their agreed conditions.",
+    "es": "La comisión se cobra al abrir. Los cargos de spread se cobran aparte. El apalancamiento depende del instrumento; BTC tiene un límite de 1:20. Las cuentas existentes conservan sus condiciones acordadas."
+  },
+  "Recargo de cuenta (no spread total)": {
+    "es": "Recargo de cuenta (no spread total)",
+    "en": "Account markup (not total spread)"
+  },
+  "Comisión/lote al abrir": {
+    "es": "Comisión/lote al abrir",
+    "en": "Commission per lot at opening"
   }
 }
