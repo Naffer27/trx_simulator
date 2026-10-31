@@ -22,6 +22,7 @@ class MobileTradingChart {
     this.candleSeries = null;
     this.volumeSeries = null;
     this.bars = [];
+    this._hasInitialHistory = false;
     this._resizeObs = null;
     // ISOLATED FIX — symbol/scale coherence for SL/TP editing. The
     // symbol whose candle data is CURRENTLY ACCEPTED into candleSeries
@@ -253,7 +254,8 @@ class MobileTradingChart {
     if (this.bars.length) {
       this.candleSeries.setData(this.bars);
       this.volumeSeries.setData(this.bars.map(volPointForBar));
-      this.chart.timeScale().fitContent();
+      if (this._historySymbol) this.setSymbolFormat(this._historySymbol);
+      this._frameInitialHistory();
     }
     this.setPositions(this._lastPositions, this._selectedId);
   }
@@ -335,6 +337,7 @@ class MobileTradingChart {
   // GOLDEN-MARKETDATA-CRYPTO-01 (visual reset must happen independently
   // of the bars array reset).
   clear() {
+    this._hasInitialHistory = false;
     this.bars = [];
     this.candleSeries?.setData([]);
     this.volumeSeries?.setData([]);
@@ -1403,6 +1406,25 @@ class MobileTradingChart {
     });
   }
 
+  // Frame only new history, never live ticks or older-history extensions.
+  // A bounded recent window keeps mobile candles readable even with years
+  // of loaded history; all older bars remain available by panning.
+  _frameInitialHistory() {
+    if (!this.chart || !this.bars.length) return;
+    this.chart.priceScale('right').applyOptions({
+      autoScale: true, scaleMargins: { top: 0.12, bottom: 0.12 },
+    });
+    const scale = this.chart.timeScale();
+    const count = Math.min(this.bars.length, Math.max(20,
+      Math.min(100, Math.floor((this.containerEl.clientWidth || 390) / 8))));
+    if (typeof scale.setVisibleLogicalRange === 'function') {
+      const last = this.bars.length - 1;
+      scale.setVisibleLogicalRange({ from: last - count + 1, to: last + 3 });
+    } else {
+      scale.fitContent();
+    }
+  }
+
   // History — same real phase contract already proven on Desktop: a
   // "complete" (depth-fetch) response arriving after bars already exist
   // (from the "initial" fast-paint) must never replace them — only
@@ -1426,7 +1448,10 @@ class MobileTradingChart {
       }))
       .filter((b) => b.time && b.open != null && b.high != null && b.low != null && b.close != null);
 
-    if ((phase || 'complete') === 'complete' && this.bars.length) {
+    if (!bars.length) return;
+    // A live candle can arrive first. Only accepted history establishes
+    // the initial viewport; bars.length alone cannot distinguish it.
+    if ((phase || 'complete') === 'complete' && this._hasInitialHistory && this.bars.length) {
       const earliest = this.bars[0].time;
       const older = bars.filter((b) => b.time < earliest);
       if (older.length) {
@@ -1441,11 +1466,11 @@ class MobileTradingChart {
     // from the previous instrument must not flatten the new candles.
     // Live updates and older-history prepends keep the user's zoom.
     if (symbol) this.setSymbolFormat(symbol);
-    this.chart?.priceScale('right').applyOptions({ autoScale: true });
     this.bars = bars;
+    this._hasInitialHistory = true;
     this.candleSeries?.setData(bars);
     this.volumeSeries?.setData(bars.map(volPointForBar));
-    this.chart?.timeScale().fitContent();
+    this._frameInitialHistory();
     if (symbol) {
       this._historySymbol = symbol;
       // ISOLATED FIX (Parte A) — records that THIS generation (the one

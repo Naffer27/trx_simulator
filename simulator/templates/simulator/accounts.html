@@ -232,13 +232,23 @@
       <span class="ac-status status-{{ acc.status }}">{{ acc.status }}</span>
     </div>
     <div class="ac-body">
+      {% if acc.account_type == 'DEMO' %}
+      <div style="font-size:1rem;font-weight:700;color:var(--text);overflow-wrap:anywhere">{% if acc.product_name_snapshot %}{% ui acc.product_name_snapshot %}{% else %}{% ui "Cuenta demo" %}{% endif %}</div>
+      <div class="ac-lbl">{% ui "Fondos virtuales para practicar" %}</div>
+      {% if acc.commission_per_lot_snapshot != None %}
+      <div class="ac-row">
+        <span class="ac-lbl">{% ui "Comisión/lote al abrir" %}</span>
+        <span class="ac-val gold">{{ acc.currency }} {{ acc.commission_per_lot_snapshot|floatformat:"2g" }}</span>
+      </div>
+      {% endif %}
+      {% endif %}
       <div class="ac-row">
         <span class="ac-lbl">{% ui "Balance" %}</span>
-        <span class="ac-val">${{ acc.balance|floatformat:2 }}</span>
+        <span class="ac-val">${{ acc.balance|floatformat:"2g" }}</span>
       </div>
       <div class="ac-row">
         <span class="ac-lbl">{% ui "Equity" %}</span>
-        <span class="ac-val">${{ acc.equity|floatformat:2 }}</span>
+        <span class="ac-val">${{ acc.equity|floatformat:"2g" }}</span>
       </div>
       <div class="ac-row">
         <span class="ac-lbl">{% ui "Apalancamiento" %}</span>

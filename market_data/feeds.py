@@ -124,7 +124,12 @@ def _finnhub_sym(symbol: str) -> str:
 # history (fetch_kline_history, below) is completely untouched — these are
 # two disjoint symbol sets by construction (kline_symbols() vs this
 # allowlist), never merged into one provider-selection framework.
-_MASSIVE_ENABLED_SYMBOLS = frozenset({"EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD"})
+# Gold data can be certified independently of trading permission. This
+# opt-in never changes SymbolSpec.enabled or an account's allowed symbols.
+_MASSIVE_GOLD_DATA_ENABLED = os.getenv("MASSIVE_GOLD_DATA_ENABLED", "").strip() == "1"
+_MASSIVE_ENABLED_SYMBOLS = frozenset({"EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD"}) | (
+    frozenset({"XAU/USD"}) if _MASSIVE_GOLD_DATA_ENABLED else frozenset()
+)
 
 # multiplier, timespan — Massive's own /v2/aggs/ticker/.../range/{mult}/{span}/...
 # path segments. Single source of truth; consumers.py never duplicates this.
@@ -266,7 +271,9 @@ def _finalize_massive_bars(bars: list, limit: int) -> list:
 # — confirmed live (GOLDEN-LIVE-PROVIDER-01: "1-connection-4-symbols
 # works").
 _MASSIVE_WS_URL = "wss://socket.massive.com/forex"
-_MASSIVE_WS_ENABLED_SYMBOLS = frozenset({"EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD"})  # B2
+# Same route for historical bars and bid/ask; gold shares the existing
+# forex connection, never opening a competing upstream connection.
+_MASSIVE_WS_ENABLED_SYMBOLS = frozenset(s for s in _MASSIVE_ENABLED_SYMBOLS)
 
 # FIX-05B.3-B1.1/B2 — data-staleness watchdog. GOLDEN-MASSIVE-PRICECACHE-01
 # found the WS connection can stay technically alive (ping/pong healthy,

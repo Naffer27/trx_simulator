@@ -8,7 +8,7 @@ const RGX_HEX=/^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i;
 const hexToRgba=(hex,a=1)=>{const m=RGX_HEX.exec(hex);if(!m)return hex;return `rgba(${parseInt(m[1],16)},${parseInt(m[2],16)},${parseInt(m[3],16)},${a})`;};
 
 /* ── Shared utils ── */
-const priceFormatFor=sym=>(sym.includes('BTC')||sym.includes('ETH'))?{precision:2,minMove:0.01}:sym.endsWith('/JPY')?{precision:3,minMove:0.001}:{precision:5,minMove:0.00001};
+const priceFormatFor=sym=>(sym.includes('BTC')||sym.includes('ETH')||sym==='XAU/USD')?{precision:2,minMove:0.01}:sym.endsWith('/JPY')?{precision:3,minMove:0.001}:{precision:5,minMove:0.00001};
 // LIVE-CHART-MAGNITUDE-FILTER-01 — the REAL pip size, hand-verified,
 // deliberately NEVER derived from priceFormatFor().minMove: minMove is
 // the order-pricing tick/pipette granularity (0.00001 for most forex

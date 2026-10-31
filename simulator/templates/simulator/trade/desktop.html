@@ -2837,7 +2837,8 @@ class TradingPanel {
   }
 
   _buildDOM(){
-    const SYMS=['EUR/USD','GBP/USD','USD/JPY','AUD/USD','BTCUSD','ETHUSD']; // mirrors backend _ALLOWED_SYMBOLS (symbol_specs.enabled=True)
+    const SYMS=['EUR/USD','GBP/USD','USD/JPY','AUD/USD','BTCUSD','ETHUSD'];
+{% if gold_demo_enabled %}SYMS.push('XAU/USD');{% endif %} // mirrors backend _ALLOWED_SYMBOLS (symbol_specs.enabled=True)
     const opts=SYMS.map(s=>`<option value="${s}"${s===this.currentSymbol?' selected':''}>${s.replace('/','')}</option>`).join('');
     this.wrapper.innerHTML=`
       <div class="panel-toolbar">
@@ -5501,7 +5502,8 @@ function _renderHstSummary(trades){
 }
 
 /* ── Quotes panel ── */
-const ALL_SYMBOLS=['EUR/USD','GBP/USD','USD/JPY','AUD/USD','BTCUSD','ETHUSD']; // mirrors backend _ALLOWED_SYMBOLS (symbol_specs.enabled=True)
+const ALL_SYMBOLS=['EUR/USD','GBP/USD','USD/JPY','AUD/USD','BTCUSD','ETHUSD'];
+{% if gold_demo_enabled %}ALL_SYMBOLS.push('XAU/USD');{% endif %} // mirrors backend _ALLOWED_SYMBOLS (symbol_specs.enabled=True)
 const quotesLivePx={};
 const quotesList=document.getElementById('quotesList'),quotesSearch=document.getElementById('quotesSearch');
 function _fmtQPx(p,sym){if(p==null)return'—';const s=String(sym||'');if(s.includes('JPY')||s==='US30'||s==='US500'||s==='NAS100')return p.toFixed(2);if(s==='BTCUSD'||s==='ETHUSD')return p.toFixed(2);if(s.includes('XAU')||s.includes('XAG'))return p.toFixed(2);return p.toFixed(5);}

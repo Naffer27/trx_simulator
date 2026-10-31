@@ -1,0 +1,22 @@
+{
+  "checked_at": "2026-10-31T13:49:11.624885+00:00",
+  "websocket_probed": false,
+  "results": {
+    "gold_quote": {
+      "http_status": 200,
+      "status": "success",
+      "bid": 3874.86,
+      "ask": 3876.19,
+      "timestamp": 1793393972000
+    },
+    "gold_history": {
+      "http_status": 200,
+      "status": "OK",
+      "bars": 3,
+      "latest_timestamp": 1793393940000
+    },
+    "us30_access": {
+      "http_status": 403
+    }
+  }
+}

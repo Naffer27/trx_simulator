@@ -4303,13 +4303,42 @@ class BrokerSpreadConfigAdmin(admin.ModelAdmin):
     list_filter    = ('enabled', 'is_dynamic', 'spread_bounds_enabled')
     search_fields  = ('symbol',)
     list_editable  = ('spread_pips', 'enabled', 'is_dynamic', 'spread_bounds_enabled')
-    readonly_fields = ('created_at',)
+    readonly_fields = ('created_at', 'spread_units_explanation')
     fields = (
-        'symbol', 'spread_pips', 'enabled', 'is_dynamic',
+        'symbol', 'spread_pips', 'spread_units_explanation', 'enabled', 'is_dynamic',
         'manual_multiplier', 'manual_reason', 'manual_expires_at',
         'spread_bounds_enabled', 'min_spread', 'max_spread', 'created_at',
     )
     ordering       = ('symbol',)
+
+
+    def formfield_for_dbfield(self, db_field, request, **kwargs):
+        if db_field.name == 'spread_pips':
+            kwargs['label'] = 'Recargo total del broker (pips del instrumento)'
+            kwargs['help_text'] = (
+                'Se añade al spread del proveedor y se reparte entre bid y ask. '
+                'No es un recargo completo por cada lado ni el spread final. '
+                'El perfil de cuenta, límites y modo dinámico también pueden modificarlo.'
+            )
+        return super().formfield_for_dbfield(db_field, request, **kwargs)
+
+    @admin.display(description='Unidades y alcance del recargo')
+    def spread_units_explanation(self, obj):
+        from .spread_admin_preview import spread_units
+        info = spread_units(obj)
+        if info is None:
+            return 'Selecciona un símbolo con especificación en el motor.'
+        return format_html(
+            '<p>1 pip = {} unidades de precio. Recargo base total: {}; '
+            'mitad teórica por lado: {}.</p><p>{}</p><p>{}</p>'
+            '<p>Vista del valor guardado; guarda para recalcular. No es una cotización. '
+            'Activar esta configuración no habilita el instrumento.</p>',
+            info['pip'], info['extra'], info['per_side'],
+            ('Atención: el redondeo del instrumento puede alterar este recargo.'
+             if info['rounding_required'] else 'El recargo cabe en la precisión del instrumento.'),
+            ('Instrumento habilitado en el registro.' if info['instrument_enabled']
+             else 'Instrumento deshabilitado: esta ficha no autoriza operaciones.'),
+        )
 
 
 class WithdrawalFeeConfigForm(forms.ModelForm):

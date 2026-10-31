@@ -11,6 +11,7 @@ from django.utils import timezone
 
 from market_data.feeds import get_feed_manager, _validate_quote_values, _closed_only, _MASSIVE_ENABLED_SYMBOLS, _MASSIVE_CRYPTO_ENABLED_SYMBOLS
 from market_data.symbol_specs import get_spec, allowed_symbols, kline_symbols
+from .gold_demo_policy import gold_demo_allowed, gold_demo_for_account
 from .models import TradingAccount, Position, Trade, LedgerEntry, BrokerLedger, PendingOrder
 from .spread_engine import broker_price, calculate_spread_revenue, _get_config as _get_spread_config
 from .observability import security_log
@@ -700,6 +701,9 @@ def _trigger_pending_order_core(pending_order_id: int, execution_price: float) -
             ))
             return {"ok": False, "code": code, "position_id": None, "merged": None}
 
+        if symbol == 'XAU/USD':
+            return _reject('gold_pilot_market_only', 'El piloto de oro admite solo órdenes de mercado.')
+
         # Design lock section 4 — SL/TP revalidated against the REAL fill
         # price (never trigger_price). Same pure validator _order_new()
         # uses for a market order — no second SL/TP policy invented.
@@ -1313,6 +1317,14 @@ class TradingConsumer(AsyncWebsocketConsumer):
         if feed:
             await feed.unsubscribe(self.symbol, self.channel_layer, self.channel_name)
 
+    def _symbol_allowed_for_account(self, symbol):
+        if symbol in _ALLOWED_SYMBOLS:
+            return True
+        account = getattr(self, 'account', {})
+        return symbol == 'XAU/USD' and gold_demo_allowed(
+            getattr(self, '_db_account_id', None), account.get('account_type'),
+            account.get('currency'), account.get('allowed_symbols'))
+
     # ---------------- Mensajes entrantes ----------------
     async def receive(self, text_data: str):
         self._last_msg_ts = time.time()
@@ -1330,7 +1342,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
         if act == "change_symbol":
             new_sym = data.get("symbol", self.symbol)
-            if new_sym not in _ALLOWED_SYMBOLS:
+            if not self._symbol_allowed_for_account(new_sym):
                 await self.send_json({"type": "error", "code": "invalid_symbol", "message": "simbolo_no_permitido"})
                 return
             old_sym = self.symbol
@@ -1372,6 +1384,9 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
         elif act == "load_history":
             sym = data.get("symbol", self.symbol)
+            if sym == 'XAU/USD' and not self._symbol_allowed_for_account(sym):
+                await self.send_json({"type": "error", "code": "invalid_symbol", "message": "simbolo_no_permitido"})
+                return
             # PRE-VPS-POLISH-03C.3.TF-01 — same fail-closed rejection
             # as change_timeframe above: an unrecognized timeframe is
             # rejected explicitly, never silently remapped.
@@ -2205,7 +2220,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
         sl   = data.get("sl")
         tp   = data.get("tp")
 
-        if sym not in _ALLOWED_SYMBOLS:
+        if not self._symbol_allowed_for_account(sym):
             await self.send_json({"type": "error", "code": "invalid_symbol", "message": "simbolo_no_permitido"})
             return
 
@@ -4773,6 +4788,10 @@ class TradingConsumer(AsyncWebsocketConsumer):
         more honest than fabricating one for the merge.
         """
         if not self._db_account_id:
+            if symbol == 'XAU/USD':
+                return {"ok": False, "error_code": "symbol_not_allowed",
+                        "message": "Oro requiere una cuenta demo autorizada.",
+                        "position_id": None, "merged": False, "routing_decision_id": None}
             return {"position_id": None, "merged": False, "ok": True, "routing_decision_id": None}
         from decimal import Decimal
         with transaction.atomic():
@@ -4852,6 +4871,11 @@ class TradingConsumer(AsyncWebsocketConsumer):
                     "max_total_margin_pct": _DEFAULT_MAX_TOTAL_MARGIN_PCT,
                     "current_open_positions": 0, "max_open_positions": 0,
                 }
+
+            if symbol == 'XAU/USD' and not gold_demo_for_account(account):
+                return {"ok": False, "error_code": "symbol_not_allowed",
+                        "message": "Oro no habilitado para esta cuenta demo.",
+                        "position_id": None, "merged": False, "routing_decision_id": None}
 
             # 2. NOW lock every open Position for this account — issued
             # and evaluated (list(...) forces immediate execution) STRICTLY

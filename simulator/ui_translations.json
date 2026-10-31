@@ -3849,6 +3849,26 @@
   },
   "Comisión/lote al abrir": {
     "es": "Comisión/lote al abrir",
-    "en": "Commission per lot at opening"
+    "en": "Commission/lot at open"
+  },
+  "Demo VIP — reglas reales": {
+    "es": "Demo VIP — reglas reales",
+    "en": "Demo VIP — real account rules"
+  },
+  "Demo ECN — reglas reales": {
+    "es": "Demo ECN — reglas reales",
+    "en": "Demo ECN — real account rules"
+  },
+  "Demo Standard": {
+    "es": "Demo Estándar",
+    "en": "Demo Standard"
+  },
+  "Cuenta demo": {
+    "es": "Cuenta demo",
+    "en": "Demo account"
+  },
+  "Fondos virtuales para practicar": {
+    "es": "Fondos virtuales para practicar",
+    "en": "Virtual funds for practice"
   }
 }

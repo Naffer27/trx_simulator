@@ -416,11 +416,14 @@ def trading_dashboard(request, account_id=None):
     # SymbolSpec fields, nothing invented. No daily %/sparkline/high-low/
     # market-status/fake-quote fields exist on SymbolSpec, so none are
     # exposed here.
+    from .gold_demo_policy import gold_demo_for_account
+    gold_demo_enabled = gold_demo_for_account(account)
+    dashboard_symbols = _allowed_symbols() | ({'XAU/USD'} if gold_demo_enabled else set())
     mobile_allowed_symbols_json = json.dumps(
         [
             {"symbol": sp.symbol, "asset_class": sp.asset_class}
             for sp in _get_all_specs()
-            if sp.symbol in _allowed_symbols()
+            if sp.symbol in dashboard_symbols
         ]
     )
 
@@ -627,6 +630,7 @@ def trading_dashboard(request, account_id=None):
         'equity_curve_json':     equity_curve_json,
         'contract_size_json':    contract_size_json,
         'mobile_allowed_symbols_json': mobile_allowed_symbols_json,
+        'gold_demo_enabled': gold_demo_enabled,
         'trader_score':          trader_score,
         'recent_violations':     recent_violations,
         'win_rate_pct':          win_rate_pct,
