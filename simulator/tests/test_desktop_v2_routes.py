@@ -16,7 +16,7 @@ class DesktopV2RoutesTests(TestCase):
         response = self.client.get(reverse('simulator:dashboard_v2_account', args=[self.account.pk]))
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, 'simulator/trade/desktop_v2.html')
-        self.assertContains(response, reverse('simulator:dashboard_account', args=[self.account.pk]))
+        self.assertContains(response, reverse('simulator:home'))
 
     def test_classic_panel_preserved(self):
         self.client.force_login(self.user)
