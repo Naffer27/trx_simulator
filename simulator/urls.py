@@ -27,6 +27,7 @@ from .views import (
     logout_view,
     register_view,
     trading_dashboard,
+    trading_dashboard_v2,
     api_orden,
     landing_view,
     home_view,
@@ -137,6 +138,9 @@ urlpatterns = [
     path("dashboard/<int:account_id>/", trading_dashboard, name="dashboard_account"),
     path("dashboard/",                  trading_dashboard, name="dashboard"),
     path("dashboard/alt/",              trading_dashboard, name="dashboard_alt"),
+    # DESKTOP-V2 (vista previa) — ruta nueva; /dashboard/ sigue igual
+    path("dashboard/v2/",                    trading_dashboard_v2, name="dashboard_v2"),
+    path("dashboard/v2/<int:account_id>/",   trading_dashboard_v2, name="dashboard_v2_account"),
 
     # Account switcher (legacy — session-based)
     path("accounts/switch/<int:account_id>/", switch_account_view, name="switch_account"),

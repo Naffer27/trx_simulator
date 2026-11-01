@@ -668,7 +668,19 @@ def trading_dashboard(request, account_id=None):
         'simulator/trade/mobile.html' if _is_mobile_request(request)
         else 'simulator/trade/shell.html'
     )
+    # DESKTOP-V2 (vista previa) — solo la ruta /dashboard/v2/ usa el template nuevo.
+    # Misma vista, mismos permisos y mismos datos: únicamente cambia el template final.
+    if getattr(request, "_desktop_v2", False):
+        template_name = 'simulator/trade/desktop_v2.html'
     return render(request, template_name, context)
+
+
+@login_required
+def trading_dashboard_v2(request, account_id=None):
+    """DESKTOP-V2 (vista previa) — reutiliza trading_dashboard() completa
+    (resolución de cuenta, permisos y contexto); solo cambia el template final."""
+    request._desktop_v2 = True
+    return trading_dashboard(request, account_id)
 
 
 # -----------------------
