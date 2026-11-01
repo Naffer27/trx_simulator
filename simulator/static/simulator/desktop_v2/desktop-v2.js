@@ -622,11 +622,11 @@
     else if (a === 'cancel') { API.cancelOrder(parseInt(b.dataset.id, 10)).then(function () { toast('Orden cancelada'); log('Orden cancelada'); return refreshTrading(); }).catch(function (e) { toast(e.message || 'No se pudo cancelar'); }); }
     else if (a === 'edit') {
       var pe = D.positions.find(function (x) { return String(x.id) === String(b.dataset.id); }); if (!pe) return;
-      var nsl = window.prompt('Stop Loss para ' + pe.sym + ' (vacío = sin SL):', pe.sl === null || pe.sl === undefined ? '' : String(pe.sl)); if (nsl === null) return;
-      var ntp = window.prompt('Take Profit para ' + pe.sym + ' (vacío = sin TP):', pe.tp === null || pe.tp === undefined ? '' : String(pe.tp)); if (ntp === null) return;
-      var vsl = parseNum(nsl), vtp = parseNum(ntp);
+      var nsl = window.prompt('Stop Loss para ' + pe.sym + ' (vacío = conservar SL actual):', pe.sl === null || pe.sl === undefined ? '' : String(pe.sl)); if (nsl === null) return;
+      var ntp = window.prompt('Take Profit para ' + pe.sym + ' (vacío = conservar TP actual):', pe.tp === null || pe.tp === undefined ? '' : String(pe.tp)); if (ntp === null) return;
+      var vsl = nsl.trim() ? parseNum(nsl) : pe.sl, vtp = ntp.trim() ? parseNum(ntp) : pe.tp;
       if ((nsl.trim() && vsl === null) || (ntp.trim() && vtp === null)) { toast('Valor inválido'); return; }
-      API.modifyPosition(pe.id, vsl, vtp).then(function () { toast('SL/TP enviado al servidor'); log('SL/TP ' + pe.sym + ' → SL ' + (vsl === null ? '—' : vsl) + ' · TP ' + (vtp === null ? '—' : vtp)); return refreshTrading(); })
+      API.modifyPosition(pe.id, vsl, vtp).then(function () { toast('SL/TP confirmado'); log('SL/TP ' + pe.sym + ' → SL ' + (vsl === null ? '—' : vsl) + ' · TP ' + (vtp === null ? '—' : vtp)); return refreshTrading(); })
         .catch(function (e) { toast(e.message || 'No se pudo modificar'); });
     }
     else if (a === 'close-all') {
@@ -690,7 +690,7 @@
     }
     if (!window.confirm('¿Mover el ' + a.k.toUpperCase() + ' de ' + p.sym + ' a ' + px(p.sym, a.precio) + '?')) { drawCharts(); return; }
     var nsl = a.k === 'sl' ? a.precio : p.sl, ntp = a.k === 'tp' ? a.precio : p.tp;
-    API.modifyPosition(p.id, nsl, ntp).then(function () { toast(a.k.toUpperCase() + ' movido · enviado al servidor'); log(a.k.toUpperCase() + ' ' + p.sym + ' → ' + px(p.sym, a.precio)); return refreshTrading(); })
+    API.modifyPosition(p.id, nsl, ntp).then(function () { toast(a.k.toUpperCase() + ' confirmado por el servidor'); log(a.k.toUpperCase() + ' ' + p.sym + ' → ' + px(p.sym, a.precio)); return refreshTrading(); })
       .catch(function (e) { toast(e.message || 'No se pudo mover'); drawCharts(); });
   });
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { var q = false; panels.forEach(function (P) { if (P.temp) { P.temp = null; q = true; } }); if (q) drawCharts(); } });

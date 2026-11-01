@@ -100,7 +100,9 @@ window.MB_API = (function () {
       enviar({ action: 'account:get' });
     };
     ws.onclose = function () {
-      account.connected = false; setConn(false); clearInterval(hb);
+      account.connected = false; liveMid = null; preview = {}; previewAt = {}; nominal = {};
+      if (modificacion) { var failed = modificacion; modificacion = null; terminar(failed); failed.reject(new Error("Conexión perdida. Verifica SL/TP antes de reintentar.")); }
+      setConn(false); clearInterval(hb);
       reintento = Math.min(reintento * 2, 15000); setTimeout(conectar, reintento);
     };
     ws.onmessage = function (ev) { var m; try { m = JSON.parse(ev.data); } catch (e) { return; } try { manejar(m); } catch (e) { if (window.console) console.warn('[V2] mensaje no procesado', m && m.type, e); } };
@@ -126,12 +128,17 @@ window.MB_API = (function () {
   var enCurso = null;          // orden de mercado o pendiente: { tipo, resolve, reject, payload, timer, ack }
   var cierres = [];            // [{ id, resolve, reject, timer }]
   var cancelaciones = [];      // [{ id, resolve, reject, timer }]
+  var modificacion = null;
+  var previewAt = {};
   var preview = {};            // 'BTC/USD|0.01' -> margin_required (del motor)
   var nominal = {};            // 'BTC/USD|0.01' -> notional (del motor)
   function terminar(o) { if (o && o.timer) clearTimeout(o.timer); }
 
   function respuestaOrden(m) {
     var t = m.type;
+    if (modificacion && (t === 'error' || (t === 'warn' && m.message === 'order_update_not_found'))) {
+      var failed = modificacion; modificacion = null; terminar(failed); failed.reject(new Error(textoError(m))); return true;
+    }
     if (enCurso && enCurso.tipo === 'mercado') {
       if (t === 'order_fill') { var o = enCurso; enCurso = null; terminar(o); o.resolve({ kind: 'position', item: { id: m.order_id, sym: v2(m.symbol || cur.sym), entry: num(m.price) } }); return false; }
       if (t === 'order_ack') {    // si el fill no llega en 1.5s, se da por aceptada con el ack del motor
@@ -171,7 +178,7 @@ window.MB_API = (function () {
       var cc = cancelaciones.splice(j, 1)[0]; terminar(cc); cc.resolve(true); return false;
     }
     if (t === 'error_pending' && cancelaciones.length && !enCurso) { var cc2 = cancelaciones.shift(); terminar(cc2); cc2.reject(new Error(textoError(m))); return true; }
-    if (t === 'risk_preview' && m.symbol) { var mr = m.margin_required !== undefined ? m.margin_required : m.new_margin_required; preview[m.symbol + '|' + Number(m.qty)] = num(mr); nominal[m.symbol + '|' + Number(m.qty)] = num(m.notional); if (window.MB_V2_REFRESH_TICKET) window.MB_V2_REFRESH_TICKET(); return true; }
+    if (t === 'risk_preview' && m.symbol) { var mr = m.margin_required !== undefined ? m.margin_required : m.new_margin_required; preview[m.symbol + '|' + Number(m.qty)] = num(mr); previewAt[m.symbol + '|' + Number(m.qty)] = Date.now(); nominal[m.symbol + '|' + Number(m.qty)] = num(m.notional); if (window.MB_V2_REFRESH_TICKET) window.MB_V2_REFRESH_TICKET(); return true; }
     return false;
   }
 
@@ -217,7 +224,14 @@ window.MB_API = (function () {
       for (var iv = lv.length - 1; iv >= 0 && iv >= lv.length - 3; iv--) { if (lv[iv].t === tv) { lv[iv].v = vv; break; } }
       return;
     }
-    if (t === 'positions' && Array.isArray(m.items)) { positions = m.items.map(mapPos); refrescar(); return; }
+    if (t === 'positions' && Array.isArray(m.items)) { positions = m.items.map(mapPos);
+      if (modificacion) {
+        var update = modificacion, match = positions.filter(function (p) { return String(p.id) === String(update.id); })[0];
+        if (match && match.sl === update.sl && match.tp === update.tp) {
+          modificacion = null; terminar(update); update.resolve(copia(match));
+        }
+      }
+      refrescar(); return; }
     if (t === 'pending_orders' && Array.isArray(m.items)) { orders = m.items.map(mapOrder); refrescar(); return; }
     if (t === 'closed_trades_snapshot' && Array.isArray(m.trades) && m.trades.length) {
       history = m.trades.map(mapClosed).filter(Boolean).sort(function (x, y) { return y.time - x.time; }); refrescar(); return;
@@ -385,6 +399,7 @@ window.MB_API = (function () {
   function conectado() { return ws && ws.readyState === WebSocket.OPEN; }
   function placeOrder(o) {
     if (!conectado()) return Promise.reject(new Error('Sin conexión con el servidor. Reintentando…'));
+    if (modificacion) return Promise.reject(new Error('Espera la confirmación de SL/TP.'));
     if (enCurso) return Promise.reject(new Error('Ya hay una orden en curso. Espera la respuesta.'));
     var symReal = real[o.sym];
     if (!symReal || symReal !== cur.sym) return Promise.reject(new Error('Abre primero el gráfico de ' + o.sym + ' para operarlo.'));
@@ -412,6 +427,7 @@ window.MB_API = (function () {
     });
   }
   function cerrar(id, sinConfirmar) {
+    if (modificacion) return Promise.reject(new Error("Espera la confirmación de SL/TP."));
     if (!conectado()) return Promise.reject(new Error('Sin conexión con el servidor'));
     if (!sinConfirmar && !window.confirm('¿Confirmas el cierre de esta posición?')) return Promise.reject(new Error('Cierre cancelado'));
     return new Promise(function (resolve, reject) {
@@ -433,10 +449,24 @@ window.MB_API = (function () {
     if (!conectado()) return Promise.reject(new Error('Sin conexión con el servidor'));
     var p = positions.filter(function (x) { return String(x.id) === String(id); })[0];
     if (!p) return Promise.reject(new Error('Posición no encontrada'));
-    enviar({ action: 'order:update', id: String(id), symbol: real[p.sym] || p.sym, sl: num(sl), tp: num(tp) });
-    return new Promise(function (resolve) { setTimeout(function () { enviar({ action: 'get_positions' }); resolve(copia(p)); }, 400); });
+    if (modificacion || enCurso || cierres.length || cancelaciones.length) return Promise.reject(new Error('Espera a que termine la operación anterior.'));
+    // The existing server treats null as unchanged, never as removal.
+    var nextSl = num(sl) === null ? p.sl : num(sl), nextTp = num(tp) === null ? p.tp : num(tp);
+    return new Promise(function (resolve, reject) {
+      var update = { id: id, sl: nextSl, tp: nextTp, resolve: resolve, reject: reject };
+      modificacion = update;
+      update.timer = setTimeout(function () {
+        if (modificacion !== update) return;
+        modificacion = null;
+        reject(new Error('SL/TP sin confirmar. Revisa la posición antes de reintentar.'));
+        enviar({ action: 'get_positions' });
+      }, 10000);
+      enviar({ action: 'order:update', id: String(id), symbol: real[p.sym] || p.sym, sl: num(sl), tp: num(tp) });
+    });
   }
+
   function cancelOrder(id) {
+    if (modificacion) return Promise.reject(new Error("Espera la confirmación de SL/TP."));
     if (!conectado()) return Promise.reject(new Error('Sin conexión con el servidor'));
     return new Promise(function (resolve, reject) {
       var c = { id: id, resolve: resolve, reject: reject };
@@ -457,7 +487,7 @@ window.MB_API = (function () {
   function marginFor(sym, lots) {
     var symReal = real[sym]; if (!symReal || symReal !== cur.sym || !lots) return null;
     var key = symReal + '|' + Number(lots);
-    if (preview[key] !== undefined) return preview[key];
+    if (preview[key] !== undefined && Date.now() - previewAt[key] < 2000) return preview[key];
     if (pidiendo !== key) { pidiendo = key; setTimeout(function () { if (pidiendo === key) { enviar({ action: 'order:risk_preview', symbol: symReal, qty: Number(lots) }); pidiendo = null; } }, 200); }
     return null;
   }
@@ -487,7 +517,7 @@ window.MB_API = (function () {
     placeOrder: placeOrder, closePosition: function (id) { return cerrar(id, false); }, closeAll: closeAll,
     modifyPosition: modifyPosition, cancelOrder: cancelOrder, cancelAll: cancelAll,
     marginFor: marginFor,
-    notionalFor: function (sym, lots) { var k = (real[sym] || '') + '|' + Number(lots); return nominal[k] !== undefined ? nominal[k] : null; },
+    notionalFor: function (sym, lots) { var k = (real[sym] || '') + '|' + Number(lots); return nominal[k] !== undefined && Date.now() - previewAt[k] < 2000 ? nominal[k] : null; },
     onTick: function (cb) { tickCbs.push(cb); },
     /* P&L: el de la posición lo da el MOTOR (p.pnl). Para posiciones sin ese dato
        (o estimaciones del ticket) se devuelve null: no se inventa un número. */
