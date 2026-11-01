@@ -29,3 +29,29 @@ class DesktopV2RoutesTests(TestCase):
         self.client.force_login(make_user())
         response = self.client.get(reverse('simulator:dashboard_v2_account', args=[self.account.pk]))
         self.assertRedirects(response, reverse('simulator:accounts'), fetch_redirect_response=False)
+
+    def test_home_link(self):
+        self.client.force_login(self.user)
+        response = self.client.get(reverse('simulator:dashboard_v2_account', args=[self.account.pk]))
+        self.assertContains(response, '← Volver al inicio')
+        self.assertContains(response, 'href="' + reverse('simulator:home') + '"')
+
+    def test_phone_keeps_native_mobile_and_same_account(self):
+        self.client.force_login(self.user)
+        for ua in ['Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', 'Mozilla/5.0 (Linux; Android 14) Mobile']:
+            for route in ['simulator:dashboard_account', 'simulator:dashboard_v2_account']:
+                with self.subTest(ua=ua, route=route):
+                    response = self.client.get(reverse(route, args=[self.account.pk]), HTTP_USER_AGENT=ua)
+                    self.assertEqual(response.status_code, 200)
+                    self.assertTemplateUsed(response, 'simulator/trade/mobile.html')
+                    self.assertEqual(response.context['account_id'], self.account.pk)
+
+    def test_session_account_is_shared_between_routes(self):
+        self.client.force_login(self.user)
+        session = self.client.session
+        session['account_id'] = self.account.pk
+        session.save()
+        for route in ['simulator:home', 'simulator:dashboard', 'simulator:dashboard_v2']:
+            response = self.client.get(reverse(route))
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.context['account'].pk, self.account.pk)

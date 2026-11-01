@@ -6,7 +6,7 @@
 <title>Money Broker — Panel 2</title>
 <link rel="stylesheet" href="{% static 'simulator/desktop_v2/desktop-v2.css' %}">
 <style>
-  .v2-preview-bar{display:flex;align-items:center;gap:10px;padding:8px 14px;font-size:12px;
+  .v2-preview-bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:8px 14px;font-size:12px;
     background:var(--brand-soft);color:var(--text);border-bottom:1px solid var(--brand-line)}
   .v2-preview-bar b{color:var(--brand-ink,var(--brand))}
   .v2-preview-bar a{color:inherit;text-decoration:underline}
@@ -51,6 +51,7 @@
     <b>Panel 2 · beta</b>
     <span>Conectado al mismo motor del escritorio clásico. Todas las órdenes las valida el servidor.</span>
     <span class="v2-spacer"></span>
+    <a class="v2-btn-brand" href="{% url 'simulator:home' %}">← Volver al inicio</a>
     <a href="{% if account_id %}{% url 'simulator:dashboard_account' account_id %}{% else %}{% url 'simulator:dashboard' %}{% endif %}">Volver al Panel 1</a>
   </div>
 
@@ -58,7 +59,8 @@
   <header class="v2-topbar">
     <a class="v2-logo" href="{% url 'simulator:dashboard_v2' %}"><span class="v2-logo-mark">MB</span><span class="v2-logo-name">Money Broker</span></a>
     <nav class="v2-nav v2-nav--underline" aria-label="Principal">
-      <a href="{% url 'simulator:dashboard_v2' %}" aria-current="page">Dashboard</a>
+      <a href="{% url 'simulator:home' %}">Inicio</a>
+      <a href="{% url 'simulator:dashboard_v2' %}" aria-current="page">Panel 2</a>
       <a href="{% url 'simulator:history' %}">Historial</a>
     </nav>
     <span class="v2-spacer"></span>

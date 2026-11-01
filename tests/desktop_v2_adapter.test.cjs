@@ -8,7 +8,7 @@ function fixture(){
  class WS {static OPEN=1;constructor(){socket=this;this.readyState=1;}send(s){sent.push(JSON.parse(s));}}
  const document={hidden:true,getElementById(){return null},body:{classList:{remove(){},add(){}}}};
  const ctx={URL,WebSocket:WS,console,Date:class extends Date {static now(){return now}},setTimeout:(fn,ms)=>{const t={fn,ms};timers.push(t);return t},clearTimeout:t=>{if(t)t.off=true},setInterval(){},clearInterval(){},document};
- ctx.window={MB_V2_BOOT:{accountId:55,symbols:[{symbol:'BTC/USD'}]},location:{href:'http://localhost/'},console};
+ ctx.window={MB_V2_BOOT:{accountId:55,symbols:[{symbol:'BTC/USD'}]},confirm:()=>true,location:{href:'http://localhost/'},console};
  vm.createContext(ctx);vm.runInContext(source,ctx);
  const receive=m=>socket.onmessage({data:JSON.stringify(m)});
  const pos=(sl=80000,tp=100000)=>receive({type:'positions',items:[{id:7,symbol:'BTC/USD',qty:0.01,sl,tp}]});
@@ -21,3 +21,7 @@ test('SL/TP timeout is unknown, not success',async()=>{const f=fixture();f.pos()
 test('disconnect rejects pending edit and clears margin',async()=>{const f=fixture();f.pos();const p=f.api.modifyPosition(7,85000,100000);f.close();await assert.rejects(p,/Conexión perdida/)});
 test('blank keeps existing stop values',async()=>{const f=fixture();f.pos();const p=f.api.modifyPosition(7,null,110000);f.pos(80000,110000);const result=await p;assert.equal(result.sl,80000);assert.equal(result.tp,110000)});
 test('another write cannot overlap pending SL/TP',async()=>{const f=fixture();f.pos();const p=f.api.modifyPosition(7,85000,100000);await assert.rejects(f.api.placeOrder({}),/confirmación/);await assert.rejects(f.api.closePosition(7),/confirmación/);f.pos(85000);await p});
+
+test('mobile snapshots update positions and balances in Panel 2',async()=>{const f=fixture();f.pos(85000);f.receive({type:'account:update',balance:9999,equity:10001,margin_used:20});assert.equal((await f.api.getPositions())[0].sl,85000);assert.equal((await f.api.getAccount()).balance,9999);f.receive({type:'positions',items:[]});assert.equal((await f.api.getPositions()).length,0)});
+test('another device close cannot acknowledge a different pending close',async()=>{const f=fixture();f.pos();let settled=false;const p=f.api.closePosition(7).then(()=>settled=true);f.receive({type:'order_close',id:8});await Promise.resolve();assert.equal(settled,false);f.receive({type:'order_close',id:7});await p;assert.equal(settled,true)});
+test('empty history snapshot clears old rows',async()=>{const f=fixture();f.receive({type:'closed_trades_snapshot',trades:[{id:1,symbol:'BTC/USD',pnl:1}]});assert.equal((await f.api.getHistory()).length,1);f.receive({type:'closed_trades_snapshot',trades:[]});assert.equal((await f.api.getHistory()).length,0)});

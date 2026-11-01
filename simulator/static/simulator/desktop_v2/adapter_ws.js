@@ -165,7 +165,7 @@ window.MB_API = (function () {
     if (t === 'order_close' && cierres.length) {
       var idx = -1;
       for (var i = 0; i < cierres.length; i++) if (m.id !== undefined && String(cierres[i].id) === String(m.id)) { idx = i; break; }
-      if (idx < 0) idx = 0;
+      if (idx < 0) return false; // Another device may close a different position.
       var c = cierres.splice(idx, 1)[0]; terminar(c);
       var pnlC = m.realized_pnl !== undefined ? m.realized_pnl : (m.pnl !== undefined ? m.pnl : m.profit);
       c.resolve({ pnl: num(pnlC) });
@@ -233,7 +233,7 @@ window.MB_API = (function () {
       }
       refrescar(); return; }
     if (t === 'pending_orders' && Array.isArray(m.items)) { orders = m.items.map(mapOrder); refrescar(); return; }
-    if (t === 'closed_trades_snapshot' && Array.isArray(m.trades) && m.trades.length) {
+    if (t === 'closed_trades_snapshot' && Array.isArray(m.trades)) {
       history = m.trades.map(mapClosed).filter(Boolean).sort(function (x, y) { return y.time - x.time; }); refrescar(); return;
     }
     if (t === 'account:update' || t === 'account:snapshot') {
