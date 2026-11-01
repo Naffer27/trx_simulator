@@ -132,7 +132,7 @@
     var el = $('#v2-watch'); if (!el) return;
     var list = D.quotes.filter(function (q) { return !S.search || q.sym.toLowerCase().indexOf(S.search.toLowerCase()) >= 0 || (q.name || '').toLowerCase().indexOf(S.search.toLowerCase()) >= 0; });
     var variant = el.dataset.variant || 'table';
-    var chg = function (q) { return '<small class="num ' + (q.chg >= 0 ? 'v2-buy' : 'v2-sell') + '">' + (q.chg >= 0 ? '+' : '') + q.chg.toFixed(2) + '%</small>'; };
+    var chg = function (q) { if (q.bid === null || q.ask === null) return '<small class="v2-muted">Sin cotización reciente</small>'; return '<small class="num ' + (q.chg >= 0 ? 'v2-buy' : 'v2-sell') + '">' + (q.chg >= 0 ? '+' : '') + q.chg.toFixed(2) + '%</small>'; };
     if (variant === 'table') {
       el.innerHTML = '<div class="v2-watch-head"><span>INSTRUMENTO</span><span>BID</span><span>ASK</span><span>SPR</span></div>' +
         list.map(function (q) {

@@ -41,7 +41,7 @@ window.MB_API = (function () {
 
   var quotes = simbolos.map(function (s) {
     var nm = NOMBRES[s] || [s, s.slice(0, 2)];
-    return { sym: v2(s), name: nm[0], badge: nm[1], kind: kindOf(s), digits: digitsOf(s), bid: null, ask: null, chg: 0 };
+    return { sym: v2(s), name: nm[0], badge: nm[1], kind: kindOf(s), digits: digitsOf(s), bid: null, ask: null, chg: 0, quoteAt: null };
   });
   var bySym = {}; quotes.forEach(function (q) { bySym[q.sym] = q; });
 
@@ -100,7 +100,8 @@ window.MB_API = (function () {
       enviar({ action: 'account:get' });
     };
     ws.onclose = function () {
-      account.connected = false; liveMid = null; preview = {}; previewAt = {}; nominal = {};
+      account.connected = false; liveMid = null;
+      var activeQuote = bySym[v2(cur.sym)]; if (activeQuote) { activeQuote.bid = null; activeQuote.ask = null; activeQuote.quoteAt = null; emitirTick(); } preview = {}; previewAt = {}; nominal = {};
       if (modificacion) { var failed = modificacion; modificacion = null; terminar(failed); failed.reject(new Error("Conexión perdida. Verifica SL/TP antes de reintentar.")); }
       setConn(false); clearInterval(hb);
       reintento = Math.min(reintento * 2, 15000); setTimeout(conectar, reintento);
@@ -193,7 +194,7 @@ window.MB_API = (function () {
       if (!st) return;
       liveMid = st.liveMid;
       var q = bySym[v2(sym)]; if (!q) return;
-      q.bid = st.bid; q.ask = st.ask;
+      q.bid = st.bid; q.ask = st.ask; q.quoteAt = ms(m.time) || Date.now();
       emitirTick(); return;
     }
     if (t === 'history' && Array.isArray(m.data)) {
@@ -299,6 +300,7 @@ window.MB_API = (function () {
     if (!esActual) {
       var cambioSym = symReal !== cur.sym;
       cur.sym = symReal; cur.tf = tf; liveMid = null;
+      setPanelFeeds([], tf);
       if (cambioSym) enviar({ action: 'change_symbol', symbol: cur.sym });
       enviar({ action: 'change_timeframe', timeframe: TF[tf] || '15m' });
     }
@@ -328,7 +330,7 @@ window.MB_API = (function () {
       };
       L.ws.onclose = function () {
         clearInterval(L.hb); L.mid = null;
-        var q = bySym[v2(L.sym)]; if (q && L.sym !== cur.sym) { q.bid = null; q.ask = null; emitirTick(); }   // sin conexión = sin precio (FIX-05C)
+        var q = bySym[v2(L.sym)]; if (q && L.sym !== cur.sym) { q.bid = null; q.ask = null; q.quoteAt = null; emitirTick(); }   // sin conexión = sin precio (FIX-05C)
         if (!L.cerrado) { L.retry = Math.min(L.retry * 2, 15000); setTimeout(abrir, L.retry); }
       };
       L.ws.onmessage = function (ev) { if (L.cerrado) return; var m; try { m = JSON.parse(ev.data); } catch (e) { return; } try { lectorMensaje(L, m); } catch (e) {} };
@@ -346,7 +348,7 @@ window.MB_API = (function () {
       var st = (typeof applyPriceTickState === 'function') ? applyPriceTickState(L.mid, b, a, m.source) : (b && a && m.source && m.source !== 'sim' ? { bid: b, ask: a, liveMid: (a + b) / 2 } : null);
       if (!st) return;
       L.mid = st.liveMid; var q = bySym[v2(L.sym)]; if (!q) return;
-      q.bid = st.bid; q.ask = st.ask; emitirTick(); return;
+      q.bid = st.bid; q.ask = st.ask; q.quoteAt = ms(m.time) || Date.now(); emitirTick(); return;
     }
     if (t === 'history' && Array.isArray(m.data)) {
       if (m.symbol && m.symbol !== L.sym) return;
@@ -377,7 +379,10 @@ window.MB_API = (function () {
   /* La interfaz indica qué símbolos tienen gráfico extra; se abren/cierran las conexiones necesarias. */
   function setPanelFeeds(syms, tf) {
     var quiero = {};
-    (syms || []).forEach(function (s) { var r = real[s]; if (r) quiero[r] = 1; });   // la interfaz nunca incluye el gráfico activo
+    // Keep every allowed watchlist symbol subscribed, even with a single chart.
+    // Reuse existing readers: never one additional reader per layout or refresh.
+    simbolos.forEach(function (r) { if (r !== cur.sym) quiero[r] = 1; });
+    (syms || []).forEach(function (s) { var r = real[s]; if (r && r !== cur.sym) quiero[r] = 1; });   // la interfaz nunca incluye el gráfico activo
     Object.keys(lectores).forEach(function (r) { if (!quiero[r]) { lectores[r].cerrar(); delete lectores[r]; } });
     Object.keys(quiero).forEach(function (r) { if (lectores[r]) lectores[r].setTF(tf); else lectores[r] = crearLector(r, tf); });
   }
@@ -505,6 +510,19 @@ window.MB_API = (function () {
   }
 
   conectar();
+  setPanelFeeds([], cur.tf);
+  // Presentation freshness follows the existing shared price cache's 60s TTL.
+  // Missing/stale quotes are not replaced with simulated or candle-close prices.
+  setInterval(function () {
+    var changed = false;
+    quotes.forEach(function (q) {
+      if (q.quoteAt !== null && Date.now() - q.quoteAt > 60000) {
+        q.bid = null; q.ask = null; q.quoteAt = null; changed = true;
+        if (q.sym === v2(cur.sym)) liveMid = null;
+      }
+    });
+    if (changed) emitirTick();
+  }, 1000);
 
   return {
     getAccount: function () { return Promise.resolve(copia(account)); },
