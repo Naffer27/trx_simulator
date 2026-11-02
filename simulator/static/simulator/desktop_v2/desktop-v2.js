@@ -132,7 +132,7 @@
     var el = $('#v2-watch'); if (!el) return;
     var list = D.quotes.filter(function (q) { return !S.search || q.sym.toLowerCase().indexOf(S.search.toLowerCase()) >= 0 || (q.name || '').toLowerCase().indexOf(S.search.toLowerCase()) >= 0; });
     var variant = el.dataset.variant || 'table';
-    var chg = function (q) { if (q.bid === null || q.ask === null) return '<small class="v2-muted">Sin cotización reciente</small>'; return '<small class="num ' + (q.chg >= 0 ? 'v2-buy' : 'v2-sell') + '">' + (q.chg >= 0 ? '+' : '') + q.chg.toFixed(2) + '%</small>'; };
+    var chg = function (q) { if (q.bid === null || q.ask === null) return '<small class="v2-muted" title="Sin cotización reciente" style="white-space:nowrap">Sin precio</small>'; return '<small class="num ' + (q.chg >= 0 ? 'v2-buy' : 'v2-sell') + '">' + (q.chg >= 0 ? '+' : '') + q.chg.toFixed(2) + '%</small>'; };
     if (variant === 'table') {
       el.innerHTML = '<div class="v2-watch-head"><span>INSTRUMENTO</span><span>BID</span><span>ASK</span><span>SPR</span></div>' +
         list.map(function (q) {
@@ -157,7 +157,20 @@
   function renderSymbol() {
     var el = $('#v2-symbol'); if (!el) return; var q = D.q[S.sym]; if (!q) return;
     if ((el.dataset.variant || 'button') === 'button') {
-      el.innerHTML = '<button class="v2-symbol-btn" aria-label="Cambiar instrumento">' + S.sym + ' <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="color:var(--muted)"><path d="M6 9l6 6 6-6"/></svg></button>';
+      // Preserve the native selector across price ticks so an open menu stays open.
+      var select = $('#v2-symbol-select', el);
+      var symbolsKey = JSON.stringify(D.quotes.map(function (item) { return item.sym; }));
+      if (!select) {
+        el.innerHTML = '<select id="v2-symbol-select" class="v2-symbol-btn" aria-label="Cambiar instrumento"></select>';
+        select = $('#v2-symbol-select', el);
+      }
+      if (select.dataset.symbolsKey !== symbolsKey) {
+        select.innerHTML = D.quotes.map(function (item) {
+          return '<option value="' + esc(item.sym) + '">' + esc(item.sym) + '</option>';
+        }).join('');
+        select.dataset.symbolsKey = symbolsKey;
+      }
+      if (select.value !== S.sym) select.value = S.sym;
     } else {
       el.innerHTML = '<span class="v2-symbol-title"><span class="name">' + S.sym + '</span><span class="num price">' + px(S.sym, q.bid) + '</span><span class="num chg ' + (q.chg >= 0 ? 'v2-buy' : 'v2-sell') + '">' + (q.chg >= 0 ? '+' : '') + q.chg.toFixed(2) + '%</span></span>';
     }
@@ -281,7 +294,7 @@
         var oc = document.createElement('div');
         oc.className = 'v2-oneclick'; oc.setAttribute('role', 'group'); oc.setAttribute('aria-label', 'Operar en un clic');
         oc.innerHTML = '<button class="sell" data-act="market" data-side="sell"><small>VENDER</small><b class="num" data-f="bid"></b></button>' +
-          '<span class="lot"><button data-act="lot-down" aria-label="Bajar lote">−</button><output class="num" data-f="lot"></output><button data-act="lot-up" aria-label="Subir lote">+</button></span>' +
+          '<span class="lot"><button data-act="lot-down" aria-label="Bajar lote">−</button><input id="v2-lot" class="num" data-f="lot" type="text" inputmode="decimal" autocomplete="off" aria-label="Volumen en lotes"><button data-act="lot-up" aria-label="Subir lote">+</button></span>' +
           '<button class="buy" data-act="market" data-side="buy"><small>COMPRAR</small><b class="num" data-f="ask"></b></button>';
         P.plot.appendChild(oc); P.oneclickEl = oc;
       }
@@ -289,9 +302,14 @@
     });
     // Gráfico activo = conexión principal (la que opera). Los demás: conexiones de solo lectura.
     if (API.setPanelFeeds) API.setPanelFeeds(panels.filter(function (P) { return P.sym !== S.sym; }).map(function (P) { return P.sym; }), S.tf);
+    var requestedTf = S.tf;
     panels.forEach(function (P) {
-      var pr = (P.sym === S.sym || !API.getPanelCandles) ? API.getCandles(P.sym, S.tf, 220) : API.getPanelCandles(P.sym, S.tf);
-      pr.then(function (c) { D.candles[P.sym + '|' + S.tf] = c; seguro('grafico ' + P.sym, function () { drawPanel(P); }); });
+      var pr = (P.sym === S.sym || !API.getPanelCandles) ? API.getCandles(P.sym, requestedTf, 220) : API.getPanelCandles(P.sym, requestedTf);
+      pr.then(function (c) {
+        D.candles[P.sym + '|' + requestedTf] = c;
+        if (S.tf !== requestedTf || panels.indexOf(P) < 0) return;
+        seguro('grafico ' + P.sym, function () { drawPanel(P); });
+      });
     });
     divisores(host, cols, rows);
     if (!host._ro && window.ResizeObserver) { host._ro = new ResizeObserver(function () { if (panels.length > 1) ubicarDivisores(host, S.layout === 3 ? 3 : 2, S.layout === 4 ? 2 : 1); }); host._ro.observe(host); }
@@ -484,9 +502,16 @@
   }
 
   /* ------------------------------ Ticket de orden ------------------------------ */
+  var lotDraft = null;
+  function parseLot(value) {
+    var text = String(value).trim().replace(',', '.');
+    if (!/^(?:\d+(?:\.\d{0,2})?|\.\d{1,2})$/.test(text)) return null;
+    var value = Number(text);
+    return Number.isFinite(value) && value >= 0.01 && value <= 100 ? value : null;
+  }
   function fieldVolume() {
     return '<div class="v2-field"><div class="v2-field-head">Volumen (lotes)<small class="num" data-f="nominal"></small></div>' +
-      '<div class="v2-stepper"><button data-act="lot-down" aria-label="Bajar volumen">−</button><output class="num" data-f="lot"></output><button data-act="lot-up" aria-label="Subir volumen">+</button></div>' +
+      '<div class="v2-stepper"><button data-act="lot-down" aria-label="Bajar volumen">−</button><input id="v2-lot" class="num" data-f="lot" type="text" inputmode="decimal" autocomplete="off" aria-label="Volumen en lotes"><button data-act="lot-up" aria-label="Subir volumen">+</button></div>' +
       '<div class="v2-presets">' + PRESETS.map(function (v) { return '<button class="num" data-act="lot-set" data-v="' + v + '" aria-pressed="false">' + v.toFixed(2) + '</button>'; }).join('') + '</div></div>';
   }
   function fieldInput(id, label, val, f, ph) {
@@ -522,7 +547,9 @@
   function updateTicket() {
     var q = D.q[S.sym]; if (!q) return;
     var root = document;
-    setF(root, 'bid', px(S.sym, q.bid)); setF(root, 'ask', px(S.sym, q.ask)); setF(root, 'lot', S.lot.toFixed(2));
+    setF(root, 'bid', px(S.sym, q.bid)); setF(root, 'ask', px(S.sym, q.ask)); $$('[data-f="lot"]').forEach(function (n) {
+      if (document.activeElement !== n) n.value = lotDraft === null ? S.lot.toFixed(2) : lotDraft;
+    });
     $$('[data-act="lot-set"]').forEach(function (b) { b.setAttribute('aria-pressed', String(Math.abs(parseFloat(b.dataset.v) - S.lot) < 1e-9)); });
     var el = $('#v2-ticket'); if (!el) return;
     var sl = parseNum(S.slTxt), tp = parseNum(S.tpTxt);
@@ -566,6 +593,11 @@
   }
   var enviando = false;
   function send(side) {
+    if (lotDraft !== null && parseLot(lotDraft) === null) {
+      toast('Escribe un volumen entre 0,01 y 100 lotes, con hasta dos decimales.');
+      var field = $('#v2-lot'); if (field) field.focus();
+      return;
+    }
     var sl = parseNum(S.slTxt), tp = parseNum(S.tpTxt), entry = ticketEntry(side);
     if (sl !== null && (side === 'buy' ? sl >= entry : sl <= entry)) { toast('El Stop Loss está del lado equivocado'); return; }
     if (tp !== null && (side === 'buy' ? tp <= entry : tp >= entry)) { toast('El Take Profit está del lado equivocado'); return; }
@@ -588,11 +620,70 @@
       .catch(function (e) { toast(e.message || 'No se pudo cerrar'); });
   }
 
+  var stopEditor = null;
+  function openStopEditor(position, draft) {
+    if (stopEditor) return;
+    var id = position.id, originalSL = position.sl, originalTP = position.tp;
+    var previousFocus = document.activeElement, pending = false;
+    var dialog = document.createElement('dialog');
+    dialog.className = 'v2-stop-editor';
+    dialog.setAttribute('aria-labelledby', 'v2-stop-title');
+    dialog.innerHTML = '<form><h2 id="v2-stop-title">Modificar SL / TP</h2>' +
+      '<p>' + esc(position.sym) + ' · ' + (position.side === 'buy' ? 'Compra' : 'Venta') + ' · Posición #' + esc(id) + '</p>' +
+      '<label>Stop Loss<input name="sl" type="number" step="any" min="0" inputmode="decimal"></label>' +
+      '<label>Take Profit<input name="tp" type="number" step="any" min="0" inputmode="decimal"></label>' +
+      '<p class="v2-muted">Un campo vacío conserva el valor actual.</p>' +
+      '<p class="v2-stop-status" role="status" aria-live="polite"></p>' +
+      '<div class="v2-stop-actions"><button type="button">Cancelar</button><button type="submit">Guardar cambios</button></div></form>';
+    document.body.appendChild(dialog); stopEditor = dialog;
+    var form = $('form', dialog), sl = $('[name="sl"]', dialog), tp = $('[name="tp"]', dialog);
+    sl.value = draft && draft.k === 'sl' ? draft.price : (position.sl == null ? '' : position.sl);
+    tp.value = draft && draft.k === 'tp' ? draft.price : (position.tp == null ? '' : position.tp);
+    var status = $('.v2-stop-status', dialog), save = $('[type="submit"]', dialog);
+    function close() { if (!pending) dialog.close(); }
+    $('[type="button"]', dialog).onclick = close;
+    dialog.addEventListener('cancel', function (e) { if (pending) e.preventDefault(); });
+    dialog.addEventListener('close', function () {
+      dialog.remove(); stopEditor = null; drawCharts();
+      if (previousFocus && previousFocus.isConnected) previousFocus.focus();
+    });
+    form.addEventListener('submit', function (e) {
+      e.preventDefault(); if (pending) return;
+      var latest = D.positions.find(function (p) { return String(p.id) === String(id); });
+      if (!latest) { status.textContent = 'Esta posición ya no está abierta.'; return; }
+      if (latest.sl !== originalSL || latest.tp !== originalTP) {
+        status.textContent = 'La posición cambió. Cierra y vuelve a abrir el editor para revisar los valores actuales.'; return;
+      }
+      var nsl = sl.value.trim() ? Number(sl.value) : latest.sl, ntp = tp.value.trim() ? Number(tp.value) : latest.tp;
+      if ((sl.value.trim() && (!isFinite(nsl) || nsl <= 0)) || (tp.value.trim() && (!isFinite(ntp) || ntp <= 0))) {
+        status.textContent = 'Escribe precios válidos mayores que cero.'; return;
+      }
+      pending = true; save.disabled = true; sl.disabled = tp.disabled = true;
+      status.textContent = 'Esperando confirmación del servidor…';
+      API.modifyPosition(id, nsl, ntp).then(function () {
+        pending = false; close(); toast('SL/TP confirmado por el servidor'); log('SL/TP actualizado · ' + position.sym);
+        return refreshTrading();
+      }).catch(function (error) {
+        pending = false; save.disabled = false; sl.disabled = tp.disabled = false;
+        status.textContent = error.message || 'No se pudo confirmar el cambio. Revisa la posición.';
+      });
+    });
+    dialog.showModal(); (draft && draft.k === 'tp' ? tp : sl).focus();
+  }
+
+  function selectInstrument(sym) {
+    if (!D.q[sym] || S.sym === sym) return;
+    S.sym = sym;
+    renderWatch(); renderToolbar(); buildCharts(); renderTicket();
+  }
+  document.addEventListener('change', function (e) {
+    if (e.target.id === 'v2-symbol-select') selectInstrument(e.target.value);
+  });
   document.addEventListener('click', function (e) {
     var b = e.target.closest('[data-act]'); if (!b) return;
     var a = b.dataset.act, v = b.dataset.v;
     if (a === 'theme') setTheme(document.documentElement.getAttribute('data-theme') === 'dia' ? 'noche' : 'dia');
-    else if (a === 'sym') { S.sym = b.dataset.sym; renderWatch(); renderToolbar(); buildCharts(); renderTicket(); }
+    else if (a === 'sym') selectInstrument(b.dataset.sym);
     else if (a === 'tf') { S.tf = v; renderToolbar(); buildCharts(); }
     else if (a === 'layout') { S.layout = parseInt(v, 10); guardarCfg({ layout: S.layout }); renderToolbar(); buildCharts(); }
     else if (a === 'range') { S.range = v; renderToolbar(); }
@@ -600,9 +691,9 @@
     else if (a === 'tab') { S.tab = v; renderTabs(); renderTabBody(); }
     else if (a === 'otype') { S.otype = v; renderTicket(); }
     else if (a === 'side') { S.side = b.dataset.side; renderTicket(); }
-    else if (a === 'lot-down') { S.lot = Math.max(0.01, Math.round((S.lot - 0.01) * 100) / 100); updateTicket(); drawCharts(); }
-    else if (a === 'lot-up') { S.lot = Math.min(100, Math.round((S.lot + 0.01) * 100) / 100); updateTicket(); drawCharts(); }
-    else if (a === 'lot-set') { S.lot = parseFloat(v); updateTicket(); drawCharts(); }
+    else if (a === 'lot-down') { lotDraft = null; S.lot = Math.max(0.01, Math.round((S.lot - 0.01) * 100) / 100); updateTicket(); drawCharts(); }
+    else if (a === 'lot-up') { lotDraft = null; S.lot = Math.min(100, Math.round((S.lot + 0.01) * 100) / 100); updateTicket(); drawCharts(); }
+    else if (a === 'lot-set') { lotDraft = null; S.lot = parseFloat(v); updateTicket(); drawCharts(); }
     else if (a === 'market') { var keep = S.otype; S.otype = 'market'; send(b.dataset.side); S.otype = keep; }
     else if (a === 'send') send(b.dataset.side);
     else if (a === 'submit') send(S.side);
@@ -622,12 +713,7 @@
     else if (a === 'cancel') { API.cancelOrder(parseInt(b.dataset.id, 10)).then(function () { toast('Orden cancelada'); log('Orden cancelada'); return refreshTrading(); }).catch(function (e) { toast(e.message || 'No se pudo cancelar'); }); }
     else if (a === 'edit') {
       var pe = D.positions.find(function (x) { return String(x.id) === String(b.dataset.id); }); if (!pe) return;
-      var nsl = window.prompt('Stop Loss para ' + pe.sym + ' (vacío = conservar SL actual):', pe.sl === null || pe.sl === undefined ? '' : String(pe.sl)); if (nsl === null) return;
-      var ntp = window.prompt('Take Profit para ' + pe.sym + ' (vacío = conservar TP actual):', pe.tp === null || pe.tp === undefined ? '' : String(pe.tp)); if (ntp === null) return;
-      var vsl = nsl.trim() ? parseNum(nsl) : pe.sl, vtp = ntp.trim() ? parseNum(ntp) : pe.tp;
-      if ((nsl.trim() && vsl === null) || (ntp.trim() && vtp === null)) { toast('Valor inválido'); return; }
-      API.modifyPosition(pe.id, vsl, vtp).then(function () { toast('SL/TP confirmado'); log('SL/TP ' + pe.sym + ' → SL ' + (vsl === null ? '—' : vsl) + ' · TP ' + (vtp === null ? '—' : vtp)); return refreshTrading(); })
-        .catch(function (e) { toast(e.message || 'No se pudo modificar'); });
+      openStopEditor(pe);
     }
     else if (a === 'close-all') {
       if (!D.positions.length) { toast('No hay posiciones abiertas'); return; }
@@ -639,6 +725,13 @@
   });
   document.addEventListener('input', function (e) {
     var id = e.target.id;
+    if (id === 'v2-lot') {
+      lotDraft = e.target.value;
+      var lot = parseLot(lotDraft);
+      e.target.setAttribute('aria-invalid', String(lot === null));
+      if (lot !== null) S.lot = lot;
+      updateTicket(); return;
+    }
     if (id === 'v2-sl') S.slTxt = e.target.value;
     else if (id === 'v2-tp') S.tpTxt = e.target.value;
     else if (id === 'v2-price') S.priceTxt = e.target.value;
@@ -650,12 +743,25 @@
   /* ------------------------------ Arranque ------------------------------ */
   // Cada parte se actualiza por separado: si una falla con un dato raro, las demás siguen (error en window.__V2_ERRORES).
   function seguro(nombre, fn) { try { fn(); } catch (e) { (window.__V2_ERRORES = window.__V2_ERRORES || []).push(nombre + ': ' + (e && e.message)); if (window.console) console.error('[V2] ' + nombre, e); } }
-  function onTick(qs) {
+  function renderTick(qs) {
     D.quotes = qs; qs.forEach(function (q) { D.q[q.sym] = q; });
     seguro('watchlist', renderWatch); seguro('cuenta', renderAcct); seguro('simbolo', renderSymbol);
     seguro('graficos', drawCharts); seguro('ticket', updateTicket);
     // La tabla de posiciones se refresca máx. 1 vez/seg y nunca con el mouse presionado (para no perder clics).
     if (S.tab === 'pos' && D.positions.length && !punteroAbajo && Date.now() - tablaUlt > 1000) { tablaUlt = Date.now(); seguro('posiciones', renderTabBody); }
+  }
+  // Batch visual refreshes; never replace controls during an active pointer gesture.
+  var queuedQuotes = null, tickTimer = null;
+  function onTick(qs) {
+    queuedQuotes = qs;
+    if (tickTimer !== null) return;
+    function flush() {
+      if (punteroAbajo || arrastre) { tickTimer = setTimeout(flush, 100); return; }
+      tickTimer = null;
+      var latest = queuedQuotes; queuedQuotes = null;
+      if (latest) renderTick(latest);
+    }
+    tickTimer = setTimeout(flush, 100);
   }
   var punteroAbajo = false, tablaUlt = 0, arrastre = null;
   document.addEventListener('pointerdown', function (e) {
@@ -688,10 +794,8 @@
       var mal = (a.k === 'sl' && (p.side === 'buy' ? a.precio >= ref : a.precio <= ref)) || (a.k === 'tp' && (p.side === 'buy' ? a.precio <= ref : a.precio >= ref));
       if (mal) { toast((a.k === 'sl' ? 'El Stop Loss' : 'El Take Profit') + ' quedaría del lado equivocado del precio'); drawCharts(); return; }
     }
-    if (!window.confirm('¿Mover el ' + a.k.toUpperCase() + ' de ' + p.sym + ' a ' + px(p.sym, a.precio) + '?')) { drawCharts(); return; }
-    var nsl = a.k === 'sl' ? a.precio : p.sl, ntp = a.k === 'tp' ? a.precio : p.tp;
-    API.modifyPosition(p.id, nsl, ntp).then(function () { toast(a.k.toUpperCase() + ' confirmado por el servidor'); log(a.k.toUpperCase() + ' ' + p.sym + ' → ' + px(p.sym, a.precio)); return refreshTrading(); })
-      .catch(function (e) { toast(e.message || 'No se pudo mover'); drawCharts(); });
+    drawCharts();
+    openStopEditor(p, { k: a.k, price: a.precio });
   });
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { var q = false; panels.forEach(function (P) { if (P.temp) { P.temp = null; q = true; } }); if (q) drawCharts(); } });
   document.addEventListener('pointerdown', function () { punteroAbajo = true; }, true);

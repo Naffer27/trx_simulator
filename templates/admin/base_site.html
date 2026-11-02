@@ -1,0 +1,2 @@
+{% extends "admin/base_site.html" %}
+{% block footer %}{{ block.super }}{% include "simulator/includes/session_lock.html" %}{% endblock %}

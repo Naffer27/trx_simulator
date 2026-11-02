@@ -19,3 +19,22 @@ def gold_demo_allowed(account_id, account_type, currency='USD', allowed_symbols=
 def gold_demo_for_account(account):
     return gold_demo_allowed(account.pk, account.account_type, account.currency,
                              account.allowed_symbols_snapshot)
+
+
+def gold_trading_allowed(account_id, account_type, currency='USD', allowed_symbols=None):
+    """Keep the DEMO allowlist; real gold requires an independent explicit opt-in."""
+    if account_type == 'DEMO':
+        return gold_demo_allowed(account_id, account_type, currency, allowed_symbols)
+    return (
+        os.getenv('MASSIVE_GOLD_DATA_ENABLED', '').strip() == '1'
+        and os.getenv('GOLD_REAL_TRADING_ENABLED', '').strip() == '1'
+        and account_type in ('RETAIL', 'STANDARD', 'ECN')
+        and currency == 'USD'
+        and bool(account_id)
+        and (allowed_symbols is None or 'XAU/USD' in allowed_symbols)
+    )
+
+
+def gold_trading_for_account(account):
+    return gold_trading_allowed(account.pk, account.account_type, account.currency,
+                                account.allowed_symbols_snapshot)

@@ -271,7 +271,7 @@
     </div>
     <div class="ac-footer">
       {% if acc.status == 'Activo' %}
-      <a href="{% url 'simulator:dashboard_account' acc.id %}" class="btn btn-primary btn-sm" style="flex:1;justify-content:center">
+      <a href="{% url 'simulator:dashboard_v2_account' acc.id %}" class="btn btn-primary btn-sm" style="flex:1;justify-content:center">
         <i class="fa-solid fa-chart-line"></i> {% ui "Tradear" %}
       </a>
       {% endif %}

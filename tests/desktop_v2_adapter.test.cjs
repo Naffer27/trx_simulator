@@ -5,7 +5,7 @@ const fs=require('node:fs');
 const source=fs.readFileSync('simulator/static/simulator/desktop_v2/adapter_ws.js','utf8');
 function fixture(symbols=['BTC/USD']){
  let socket, now=1700000000000;const sent=[],timers=[],sockets=[],intervals=[];
- class WS {static OPEN=1;constructor(){if(!socket)socket=this;sockets.push(this);this.readyState=1;this.sent=[];}send(s){this.sent.push(JSON.parse(s));sent.push(JSON.parse(s));}close(){this.readyState=3;if(this.onclose)this.onclose();}}
+ class WS {static OPEN=1;constructor(url){this.url=url;if(!socket)socket=this;sockets.push(this);this.readyState=1;this.sent=[];}send(s){this.sent.push(JSON.parse(s));sent.push(JSON.parse(s));}close(){this.readyState=3;if(this.onclose)this.onclose();}}
  const document={hidden:true,getElementById(){return null},body:{classList:{remove(){},add(){}}}};
  const ctx={URL,WebSocket:WS,console,Date:class extends Date {static now(){return now}},setTimeout:(fn,ms)=>{const t={fn,ms};timers.push(t);return t},clearTimeout:t=>{if(t)t.off=true},setInterval:(fn,ms)=>{intervals.push({fn,ms})},clearInterval(){},document};
  ctx.window={MB_V2_BOOT:{accountId:55,symbols:symbols.map(symbol=>({symbol}))},confirm:()=>true,location:{href:'http://localhost/'},console};
@@ -39,3 +39,87 @@ test('watchlist subscribes every instrument without chart selection or order mes
 });
 test('reader disconnect clears only its own quote',async()=>{const f=fixture(['BTC/USD','EUR/USD']);const r=f.sockets[1];r.onmessage({data:JSON.stringify({type:'tick',symbol:'EUR/USD',bid:1.1,ask:1.2,source:'massive'})});assert.equal((await f.api.getQuotes())[1].bid,1.1);r.close();assert.equal((await f.api.getQuotes())[1].bid,null)});
 test('stale and simulated quotes are not presented as live',async()=>{const f=fixture(['BTC/USD','EUR/USD']);const r=f.sockets[1];r.onmessage({data:JSON.stringify({type:'tick',symbol:'EUR/USD',bid:1.1,ask:1.2,source:'sim'})});assert.equal((await f.api.getQuotes())[1].bid,null);r.onmessage({data:JSON.stringify({type:'tick',symbol:'EUR/USD',bid:1.1,ask:1.2,source:'massive',time:1700000000})});f.advance(60001);f.interval(1000);assert.equal((await f.api.getQuotes())[1].bid,null)});
+
+test('four panels keep separate candle histories and ignore secondary account updates',async()=>{
+ const f=fixture(['BTC/USD','ETH/USD','EUR/USD','GBP/USD']); f.sockets.forEach(s=>s.onopen());
+ f.api.setPanelFeeds(['ETHUSD','EURUSD','GBPUSD'],'4H');
+ const active=f.api.getCandles('BTCUSD','4H',220);
+ const others=['ETHUSD','EURUSD','GBPUSD'].map(s=>f.api.getPanelCandles(s,'4H'));
+ const symbols=['BTC/USD','ETH/USD','EUR/USD','GBP/USD'];
+ f.sockets.forEach((s,i)=>s.onmessage({data:JSON.stringify({type:'history',symbol:symbols[i],timeframe:'4h',data:[{time:1700000000,open:i+1,high:i+2,low:i,close:i+1,volume:10}]})}));
+ f.run(9000);
+ const arrays=await Promise.all([active,...others]);
+ assert.deepEqual(arrays.map(a=>a[0].c),[1,2,3,4]);
+ f.receive({type:'account:update',balance:1000,equity:1000});
+ f.sockets[1].onmessage({data:JSON.stringify({type:'account:update',balance:999,equity:999})});
+ assert.equal((await f.api.getAccount()).balance,1000);
+ assert.equal(f.sockets.slice(1).flatMap(s=>s.sent).filter(m=>m.action.startsWith('order:')).length,0);
+});
+
+test('late candle from previous timeframe must not alter the current chart',async()=>{
+ const f=fixture(['BTC/USD','ETH/USD']);const r=f.sockets[1];
+ const pending=f.api.getPanelCandles('ETHUSD','4H');
+ r.onmessage({data:JSON.stringify({type:'history',symbol:'ETH/USD',timeframe:'4h',data:[{time:1700000000,open:1,high:2,low:1,close:2}]})});
+ f.run(9000);const candles=await pending;
+ r.onmessage({data:JSON.stringify({type:'candle_update',symbol:'ETH/USD',timeframe:'15m',data:{time:1700000000,open:1,high:999,low:1,close:999}})});
+ assert.equal(candles[0].c,2);
+});
+for (const secondary of [false,true]) test((secondary?'secondary':'active')+' chart waits for matching history after timeframe change',async()=>{
+ const f=fixture(['BTC/USD','ETH/USD']);f.sockets.forEach(s=>s.onopen());
+ const sym=secondary?'ETHUSD':'BTCUSD', symbol=secondary?'ETH/USD':'BTC/USD';
+ const send=m=>(secondary?f.sockets[1].onmessage({data:JSON.stringify(m)}):f.receive(m));
+ const get=tf=>secondary?f.api.getPanelCandles(sym,tf):f.api.getCandles(sym,tf,220);
+ const history=(tf,close)=>({type:'history',symbol,timeframe:tf,data:[{time:1700000000,open:1,high:close,low:1,close,volume:10}]});
+ let p=get('4H');send(history('4h',4));f.run(9000);const four=await p;f.run(0);
+ p=get('15m');send(history('15m',15));f.run(9000);await p;f.run(0);
+ p=get('4H');
+ send({type:'candle_update',symbol,data:{time:1700000000,open:1,high:99,low:1,close:99}});
+ send({type:'volume_update',symbol,time:1700000000,value:99});
+ assert.equal(four[0].c,4);assert.equal(four[0].v,10);
+ send(history('15m',99));assert.equal(four[0].c,4);
+ send(history('4h',5));f.run(9000);await p;
+ send({type:'candle_update',symbol,data:{time:1700000000,open:1,high:6,low:1,close:6}});
+ assert.equal(four[0].c,6);
+ send({type:'volume_update',symbol,timeframe:'15m',time:1700000000,value:99});assert.equal(four[0].v,10);
+});
+
+test('changing timeframe retains a fresh executable quote for the same symbol',async()=>{
+ const f=fixture();f.receive({type:'tick',symbol:'BTC/USD',bid:100,ask:101,source:'massive',time:1700000000});
+ f.api.getCandles('BTCUSD','4H',220);
+ const pending=f.api.placeOrder({sym:'BTCUSD',side:'buy',type:'market',lots:.01});
+ f.receive({type:'order_fill',order_id:9,symbol:'BTC/USD',price:101});
+ await pending;assert.ok(f.sent.some(m=>m.action==='order:new'));
+});
+test('timeframe change cannot reuse an expired execution quote',async()=>{
+ const f=fixture();f.receive({type:'tick',symbol:'BTC/USD',bid:100,ask:101,source:'massive',time:1700000000});f.advance(60001);f.api.getCandles('BTCUSD','4H',220);
+ await assert.rejects(f.api.placeOrder({sym:'BTCUSD',type:'market',side:'buy',lots:.01}),/Precio no disponible/);
+ assert.equal(f.sent.filter(m=>m.action==='order:new').length,0);
+});
+test('switching instruments requires a fresh primary quote',async()=>{
+ const f=fixture(['BTC/USD','ETH/USD']);f.sockets[1].onmessage({data:JSON.stringify({type:'tick',symbol:'ETH/USD',bid:100,ask:101,source:'massive'})});
+ f.api.getCandles('ETHUSD','15m',220);
+ await assert.rejects(f.api.placeOrder({sym:'ETHUSD',type:'market',side:'buy',lots:.01}),/Precio no disponible/);
+ assert.equal((await f.api.getQuotes()).find(q=>q.sym==='ETHUSD').bid,null);
+ f.receive({type:'tick',symbol:'ETH/USD',bid:100,ask:101,source:'massive'});
+ const p=f.api.placeOrder({sym:'ETHUSD',type:'market',side:'buy',lots:.01});f.receive({type:'order_fill',order_id:1,symbol:'ETH/USD',price:101});await p;
+});
+
+test('startup requests history once per connection with timeframe in URL',()=>{
+ const f=fixture(['BTC/USD','ETH/USD']);f.sockets.forEach(s=>s.onopen());
+ assert.equal(new URL(f.sockets[0].url).searchParams.get('tf'),'15m');
+ f.sockets.forEach(s=>assert.equal(s.sent.filter(m=>m.action==='change_timeframe').length,0));
+});
+test('4H changes only visible charts while hidden quotes remain connected',()=>{
+ const f=fixture(['BTC/USD','ETH/USD','EUR/USD','GBP/USD','USD/JPY','AUD/USD']);f.sockets.forEach(s=>s.onopen());
+ f.api.setPanelFeeds(['ETHUSD','EURUSD','GBPUSD'],'4H');f.api.getCandles('BTCUSD','4H',220);
+ assert.equal(f.sockets.length,6);
+ const changed=f.sockets.filter(s=>s.sent.some(m=>m.action==='change_timeframe'&&m.timeframe==='4h'));
+ assert.equal(changed.length,4);assert.ok(f.sockets.every(s=>s.readyState===1));
+});
+test('returning to a loaded timeframe paints cached history without timeout',async()=>{
+ const f=fixture();const first=f.api.getCandles('BTCUSD','4H',220);
+ f.receive({type:'history',symbol:'BTC/USD',timeframe:'4h',data:[{time:1700000000,open:1,high:2,low:1,close:2}]});await first;f.run(0);
+ f.api.getCandles('BTCUSD','15m',220);f.run(0);
+ let done=false;f.api.getCandles('BTCUSD','4H',220).then(c=>{done=true;assert.equal(c[0].c,2)});
+ await Promise.resolve();assert.equal(done,true);
+});

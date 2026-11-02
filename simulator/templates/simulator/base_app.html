@@ -351,6 +351,7 @@
       font-size: .85rem; flex-shrink: 0;
       transition: color .15s, background .15s;
     }
+    .sb-logout-label { display: none; }
     .sb-logout:hover { color: var(--bear); background: rgba(239,83,80,.1); }
 
     /* ══════════ MAIN ══════════ */
@@ -460,6 +461,16 @@
         width: var(--sb-w) !important;
         min-width: var(--sb-w) !important;
       }
+      /* Keep logout above the mobile browser toolbar; only navigation scrolls. */
+      .app-sidebar { height: 100svh; height: 100dvh; }
+      .sb-nav { min-height: 0; overscroll-behavior-y: contain; }
+      .sb-footer { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+      .sb-footer .sb-avatar, .sb-footer .sb-user-info { display: none; }
+      .sb-footer .sb-logout {
+        width: 100%; min-height: 44px; height: auto; gap: 10px;
+        color: var(--text); border: 1px solid var(--border);
+      }
+      .sb-logout-label { display: inline; }
       .app-sidebar.sb-open { transform: translateX(0); }
       .tb-toggle { display: flex; }
       .sb-collapse-btn { display: none; }
@@ -679,7 +690,7 @@
       <div class="sb-section-label">{% ui "Mercados" %}</div>
 
       <!-- Panel de Trading -->
-      <a href="{% url 'simulator:dashboard' %}"
+      <a href="{% url 'simulator:dashboard_v2' %}"
          class="sb-link {% if active_section == 'trading' %}active{% endif %}">
         <span class="sb-icon"><i class="fa-solid fa-chart-line"></i></span>
         <span class="sb-text">{% ui "Panel de Trading" %}</span>
@@ -765,7 +776,7 @@
 
       <!-- Mi Perfil -->
       <a href="{% url 'simulator:profile' %}"
-         class="sb-link {% if active_section == 'profile' %}active{% endif %}">
+         class="sb-link {% if active_section == 'profile' and request.resolver_match.url_name != 'passkeys' %}active{% endif %}">
         <span class="sb-icon"><i class="fa-solid fa-user"></i></span>
         <span class="sb-text">{% ui "Mi Perfil" %}</span>
       </a>
@@ -803,6 +814,16 @@
         {% endif %}
       </a>
 
+      {% if login_passkeys_enabled %}
+      <a href="{% url 'simulator:passkeys' %}"
+         class="sb-link {% if request.resolver_match.url_name == 'passkeys' %}active{% endif %}"
+         title="Activar Face ID, huella o passkey para iniciar sesión">
+        <span class="sb-icon"><i class="fa-solid fa-fingerprint" aria-hidden="true"></i></span>
+        <span class="sb-text">Face ID / passkey</span>
+        <span class="sb-badge">{% ui "Opcional" %}</span>
+      </a>
+      {% endif %}
+
       <!-- Soporte -->
       <a href="{% url 'simulator:support' %}"
          class="sb-link {% if active_section == 'support' %}active{% endif %}">
@@ -829,7 +850,8 @@
         <div class="sb-user-role">{% ui "Trader" %}</div>
       </div>
       <a href="{% url 'simulator:logout' %}" class="sb-logout" title="{% ui "Cerrar sesión" %}">
-        <i class="fa-solid fa-arrow-right-from-bracket"></i>
+        <i class="fa-solid fa-arrow-right-from-bracket" aria-hidden="true"></i>
+        <span class="sb-logout-label">{% ui "Cerrar sesión" %}</span>
       </a>
     </div>
 
@@ -1116,5 +1138,6 @@
 {% endif %}
 
 {% block extra_scripts %}{% endblock %}
+{% include "simulator/includes/session_lock.html" %}
 </body>
 </html>

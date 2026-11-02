@@ -2,6 +2,7 @@ import uuid
 from decimal import Decimal
 
 from django.db import models
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 
@@ -2421,9 +2422,8 @@ class ReferralAttribution(models.Model):
     referral uses PROTECT: a Referral can never be deleted once it has
     attributed users, preserving this audit trail permanently.
 
-    No commission calculation, no wallet credit, and no multi-level/
-    sub-IB concept exist here or anywhere yet — this model is attribution
-    only. registrations counts should read referral.attributions.count(),
+    This model stores attribution only. Network links and multilevel
+    accruals are managed separately in ib_network.py. registrations counts should read referral.attributions.count(),
     never Referral.registrations (see that field's own comment above).
     """
     SOURCE_COOKIE  = "cookie"
@@ -2466,6 +2466,8 @@ class IBCommissionRule(models.Model):
     applied_percentage_rate at generation time — never re-read from this
     table after the fact.
     """
+    RULE_SUB_IB_PER_LOT = "SUB_IB_PER_LOT"
+    RULE_SUB_IB_BUDGET = "SUB_IB_BUDGET"
     RULE_PER_LOT                        = "PER_LOT"
     RULE_CHALLENGE_PERCENT              = "CHALLENGE_PERCENT"
     RULE_DEPOSIT_PERCENT                = "DEPOSIT_PERCENT"
@@ -2474,6 +2476,8 @@ class IBCommissionRule(models.Model):
     RULE_CPA_BONUS                      = "CPA_BONUS"
 
     RULE_TYPE_CHOICES = [
+        (RULE_SUB_IB_PER_LOT, "Sub-IB: tarifa primer nivel"),
+        (RULE_SUB_IB_BUDGET, "Sub-IB: presupuesto superiores por lote"),
         (RULE_PER_LOT,                          "Per Lot"),
         (RULE_CHALLENGE_PERCENT,                "Challenge Percent"),
         (RULE_DEPOSIT_PERCENT,                  "Deposit Percent"),
@@ -2488,7 +2492,7 @@ class IBCommissionRule(models.Model):
         RULE_SPREAD_REVENUE_SHARE, RULE_TRADING_COMMISSION_REVENUE_SHARE,
     )
     # rule_types priced as a flat dollar amount.
-    FIXED_AMOUNT_RULE_TYPES = (RULE_PER_LOT, RULE_CPA_BONUS)
+    FIXED_AMOUNT_RULE_TYPES = (RULE_PER_LOT, RULE_CPA_BONUS, RULE_SUB_IB_PER_LOT, RULE_SUB_IB_BUDGET)
 
     rule_type = models.CharField(max_length=40, choices=RULE_TYPE_CHOICES, db_index=True)
     referral  = models.ForeignKey(
@@ -2546,6 +2550,10 @@ class IBCommissionRule(models.Model):
             models.CheckConstraint(
                 check=~models.Q(rule_type="PER_LOT") | models.Q(fixed_amount__isnull=False),
                 name="ibrule_per_lot_requires_fixed_amount",
+            ),
+            models.CheckConstraint(
+                check=~models.Q(rule_type__in=['SUB_IB_PER_LOT', 'SUB_IB_BUDGET']) | models.Q(fixed_amount__isnull=False),
+                name='ibrule_network_requires_fixed',
             ),
             models.CheckConstraint(
                 check=~models.Q(rule_type="CPA_BONUS") | models.Q(fixed_amount__isnull=False),
@@ -5093,3 +5101,75 @@ class BrokerEconomicAdjustment(models.Model):
 
     def __str__(self):
         return f"BrokerEconomicAdjustment #{self.pk} ({self.reference}) amount={self.amount}"
+
+
+class IBNetworkLink(models.Model):
+    """Immutable parent assignment. No breadth/depth limit; service rejects cycles."""
+    child = models.OneToOneField(Referral, on_delete=models.PROTECT, related_name='network_parent')
+    parent = models.ForeignKey(Referral, on_delete=models.PROTECT, related_name='network_children')
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.PROTECT)
+    reason = models.CharField(max_length=240)
+
+    class Meta:
+        verbose_name = 'Vínculo IB / Sub-IB'
+        verbose_name_plural = 'Red de IB y Sub-IB'
+        constraints = [models.CheckConstraint(check=~models.Q(child=models.F('parent')), name='ib_network_no_self')]
+
+
+class IBNetworkExecution(models.Model):
+    """Durable completion marker, including ineligible executions; retries are safe."""
+    event = models.OneToOneField(LotExecutionEvent, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class IBNetworkCarry(models.Model):
+    """Exact sub-cent USD remainder. Rational strings avoid rounding deep levels."""
+    referral = models.OneToOneField(Referral, on_delete=models.PROTECT)
+    remainder = models.TextField(default='0/1')
+
+
+class IBNetworkAccrual(models.Model):
+    execution = models.ForeignKey(IBNetworkExecution, on_delete=models.PROTECT, related_name='accruals')
+    referral = models.ForeignKey(Referral, on_delete=models.PROTECT)
+    rule = models.ForeignKey(IBCommissionRule, on_delete=models.PROTECT)
+    level = models.PositiveIntegerField()
+    exact_amount = models.TextField()
+    carry_before = models.TextField()
+    carry_after = models.TextField()
+    obligation = models.OneToOneField(IBCommissionObligation, null=True, blank=True, on_delete=models.PROTECT)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['execution', 'referral'], name='ib_network_once_per_beneficiary')]
+
+
+class LoginSessionLease(models.Model):
+    """Interactive activity only; quote polling must never renew this lease."""
+    session_digest = models.CharField(max_length=64, unique=True)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    expires_at = models.DateTimeField(db_index=True)
+    absolute_expires_at = models.DateTimeField()
+
+
+class LoginPasskey(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    credential_id = models.CharField(max_length=1400, unique=True)
+    public_key = models.BinaryField()
+    user_handle = models.CharField(max_length=100)
+    auth_hash = models.CharField(max_length=128)
+    sign_count = models.PositiveBigIntegerField(default=0)
+    name = models.CharField(max_length=80, default="Mi dispositivo")
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+
+
+class LoginPasskeyChallenge(models.Model):
+    token = models.CharField(max_length=64, unique=True)
+    session_digest = models.CharField(max_length=64)
+    purpose = models.CharField(max_length=20)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.CASCADE)
+    challenge = models.BinaryField()
+    user_handle = models.CharField(max_length=100, blank=True)
+    auth_hash = models.CharField(max_length=128, blank=True)
+    expires_at = models.DateTimeField(db_index=True)
+    used = models.BooleanField(default=False)

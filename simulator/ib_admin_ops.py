@@ -1308,19 +1308,25 @@ class IBCommissionObligationAdmin(admin.ModelAdmin):
             raise Http404("Referral (IB) not found.")
 
         detail_url = reverse("admin:ib_detail", args=[instance.pk])
-        current_rule, current_source = ib_effective_rate(instance, IBCommissionRule.RULE_PER_LOT)
+        rate_choices = [(IBCommissionRule.RULE_PER_LOT, 'Clientes directos'),
+                        (IBCommissionRule.RULE_SUB_IB_PER_LOT, 'Primer nivel de sub-IB'),
+                        (IBCommissionRule.RULE_SUB_IB_BUDGET, 'Presupuesto total para superiores')]
+        rate_kind = request.POST.get('rule_type', request.GET.get('rule_type', IBCommissionRule.RULE_PER_LOT))
+        if rate_kind not in dict(rate_choices):
+            raise Http404('Tipo de tarifa no válido.')
+        current_rule, current_source = ib_effective_rate(instance, rate_kind)
 
         if request.method == "POST":
             new_rate = request.POST.get("new_fixed_amount", "")
             try:
-                new_rule = change_commission_rate(instance, new_rate, request=request)
+                new_rule = change_commission_rate(instance, new_rate, request=request, rule_type=rate_kind)
             except InvalidCommissionRate as exc:
                 messages.error(request, f"⚠ {exc}")
                 return render(request, "admin/ib_referral_change_rate.html", dict(
                     self.admin_site.each_context(request),
                     title=f"Change Commission Rate — {instance.code}",
                     instance=instance, current_rule=current_rule, current_source=current_source,
-                    cancel_url=detail_url,
+                    cancel_url=detail_url, rate_kind=rate_kind, rate_choices=rate_choices,
                 ))
             except CommissionRateUnchanged as exc:
                 messages.info(request, f"{exc}")
@@ -1330,7 +1336,7 @@ class IBCommissionObligationAdmin(admin.ModelAdmin):
 
             _record_ib_risk_event(
                 request, "ib_admin.rate_changed",
-                f"IB {instance.code} (#{instance.pk}) PER_LOT rate changed to ${new_rule.fixed_amount}/lot "
+                f"IB {instance.code} (#{instance.pk}) {rate_kind} rate changed to ${new_rule.fixed_amount}/lot "
                 f"(new IBCommissionRule #{new_rule.pk}, effective_from={new_rule.effective_from.isoformat()})",
                 referral=instance,
                 reason=(
@@ -1348,7 +1354,7 @@ class IBCommissionObligationAdmin(admin.ModelAdmin):
             instance=instance,
             current_rule=current_rule,
             current_source=current_source,
-            cancel_url=detail_url,
+            cancel_url=detail_url, rate_kind=rate_kind, rate_choices=rate_choices,
         )
         return render(request, "admin/ib_referral_change_rate.html", context)
 

@@ -1,0 +1,23 @@
+{% extends 'simulator/base_app.html' %}{% load static %}
+{% block title %}Acceso con passkey{% endblock %}
+{% block content %}
+<section style="max-width:640px;margin:24px auto;padding:24px" data-passkeys
+ data-options="{% url 'simulator:passkey_options' %}" data-verify="{% url 'simulator:passkey_verify' %}" data-revoke="{% url 'simulator:passkey_revoke' %}">
+<h1>Acceso con Face ID o passkey</h1>
+<p>Tu dispositivo puede usar Face ID, huella o su PIN. Los retiros siguen requiriendo el autenticador y el código por correo.</p>
+<p>Para añadir o eliminar una passkey, confirma tu contraseña y tu código 2FA. Conserva ambos como alternativa si pierdes el dispositivo.</p>
+<form onsubmit="return false" autocomplete="off">{% csrf_token %}
+<p><label>Contraseña actual<br><input required type="password" name="password" autocomplete="current-password"></label></p>
+<p><label>Código del autenticador<br><input required name="otp_code" inputmode="numeric" autocomplete="one-time-code" maxlength="6"></label></p>
+<p><label>Nombre del dispositivo<br><input name="name" maxlength="80" placeholder="Mi iPhone"></label></p>
+<button type="button" data-purpose="register">Añadir passkey</button>
+</form>
+<p role="status" aria-live="polite"></p>
+<h2>Tus passkeys</h2>
+{% for key in keys %}<p>{{ key.name }} — {{ key.created_at|date:'d/m/Y' }}
+<button type="button" data-purpose="revoke" data-key="{{ key.pk }}">Eliminar</button></p>
+{% empty %}<p>Todavía no has registrado una passkey.</p>{% endfor %}
+<p><a href="{% url 'simulator:profile' %}">Volver a mi perfil</a></p>
+</section>
+<script defer src="{% static 'simulator/passkeys.js' %}"></script>
+{% endblock %}

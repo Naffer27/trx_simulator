@@ -279,10 +279,11 @@ class AggregationTests(TestCase):
         self.assertEqual(totals["week"], Decimal("1.00"))
 
     def test_month_lots_correct(self):
-        from simulator.ib_admin_ops import ib_lot_totals
+        from simulator.ib_admin_ops import _period_starts, ib_lot_totals
         now = timezone.now()
-        _make_lot_event(self.account1, qty="2.00", created_at=now - timezone.timedelta(days=10))
-        _make_lot_event(self.account1, qty="9.00", created_at=now - timezone.timedelta(days=90))
+        _, _, month_start = _period_starts(now)
+        _make_lot_event(self.account1, qty="2.00", created_at=month_start)
+        _make_lot_event(self.account1, qty="9.00", created_at=month_start - timezone.timedelta(days=1))
         totals = ib_lot_totals(self.referral, at_time=now)
         self.assertEqual(totals["month"], Decimal("2.00"))
 

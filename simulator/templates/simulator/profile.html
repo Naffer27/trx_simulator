@@ -201,4 +201,5 @@
   </div>
 
 </div>
+{% if login_passkeys_enabled %}<p><a href="{% url 'simulator:passkeys' %}">Configurar Face ID / passkey para entrar</a></p>{% endif %}
 {% endblock %}

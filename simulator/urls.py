@@ -3,6 +3,7 @@ from django.contrib.auth import views as auth_views
 from django.urls import path, reverse_lazy
 from .market_session_stats import market_session_stats
 from .login_2fa import login_2fa_view
+from . import session_security, passkey_login
 from .auth_password_views import (
     AuditedPasswordChangeView,
     AuditedPasswordResetConfirmView,
@@ -118,6 +119,12 @@ urlpatterns = [
     # Landing pública
     path("", landing_view, name="landing"),
 
+    path("session/activity/", session_security.activity, name="session_activity"),
+    path("session/lock/", session_security.lock, name="session_lock"),
+    path("profile/passkeys/", passkey_login.manage, name="passkeys"),
+    path("passkeys/options/", passkey_login.options, name="passkey_options"),
+    path("passkeys/verify/", passkey_login.verify, name="passkey_verify"),
+    path("passkeys/revoke/", passkey_login.revoke, name="passkey_revoke"),
     # Autenticación
     path("register/", register_view, name="register"),
     path("login/", login_view, name="login"),

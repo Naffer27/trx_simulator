@@ -225,11 +225,21 @@
       <div class="prg-card-title"><i class="fa-solid fa-sitemap" style="margin-right:6px;color:var(--gold);"></i>{% ui "Programa Sub-IB" %}</div>
     </div>
     <div class="prg-card-body">
+      {% if network_rule %}
+      <p>Tu tarifa de primer nivel: <strong>${{ network_rule.fixed_amount }} por lote</strong>. Cada nivel superior recibe la mitad, sujeto al presupuesto de la red.</p>
+      <p>Las fracciones menores a un centavo se acumulan. Los abonos requieren la aprobación de tesorería.</p>
+      {% if network_parent %}<p>Tu superior: {{ network_parent.parent.code }}</p>{% endif %}
+      <h3>Sub-IB directos ({{ network_children.paginator.count }})</h3>
+      <ul>{% for link in network_children %}<li>{{ link.child.code }} — {{ link.child.user.username }}</li>{% empty %}<li>Aún no tienes sub-IB vinculados.</li>{% endfor %}</ul>
+      {% if network_children.has_previous %}<a href="?network_page={{ network_children.previous_page_number }}">Anterior</a>{% endif %}
+      {% if network_children.has_next %}<a href="?network_page={{ network_children.next_page_number }}">Siguiente</a>{% endif %}
+      {% else %}
       <div class="prg-subib-empty">
         <i class="fa-solid fa-sitemap"></i>
         <strong>{% ui "Programa multinivel aún no configurado." %}</strong>
         {% ui "Esta funcionalidad estará disponible cuando el programa Sub-IB correspondiente sea habilitado por Money Broker." %}
       </div>
+      {% endif %}
     </div>
   </div>
 

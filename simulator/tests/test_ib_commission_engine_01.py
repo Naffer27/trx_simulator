@@ -91,7 +91,7 @@ def _referred_setup(fixed_amount="10.00", qty="0.50"):
     referral = _make_referral(ib_owner)
     trader = make_user()
     _make_attribution(trader, referral)
-    account = make_account(user=trader, balance=Decimal("10000"))
+    account = make_account(account_type="STANDARD", user=trader, balance=Decimal("10000"))
     _make_rule(
         fixed_amount=Decimal(fixed_amount),
         effective_from=timezone.now() - timezone.timedelta(minutes=5),
@@ -176,7 +176,7 @@ class RuleResolutionTests(TestCase):
 class NoAttributionTests(TestCase):
     def test_7_user_without_attribution_produces_no_obligation(self):
         trader = make_user()
-        account = make_account(user=trader, balance=Decimal("10000"))
+        account = make_account(account_type="STANDARD", user=trader, balance=Decimal("10000"))
         event = _make_lot_event(account)
         _make_rule(fixed_amount=Decimal("10.00"))
 
@@ -186,7 +186,7 @@ class NoAttributionTests(TestCase):
         self.assertEqual(IBCommissionObligation.objects.count(), 0)
 
     def test_account_with_no_user_produces_no_obligation(self):
-        account = make_account(balance=Decimal("10000"))
+        account = make_account(account_type="STANDARD", balance=Decimal("10000"))
         account.user = None
         account.save(update_fields=["user"])
         event = _make_lot_event(account)
@@ -288,7 +288,7 @@ class HistoricalSnapshotTests(TestCase):
         referral = _make_referral(ib_owner)
         trader = make_user()
         _make_attribution(trader, referral)
-        account = make_account(user=trader, balance=Decimal("10000"))
+        account = make_account(account_type="STANDARD", user=trader, balance=Decimal("10000"))
 
         t0 = timezone.now() - timezone.timedelta(days=2)
         old_rule = _make_rule(fixed_amount=Decimal("2.00"), effective_from=t0)
@@ -360,7 +360,7 @@ class LinkageTests(TestCase):
         referral = _make_referral(ib_owner)
         trader = make_user()
         attribution = _make_attribution(trader, referral)
-        account = make_account(user=trader, balance=Decimal("10000"))
+        account = make_account(account_type="STANDARD", user=trader, balance=Decimal("10000"))
         rule = _make_rule(
             fixed_amount=Decimal("10.00"),
             effective_from=timezone.now() - timezone.timedelta(minutes=5),

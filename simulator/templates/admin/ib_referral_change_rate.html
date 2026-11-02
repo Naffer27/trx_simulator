@@ -30,7 +30,7 @@
   <div class="tr-summary-grid">
     <div><div class="sm-label">IB / Referral</div><div class="sm-val">#{{ instance.pk }} ({{ instance.code }})</div></div>
     <div><div class="sm-label">Owner</div><div class="sm-val">{{ instance.user.username }}</div></div>
-    <div><div class="sm-label">Current PER_LOT Rate</div>
+    <div><div class="sm-label">Tarifa actual — {{ rate_kind }}</div>
       <div class="sm-val">{% if current_rule %}${{ current_rule.fixed_amount }}/lot ({{ current_source }}){% else %}No configurada{% endif %}</div>
     </div>
   </div>
@@ -46,6 +46,11 @@
 
 <form method="post">
   {% csrf_token %}
+  <label for="rate_kind">Tipo de tarifa</label>
+  <select name="rule_type" id="rate_kind" onchange="location.href='?rule_type='+encodeURIComponent(this.value)">
+  {% for value,label in rate_choices %}<option value="{{ value }}" {% if value == rate_kind %}selected{% endif %}>{{ label }}</option>{% endfor %}
+  </select>
+  <p>La tarifa directa y el presupuesto de superiores son gastos adicionales entre sí. Una tarifa superior individual sigue limitada por el presupuesto de la red.</p>
   <div class="tr-section">
     <div class="tr-field">
       <label for="id_new_fixed_amount">New Rate ($/lot, required, &gt; 0)</label>

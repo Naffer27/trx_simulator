@@ -145,6 +145,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "simulator.session_security.InteractiveSessionMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -161,6 +162,7 @@ TEMPLATES = [
             "context_processors": [
                 "django.template.context_processors.debug",
                 "django.template.context_processors.request",
+                "simulator.session_security.context",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
                 "simulator.context_processors.readiness_context",
@@ -1213,3 +1215,10 @@ if SENTRY_DSN:
 # Pending/static spread parity: staged rollout only. Existing behaviour remains
 # default; never enable before reviewing outstanding orders and fee disclosures.
 PENDING_ORDER_SPREAD_FEE_ENABLED = os.getenv("PENDING_ORDER_SPREAD_FEE_ENABLED", "false").strip().lower() in {"1", "true", "yes"}
+
+# Optional rollout. Activate after the new migration and dependencies are installed.
+INTERACTIVE_SESSION_ENABLED = os.getenv("INTERACTIVE_SESSION_ENABLED", "false").lower() == "true"
+INTERACTIVE_SESSION_SECONDS = int(os.getenv("INTERACTIVE_SESSION_SECONDS", "60"))
+LOGIN_PASSKEYS_ENABLED = os.getenv("LOGIN_PASSKEYS_ENABLED", "false").lower() == "true"
+PASSKEY_RP_ID = os.getenv("PASSKEY_RP_ID", "moneybrokersglobal.com")
+PASSKEY_ORIGINS = [s.strip() for s in os.getenv("PASSKEY_ORIGINS", "https://moneybrokersglobal.com,https://www.moneybrokersglobal.com").split(",") if s.strip()]

@@ -371,7 +371,7 @@ class GenerationSuppressionTests(TestCase):
         referral = _make_referral()
         trader = make_user()
         _make_attribution(trader, referral)
-        account = make_account(user=trader, balance=Decimal("10000"))
+        account = make_account(user=trader, account_type="STANDARD", balance=Decimal("10000"))
         _make_rule(IBCommissionRule.RULE_PER_LOT, fixed_amount=Decimal("10.00"))
         freeze_referral(referral, "x", request=_fake_request(_make_reviewer()))
 
@@ -388,7 +388,7 @@ class GenerationSuppressionTests(TestCase):
         referral = _make_referral()
         trader = make_user()
         _make_attribution(trader, referral)
-        account = make_account(user=trader, balance=Decimal("10000"))
+        account = make_account(user=trader, account_type="STANDARD", balance=Decimal("10000"))
         _make_rule(IBCommissionRule.RULE_PER_LOT, fixed_amount=Decimal("10.00"))
 
         event = LotExecutionEvent.objects.create(
@@ -441,7 +441,7 @@ class GenerationSuppressionTests(TestCase):
         referral = _make_referral()
         trader = make_user()
         _make_attribution(trader, referral)
-        account = make_account(user=trader, balance=Decimal("10000"))
+        account = make_account(user=trader, account_type="STANDARD", balance=Decimal("10000"))
         _make_rule(IBCommissionRule.RULE_TRADING_COMMISSION_REVENUE_SHARE, percentage=Decimal("20.00"))
         row = make_broker_ledger(
             revenue_type=BrokerLedger.REV_COMMISSION, amount=Decimal("7.00"),
@@ -456,7 +456,7 @@ class GenerationSuppressionTests(TestCase):
         referral = _make_referral()
         trader = make_user()
         _make_attribution(trader, referral)
-        account = make_account(user=trader, balance=Decimal("10000"))
+        account = make_account(user=trader, account_type="STANDARD", balance=Decimal("10000"))
         _make_rule(IBCommissionRule.RULE_PER_LOT, fixed_amount=Decimal("10.00"))
         reviewer = _make_reviewer()
         freeze_referral(referral, "x", request=_fake_request(reviewer))

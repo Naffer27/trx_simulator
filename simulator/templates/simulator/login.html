@@ -200,6 +200,13 @@
       <button type="submit" class="btn-auth">{% ui "Sign In →" %}</button>
     </form>
 
+    {% if login_passkeys_enabled %}
+    <div data-passkeys data-options="{% url 'simulator:passkey_options' %}" data-verify="{% url 'simulator:passkey_verify' %}" style="margin-top:16px">
+      <button type="button" class="btn-auth" data-purpose="login">Entrar con Face ID / passkey</button>
+      <p role="status" aria-live="polite"></p>
+    </div>
+    <script defer src="{% static 'simulator/passkeys.js' %}"></script>
+    {% endif %}
     <hr class="auth-divider">
 
     <p class="auth-footer">

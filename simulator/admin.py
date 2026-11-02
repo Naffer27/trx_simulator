@@ -6848,3 +6848,6 @@ from . import ib_admin_ops  # noqa: F401
 # ib_admin_ops.py. No ModelAdmin/view/query logic for IB reversals
 # lives in this file — see simulator/ib_reversal_admin.py.
 from . import ib_reversal_admin  # noqa: F401
+
+# Additive network configuration and read-only fractional accrual audit.
+from . import ib_network_admin  # noqa: F401,E402

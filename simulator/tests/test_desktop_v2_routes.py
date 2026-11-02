@@ -55,3 +55,19 @@ class DesktopV2RoutesTests(TestCase):
             response = self.client.get(reverse(route))
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.context['account'].pk, self.account.pk)
+
+    def test_one_updated_entry_on_desktop_and_mobile(self):
+        self.client.force_login(self.user)
+        for ua in ['Mozilla/5.0 iPhone', 'Mozilla/5.0 Android Mobile', 'Mozilla/5.0 Macintosh']:
+            response = self.client.get(reverse('simulator:home'), HTTP_USER_AGENT=ua)
+            self.assertContains(response, 'href="' + reverse('simulator:dashboard_v2') + '"')
+            self.assertNotContains(response, 'href="' + reverse('simulator:dashboard') + '"')
+            self.assertNotContains(response, '> Panel 2')
+
+    def test_accounts_links_preserve_each_account_in_new_panel(self):
+        second = make_account(self.user, account_type='DEMO', tier=None)
+        self.client.force_login(self.user)
+        response = self.client.get(reverse('simulator:accounts'))
+        for account in (self.account, second):
+            self.assertContains(response, 'href="' + reverse('simulator:dashboard_v2_account', args=[account.pk]) + '"')
+            self.assertNotContains(response, 'href="' + reverse('simulator:dashboard_account', args=[account.pk]) + '"')

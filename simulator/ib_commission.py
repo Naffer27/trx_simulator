@@ -52,7 +52,7 @@ from django.utils import timezone
 
 from .models import (
     BrokerLedger, ChallengeEnrollment, Deposit, IBCommissionObligation,
-    IBCommissionRule, LotExecutionEvent, Referral, ReferralAttribution,
+    IBCommissionRule, LotExecutionEvent, Referral, ReferralAttribution, TradingAccount,
 )
 
 logger = logging.getLogger("simulator.ib_commission")
@@ -167,6 +167,11 @@ def generate_per_lot_obligation(lot_execution_event: LotExecutionEvent):
     LedgerEntry, no TreasuryOperationRequest. Only ever writes a PENDING
     IBCommissionObligation row.
     """
+    # Cash-funded trading accounts only. Demo/prop balances are synthetic;
+    # an execution there must not create a cash-payable per-lot liability.
+    if lot_execution_event.account.account_type not in TradingAccount.WITHDRAWABLE_ACCOUNT_TYPES:
+        return None
+
     user = lot_execution_event.account.user
     if user is None:
         return None

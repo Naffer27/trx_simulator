@@ -144,7 +144,7 @@ class PerLotSweepTests(TestCase):
         referral = referral or _make_referral(ib_owner)
         trader = make_user()
         _make_attribution(trader, referral)
-        account = make_account(user=trader, balance=Decimal("10000"))
+        account = make_account(account_type="STANDARD", user=trader, balance=Decimal("10000"))
         event = _make_lot_event(account, qty=qty)
         return referral, event
 
@@ -185,7 +185,7 @@ class PerLotSweepTests(TestCase):
 
     def test_no_attribution_no_obligation(self):
         trader = make_user()
-        account = make_account(user=trader, balance=Decimal("10000"))
+        account = make_account(account_type="STANDARD", user=trader, balance=Decimal("10000"))
         event = _make_lot_event(account, qty="0.50")
         _make_rule(IBCommissionRule.RULE_PER_LOT, fixed_amount=Decimal("10.00"))
 
@@ -206,7 +206,7 @@ class PerLotSweepTests(TestCase):
         referral = _make_referral(ib_owner)
         trader = make_user()
         _make_attribution(trader, referral)
-        account = make_account(user=trader, balance=Decimal("10000"))
+        account = make_account(account_type="STANDARD", user=trader, balance=Decimal("10000"))
 
         _make_rule(IBCommissionRule.RULE_PER_LOT, fixed_amount=Decimal("2.00"))  # global
         _make_rule(IBCommissionRule.RULE_PER_LOT, referral=referral, fixed_amount=Decimal("10.00"))  # override
@@ -377,7 +377,7 @@ class NoMoneyMovementTests(TestCase):
         referral_1 = _make_referral(ib_owner_1)
         trader_1 = make_user()
         _make_attribution(trader_1, referral_1)
-        account_1 = make_account(user=trader_1, balance=Decimal("10000"))
+        account_1 = make_account(account_type="STANDARD", user=trader_1, balance=Decimal("10000"))
         _make_lot_event(account_1, qty="0.50")
         _make_rule(IBCommissionRule.RULE_PER_LOT, fixed_amount=Decimal("10.00"))
 
@@ -432,7 +432,7 @@ class NoMoneyMovementTests(TestCase):
         referral = _make_referral(ib_owner)
         trader = make_user()
         _make_attribution(trader, referral)
-        account = make_account(user=trader, balance=Decimal("10000"))
+        account = make_account(account_type="STANDARD", user=trader, balance=Decimal("10000"))
         _make_lot_event(account, qty="0.50")
         _make_rule(IBCommissionRule.RULE_PER_LOT, fixed_amount=Decimal("10.00"))
 
@@ -449,7 +449,7 @@ class NoMoneyMovementTests(TestCase):
         referral = _make_referral(ib_owner)
         trader = make_user()
         _make_attribution(trader, referral)
-        account = make_account(user=trader, balance=Decimal("10000"))
+        account = make_account(account_type="STANDARD", user=trader, balance=Decimal("10000"))
         event = _make_lot_event(account, qty="0.10")
         _make_rule(IBCommissionRule.RULE_PER_LOT, fixed_amount=Decimal("3.00"))
 

@@ -11,7 +11,7 @@ from django.utils import timezone
 
 from market_data.feeds import get_feed_manager, _validate_quote_values, _closed_only, _MASSIVE_ENABLED_SYMBOLS, _MASSIVE_CRYPTO_ENABLED_SYMBOLS
 from market_data.symbol_specs import get_spec, allowed_symbols, kline_symbols
-from .gold_demo_policy import gold_demo_allowed, gold_demo_for_account
+from .gold_demo_policy import gold_trading_allowed, gold_trading_for_account
 from .models import TradingAccount, Position, Trade, LedgerEntry, BrokerLedger, PendingOrder
 from .spread_engine import broker_price, calculate_spread_revenue, _get_config as _get_spread_config
 from .observability import security_log
@@ -1095,7 +1095,14 @@ def _trigger_pending_order_core(pending_order_id: int, execution_price: float) -
 class TradingConsumer(AsyncWebsocketConsumer):
 
     # ---------------- Conexión ----------------
+    async def _interactive_session_valid(self):
+        from .session_security import socket_session_valid
+        return await database_sync_to_async(socket_session_valid)(self.scope)
+
     async def connect(self):
+        if not await self._interactive_session_valid():
+            await self.close(code=4001)
+            return
         self._db_account_id = None
         self._last_db_sync = 0.0
 
@@ -1321,12 +1328,15 @@ class TradingConsumer(AsyncWebsocketConsumer):
         if symbol in _ALLOWED_SYMBOLS:
             return True
         account = getattr(self, 'account', {})
-        return symbol == 'XAU/USD' and gold_demo_allowed(
+        return symbol == 'XAU/USD' and gold_trading_allowed(
             getattr(self, '_db_account_id', None), account.get('account_type'),
             account.get('currency'), account.get('allowed_symbols'))
 
     # ---------------- Mensajes entrantes ----------------
     async def receive(self, text_data: str):
+        if not await self._interactive_session_valid():
+            await self.close(code=4001)
+            return
         self._last_msg_ts = time.time()
         try:
             data = json.loads(text_data)
@@ -1771,15 +1781,22 @@ class TradingConsumer(AsyncWebsocketConsumer):
 
     async def _heartbeat_loop(self):
         """Send server ping every 30 s; close stale connections after 90 s silence."""
-        PING_INTERVAL = 30
+        PING_INTERVAL = 5
+        last_ping = 0
         STALE_TIMEOUT = 90
         while True:
             await asyncio.sleep(PING_INTERVAL)
+            if not await self._interactive_session_valid():
+                await self.close(code=4001)
+                return
             now = time.time()
             if now - self._last_msg_ts > STALE_TIMEOUT:
                 log.warning("[heartbeat] stale connection for account=%s — closing", self._db_account_id)
                 await self.close()
                 return
+            if now - last_ping < 30:
+                continue
+            last_ping = now
             try:
                 await self.send_json({"type": "heartbeat", "ts": int(now)})
             except Exception:
@@ -4790,7 +4807,7 @@ class TradingConsumer(AsyncWebsocketConsumer):
         if not self._db_account_id:
             if symbol == 'XAU/USD':
                 return {"ok": False, "error_code": "symbol_not_allowed",
-                        "message": "Oro requiere una cuenta demo autorizada.",
+                        "message": "Oro requiere una cuenta autorizada.",
                         "position_id": None, "merged": False, "routing_decision_id": None}
             return {"position_id": None, "merged": False, "ok": True, "routing_decision_id": None}
         from decimal import Decimal
@@ -4872,9 +4889,9 @@ class TradingConsumer(AsyncWebsocketConsumer):
                     "current_open_positions": 0, "max_open_positions": 0,
                 }
 
-            if symbol == 'XAU/USD' and not gold_demo_for_account(account):
+            if symbol == 'XAU/USD' and not gold_trading_for_account(account):
                 return {"ok": False, "error_code": "symbol_not_allowed",
-                        "message": "Oro no habilitado para esta cuenta demo.",
+                        "message": "Oro no habilitado para esta cuenta.",
                         "position_id": None, "merged": False, "routing_decision_id": None}
 
             # 2. NOW lock every open Position for this account — issued

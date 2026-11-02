@@ -416,8 +416,8 @@ def trading_dashboard(request, account_id=None):
     # SymbolSpec fields, nothing invented. No daily %/sparkline/high-low/
     # market-status/fake-quote fields exist on SymbolSpec, so none are
     # exposed here.
-    from .gold_demo_policy import gold_demo_for_account
-    gold_demo_enabled = gold_demo_for_account(account)
+    from .gold_demo_policy import gold_trading_for_account
+    gold_demo_enabled = gold_trading_for_account(account)
     dashboard_symbols = _allowed_symbols() | ({'XAU/USD'} if gold_demo_enabled else set())
     mobile_allowed_symbols_json = json.dumps(
         [
@@ -4960,6 +4960,10 @@ def associates_program_view(request):
                 'unit_label': unit_label, 'active': False,
             })
 
+    from .models import IBNetworkLink
+    network_rule, _ = ib_effective_rate(ref, IBCommissionRule.RULE_SUB_IB_PER_LOT)
+    network_children = Paginator(IBNetworkLink.objects.filter(parent=ref).select_related('child__user').order_by('pk'), 25).get_page(request.GET.get('network_page'))
+    network_parent = IBNetworkLink.objects.filter(child=ref).select_related('parent').first()
     active_component_count = sum(1 for c in components if c['active'])
     return render(request, 'simulator/associates_program.html', {
         'referral': ref,
@@ -4968,6 +4972,9 @@ def associates_program_view(request):
         'components': components,
         'has_active_component': active_component_count > 0,
         'active_component_count': active_component_count,
+        'network_rule': network_rule,
+        'network_children': network_children,
+        'network_parent': network_parent,
     })
 
 

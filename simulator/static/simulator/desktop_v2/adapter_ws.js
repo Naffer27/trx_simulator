@@ -49,6 +49,7 @@ window.MB_API = (function () {
   var TF = { '1m': '1m', '5m': '5m', '15m': '15m', '1H': '1h', '4H': '4h', '1D': '1d' };
   var inicial = simbolos.indexOf('BTC/USD') >= 0 ? 'BTC/USD' : simbolos[0];
   var cur = { sym: inicial, tf: '15m' };
+  var chartReady = false; // Wait for matching history before accepting untagged candle updates.
   var liveMid = null;
   var account = { id: BOOT.accountId || null, type: BOOT.accountType || '', balance: Number(BOOT.balance || 0),
     leverage: BOOT.leverage || null, server: 'LIVE', connected: false,
@@ -83,24 +84,26 @@ window.MB_API = (function () {
 
   /* --------------------------- WebSocket (el mismo del escritorio actual) --------------------------- */
   var ws = null, hb = null, reintento = 1000;
-  function wsUrl() {
+  function wsUrl(tf) {
     var path = account.id ? '/ws/trading/' + account.id + '/' : '/ws/trading/';
-    var u = new URL(path, window.location.href); u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:'; return u.toString();
+    var u = new URL(path, window.location.href); u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:'; u.searchParams.set('tf', TF[tf] || '15m'); return u.toString();
   }
   function enviar(o) { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(o)); }
   function conectar() {
-    try { ws = new WebSocket(wsUrl()); } catch (e) { setTimeout(conectar, reintento); return; }
+    var openedTf = cur.tf;
+    try { ws = new WebSocket(wsUrl(openedTf)); } catch (e) { setTimeout(conectar, reintento); return; }
     ws.onopen = function () {
-      reintento = 1000; account.connected = true; setConn(true);
+      chartReady = false; reintento = 1000; account.connected = true; setConn(true);
       clearInterval(hb); hb = setInterval(function () { try { ws.send('{"action":"ping"}'); } catch (e) {} }, 15000);
       enviar({ action: 'change_symbol', symbol: cur.sym });
-      enviar({ action: 'change_timeframe', timeframe: TF[cur.tf] || '15m' });
+      // The connection already starts in the requested timeframe.
+      if (openedTf !== cur.tf) enviar({ action: 'change_timeframe', timeframe: TF[cur.tf] });
       enviar({ action: 'get_positions' });
       enviar({ action: 'get_closed_trades' });
       enviar({ action: 'account:get' });
     };
     ws.onclose = function () {
-      account.connected = false; liveMid = null;
+      chartReady = false; account.connected = false; liveMid = null;
       var activeQuote = bySym[v2(cur.sym)]; if (activeQuote) { activeQuote.bid = null; activeQuote.ask = null; activeQuote.quoteAt = null; emitirTick(); } preview = {}; previewAt = {}; nominal = {};
       if (modificacion) { var failed = modificacion; modificacion = null; terminar(failed); failed.reject(new Error("Conexión perdida. Verifica SL/TP antes de reintentar.")); }
       setConn(false); clearInterval(hb);
@@ -205,12 +208,14 @@ window.MB_API = (function () {
       arr.sort(function (x, y) { return x.t - y.t; });
       if (!candles[key]) candles[key] = [];
       var lista0 = candles[key]; lista0.length = 0; Array.prototype.push.apply(lista0, arr);   // mismo arreglo: el gráfico se actualiza solo
+      chartReady = true;
       calcularCambio(v2(cur.sym), lista0);
       (esperando[key] || []).forEach(function (r) { r(lista0); }); esperando[key] = [];
       emitirTick(); return;
     }
     if ((t === 'candle_update' || t === 'candle_new') && m.data) {
       if (m.symbol && m.symbol !== cur.sym) return;
+      if (!chartReady || (m.timeframe && m.timeframe !== TF[cur.tf])) return;
       var k = v2(cur.sym) + '|' + cur.tf, lista = candles[k]; if (!lista) return;
       var c = mapCandle(m.data); if (!c.t || c.c === null) return;
       var ult = lista[lista.length - 1];
@@ -221,6 +226,7 @@ window.MB_API = (function () {
     // Volumen de la vela en formación: el motor lo manda aparte (volume_update), igual que al escritorio clásico
     if (t === 'volume_update') {
       if (m.symbol && m.symbol !== cur.sym) return;
+      if (!chartReady || (m.timeframe && m.timeframe !== TF[cur.tf])) return;
       var kv = v2(cur.sym) + '|' + cur.tf, lv = candles[kv], tv = ms(m.time), vv = num(m.value); if (!lv || !tv || vv === null) return;
       for (var iv = lv.length - 1; iv >= 0 && iv >= lv.length - 3; iv--) { if (lv[iv].t === tv) { lv[iv].v = vv; break; } }
       return;
@@ -299,11 +305,18 @@ window.MB_API = (function () {
     turno = key; setTimeout(function () { turno = null; }, 0);
     if (!esActual) {
       var cambioSym = symReal !== cur.sym;
-      cur.sym = symReal; cur.tf = tf; liveMid = null;
-      setPanelFeeds([], tf);
+      cur.sym = symReal; cur.tf = tf; chartReady = false;
+      if (cambioSym) {
+        liveMid = null;
+        var selectedQuote = bySym[sym];
+        if (selectedQuote) { selectedQuote.bid = null; selectedQuote.ask = null; selectedQuote.quoteAt = null; }
+      }
+      setPanelFeeds(null, tf);
       if (cambioSym) enviar({ action: 'change_symbol', symbol: cur.sym });
       enviar({ action: 'change_timeframe', timeframe: TF[tf] || '15m' });
     }
+    // Reuse real cached candles while the new history request refreshes them.
+    if (candles[key] && candles[key].length) return Promise.resolve(candles[key]);
     if (!candles[key]) candles[key] = [];
     return new Promise(function (resolve) {
       (esperando[key] = esperando[key] || []).push(function (arr) { resolve(arr); });
@@ -318,24 +331,26 @@ window.MB_API = (function () {
      Ignora posiciones/cuenta/órdenes: eso lo maneja únicamente la conexión principal. */
   var lectores = {};   // 'ETH/USD' -> lector
   function crearLector(symReal, tf) {
-    var L = { sym: symReal, tf: tf, ws: null, hb: null, retry: 1000, cerrado: false, mid: null };
+    var L = { sym: symReal, tf: tf, ws: null, hb: null, retry: 1000, cerrado: false, ready: false, mid: null };
     function env(o) { if (L.ws && L.ws.readyState === WebSocket.OPEN) L.ws.send(JSON.stringify(o)); }
     function abrir() {
       if (L.cerrado) return;
-      try { L.ws = new WebSocket(wsUrl()); } catch (e) { setTimeout(abrir, L.retry); return; }
+      var openedTf = L.tf;
+      try { L.ws = new WebSocket(wsUrl(openedTf)); } catch (e) { setTimeout(abrir, L.retry); return; }
       L.ws.onopen = function () {
         if (L.cerrado) { try { L.ws.close(); } catch (e) {} return; }
-        L.retry = 1000; clearInterval(L.hb); L.hb = setInterval(function () { env({ action: 'ping' }); }, 15000);
-        env({ action: 'change_symbol', symbol: L.sym }); env({ action: 'change_timeframe', timeframe: TF[L.tf] || '15m' });
+        L.ready = false; L.retry = 1000; clearInterval(L.hb); L.hb = setInterval(function () { env({ action: 'ping' }); }, 15000);
+        env({ action: 'change_symbol', symbol: L.sym });
+        if (openedTf !== L.tf) env({ action: 'change_timeframe', timeframe: TF[L.tf] });
       };
       L.ws.onclose = function () {
-        clearInterval(L.hb); L.mid = null;
+        clearInterval(L.hb); L.mid = null; L.ready = false;
         var q = bySym[v2(L.sym)]; if (q && L.sym !== cur.sym) { q.bid = null; q.ask = null; q.quoteAt = null; emitirTick(); }   // sin conexión = sin precio (FIX-05C)
         if (!L.cerrado) { L.retry = Math.min(L.retry * 2, 15000); setTimeout(abrir, L.retry); }
       };
       L.ws.onmessage = function (ev) { if (L.cerrado) return; var m; try { m = JSON.parse(ev.data); } catch (e) { return; } try { lectorMensaje(L, m); } catch (e) {} };
     }
-    L.setTF = function (t2) { if (t2 === L.tf) return; L.tf = t2; env({ action: 'change_timeframe', timeframe: TF[t2] || '15m' }); };
+    L.setTF = function (t2) { if (t2 === L.tf) return; L.tf = t2; L.ready = false; env({ action: 'change_timeframe', timeframe: TF[t2] || '15m' }); };
     L.cerrar = function () { L.cerrado = true; clearInterval(L.hb); try { L.ws && L.ws.close(); } catch (e) {} };
     abrir(); return L;
   }
@@ -357,12 +372,14 @@ window.MB_API = (function () {
       arr.sort(function (x, y) { return x.t - y.t; });
       if (!candles[key]) candles[key] = [];
       var lista0 = candles[key]; lista0.length = 0; Array.prototype.push.apply(lista0, arr);
+      L.ready = true;
       calcularCambio(v2(L.sym), lista0);
       (esperando[key] || []).forEach(function (r) { r(lista0); }); esperando[key] = [];
       emitirTick(); return;
     }
     if ((t === 'candle_update' || t === 'candle_new') && m.data) {
       if (m.symbol && m.symbol !== L.sym) return;
+      if (!L.ready || (m.timeframe && m.timeframe !== TF[L.tf])) return;
       var lista = candles[key]; if (!lista) return;
       var c = mapCandle(m.data); if (!c.t || c.c === null) return;
       var ult = lista[lista.length - 1];
@@ -372,19 +389,26 @@ window.MB_API = (function () {
     }
     if (t === 'volume_update') {
       if (m.symbol && m.symbol !== L.sym) return;
+      if (!L.ready || (m.timeframe && m.timeframe !== TF[L.tf])) return;
       var lv = candles[key], tv = ms(m.time), vv = num(m.value); if (!lv || !tv || vv === null) return;
       for (var iv = lv.length - 1; iv >= 0 && iv >= lv.length - 3; iv--) { if (lv[iv].t === tv) { lv[iv].v = vv; break; } }
     }
   }
   /* La interfaz indica qué símbolos tienen gráfico extra; se abren/cierran las conexiones necesarias. */
+  var visiblePanelSymbols = [];
   function setPanelFeeds(syms, tf) {
+    if (syms !== null) visiblePanelSymbols = syms || [];
+    var visible = {}; visiblePanelSymbols.forEach(function (sym) { if (real[sym]) visible[real[sym]] = true; });
     var quiero = {};
     // Keep every allowed watchlist symbol subscribed, even with a single chart.
     // Reuse existing readers: never one additional reader per layout or refresh.
     simbolos.forEach(function (r) { if (r !== cur.sym) quiero[r] = 1; });
     (syms || []).forEach(function (s) { var r = real[s]; if (r && r !== cur.sym) quiero[r] = 1; });   // la interfaz nunca incluye el gráfico activo
     Object.keys(lectores).forEach(function (r) { if (!quiero[r]) { lectores[r].cerrar(); delete lectores[r]; } });
-    Object.keys(quiero).forEach(function (r) { if (lectores[r]) lectores[r].setTF(tf); else lectores[r] = crearLector(r, tf); });
+    Object.keys(quiero).forEach(function (r) {
+      if (lectores[r]) { if (visible[r]) lectores[r].setTF(tf); }
+      else lectores[r] = crearLector(r, visible[r] ? tf : '1m');
+    });
   }
   function getPanelCandles(sym, tf) {
     var r = real[sym]; if (!r) return Promise.resolve([]);
@@ -412,7 +436,8 @@ window.MB_API = (function () {
     if (!lots || lots <= 0) return Promise.reject(new Error('Volumen inválido'));
     var sl = num(o.sl), tp = num(o.tp), payload, tipo;
     if (o.type === 'market') {
-      if (liveMid === null) return Promise.reject(new Error('Precio no disponible todavía para ' + o.sym));
+      var orderQuote = bySym[o.sym];
+      if (liveMid === null || !orderQuote || !orderQuote.quoteAt || Date.now() - orderQuote.quoteAt > 60000) return Promise.reject(new Error('Precio no disponible todavía para ' + o.sym));
       payload = { action: 'order:new', symbol: symReal, side: o.side, type: 'market', qty: lots, sl: sl, tp: tp };
       tipo = 'mercado';
     } else {

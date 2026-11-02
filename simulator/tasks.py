@@ -1940,6 +1940,8 @@ def sweep_ib_commission_triggers_task(self, minutes_back: int = 30) -> dict:
     t0 = _t.monotonic()
     cutoff = timezone.now() - timedelta(minutes=minutes_back)
 
+    from .ib_network import sweep_network
+    network = sweep_network()
     per_lot = sweep_per_lot(cutoff)
     challenge_percent = sweep_challenge_percent(cutoff)
     deposit_percent = sweep_deposit_percent(cutoff)
@@ -1949,6 +1951,7 @@ def sweep_ib_commission_triggers_task(self, minutes_back: int = 30) -> dict:
     elapsed_ms = round((_t.monotonic() - t0) * 1000)
     result = {
         "per_lot": per_lot,
+        "network": network,
         "challenge_percent": challenge_percent,
         "deposit_percent": deposit_percent,
         "trading_commission_revenue_share": trading_commission_revenue_share,

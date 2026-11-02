@@ -319,7 +319,8 @@ body.v2 {
 .v2-stepper { display: flex; align-items: center; height: 42px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border); }
 [data-theme="dia"] .v2-stepper { background: #FFFFFF; }
 .v2-stepper button { width: 44px; height: 40px; font-size: 20px; color: var(--text-2); }
-.v2-stepper output { flex: 1; text-align: center; font-size: 16px; font-weight: 700; }
+.v2-stepper input { flex: 1; width: 0; min-width: 0; text-align: center; font-size: 16px; font-weight: 700; color: var(--text); background: transparent; border: 0; padding: 8px 0; }
+.v2-stepper:focus-within { outline: 2px solid var(--accent, #f5c400); outline-offset: 2px; }
 .v2-presets { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; }
 .v2-presets button { height: 26px; border-radius: 6px; font-size: 11px; font-weight: 600; background: var(--surface); color: var(--text-2); }
 .v2-presets button[aria-pressed="true"] { background: var(--brand); color: var(--on-brand); }
@@ -344,3 +345,16 @@ body.v2 {
 .v2-toast.show { opacity: 1; transform: translate(-50%, 0); }
 .v2-toast::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--brand); }
 @media (prefers-reduced-motion: reduce) { .v2-toast { transition: none; } }
+
+/* In-panel SL/TP editor. Native dialog provides focus trapping and Escape. */
+.v2-stop-editor { width: min(420px, calc(100vw - 32px)); padding: 24px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+.v2-stop-editor::backdrop { background: rgba(0,0,0,.6); }
+.v2-stop-editor h2 { margin: 0 0 10px; font-size: 20px; }
+.v2-stop-editor p { margin: 10px 0; font-size: 13px; }
+.v2-stop-editor label { display: block; margin-top: 18px; font-size: 14px; }
+.v2-stop-editor input { display: block; box-sizing: border-box; width: 100%; margin-top: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text); }
+.v2-stop-status { min-height: 36px; }
+.v2-stop-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.v2-stop-actions button { padding: 11px 15px; border: 1px solid var(--border); border-radius: 8px; }
+.v2-stop-actions button[type="submit"] { background: var(--brand); color: #111; font-weight: 700; }
+.v2-stop-editor button:disabled { opacity: .6; cursor: wait; }

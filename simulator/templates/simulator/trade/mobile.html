@@ -1623,6 +1623,7 @@ window.__TRADE_CONFIG__ = {
 
 <script src="{% static 'simulator/trade/mobile_chart.js' %}"></script>
 <script src="{% static 'simulator/trade/mobile_session.js' %}"></script>
+<script src="{% static 'simulator/trade/mobile_watch_quotes.js' %}"></script>
 
 <script>
 (function(){
@@ -1969,6 +1970,7 @@ window.__TRADE_CONFIG__ = {
     elTradeBidPrice.textContent=fmt(state.bid);
     elTradeAskPrice.textContent=fmt(state.ask);
     lastQuoteState = state;
+    if (watchQuotes && state.symbol) watchQuotes.setActive(state.symbol);
     if(state.symbol && state.symbol !== marketsSelectedSymbol){
       marketsSelectedSymbol = state.symbol;
       renderWatchlist();
@@ -2219,6 +2221,8 @@ window.__TRADE_CONFIG__ = {
       const p = priceFormatFor(sym).precision;
       return { bid: fmt(lastQuoteState.bid, p), ask: fmt(lastQuoteState.ask, p) };
     }
+    const other = watchQuotes && watchQuotes.get(sym);
+    if (other) { const p=priceFormatFor(sym).precision; return {bid:fmt(other.bid,p),ask:fmt(other.ask,p)}; }
     return { bid: '—', ask: '—' };
   }
 
@@ -3825,6 +3829,21 @@ window.__TRADE_CONFIG__ = {
   renderPositions(getCanonicalPositions());
   refreshPositionLines();
   renderHistorialState();
+  var watchQuotes = new MobileWatchQuotes({
+    symbols: MOBILE_SYMBOLS.map(item=>item.symbol), active: session.currentSymbol,
+    url: ()=>session.wsUrl(),
+    changed: function(symbol) {
+      if(symbol===marketsSelectedSymbol)return;
+      const row=Array.from(elWatchlist.querySelectorAll('[data-symbol]')).find(el=>el.dataset.symbol===symbol);
+      if(!row)return;
+      const values=marketLiveValues(symbol);
+      row.querySelector('.wl-price').textContent=values.bid;
+      row.querySelector('.wl-bidask').textContent=values.ask;
+    }
+  });
+  document.addEventListener('visibilitychange',()=>{if(document.hidden)watchQuotes.pause();else watchQuotes.resume();});
+  window.addEventListener('pagehide',()=>watchQuotes.pause());
+  window.addEventListener('pageshow',()=>{if(!document.hidden)watchQuotes.resume();});
   session.connect();
   recomputeDailyStats();
   let statsTimer=setInterval(recomputeDailyStats,15000);

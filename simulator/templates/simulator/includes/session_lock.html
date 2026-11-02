@@ -1,0 +1,7 @@
+{% load static %}{% if interactive_session_enabled %}
+<div hidden>{% csrf_token %}
+<script defer src="{% static 'simulator/session_lock.js' %}"
+ data-timeout="{{ interactive_session_seconds }}" data-session="{{ interactive_session_digest }}"
+ data-remaining="{{ interactive_session_remaining }}" data-activity="{% url 'simulator:session_activity' %}"
+ data-lock="{% url 'simulator:session_lock' %}" data-login="{% url 'simulator:login' %}"></script></div>
+{% endif %}

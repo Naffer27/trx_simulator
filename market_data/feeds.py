@@ -159,19 +159,9 @@ GAP_BUFFER = 2.0
 _MASSIVE_RANGE_MIN_SECONDS = 86400
 _MASSIVE_RANGE_MAX_SECONDS = 400 * 86400
 
-# CHART-GLOBAL-REGRESSION-01 — precheck confirmed live (real Massive API,
-# sort=desc, 2026-09-03): the aggs endpoint returns a small, timeframe-
-# driven page size for EVERY Forex pair tested (EUR/USD, GBP/USD, USD/JPY,
-# AUD/USD all identical) — 200/39/13/3/203 results per page for
-# 1m/5m/15m/1h/1d respectively, regardless of the requested `limit`. The
-# original _MASSIVE_MAX_PAGES=3 (1 initial + 2 continuations) was only
-# ever validated against 1m (which happens to fit in a single page) —
-# 15m/1h silently truncated Forex history to 3-16 DAYS stale, for every
-# pair, undetected until this audit. Renamed (not duplicated) to
-# _MASSIVE_FOREX_MAX_PAGES and raised to 20 — same evidence-backed value
-# already proven for _MASSIVE_CRYPTO_MAX_PAGES, since the two page-size
-# profiles are identical. Worst case (1h): 20 pages ≈ 60-80 fresh bars
-# instead of 200 stale ones — FRESHNESS > DEPTH, same tradeoff as crypto.
+# Pagination remains bounded for sparse markets and histories exceeding one
+# provider page. The API limit counts base bars, not output candles; size the
+# first request accordingly instead of relying on many tiny hourly pages.
 _MASSIVE_FOREX_MAX_PAGES = 20
 
 
@@ -181,6 +171,20 @@ def _massive_sym(symbol: str) -> "str | None":
     if symbol not in _MASSIVE_ENABLED_SYMBOLS:
         return None
     return f"C:{symbol.replace('/', '')}"
+
+
+def _massive_base_bar_limit(interval: str, bars: int) -> int:
+    """Massive limits input minutes for minute/hour candles (maximum 50,000).
+
+    Keep the caller's output candle limit separate for trimming and cursors.
+    One extra candle budget covers alignment at the range boundary.
+    """
+    multiplier, timespan = _MASSIVE_TF[interval]
+    base_per_candle = multiplier * (60 if timespan == "hour" else 1)
+    count = max(1, int(bars))
+    if base_per_candle > 1:
+        count = (count + 1) * base_per_candle
+    return min(50_000, count)
 
 
 def _massive_range(interval: str, bars: int) -> "tuple[str, str] | None":
@@ -1365,7 +1369,8 @@ class FeedManager:
 
         url = (
             f"https://api.massive.com/v2/aggs/ticker/{mapped}/range/"
-            f"{multiplier}/{timespan}/{from_date}/{to_date}?limit={limit}&sort=desc"
+            f"{multiplier}/{timespan}/{from_date}/{to_date}"
+            f"?limit={_massive_base_bar_limit(interval, limit)}&sort=desc"
         )
 
         try:
@@ -1569,7 +1574,8 @@ class FeedManager:
 
         url = (
             f"https://api.massive.com/v2/aggs/ticker/{mapped}/range/"
-            f"{multiplier}/{timespan}/{from_date}/{to_date}?limit={limit}&sort=desc"
+            f"{multiplier}/{timespan}/{from_date}/{to_date}"
+            f"?limit={_massive_base_bar_limit(interval, limit)}&sort=desc"
         )
 
         try:
